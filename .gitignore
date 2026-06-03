@@ -1,0 +1,21 @@
+# Local environment
+.env
+.env.*
+!.env.local.example
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Dependencies/build outputs, reserved for future implementation
+node_modules/
+dist/
+build/
+.next/
+coverage/

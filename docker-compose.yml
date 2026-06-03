@@ -1,0 +1,32 @@
+name: startupmanage_local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SMS_POSTGRES_DB:-startupmanage_local}
+      POSTGRES_USER: ${SMS_POSTGRES_USER:-startupmanage_app}
+      POSTGRES_PASSWORD: ${SMS_POSTGRES_PASSWORD:-startupmanage_local_dev_only}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${SMS_POSTGRES_HOST_PORT:-55432}:5432"
+    volumes:
+      - startupmanage_local_pgdata:/var/lib/postgresql/data
+    networks:
+      - startupmanage_local_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  startupmanage_local_pgdata:
+    name: startupmanage_local_pgdata
+
+networks:
+  startupmanage_local_net:
+    name: startupmanage_local_net
+    driver: bridge
