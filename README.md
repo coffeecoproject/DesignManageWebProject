@@ -18,6 +18,7 @@
 - Readiness checklist status: `docs/governance/readiness-checklist-status.md`
 - Governance review: `docs/governance/governance-review.md`
 - Governance close-out: `docs/governance/governance-close-out.md`
+- Pre-business readiness close-out: `docs/governance/pre-business-readiness-close-out.md`
 - Engineering bootstrap: `docs/project/engineering-bootstrap.md`
 - Environment matrix: `docs/project/environment-matrix.md`
 - Infrastructure/platform: `docs/project/infrastructure-platform.md`

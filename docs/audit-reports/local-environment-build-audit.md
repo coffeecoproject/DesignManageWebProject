@@ -19,7 +19,7 @@
 | Compose config valid | pass | `docker compose config` |
 | Container healthy | pass | `docker compose ps` showed `Up ... (healthy)` |
 | Database connection valid | pass | `SELECT current_database(), current_user;` returned `startupmanage_local`, `startupmanage_app` |
-| Helper scripts verified | pass | Syntax verified for all local DB scripts; runtime verified for config/up/status/psql/logs |
+| Helper scripts verified | pass | Syntax verified for all local DB scripts; runtime verified for config/up/status/psql/logs/down |
 
 ## 3. Findings
 
@@ -27,7 +27,7 @@ No local environment conflict was found after creation.
 
 The local Postgres dependency is ready with evidence.
 
-Local DB helper scripts are ready with evidence except `db-down.sh` runtime behavior, which was intentionally not run to keep the verified database running.
+Local DB helper scripts are ready with evidence. `db-down.sh` was later exercised in the pre-business readiness audit and the database was restarted and verified healthy.
 
 ## 4. Boundaries
 

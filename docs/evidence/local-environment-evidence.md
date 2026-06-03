@@ -58,11 +58,11 @@ lsof -nP -iTCP:55432 -sTCP:LISTEN
 | Database/user sanity | pass | `SELECT current_database(), current_user;` returned `startupmanage_local` and `startupmanage_app` |
 | Helper scripts exist | pass | `scripts/local/db-config.sh`, `db-up.sh`, `db-status.sh`, `db-psql.sh`, `db-logs.sh`, `db-down.sh` |
 | Helper script syntax | pass | `bash -n` passed for all `scripts/local/db-*.sh` scripts |
-| Helper script runtime | pass | `db-config.sh`, `db-up.sh`, `db-status.sh`, `db-psql.sh`, and `db-logs.sh` ran successfully |
+| Helper script runtime | pass | `db-config.sh`, `db-up.sh`, `db-status.sh`, `db-psql.sh`, `db-logs.sh`, and `db-down.sh` ran successfully |
 
 ## 5.1 Script Verification Notes
 
-`db-down.sh` syntax was verified, but runtime stop behavior was not executed during this pass to keep the healthy local database running.
+`db-down.sh` was exercised by stopping the local Postgres container without removing the data volume. `db-up.sh`, `db-status.sh`, and `db-psql.sh` were then run to confirm the database returned to healthy status with the expected database and user.
 
 ## 6. Evidence Boundary
 

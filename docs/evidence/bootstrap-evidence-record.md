@@ -34,6 +34,9 @@ It does not prove implementation readiness.
 | Local environment build audit | `docs/audit-reports/local-environment-build-audit.md` | ready_with_evidence | Local Docker Postgres build audit. |
 | Local database runbook | `docs/operations/local-database-runbook.md` | bootstrap_asset_only | Local DB operation and destructive boundary. |
 | Local engineering foundation audit | `docs/audit-reports/local-engineering-foundation-audit.md` | ready_with_evidence | Git, scripts, runbook, and editor baseline audit. |
+| Pre-business readiness round 1 | `docs/audit-reports/pre-business-readiness-audit-round-1.md` | ready_with_evidence | Full pre-business readiness audit. |
+| Pre-business readiness round 2 | `docs/audit-reports/pre-business-readiness-audit-round-2.md` | ready_with_evidence | Re-audit after remediation. |
+| Pre-business readiness close-out | `docs/governance/pre-business-readiness-close-out.md` | ready_with_evidence | Confirms readiness to begin business communication. |
 
 ## 4. Missing Implementation Evidence
 

@@ -30,6 +30,7 @@
 | Round 2 found no new remediable bootstrap governance gaps | 1 Project governance | low | bootstrap_asset_only | Codex | `docs/audit-reports/bootstrap-full-audit-round-2.md`, `docs/governance/governance-close-out.md` |
 | Local Docker Postgres environment configured and verified | 5 Environment, 9 API/data-contract | medium | ready_with_evidence | Codex | `docker-compose.yml`, `docs/evidence/local-environment-evidence.md` |
 | Pre-business local engineering foundation improved | 4 Engineering, 5 Environment | medium | ready_with_evidence | Codex | `.editorconfig`, `scripts/local/`, `docs/operations/local-database-runbook.md`, `docs/evidence/local-environment-evidence.md` |
+| Pre-business readiness closed | 1, 4, 5, 9 | medium | ready_with_evidence | Codex | `docs/governance/pre-business-readiness-close-out.md`, `docs/audit-reports/pre-business-readiness-audit-round-1.md`, `docs/audit-reports/pre-business-readiness-audit-round-2.md` |
 
 ## 4. Approved Exceptions
 
