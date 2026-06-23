@@ -1,0 +1,13 @@
+{
+  "name": "startup-manage-system",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.1.3",
+  "scripts": {
+    "dev:web": "pnpm --filter @startupmanage/web dev",
+    "build:web": "pnpm --filter @startupmanage/web build",
+    "lint": "pnpm --filter @startupmanage/web lint",
+    "test:web": "pnpm --filter @startupmanage/web test",
+    "typecheck": "pnpm --filter @startupmanage/web typecheck"
+  }
+}

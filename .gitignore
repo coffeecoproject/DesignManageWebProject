@@ -15,7 +15,9 @@ temp/
 
 # Dependencies/build outputs, reserved for future implementation
 node_modules/
+.pnpm-store/
 dist/
 build/
 .next/
 coverage/
+*.tsbuildinfo

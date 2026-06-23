@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-- Product purpose: TBD after business discussion.
+- Product purpose: multi-customer, multi-brand design-service operations management, task delivery, personnel settlement, and operating-finance visibility; current business scope is draft-confirmed in `docs/requirements/0002-business-modules-draft.md`.
 - Web project type: admin console / internal management tool.
 - Default scope: `Web frontend + Backend/API/Database/Storage + Auth + Infrastructure + CI/CD + Release/Operations/Recovery/Governance`
 - Out of scope unless explicitly added: native mobile apps, desktop app, browser extension, unrelated backend platform, production deployment.
@@ -47,7 +47,7 @@ These entry points mirror `/Users/liushan/Developer/CodingFlow/for-web-industria
 
 ## 3. Local Startup
 
-- Web frontend: planned gap, not initialized.
+- Web frontend: initialized at `apps/web` with Vite + React + TypeScript + Ant Design Pro-style shell.
 - Backend API: planned gap, not initialized.
 - Backend runtime units: TBD.
 - Local dependency services: Docker Compose Postgres.
@@ -60,25 +60,38 @@ These entry points mirror `/Users/liushan/Developer/CodingFlow/for-web-industria
 - Email: TBD.
 - Auth: TBD.
 
+Frontend local run:
+
+```bash
+corepack pnpm install
+corepack pnpm dev:web
+```
+
+Frontend URL:
+
+```text
+http://127.0.0.1:5173
+```
+
 ## 4. Core Commands
 
 | Purpose | Command | Notes |
 | --- | --- | --- |
-| install | TBD | No package manager selected yet. |
+| install | `corepack pnpm install` | Uses `pnpm@11.1.3` and `pnpm-lock.yaml`. |
 | local database config | `scripts/local/db-config.sh` | Renders Compose config. |
 | start local database | `scripts/local/db-up.sh` | Starts isolated local Postgres. |
 | inspect local database | `scripts/local/db-status.sh` | Checks Postgres health. |
 | open local psql | `scripts/local/db-psql.sh` | Opens psql against the isolated local database. |
 | local database logs | `scripts/local/db-logs.sh` | Shows recent Postgres logs. |
 | stop local database | `scripts/local/db-down.sh` | Stops without removing data volume. |
-| start frontend | TBD | Frontend framework not initialized. |
+| start frontend | `corepack pnpm dev:web` | Opens `http://127.0.0.1:5173`. |
 | start API | TBD | Backend runtime not initialized. |
-| lint | TBD | Planned gap. |
+| lint | `corepack pnpm lint` | Frontend ESLint gate. |
 | format | TBD | Planned gap. |
-| typecheck | TBD | Planned gap. |
+| typecheck | `corepack pnpm typecheck` | Frontend TypeScript gate. |
 | test | TBD | Planned gap. |
 | E2E smoke | TBD | Planned gap. |
-| build | TBD | Planned gap. |
+| build | `corepack pnpm build:web` | Frontend production build gate. |
 | migration apply/check | TBD | Database scope pending. |
 | storage local check | TBD | Storage scope pending. |
 | start workers/jobs | TBD | Runtime units pending. |
