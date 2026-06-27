@@ -8,6 +8,13 @@
     "build:web": "pnpm --filter @startupmanage/web build",
     "lint": "pnpm --filter @startupmanage/web lint",
     "test:web": "pnpm --filter @startupmanage/web test",
-    "typecheck": "pnpm --filter @startupmanage/web typecheck"
+    "typecheck": "pnpm --filter @startupmanage/web typecheck",
+    "ai-native:next": "node .ai-native/scripts/cli.mjs next ..",
+    "ai-native:baseline": "node .ai-native/scripts/cli.mjs baseline ..",
+    "ai-native:check": "node .ai-native/scripts/check-startup-adapter.mjs",
+    "ai-native:doctor": "pnpm ai-native:next && pnpm ai-native:check",
+    "ai-native:claim": "node .ai-native/scripts/cli.mjs claim-control ..",
+    "ai-native:context": "node .ai-native/scripts/check-startup-context.mjs",
+    "ai-native:launch": "node .ai-native/scripts/check-startup-launch.mjs"
   }
 }

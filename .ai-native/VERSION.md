@@ -1,0 +1,288 @@
+# AI Native Dev Kit Version
+
+Current version: `1.8.1`
+
+## Versioning Policy
+
+- Patch changes update templates, prompts, checklists, scripts, or docs without changing required project structure.
+- Minor changes add new required workflow assets, profiles, starters, or checks.
+- Major changes alter workflow gates, task levels, initialization semantics, or compatibility expectations.
+
+## Current Release
+
+`1.8.1`
+
+Includes:
+
+- Real adoption calibration phase `1.8.1`: separates recommended profiles from risk/capability packs, adds patch classification false-positive records, and clarifies that `real-adoption` checks recorded reports rather than auto-generating target-project reports
+- Added `docs/real-adoption-usage.md`, `templates/patch-classification-false-positive.md`, `patch-classification-false-positives/`, and false-positive validation in `scripts/check-patch-classification.mjs`
+- `1.8.1` does not add an automatic real-project scanning runner, target-project write approval, implementation approval, or weaker patch classification defaults
+- Real Project Read-only Adoption Trial phase `1.8.0`: sanitized real-project adoption reports, governance maps, patch classification reports, and `scripts/check-real-adoption-trial.mjs`
+- Patch Classification Governance phase `1.8.0`: repair scale classification before non-trivial fixes, with `SAFE_LOCAL_FIX`, `BASELINE_ALIGNED_HARDCUT`, `STRUCTURAL_REMEDIATION`, `NEEDS_HUMAN_DECISION`, and `DO_NOT_PATCH`
+- Added `core/real-project-adoption-trial.md`, `core/patch-classification.md`, `templates/real-adoption-trial-report.md`, `templates/patch-classification-report.md`, `checklists/real-adoption-trial-review.md`, `checklists/patch-classification-review.md`, `prompts/real-adoption-agent.md`, `prompts/patch-classifier-agent.md`, and `scripts/check-patch-classification.mjs`
+- Added `real-adoption-trials/`, `governance-maps/`, and `patch-classifications/` as optional evidence directories; real-project entry remains read-only by default
+- Added sanitized read-only evidence for one governed production-sensitive Web project under `real-adoption-trials/`, `governance-maps/`, `patch-classifications/`, and `examples/1.8-real-project-readonly/`
+- `1.8.0` does not claim production validation, release approval, security/privacy/compliance approval, target-project write approval, or implementation authorization from patch classification
+- First Delivery Walkthrough phase `1.7.0`: complete first-slice walkthrough, Adoption Trial Report, walkthrough agent prompt, and `scripts/check-first-delivery-walkthrough.mjs`
+- Added `core/first-delivery-walkthrough.md`, `templates/adoption-trial-report.md`, `checklists/first-delivery-walkthrough-review.md`, `prompts/walkthrough-agent.md`, and `docs/first-delivery-walkthrough.md`
+- Added `adoption-trial-reports/` as an optional evidence directory; empty target projects are not forced to create reports
+- Added simulated booking mini app walkthrough under `examples/1.7-first-delivery-walkthrough/`
+- `1.7.0` does not claim production validation, real-project adoption evidence, automatic release approval, or automatic scope/risk approval
+- Conversation Drift Control phase `1.6.0`: turn classification, scope change reports, conversation router prompt, and `scripts/check-conversation-drift.mjs`
+- Added `core/conversation-drift-control.md`, `templates/conversation-turn-classification.md`, `templates/scope-change-report.md`, `checklists/conversation-drift-review.md`, `prompts/conversation-router-agent.md`, and `docs/conversation-drift-control.md`
+- Added `conversation-turns/` and `scope-change-reports/` as optional routing evidence directories; empty target projects are not forced to create reports
+- `DISCUSS_ONLY`, `REVIEW_ONLY`, `PAUSE_OR_STOP`, `DIRECT_FOLLOW_UP`, `SCOPE_CHANGE`, `NEW_TASK`, and `RISK_DECISION` turns cannot silently authorize current-task execution
+- Safe Launch / Delivery Readiness phase `1.5.0`: readiness states, launch readiness report, launch readiness agent, and `scripts/check-launch-readiness.mjs`
+- Added `core/safe-launch.md`, `templates/launch-readiness-report.md`, `checklists/launch-readiness-review.md`, `prompts/launch-readiness-agent.md`, and `docs/safe-launch.md`
+- Added `launch-readiness/` as an optional delivery readiness evidence directory; ready states require verification and no pending human decisions
+- `READY_FOR_DEMO`, `READY_FOR_INTERNAL_HANDOFF`, and `READY_FOR_RELEASE_REVIEW` are recommendations only and do not approve production launch
+- Context polish phase `1.4.1`: added `docs/context-governance-usage.md`, `docs/minimal-commit-set.md`, and cleaned old guided delivery wording
+- Added `docs/delivery-readiness-and-drift-roadmap-1.4.1-1.6.md`, `releases/1.4.1/`, `releases/1.5.0/`, and `releases/1.6.0/`
+- CLI now includes `launch-readiness` and `conversation-drift`
+- `1.6.0` does not implement external GPT/API hook automation, production deployment automation, legal/compliance approval, or automatic scope approval
+- Project Memory & Context Governance phase `1.4.0`: Git Boundary, Context Governance, Learning Candidate, Context Correction Report, and Git Boundary Report
+- Added `core/context-governance.md`, `core/git-boundary.md`, context templates, context/Git boundary checklists, `prompts/context-governance-agent.md`, and `scripts/check-context-governance.mjs`
+- Added `learning-candidates/`, `context-corrections/`, and `git-boundary-reports/` as candidate and audit directories; candidates are not project facts until approved
+- Git-backed source of truth now explicitly overrides model memory, historical AI logs, and unconfirmed Codex inference
+- Added 1.4 examples, bad fixtures, generated-project asset installation, and `releases/1.4.0/`
+- `1.4.0` does not implement AI self-learning, external memory storage, raw conversation persistence, full secret scanning, or Safe Launch / Delivery Readiness
+- Guided Delivery Baseline phase `1.3.0`: product outcome, product boundary, claim control, and assumption visibility
+- Added `core/outcome-baseline.md`, `core/product-baseline.md`, `core/claim-control.md`, and `core/assumption-register.md`
+- Added `scripts/check-product-baseline.mjs` and `scripts/check-claim-control.mjs`
+- Added product/claim templates, checklists, prompts, examples, bad fixtures, and `releases/1.3.0/`
+- Final Report, Review Packet, Review Loop Report, Human Status Report, and Customer Handoff templates now include Assumption Register sections for inferred or unconfirmed facts
+- Release evidence must distinguish allowed claims, forbidden claims, evidence status, known limitations, and verification
+- `1.3.0` does not implement Safe Launch / Delivery Readiness and does not claim production validation
+- Engineering and Environment Baseline Guided Setup phase `1.2.0`: `node scripts/cli.mjs baseline <project>` as the second entry after `start`
+- `baseline` produces a read-only baseline recommendation with `Can AI write now: No`
+- Added `scripts/baseline-project.mjs`, `scripts/check-environment-baseline.mjs`, `scripts/check-baseline-enforcement.mjs`, `core/environment-baseline.md`, `core/baseline-enforcement.md`, `templates/environment-baseline.md`, baseline recommendation/gap templates, and baseline setup docs
+- Baseline writes now use `write-plan -> human review -> apply-plan`; apply scope is limited to `docs/engineering-baseline.md`, `docs/environment-baseline.md`, `baseline-recommendations/`, and `baseline-gap-reports/`
+- Environment Baseline uses `CONFIRMED`, `PENDING_CONFIRMATION`, and `NOT_APPLICABLE`; secret values, `.env` writes, CI/CD/deploy/production config edits, AGENTS/PR template edits, and industrial-pack writes are forbidden through baseline apply
+- Task Card, Review Packet, and Review Loop templates now include engineering/environment baseline reference fields
+- Added platform-specific environment topic lists under profiles without duplicating full environment templates per platform
+- Added 1.2 examples, bad fixtures for secret misuse and missing baseline refs, and `releases/1.2.0/` simulated baseline guided setup evidence
+- BL0/BL1/BL2 behavior stays proportional; BL2 and industrial packs remain opt-in only
+- Guided Adoption Entry phase `1.1.0`: `node scripts/cli.mjs start <project>` as the first-hour project adoption entry
+- `start` runs read-only project inspection, classifies the target, recommends the adoption path, lists human decisions, and records that no target files were written
+- Added `scripts/start-project.mjs`, `scripts/check-guided-adoption.mjs`, `templates/adoption-recommendation-report.md`, `adoption-recommendations/`, `docs/first-hour.md`, `examples/1.1-guided-adoption/`, and `releases/1.1.0/`
+- Generated projects now receive the guided adoption entry scripts, saved recommendation directory, local first-hour doc, and recommendation template
+- BL2 and industrial packs remain opt-in only and require explicit human confirmation; no platform baseline or industrial pack was deepened in `1.1.0`
+- No target project writes are performed by `start`; writes still go through dry-run, write-plan, and apply-plan after human review
+- Productization Hardcut phase `1.0.0`: release evidence and adoption entry criteria
+- Added `releases/1.0.0/` release record, self-check report, generated-project smoke, update smoke, migration matrix, known limitations, and adoption evidence
+- Added `templates/adoption-evidence-report.md` and `templates/productization-trial-report.md`
+- `1.0.0` is a minimum productization release: productized CLI, manifest, checks, migration plan, docs, and release evidence are complete
+- `1.0.0` does not claim 10/10 real-project evidence; real adoption reports, governed-project adoption, production-sensitive adapter trial, and industrial pack candidate promotion remain future evidence work
+- No package publishing, migration apply, external reviewer automation, license term change, or industrial pack promotion is included
+- Productization Hardcut phase `0.42.0`: docs information architecture and migration command
+- README and README.zh-CN are now short entry pages that link to complete operator, reference, playbook, migration, FAQ, and troubleshooting docs
+- Added `docs/operator-manual.md`, `docs/reference/`, `docs/adoption-playbooks/`, `docs/migrations/`, `docs/troubleshooting.md`, and `docs/faq.md`
+- `scripts/migrate-project.mjs` powers `ai-native migrate` as a plan-only command for `0.33.0 -> 1.0.0`
+- `ai-native migrate --dry-run` prints a migration plan without writing target project files
+- `ai-native migrate --write-plan <file>` writes only the requested JSON plan
+- `ai-native migrate` without `--dry-run` or `--write-plan` fails instead of applying changes
+- Dev-kit self-check now covers migrate safety and docs IA pointers
+- Productization Hardcut phase `0.41.0`: industrial pack maturity and license boundary
+- Industrial packs now expose maturity metadata with stage, evidence docs, dogfood, false-positive log, owner, changelog, promotion criteria, demotion triggers, and known limitations
+- All concrete industrial packs remain `draft`; no pack is promoted by file completeness alone
+- `check-industrial-pack.mjs` now validates maturity metadata/docs and scans draft packs for stable or production-ready overclaims
+- `industrial-packs/README.md` and `industrial-packs/selection-guide.md` now define `draft`, `candidate`, `stable`, `deprecated`, and `retired`
+- Added `LICENSE-FAQ.md`, `LICENSE-COMMERCIAL.md`, and `NOTICE.md` as conservative license-boundary explanations subordinate to `LICENSE.md`
+- Productization Hardcut phase `0.41.0` records that qualified legal review or owner risk acceptance remains required before 1.0 release materials treat license wording as final
+- Productization Hardcut phase `0.40.1`: checker library refactor
+- Added shared checker helpers under `scripts/lib/args.mjs`, `scripts/lib/markdown.mjs`, `scripts/lib/check-result.mjs`, `scripts/lib/git.mjs`, and `scripts/lib/project-signals.mjs`
+- Checker scripts now reuse shared argument parsing, Markdown section extraction, git state, file walking, and result recording helpers where fixture coverage protects behavior
+- `init-project.mjs` and `new-workflow-item.mjs` keep local script-specific helpers where behavior differs from generic checker plumbing
+- Generated projects now receive the shared helper libraries needed by copied checker scripts
+- Productization Hardcut phase `0.40.0`: fixture matrix expansion
+- `test-fixtures/` is organized into golden, bad, migration, CLI, init/update, and output-quality fixture areas
+- `test-fixtures/fixture-cases.json` now records case type, checker coverage, expected output, and repair guidance
+- `scripts/check-fixtures.mjs` supports generated-project setup, migration manifest setup, typed coverage summaries, and clearer failure diagnostics
+- Fixture coverage now includes workflow assets, onboarding, workflow version, platform baseline, industrial baseline, manifest, CLI, init/update, frontmatter migration, and workflow-next smoke cases
+- Productization Hardcut phase `0.39.0`: artifact frontmatter and schema
+- `schemas/artifacts/` defines initial metadata schemas for request, preflight, spec, eval, task, review loop report, goal card, and subagent run plan
+- `scripts/lib/frontmatter.mjs` provides dependency-free frontmatter parsing, formatting, and validation
+- `scripts/new-workflow-item.mjs` now adds frontmatter to newly generated schema-backed artifacts
+- `scripts/check-workflow-artifacts.mjs` validates frontmatter when present and warns for legacy artifacts without frontmatter
+- `check-workflow-artifacts.mjs --strict-schema` fails legacy artifacts without frontmatter for migration rehearsals
+- generated projects now receive artifact schemas and `scripts/lib/frontmatter.mjs`
+- Productization Hardcut phase `0.38.0`: init/update safety
+- `scripts/init-project.mjs --dry-run` emits a machine-readable init/update plan without writing target files
+- `scripts/init-project.mjs --write-plan <file>` writes a reviewable plan without mutating the target
+- `scripts/init-project.mjs --apply-plan <file>` validates target fingerprint and applies the reviewed plan
+- `--backup-dir <dir>` preserves overwritten managed workflow assets during apply/update
+- direct workflow asset update now requires plan-first flow for governed, production, dirty, or unbootstrapped existing projects
+- `scripts/cli.mjs` now separates global dry-run command preview from command-level init/update plan preview
+- dev-kit self-check now covers dry-run, write-plan, apply-plan, stale-plan rejection, backup, and legacy plan-first adoption
+- Productization Hardcut phase `0.37.0`: manifest authoritative asset source
+- `dev-kit-manifest.json` is now the authoritative source for source required files, target required paths, workflow readiness paths, workflow version assets, and safe static copy rules
+- `check-ai-workflow.mjs`, `workflow-next.mjs`, `check-dev-kit.mjs`, and `init-project.mjs` now consume manifest data for their asset lists
+- generated projects now receive `.ai-native/dev-kit-manifest.json` and `scripts/lib/manifest.mjs`
+- `scripts/check-manifest.mjs` now validates authoritative manifest shape, copy rule sources, target group coverage, workflow version asset sync, and script consumption markers
+- Productization Hardcut phase `0.36.0`: CLI Front Door
+- `package.json` with private package metadata, `ai-native` bin mapping, and productization scripts
+- `scripts/cli.mjs` as a thin CLI facade for init, update, next, check, doctor, new, fixtures, and self-check
+- planned-only `ai-native migrate` placeholder that does not pretend migration is implemented before its approved phase
+- CLI smoke coverage in `scripts/check-dev-kit.mjs`, including help, version, dry-run routing, fixture delegation, and generated-project init smoke
+- README guidance that prefers CLI for human usage while keeping lower-level scripts for CI, debugging, and exact evidence
+- Productization Hardcut phase `0.35.0`: read-only dev-kit manifest introduction
+- `dev-kit-manifest.json` with grouped source and generated-project asset inventory
+- manifest schema, loader, and drift checker through `schemas/dev-kit-manifest.schema.json`, `scripts/lib/manifest.mjs`, and `scripts/check-manifest.mjs`
+- dev-kit self-check and CI coverage for manifest validation, invalid manifest rejection, and drift reporting
+- decision brief and phase evidence for keeping manifest read-only and non-authoritative
+- Productization Hardcut phase `0.34.0`: Baseline Freeze + Self CI
+- first-party dev-kit PR and release CI under `.github/workflows/`
+- repository PR template, CODEOWNERS draft guidance, CONTRIBUTING, and SECURITY docs
+- `0.33.0` baseline freeze evidence and `0.34.0` phase evidence under `releases/`
+- task-scoped Goal Card, Subagent Run Plan, Review Packet, Review Loop Report, and Final Report for the phase
+- dev-kit self-check coverage for first-party CI and repository governance assets
+- Simulated Goal + Subagent L2 feature dogfood for rehearsing a full task closure without requiring a real project
+- `docs/goal-subagent-usage.md` for plain-language Goal Card and Subagent Run Plan usage
+- `examples/goal-subagent-l2-feature/` with Goal Card, Subagent Run Plan, Engineering Baseline, request, preflight, spec, eval, task, Review Packet, GPT review prompt, Review Loop Report, final report, follow-up proposal, and review summary
+- dev-kit self-check now validates the Goal + Subagent L2 feature example through Goal Mode, Subagent Orchestration, Engineering Baseline strict mode, workflow artifacts, Review Loop, Bounded Next-Step, and output quality gates
+- target-project bootstrap now installs `.ai-native/docs/goal-subagent-usage.md` as a usage guide, not as a business workflow artifact
+- Subagent Orchestration Protocol for goal-oriented helper-agent planning, read-only research, review, repair analysis, and reporting
+- `core/subagent-orchestration.md`, `templates/subagent-run-plan.md`, `checklists/subagent-orchestration-review.md`, and `prompts/engineering-baseline-agent.md`
+- `scripts/check-subagent-orchestration.mjs` for enforcing many readers / one writer, role authority, handoff, lifecycle closure, and no lingering `RUNNING` subagents
+- `new-workflow-item --type subagent-run-plan`
+- generated projects and workflow asset updates now include `subagent-run-plans/` and Subagent Orchestration assets
+- Codex, Cursor, Claude, GitHub CI, and PR governance now require subagents to be closed or skipped after handoff so helper agents do not occupy slots after use
+- Subagent Orchestration golden example and bad fixtures for unclosed subagents and multiple active writers
+- Goal Mode Entry for classifying user intent before selecting workflow artifacts
+- `core/goal-mode.md`, `templates/goal-card.md`, `checklists/goal-mode-review.md`, and `prompts/goal-planner-agent.md`
+- `scripts/check-goal-mode.mjs` for Goal Card semantic checks
+- `new-workflow-item --type goal-card`
+- generated projects and workflow asset updates now include `goal-cards/` and Goal Mode assets
+- Goal Mode golden example and bad fixtures for invalid mode and read-only adoption write attempts
+- CI and dev-kit self-check now include Goal Mode semantics without requiring every target project to create Goal Cards by default
+- Output Quality and Glossary checks for dev-kit human-facing report quality
+- `scripts/score-output-quality.mjs` for scoring final reports, status reports, decision briefs, review summaries, and customer handoffs
+- `scripts/check-glossary-usage.mjs` for required plain-language explanations of important workflow terms
+- `templates/output-quality-report.md`
+- negative fixtures for low-quality output and missing glossary terms
+- Fixture runner UX hardening with command and repair guidance in failure output
+- expanded negative fixtures for pending Engineering Baseline decisions, excessive AUTO_FIX rounds, and missing human-decision routing for `RISK_DECISION`
+- fixture cases now include repair guidance for stable checker maintenance
+- Governance Hardening roadmap for 0.30 fixture-driven checks, 0.31 Goal Mode, and 0.32 Subagent Orchestration
+- `docs/governance-hardening-roadmap.md`
+- `scripts/check-fixtures.mjs` for dev-kit-only golden example and negative fixture validation
+- `test-fixtures/` with bad Engineering Baseline, Review Loop, and Next-Step Boundary cases
+- golden examples for Engineering Baseline enum-vs-lookup, DTO/domain boundary, and Next-Step Boundary suggestions
+- dev-kit self-check now runs the fixture suite and asserts that bad fixtures fail for expected reasons
+- Engineering Baseline Entry for pre-coding engineering decision governance
+- `core/engineering-baseline.md`, `templates/engineering-baseline.md`, `checklists/engineering-baseline-review.md`, and `scripts/check-engineering-baseline.mjs`
+- generated projects and workflow asset updates now include `docs/engineering-baseline.md`
+- AGENTS, Builder/Reviewer prompts, Cursor, Claude, and GitHub PR governance now constrain Codex from creating or upgrading project-wide engineering conventions without source-of-truth or human approval
+- Review Packet now records Engineering Baseline checked/ref/gaps
+- dedicated Review Loop L2 dogfood example with request, preflight, spec, eval, task, review packet, GPT review prompt, review loop report, final report, follow-up proposal, and plain review summary
+- Review Loop L2 dogfood coverage for `AUTO_FIX`, `NEEDS_HUMAN_DECISION`, `DIRECT_FOLLOW_UP`, and `DO_NOT_PROCEED`
+- dev-kit self-check now validates the dedicated Review Loop L2 dogfood example with workflow artifact, review loop, and next-step semantic gates
+- Codex usage guide now documents the GPT Pro semi-automatic review handoff path
+- Review Loop semantic checker with task/spec/eval/review-packet reference checks, finding category validation, AUTO_FIX bounds, human-decision routing, and verification-after-fix requirements
+- Bounded Next-Step semantic checker with suggestion type validation, Can AI do now consistency, required entry checks, human-decision routing, and DO_NOT_PROCEED guardrails
+- Artifact Decision Tree for choosing the right workflow artifact without creating every template by default
+- target-project bootstrap now installs `.ai-native/docs/artifact-decision-tree.md`
+- workflow artifact implementation gate now expects Review Packet and Review Loop Report for L2/L3 tasks
+- GitHub Actions workflow includes Review Loop and Next-Step semantic checks
+- dev-kit self-check covers generated-project Review Loop and Next-Step semantic failures
+- existing Web and Mini Program BL2 dogfood examples now include Review Packet / Review Loop Report assets and semantic self-check coverage
+- Bounded Next-Step Protocol for classifying Codex follow-up suggestions without treating them as execution approval
+- `core/next-step-boundary.md` and `checklists/next-step-boundary-review.md`
+- follow-up proposal and final report templates
+- `new-workflow-item --type follow-up-proposal`
+- `new-workflow-item --type final-report`
+- generated project and starter directories for `follow-up-proposals/` and `final-reports/`
+- AGENTS, Cursor, Claude, and GitHub PR governance for bounded next-step suggestions
+- Review Loop separation between current-task findings and future suggestions
+- generic workflow starter
+- self-iteration loop
+- workflow asset update mode
+- dev-kit end-to-end self-check
+- Web/backend/internal-admin/high-risk profiles
+- iOS and Android profiles/starters
+- workflow version records
+- project constitution docs for engineering principles and risk policy
+- controlled Skill candidate governance
+- daily workflow summary automation support
+- project-scoped daily automation guidance
+- project automation proposal governance
+- platform adapter governance synchronization for Codex, Cursor, Claude, GitHub PRs, and GitHub Actions
+- generated project baseline checks for PR governance and workflow CI commands
+- PR template governance migration report with explicit apply flag during workflow asset updates
+- manual PR template governance merges resolve pending migration reports
+- project onboarding workflow where AI drafts project context and humans only confirm decisions
+- onboarding templates for project profile, technology strategy, business spec index, sample policy, and decision log
+- project onboarding baseline and strict readiness check
+- quickstart and Codex-first usage guides
+- workflow item generator for request, preflight, spec, eval, task, and AI task log files
+- workflow artifact quality checker for filled specs, evals, tasks, requests, preflights, and AI logs
+- concrete web internal admin first-slice example
+- O0/O1/O2 onboarding levels for lightweight, normal, and high-risk adoption
+- Codex bootstrap entry prompt for execution-vs-discussion intent gating
+- `workflow-next.mjs` project state and next-action detector
+- `AGENTS.md` governance migration report with explicit apply flag during workflow asset updates
+- workflow artifact checker modes for draft, ready, and implementation gates
+- task-scoped workflow artifact checks with graph consistency validation
+- structured Human Approval gate for checked risk items
+- Human Approval scope gate for checked risk items
+- GitHub Actions workflow artifact check uses ready mode only for changed artifacts
+- platform baseline profiles with machine-readable baseline JSON
+- platform baseline resolver and checker scripts
+- `workflow-next` reports platform baseline readiness
+- project onboarding checks for O0, O1, and O2 levels
+- `workflow-next --enforce` for optional project-state gating
+- industrial baseline pack framework with BL0/BL1/BL2 governance levels
+- industrial pack schema, index, candidate policy, and full draft pack coverage
+- draft industrial packs for Web, iOS, Android, WeChat Mini Program, Backend API, Internal Admin, Data Storage, CloudBase, Auth/Permission, Payment/Value Transfer, and High-risk Change
+- industrial pack structure and purity checker
+- project-level industrial baseline resolver and checker
+- `workflow-next` reports BL2 industrial baseline readiness
+- baseline selection and baseline evidence templates
+- structured BL2 evidence references with strict existence checks
+- workflow artifact implementation checks read platform and industrial baselines
+- WeChat Mini Program profile and machine-readable baseline
+- necessary Web industrial deepening for form interactions, API failures, accessibility, performance, and runtime evidence
+- Risk Gate missed-risk detection for ready and implementation artifact checks
+- industrial pack registry and manifest consistency checks
+- industrial pack version and stability metadata
+- mental model guide for workflow/profile/BL2/industrial pack decisions
+- Web BL2 dogfood example connecting baseline selection, evidence, task gate, release record, and AI log
+- Mini Program BL2 industrial deepening for runtime, cloud/access rules, auth/permission, privacy/payment, and release review
+- Mini Program BL2 dogfood example connecting baseline selection, evidence, task gate, release record, and AI log
+- optional Mini Program admin/backend composition guidance through companion industrial packs
+- lightweight default industrial pack bootstrap with registry/schema only
+- selected industrial pack installation through `--industrial-packs`
+- repair hints for missing selected industrial packs in industrial pack and baseline checks
+- selected-only industrial pack checks for target projects
+- BL2-only industrial baseline checks for routine CI
+- `workflow-next` no longer treats the Web industrial pack as a global required asset
+- human-accepted `Risk Gate Exclusions` for auditable missed-risk false positives
+- abuse guard for tasks with more than three accepted `Risk Gate Exclusions`
+- evidence layering guidance for baseline, task, and release evidence
+- industrial pack selection guide for primary platform, capability, and risk-overlay combinations
+- draft-to-stable promotion requirements for industrial packs
+- `check-ai-workflow.mjs --mode core|full` for routine target-project checks versus full asset checks
+- target-project bootstrap now carries industrial pack selection guidance without installing concrete packs by default
+- dogfood observation template for measuring real project workflow cost, evidence effort, missed-risk behavior, and AI collaboration quality
+- README path guidance for O0/BL0, O1/BL1, and O2/BL2 adoption choices
+- README quick index includes the Mini Program BL2 dogfood example
+- Existing Governed Project Adoption mode for governed, production-sensitive, or dirty projects
+- `workflow-next` project state tags, governance signals, and read-only adoption mode
+- adoption assessment and existing governance map templates
+- guarded task execution for dirty production-governed projects
+- review packet template and `new-workflow-item --type review-packet`
+- Review Loop Protocol for task-level review, AUTO_FIX, re-review, and human-decision routing
+- GPT review prompt template for read-only external reviewer use
+- Review Loop Report template and `new-workflow-item --type review-loop-report`
+- `new-workflow-item --type gpt-review-prompt`
+- review loop directories for generated projects and starter projects
+- review loop protocol self-checks in `check-dev-kit.mjs`
+- adoption assessment and governance map generation entries
+- Output Experience Protocol for human-first workflow, baseline, adoption, review, release, and audit reporting
+- plain-language glossary for AI Native workflow terms
+- reporter agent prompt for converting technical workflow state into human-readable status
+- human status report, decision brief, plain review summary, and customer handoff templates
+- `workflow-next --format human|technical|json` with human summary before technical fields by default
+- workflow item generation for human status reports, decision briefs, plain review summaries, and customer handoffs
+- generated project output report directories for status reports, decision briefs, review summaries, and customer handoffs
+- AGENTS.md governance includes Output Experience rules

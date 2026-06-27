@@ -1,0 +1,227 @@
+{
+  "schemaVersion": "0.2",
+  "packVersion": "0.2.0",
+  "minimumDevKitVersion": "0.41.0",
+  "lastReviewedAt": "2026-06-27",
+  "stabilityNotes": "Draft pack; requires real project dogfood, false-positive review, and strict BL2 evidence before promotion.",
+  "id": "web-app-industrial",
+  "type": "primary-platform",
+  "displayName": "Web App Industrial Pack",
+  "status": "draft",
+  "appliesToProfiles": [
+    "web-app"
+  ],
+  "compatiblePacks": [
+    "backend-api-industrial",
+    "internal-admin-industrial",
+    "auth-permission-industrial",
+    "data-storage-industrial",
+    "payment-value-transfer-industrial",
+    "high-risk-change-industrial"
+  ],
+  "conflictsWith": [],
+  "requiredBaselines": [
+    "baselines/web-runtime-baseline.md",
+    "baselines/web-security-permission-baseline.md",
+    "baselines/web-release-readiness-baseline.md",
+    "baselines/web-interaction-api-baseline.md",
+    "baselines/web-performance-accessibility-baseline.md"
+  ],
+  "requiredExecutionDocs": [
+    "executions/codex-web-industrial-execution.md"
+  ],
+  "requiredAuditDocs": [
+    "audit/web-existing-project-audit.md",
+    "audit/web-release-readiness.md",
+    "audit/web-runtime-quality-audit.md"
+  ],
+  "requiredChecklists": [
+    "checklists/web-ui-state-checklist.md",
+    "checklists/web-security-checklist.md",
+    "checklists/web-form-interaction-checklist.md",
+    "checklists/web-api-error-handling-checklist.md",
+    "checklists/web-performance-accessibility-checklist.md"
+  ],
+  "requiredTemplates": [
+    "templates/release-record.md",
+    "templates/incident-record.md",
+    "templates/web-runtime-evidence.md"
+  ],
+  "riskMappings": {
+    "auth": [
+      "permission",
+      "security"
+    ],
+    "permission": [
+      "permission",
+      "security"
+    ],
+    "api-contract": [
+      "api failure",
+      "external side effect"
+    ],
+    "api-failure": [
+      "api failure",
+      "external side effect"
+    ],
+    "form-submission": [
+      "form interaction",
+      "external side effect"
+    ],
+    "accessibility-critical": [
+      "accessibility",
+      "external side effect"
+    ],
+    "performance-sensitive": [
+      "performance",
+      "external side effect"
+    ],
+    "dependency-addition": [
+      "dependency change",
+      "external side effect"
+    ],
+    "client-secret": [
+      "secrets",
+      "security"
+    ],
+    "production-config": [
+      "production config"
+    ],
+    "external-side-effect": [
+      "regulated operation"
+    ],
+    "destructive-operation": [
+      "irreversible operation",
+      "data deletion"
+    ]
+  },
+  "taskLevelEscalation": [
+    {
+      "when": [
+        "auth",
+        "permission",
+        "api-contract",
+        "api-failure",
+        "form-submission",
+        "accessibility-critical",
+        "performance-sensitive",
+        "dependency-addition"
+      ],
+      "minTaskLevel": "L2"
+    },
+    {
+      "when": [
+        "production-config",
+        "secrets",
+        "value-transfer",
+        "regulated-data",
+        "destructive-operation",
+        "irreversible-operation"
+      ],
+      "minTaskLevel": "L3"
+    }
+  ],
+  "requiredEvidence": {
+    "ui-change": [
+      "loading-empty-error-forbidden evidence",
+      "success and layout stability evidence",
+      "responsive behavior evidence",
+      "critical flow behavior evidence"
+    ],
+    "form-interaction": [
+      "form submission validation and duplicate-submit evidence",
+      "destructive action and recovery evidence"
+    ],
+    "api-error-handling": [
+      "API failure and recovery evidence",
+      "auth and validation error behavior evidence"
+    ],
+    "accessibility": [
+      "keyboard focus and accessible name evidence",
+      "status message and contrast evidence"
+    ],
+    "performance": [
+      "bundle asset and loading impact evidence",
+      "interaction responsiveness evidence"
+    ],
+    "permission-change": [
+      "server-side permission test evidence",
+      "forbidden state evidence",
+      "resource scope evidence"
+    ],
+    "release": [
+      "release record",
+      "rollback plan",
+      "monitoring evidence"
+    ],
+    "production-config": [
+      "environment variable review",
+      "secret exposure review",
+      "deployment configuration evidence"
+    ],
+    "dependency-change": [
+      "dependency rationale and vulnerability review",
+      "client bundle impact review"
+    ]
+  },
+  "humanApprovalRequiredFor": [
+    "auth",
+    "permission",
+    "production-config",
+    "secrets",
+    "irreversible-operation",
+    "destructive-operation",
+    "value-transfer",
+    "accessibility-critical-exception",
+    "performance-exception"
+  ],
+  "maturity": {
+    "stage": "draft",
+    "stageReason": "Draft pack; requires real project dogfood, false-positive review, and strict BL2 evidence before promotion.",
+    "lastMaturityReviewAt": "2026-06-27",
+    "reviewedBy": "AI Native Dev Kit maintainers",
+    "evidenceDocs": [
+      "maturity.md",
+      "evidence.md",
+      "dogfood.md",
+      "false-positive-log.md",
+      "owner.md",
+      "changelog.md"
+    ],
+    "evidenceSummary": [
+      "Pack structure exists and is checked by `check-industrial-pack.mjs`.",
+      "Required baseline, execution, audit, checklist, template, and bootstrap docs are present.",
+      "No real project evidence is embedded in the pack; project proof belongs in adopting project docs."
+    ],
+    "missingEvidenceBeforeCandidate": [
+      "At least one real project dogfood with recorded BL2 selection and baseline evidence.",
+      "A review loop report that records findings, false positives, and fixes.",
+      "A maintainer review confirming the pack did not require unsafe bypasses."
+    ],
+    "missingEvidenceBeforeStable": [
+      "At least two real project dogfoods use the pack without bypassing required gates.",
+      "At least one existing-project adoption records no blocking mismatch or records the fix.",
+      "`check-industrial-pack.mjs` passes for the pack.",
+      "`check-industrial-baseline.mjs --strict` passes in a project that selected the pack.",
+      "False positives, missing checks, and follow-up changes are recorded."
+    ],
+    "promotionCriteria": [
+      "At least two real project dogfoods use the pack without bypassing required gates.",
+      "At least one existing-project adoption records no blocking mismatch or records the fix.",
+      "`check-industrial-pack.mjs` passes for the pack.",
+      "`check-industrial-baseline.mjs --strict` passes in a project that selected the pack.",
+      "False positives, missing checks, and follow-up changes are recorded."
+    ],
+    "demotionTriggers": [
+      "A pack gate repeatedly blocks valid work without a documented fix.",
+      "A project adoption finds unsafe guidance, missing evidence, or misleading claims.",
+      "A platform or toolchain change makes required checks obsolete.",
+      "The owner cannot review the pack before a stage-changing release."
+    ],
+    "knownLimitations": [
+      "Draft status means this pack is not stable and not a default project standard.",
+      "The pack describes required evidence; it does not prove an adopting project has that evidence.",
+      "Project-specific architecture, data, permission, release, and rollback decisions remain outside the pack."
+    ]
+  }
+}

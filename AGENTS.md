@@ -48,6 +48,62 @@ Local external dependencies such as database, cache, queue, object storage, sear
 
 Remote containerized deployment is recommended but not mandatory. Remote non-container runtime units must have auditable artifact identity, deploy identity, config source, rollback/forward-fix path, CI/CD evidence, release evidence, and ADR or approved exception evidence for production use.
 
+## 2.2 AI Native Dev Kit Workflow Adapter
+
+This project adopts AI Native Dev Kit `1.8.1` as a workflow adapter layer under `.ai-native/`.
+
+Adapter refs:
+
+- `.ai-native/version.json`
+- `docs/governance/ai-native-dev-kit-adoption-v1.md`
+- `docs/project-profile.md`
+- `docs/environment-baseline.md`
+
+Selected AI Native profiles:
+
+- `web-app`
+- `internal-admin`
+
+Current AI Native baseline level:
+
+- `BL1`
+
+Authority order:
+
+1. Active system/developer instructions.
+2. This `AGENTS.md`.
+3. The upstream Web industrial baseline in section 2.
+4. Project-specific docs and evidence.
+5. AI Native Dev Kit adapter assets under `.ai-native/`.
+
+AI Native Dev Kit may add stricter workflow gates, task classification, review-loop, claim-control, context-governance, and launch-readiness checks. It must not weaken this project's Web industrial baseline, high-risk boundaries, evidence requirements, or close-out requirements.
+
+Allowed local adapter commands:
+
+- `corepack pnpm ai-native:next`
+- `corepack pnpm ai-native:baseline`
+- `corepack pnpm ai-native:check`
+- `corepack pnpm ai-native:doctor`
+- `corepack pnpm ai-native:claim`
+- `corepack pnpm ai-native:context`
+- `corepack pnpm ai-native:launch`
+
+Forbidden without separate explicit approval:
+
+- running Dev Kit `init` or `update` directly against the project root
+- replacing this `AGENTS.md`
+- adding or replacing CI workflows
+- enabling `BL2` or industrial packs as binding gates
+- copying unrelated platform profiles, starters, examples, evals, or release records into the active project
+- modifying production/deployment/secret/database/auth/permission files through the adapter setup
+
+Dirty worktree rule:
+
+- You may be in a dirty git worktree.
+- NEVER revert existing changes you did not make unless explicitly requested.
+- If changes are unrelated to the current task, ignore them.
+- If changes affect the current task, work with them instead of undoing them.
+
 ## 3. Template And Evidence Boundary
 
 This project may use baseline templates and bootstrap templates, but template existence is not implementation evidence.

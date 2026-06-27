@@ -1,0 +1,15 @@
+{
+  "devKitVersion": "1.8.1",
+  "source": "coffeecoproject/ai-native-dev-kit",
+  "sourceCommit": "bb83080e43596ee8846fb2f1ff90092ef3a8111f",
+  "adoptedAt": "2026-06-28",
+  "adoptionMode": "thin_operational_bridge",
+  "baselineLevel": "BL1",
+  "selectedProfiles": ["web-app", "internal-admin"],
+  "selectedIndustrialPacks": [],
+  "notes": [
+    "AI Native Dev Kit is adopted as a workflow adapter.",
+    "Existing Web industrial baseline and project AGENTS.md remain authoritative for engineering quality.",
+    "BL2 and industrial packs require explicit future approval."
+  ]
+}

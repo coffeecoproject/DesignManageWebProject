@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-native-dev-kit/dev-kit-manifest.schema.json",
+  "title": "AI Native Dev Kit Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "devKitVersion",
+    "mode",
+    "compatibilityPolicy",
+    "groups",
+    "copyRules"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "devKitVersion": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "const": "authoritative"
+    },
+    "compatibilityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "readOnly",
+        "authoritative",
+        "changesRuntimeBehavior",
+        "phase"
+      ],
+      "properties": {
+        "readOnly": {
+          "type": "boolean",
+          "const": false
+        },
+        "authoritative": {
+          "type": "boolean",
+          "const": true
+        },
+        "changesRuntimeBehavior": {
+          "type": "boolean",
+          "const": true
+        },
+        "phase": {
+          "type": "string"
+        }
+      }
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceRequired",
+        "targetCore",
+        "targetFull",
+        "aiNativeCore",
+        "templates",
+        "prompts",
+        "checklists",
+        "profiles",
+        "industrialPackRegistry",
+        "workflowDirs",
+        "workflowReadiness",
+        "scripts",
+        "platformAdapters",
+        "examples",
+        "fixtures",
+        "workflowVersionAssets"
+      ],
+      "properties": {
+        "sourceRequired": {
+          "$ref": "#/$defs/pathList"
+        },
+        "targetCore": {
+          "$ref": "#/$defs/pathList"
+        },
+        "targetFull": {
+          "$ref": "#/$defs/pathList"
+        },
+        "aiNativeCore": {
+          "$ref": "#/$defs/pathList"
+        },
+        "templates": {
+          "$ref": "#/$defs/pathList"
+        },
+        "prompts": {
+          "$ref": "#/$defs/pathList"
+        },
+        "checklists": {
+          "$ref": "#/$defs/pathList"
+        },
+        "profiles": {
+          "$ref": "#/$defs/pathList"
+        },
+        "industrialPackRegistry": {
+          "$ref": "#/$defs/pathList"
+        },
+        "workflowDirs": {
+          "$ref": "#/$defs/pathList"
+        },
+        "workflowReadiness": {
+          "$ref": "#/$defs/pathList"
+        },
+        "scripts": {
+          "$ref": "#/$defs/pathList"
+        },
+        "platformAdapters": {
+          "$ref": "#/$defs/pathList"
+        },
+        "examples": {
+          "$ref": "#/$defs/pathList"
+        },
+        "fixtures": {
+          "$ref": "#/$defs/pathList"
+        },
+        "workflowVersionAssets": {
+          "$ref": "#/$defs/pathList"
+        }
+      }
+    },
+    "copyRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "directories",
+        "files"
+      ],
+      "properties": {
+        "directories": {
+          "$ref": "#/$defs/copyRuleList"
+        },
+        "files": {
+          "$ref": "#/$defs/copyRuleList"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "pathList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\\\]+$"
+      },
+      "uniqueItems": true
+    },
+    "copyRuleList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\\\]+$"
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\\\]+$"
+          }
+        }
+      },
+      "uniqueItems": true
+    }
+  }
+}
