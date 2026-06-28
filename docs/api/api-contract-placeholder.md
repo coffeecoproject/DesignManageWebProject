@@ -2,15 +2,41 @@
 
 ## 1. Status
 
-Status: `planned_gap`.
+Status: `partial_contract_draft`.
 
-No backend/API contract has been defined.
+Most backend/API contracts remain undefined. Finance bank reconciliation has a
+backend-facing contract draft, and accounting-voucher/general-ledger now has an
+expanded backend-facing contract before implementation.
 
 ## 2. API Inventory
 
 | Endpoint | Method | Purpose | Auth | Request schema | Response schema | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| TBD | TBD | TBD | TBD | TBD | TBD | planned_gap | Business and backend scope pending |
+| `/api/finance/bank-statement-imports/preview` | POST | Preview bank statement file, validate fields, detect duplicates, and propose matching rows | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-statement-imports` | POST | Commit importable bank statement rows into the reconciliation pool | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-reconciliation/items` | GET | List bank reconciliation work items | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-reconciliation/items/{bankStatementId}` | GET | Read bank statement, linked system rows, and operation records | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-reconciliation/items/{bankStatementId}/system-flows` | POST | Create a system cash-flow row from an unmatched bank row; row still enters cash-flow review | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-reconciliation/items/{bankStatementId}/amount-adjustments` | POST | Create a bank-reconciliation amount-adjustment cash-flow row; row still enters cash-flow review | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-reconciliation/items/{bankStatementId}/confirm` | POST | Confirm reconciliation after linked reviewed system rows offset the bank amount | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/bank-reconciliation/items/{bankStatementId}/reverse` | POST | Reverse a confirmed reconciliation with reason and audit event | required; concrete scope pending | documented draft | documented draft | backend_contract_draft | `docs/data/finance-bank-reconciliation-contract.md` |
+| `/api/finance/accounting-voucher-candidates` | GET | List server-derived voucher candidates from source facts | required; accounting voucher candidate-read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-voucher-candidates/{candidateId}` | GET | Read server-recomputed candidate detail, proposed lines, source evidence, and issue reasons | required; accounting voucher candidate-read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers/generate` | POST | Persist a complete candidate as an accounting voucher and allocate formal voucher number | required; accounting voucher generate scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers/batch-generate` | POST | Persist multiple complete candidates with per-row results | required; accounting voucher batch-generate scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers` | GET | List persisted accounting vouchers only | required; accounting voucher read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers/{voucherId}` | GET | Read persisted voucher detail, lines, sources, and lifecycle events | required; accounting voucher read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers/{voucherId}/post` | POST | Post a generated voucher and write general-ledger entries atomically | required; accounting voucher post scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers/batch-post` | POST | Post multiple generated vouchers with per-row results | required; accounting voucher batch-post scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-vouchers/{voucherId}/reverse` | POST | Reverse a posted voucher through a linked reversal voucher | required; accounting voucher reverse scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/general-ledger` | GET | List posted general-ledger entries | required; general ledger read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/general-ledger/subjects/{subjectCode}` | GET | Read subject ledger entries and opening/closing summaries for a subject | required; general ledger read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/general-ledger/balances` | GET | Read subject balances / trial balance for one period | required; general ledger balance-read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-periods` | GET | List accounting periods, close metadata, voucher counts, and blocking candidate counts | required; accounting period read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-periods/{period}/close-checks` | GET | Read period close blocking checks before month-end close | required; accounting period read scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-periods/{period}/close` | POST | Close an accounting period after voucher posting checks | required; accounting period close scope pending | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| `/api/finance/accounting-periods/{period}/reopen` | POST | Exceptional audited reopen of a closed accounting period | elevated permission required | documented draft | documented draft | backend_contract_expanded | `docs/data/finance-accounting-voucher-ledger-contract.md` |
+| Other project APIs | TBD | Customer, task, people, performance, salary, tax, auth, storage, and operations APIs | TBD | TBD | TBD | planned_gap | Business and backend scope pending |
 
 ## 3. Contract Rules
 
@@ -24,3 +50,5 @@ No backend/API contract has been defined.
 - Is backend/API in first prototype scope?
 - Which runtime and framework will own API behavior?
 - What auth/resource scope applies to admin APIs?
+- Will bank-statement import start with file parser only, or reserve an adapter
+  for future bank API pull?
