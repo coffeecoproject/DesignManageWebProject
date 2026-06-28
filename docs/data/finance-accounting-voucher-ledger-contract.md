@@ -6,6 +6,8 @@ Last updated: `2026-06-28`
 
 Owner: `财务管理 / 会计凭证`
 
+Implementation preplan: `docs/governance/finance-accounting-backend-implementation-preplan-v1.md`
+
 ## 1. Purpose
 
 This contract defines the backend boundary for accounting voucher persistence,

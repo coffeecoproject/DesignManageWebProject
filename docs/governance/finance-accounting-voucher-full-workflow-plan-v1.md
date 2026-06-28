@@ -962,18 +962,17 @@ type AccountingVoucherSourceRef = {
 
 Phase 1 到 Phase 5 的前端 mock 链路已经落地，后端凭证持久化、凭证号、期间锁定和总账 API 契约已经扩展成后端实现前置契约。
 
-下一轮建议进入后端实现前置设计，不直接上生产迁移：
+后端实现前置设计已拆到 `docs/governance/finance-accounting-backend-implementation-preplan-v1.md`，不直接上生产迁移。该文档覆盖：
 
 ```text
-后端实现前置设计
-  API schema review
-  database migration plan
-  voucher number sequence lock design
-  period close/reopen permission design
-  backend authorization scopes
-  API contract tests
-  frontend API adapter boundary
-  release/rollback and data-recovery plan
+API schema review
+database migration plan
+voucher number sequence lock design
+period close/reopen permission design
+backend authorization scopes
+API contract tests
+frontend API adapter boundary
+release/rollback and data-recovery plan
 ```
 
 在用户确认后，再进入真实后端实现：先做非生产 migration、contract tests 和种子数据回放，再把前端从会话内生命周期覆盖切换到后端持久化凭证与总账查询。
