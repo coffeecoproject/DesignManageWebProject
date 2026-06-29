@@ -805,6 +805,7 @@ export function FinanceDeclarationPreparationPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       filters={
         <FilterPanel>
           <FilterBar>

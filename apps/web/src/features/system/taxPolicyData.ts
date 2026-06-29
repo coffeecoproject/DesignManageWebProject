@@ -1,4 +1,5 @@
 import type { StatusTagTone } from '../../components/Detail';
+import { formatFinancePercentRate, getActiveFinanceTaxPolicyProfile } from '../finance/financeTaxPolicyModel';
 
 export type TaxPolicyStatus = '生效中' | '随事项确认';
 export type TaxPolicyGroup = '经营税费' | '人员税费' | '合同税费';
@@ -44,6 +45,12 @@ export type TaxPolicyRule = {
   versionRecords: TaxPolicyVersionRecord[];
 };
 
+const activeTaxPolicyProfile = getActiveFinanceTaxPolicyProfile();
+const activeVatOutputPolicy = activeTaxPolicyProfile.vat.outputInvoice;
+const activeVatInputPolicy = activeTaxPolicyProfile.vat.inputInvoice;
+const activeVatDeclarationPolicy = activeTaxPolicyProfile.vatDeclaration;
+const activeCorporateIncomeTaxPolicy = activeTaxPolicyProfile.corporateIncomeTax;
+
 export const taxPolicyStatusTone = {
   生效中: 'green',
   随事项确认: 'blue'
@@ -59,19 +66,19 @@ export const taxPolicyRules: TaxPolicyRule[] = [
   {
     calculationRules: [
       {
-        basis: '湖北武汉小规模纳税人季度不含税销售额',
+        basis: `${activeTaxPolicyProfile.region}${activeTaxPolicyProfile.taxpayerType}季度不含税销售额`,
         name: '免征判断',
-        result: '季度不含税销售额 30 万元以下按免征增值税口径处理'
+        result: `季度不含税销售额 ${activeVatDeclarationPolicy.quarterlyExemptionThreshold.toLocaleString('zh-CN')} 元以下进入免征候选口径`
       },
       {
-        basis: '普通销售额、专票销售额和小规模当期征收口径',
+        basis: `销项发票、未开票收入和${activeVatOutputPolicy.calculationMethod}`,
         name: '应纳税额',
-        result: '普通销售额按季度阈值判断；专票部分不直接按免税处理，以电子税务局带出结果为准'
+        result: `默认销项税率 ${activeVatOutputPolicy.defaultTaxRate}，申报准备只做测算，最终以电子税务局带出结果为准`
       },
       {
         basis: '申报准备确认结果',
         name: '结果回填',
-        result: '系统仅作申报前测算；最终纳税额以电子税务局申报和回执为准'
+        result: activeVatDeclarationPolicy.resultAuthority
       }
     ],
     declarationCycle: '季度',
@@ -85,19 +92,24 @@ export const taxPolicyRules: TaxPolicyRule[] = [
     ],
     officialChannel: '湖北省电子税务局',
     parameters: [
-      { label: '纳税人类型', value: '小规模纳税人' },
-      { label: '地区', value: '湖北省武汉市' },
+      { label: '纳税人类型', value: activeTaxPolicyProfile.taxpayerType },
+      { label: '地区', value: activeTaxPolicyProfile.region },
       { label: '收入口径', value: '不含税销售额' },
       { label: '申报周期', value: '季度' },
-      { label: '免税阈值', value: '季度不含税销售额 30 万元以下' },
-      { label: '专票口径', value: '不直接按免税处理，以电子税务局结果为准' },
+      { label: '默认销项税率', value: activeVatOutputPolicy.defaultTaxRate },
+      { label: '销项计税方式', value: activeVatOutputPolicy.calculationMethod },
+      { label: '进项处理', value: activeVatInputPolicy.inputTaxTreatment },
+      { label: '进项抵扣', value: activeVatInputPolicy.isInputDeductible ? '支持抵扣' : '不抵扣，进入成本费用' },
+      { label: '免税阈值', value: `季度不含税销售额 ${activeVatDeclarationPolicy.quarterlyExemptionThreshold.toLocaleString('zh-CN')} 元以下` },
+      { label: '发票税额来源', value: activeVatOutputPolicy.taxBasisPriority.join(' / ') },
       { label: '附加税关系', value: '增值税为 0 时附加税通常为 0；有应缴增值税时再测算附加税' },
-      { label: '结果回填', value: '以电子税务局申报结果为准' },
+      { label: '附加税测算率', value: formatFinancePercentRate(activeVatDeclarationPolicy.surchargeRate) },
+      { label: '结果回填', value: activeTaxPolicyProfile.officialResultAuthority },
       { label: '准备模块', value: '申报准备' },
       { label: '办理模块', value: '税务办理' }
     ],
-    primaryStatement: '小规模纳税人 / 季度不含税销售额 30 万元以下免征增值税',
-    region: '湖北武汉',
+    primaryStatement: `${activeTaxPolicyProfile.taxpayerType} / 季度不含税销售额 ${activeVatDeclarationPolicy.quarterlyExemptionThreshold.toLocaleString('zh-CN')} 元以下进入免征候选口径`,
+    region: activeTaxPolicyProfile.region,
     status: '随事项确认',
     taxpayerScope: '公司主体',
     title: '增值税及附加',
@@ -121,7 +133,7 @@ export const taxPolicyRules: TaxPolicyRule[] = [
       {
         basis: '应纳税所得额、从业人数、资产总额和行业限制',
         name: '小型微利资格',
-        result: '应纳税所得额不超过 300 万、从业人数不超过 300 人、资产总额不超过 5000 万且行业不受限时，按小型微利企业口径预估'
+        result: `应纳税所得额不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeLimit.toLocaleString('zh-CN')} 元、从业人数不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitEmployeeLimit} 人、资产总额不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitAssetLimit.toLocaleString('zh-CN')} 元且行业不受限时，按小型微利企业候选口径预估`
       },
       {
         basis: '季度预缴结果和年度最终申报结果',
@@ -141,25 +153,25 @@ export const taxPolicyRules: TaxPolicyRule[] = [
     officialChannel: '湖北省电子税务局',
     parameters: [
       { label: '申报事项', value: '企业所得税预缴 / 年度汇算' },
-      { label: '地区', value: '湖北省武汉市' },
+      { label: '地区', value: activeTaxPolicyProfile.region },
       { label: '计算基础', value: '会计利润、纳税调整和可弥补亏损等事项' },
-      { label: '普通口径', value: '不符合小型微利条件时按普通企业所得税口径预估' },
-      { label: '优惠口径', value: '符合小型微利企业条件时按 5% 有效预缴率预估' },
-      { label: '所得额条件', value: '年度应纳税所得额不超过 300 万元' },
-      { label: '从业人数条件', value: '从业人数不超过 300 人' },
-      { label: '资产条件', value: '资产总额不超过 5000 万元' },
+      { label: '普通口径', value: `不符合小型微利条件时按 ${formatFinancePercentRate(activeCorporateIncomeTaxPolicy.ordinaryEffectiveTaxRate)} 预估` },
+      { label: '优惠口径', value: `符合小型微利企业候选条件时按 ${formatFinancePercentRate(activeCorporateIncomeTaxPolicy.smallLowProfitEffectiveTaxRate)} 有效预缴率预估` },
+      { label: '所得额条件', value: `年度应纳税所得额不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeLimit.toLocaleString('zh-CN')} 元` },
+      { label: '从业人数条件', value: `从业人数不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitEmployeeLimit} 人` },
+      { label: '资产条件', value: `资产总额不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitAssetLimit.toLocaleString('zh-CN')} 元` },
       { label: '行业条件', value: '非国家限制和禁止行业' },
       { label: '当前范围', value: '季度预缴准备' },
-      { label: '数据来源', value: '财务统计、薪酬社保、申报准备' },
+      { label: '数据来源', value: '经营数据、薪酬社保、申报准备' },
       { label: '内部确认', value: '在申报准备确认利润、调整、亏损和优惠资格' },
       { label: '外部办理', value: '在税务办理完成申报、缴款和回执归档' }
     ],
     primaryStatement: '季度预缴 / 申报准备确认后进入税务办理',
-    region: '湖北武汉',
+    region: activeTaxPolicyProfile.region,
     status: '随事项确认',
     taxpayerScope: '公司主体',
     title: '企业所得税',
-    usedModules: ['申报准备', '税务办理', '财务统计', '薪酬社保'],
+    usedModules: ['申报准备', '税务办理', '经营数据', '薪酬社保'],
     versionRecords: [
       {
         changedAt: '2026-06-21',
@@ -198,7 +210,7 @@ export const taxPolicyRules: TaxPolicyRule[] = [
     ],
     officialChannel: '湖北省电子税务局',
     parameters: [
-      { label: '适用地区', value: '湖北省武汉市' },
+      { label: '适用地区', value: activeTaxPolicyProfile.region },
       { label: '适用对象', value: '小规模纳税人、小型微利企业等符合条件主体' },
       { label: '关联税费', value: '城建税、教育费附加、地方教育附加等' },
       { label: '触发条件', value: '存在实际应缴增值税或消费税' },
@@ -206,11 +218,11 @@ export const taxPolicyRules: TaxPolicyRule[] = [
       { label: '结果回填', value: '以电子税务局申报结果为准' }
     ],
     primaryStatement: '符合条件时随增值税及附加事项确认减征口径',
-    region: '湖北武汉',
+    region: activeTaxPolicyProfile.region,
     status: '随事项确认',
     taxpayerScope: '公司主体',
     title: '六税两费减征',
-    usedModules: ['申报准备', '税务办理', '财务统计'],
+    usedModules: ['申报准备', '税务办理', '经营数据'],
     versionRecords: [
       {
         changedAt: '2026-06-21',
@@ -244,15 +256,15 @@ export const taxPolicyRules: TaxPolicyRule[] = [
     ],
     officialChannel: '湖北省电子税务局',
     parameters: [
-      { label: '事项来源', value: '合同管理、财务统计、申报准备' },
+      { label: '事项来源', value: '合同管理、经营数据、申报准备' },
       { label: '申报方式', value: '按税目、计税金额和事项确认' },
       { label: '结果确认', value: '以税务办理事项回填结果为准' }
     ],
-    region: '湖北武汉',
+    region: activeTaxPolicyProfile.region,
     status: '随事项确认',
     taxpayerScope: '公司主体',
     title: '印花税',
-    usedModules: ['申报准备', '税务办理', '合同管理', '财务统计'],
+    usedModules: ['申报准备', '税务办理', '合同管理', '经营数据'],
     versionRecords: [
       {
         changedAt: '2026-06-19',
@@ -308,8 +320,8 @@ export const taxPolicyRules: TaxPolicyRule[] = [
 ];
 
 export const taxPolicyOverview = {
-  region: '湖北武汉',
-  taxpayerType: '公司主体 / 扣缴义务人',
+  region: activeTaxPolicyProfile.region,
+  taxpayerType: `${activeTaxPolicyProfile.taxpayerType} / 扣缴义务人`,
   declarationCycle: '月度 / 季度 / 年度 / 按次',
   status: '税务事项口径'
 };

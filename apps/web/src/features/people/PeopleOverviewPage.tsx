@@ -771,6 +771,7 @@ export function PeopleOverviewPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <>
           <MetricGrid columns={5}>

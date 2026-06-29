@@ -6,33 +6,60 @@ import {
   FileExcelOutlined,
   FileProtectOutlined,
   FileSearchOutlined,
+  FormOutlined,
   LinkOutlined,
-  WarningOutlined,
-  WalletOutlined
+  SwapOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
-import { Button, Input, Modal, Select, Space, Upload, message } from 'antd';
+import { Button, Empty, Input, Select, Space, Upload, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
-import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
-import { DetailSummaryCards, type DetailSummaryCardItem } from '../../components/DetailSummaryCards';
-import { DetailTabs } from '../../components/DetailTabs';
+import { DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
+import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { ImportDrawerShell } from '../../components/DrawerShell';
-import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import type { OperationRecord } from '../../components/OperationRecordTable';
-import { RelatedFileTable } from '../../components/RelatedFileTable';
-import { TabbedManagementTable, createTabbedManagementTableItem } from '../../components/TabbedManagementTable';
+import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { CellText, CompactCell, type CellTextTone } from '../../components/TableCell';
-import { WorkflowDrawerShell } from '../../components/WorkflowDrawerShell';
-import { getDefaultPublicAccount, publicAccountSeeds } from '../system/PublicAccountConfigState';
-import { useFinanceManagement } from './FinanceManagementState';
-import type { FinanceTransactionRecord } from './financeData';
 import {
-  directionTone,
+  getDefaultPublicAccountRef,
+  resolveActivePublicAccountRef,
+  type PublicAccountRef,
+  usePublicAccountConfigState
+} from '../system/PublicAccountConfigState';
+import { useFinanceManagement } from './FinanceManagementState';
+import { FinanceTransactionAdjustmentDrawer } from './FinanceTransactionAdjustmentDrawer';
+import { getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
+import {
+  buildBankStatementImportPrecheck,
+  buildPeriodCounts,
+  formatPeriodCountList,
+  formatPeriodList,
+  getStatementBatchPeriodCode,
+  getStatementDateRangeLabel,
+  getStatementPeriod,
+  requiredBankStatementImportFieldLabels,
+  type BankImportPrecheckItem,
+  type BankImportPrecheckLevel,
+  type BankMatchStatus,
+  type BankStatementDirection,
+  type BankStatementRecord
+} from './financeBankImportContract';
+import {
+  buildFinanceTransactionFromBankStatement,
+  createBankReconciliationFlowForm,
+  getBankReconciliationResolution,
+  getBankReconciliationCategoryOptions,
+  getBankReconciliationPrimaryCategoryOptions,
+  getDefaultBankReconciliationCategory,
+  type BankReconciliationResolution,
+  type BankReconciliationFlowFormValue
+} from './financeBankReconciliationModel';
+import {
   financeToday,
   formatMoney,
   getFinanceRecordCategorySnapshot,
@@ -41,45 +68,19 @@ import {
   transactionStatusTone
 } from './financeUtils';
 
-type BankStatementDirection = '入账' | '出账';
-type BankMatchStatus = '待确认' | '已对账' | '银行未匹配' | '系统未匹配' | '金额异常' | '重复导入' | '暂不可对账';
+type BankDisplayStatus = '待处理' | '待确认' | '金额不一致' | '已对账' | '跳过';
 
-type BankStatementRecord = {
-  accountName: string;
-  amount: number;
-  balance: number;
-  bankSerialNo: string;
-  batchNo: string;
-  counterparty: string;
-  direction: BankStatementDirection;
-  id: string;
-  importedAt: string;
-  matchedTransactionId?: string;
-  matchReason: string;
-  matchStatus: BankMatchStatus;
-  matchScore: number;
-  statementDate: string;
-  summary: string;
-};
-
-type BankImportBatch = {
-  accountName: string;
+type BankImportBatch = Pick<BankStatementRecord, 'importedAccountName' | 'publicAccountId' | 'publicAccountSnapshot'> & {
   batchNo: string;
   duplicateRows: number;
-  exceptionRows: number;
+  amountMismatchRows: number;
   fileName: string;
   id: string;
   importedAt: string;
   matchedRows: number;
-  period: string;
+  statementRange: string;
   status: '已导入' | '导入预览';
   totalRows: number;
-};
-
-type BankReconciliationFilters = {
-  keyword: string;
-  period: string;
-  status: '全部' | BankMatchStatus;
 };
 
 type MatchAction = {
@@ -97,25 +98,108 @@ type ConfirmEligibility = {
   reason?: string;
 };
 
-const publicAccountName = getDefaultPublicAccount(publicAccountSeeds)?.displayName ?? '未配置对公账户';
-const currentPeriod = financeToday.slice(0, 7);
+type BankQuickActionMode = 'create-system-flow' | 'import-bank-statement' | 'waiting-review';
 
-const matchStatusTone = {
+const seedBankPublicAccountRef = getFinanceSeedPublicAccountRef('public-account-cmb-basic');
+const seedBankPublicAccountName = seedBankPublicAccountRef.publicAccountSnapshot.displayName;
+const seedSecondaryPaymentPublicAccountRef = getFinanceSeedPublicAccountRef('public-account-icbc-payment-reserve');
+const seedSecondaryPaymentPublicAccountName = seedSecondaryPaymentPublicAccountRef.publicAccountSnapshot.displayName;
+
+const amountMismatchStatuses = new Set<BankMatchStatus>(['金额不一致']);
+
+const displayMatchStatusTone = {
+  待处理: 'amber',
   待确认: 'blue',
+  金额不一致: 'red',
   已对账: 'green',
-  银行未匹配: 'amber',
-  系统未匹配: 'amber',
-  金额异常: 'red',
-  重复导入: 'red',
-  暂不可对账: 'gray'
+  跳过: 'gray'
 } as const;
 
-const pendingMatchStatuses = new Set<BankMatchStatus>(['待确认', '暂不可对账', '银行未匹配', '系统未匹配']);
-const exceptionMatchStatuses = new Set<BankMatchStatus>(['金额异常', '重复导入']);
+const importPrecheckTone = {
+  通过: 'green',
+  提示: 'amber',
+  阻断: 'red'
+} as const;
+
+const importPreviewResultTone = {
+  待处理: 'amber',
+  待确认: 'blue',
+  金额不一致: 'red',
+  已对账: 'green',
+  跳过: 'gray',
+  阻断: 'red'
+} as const;
+
+const queueStatusPriority: Record<BankMatchStatus, number> = {
+  金额不一致: 1,
+  银行未匹配: 2,
+  系统未匹配: 2,
+  暂不可对账: 3,
+  待确认: 4,
+  重复导入: 9,
+  已对账: 9
+};
+
+function getDisplayMatchStatus(status: BankMatchStatus): BankDisplayStatus {
+  if (status === '已对账') {
+    return '已对账';
+  }
+
+  if (status === '待确认') {
+    return '待确认';
+  }
+
+  if (amountMismatchStatuses.has(status)) {
+    return '金额不一致';
+  }
+
+  if (status === '重复导入') {
+    return '跳过';
+  }
+
+  return '待处理';
+}
 
 const bankStatementSeeds: BankStatementRecord[] = [
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
+    amount: 4600,
+    balance: 188593.12,
+    bankSerialNo: 'CMB202606160003',
+    batchNo: 'BANK-IMP-202606-03',
+    counterparty: '蓝岛咖啡',
+    direction: '入账',
+    id: 'bank-statement-007',
+    importedAt: '2026-06-19 10:20',
+    matchedTransactionIds: [],
+    matchReason: '银行已有入账，系统尚未形成对公账户流水',
+    matchStatus: '银行未匹配',
+    matchScore: 38,
+    statementDate: '2026-06-16',
+    summary: '蓝岛咖啡门店方案补充回款'
+  },
+  {
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
+    amount: 3000,
+    balance: 191593.12,
+    bankSerialNo: '待补导入',
+    batchNo: '系统待补导入',
+    counterparty: '美刻咖啡',
+    direction: '入账',
+    id: 'bank-statement-008',
+    importedAt: '2026-06-19 10:20',
+    matchedTransactionIds: ['fin-flow-008'],
+    matchReason: '系统流水已入账，尚未导入对应银行明细',
+    matchStatus: '系统未匹配',
+    matchScore: 55,
+    statementDate: '2026-06-18',
+    summary: '美刻咖啡门店设计阶段款'
+  },
+  {
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
     amount: 68000,
     balance: 188000,
     bankSerialNo: 'CMB202606030001',
@@ -124,7 +208,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     direction: '入账',
     id: 'bank-statement-001',
     importedAt: '2026-06-04 09:20',
-    matchedTransactionId: 'fin-flow-001',
+    matchedTransactionIds: ['fin-flow-001'],
     matchReason: '金额、方向、日期、合同号一致',
     matchStatus: '已对账',
     matchScore: 98,
@@ -132,7 +216,26 @@ const bankStatementSeeds: BankStatementRecord[] = [
     summary: '奈雪华南门店设计服务合同 CON-2026-001 回款'
   },
   {
-    accountName: publicAccountName,
+    importedAccountName: seedSecondaryPaymentPublicAccountName,
+    ...seedSecondaryPaymentPublicAccountRef,
+    amount: 12000,
+    balance: 176000,
+    bankSerialNo: 'CMB202605210001',
+    batchNo: 'BANK-IMP-202605-01',
+    counterparty: '示例客户 A',
+    direction: '入账',
+    id: 'bank-statement-006',
+    importedAt: '2026-06-24 10:40',
+    matchedTransactionIds: ['fin-flow-015'],
+    matchReason: '银行日期在 5 月，系统流水已复核入账且仍未完成银行对账',
+    matchStatus: '待确认',
+    matchScore: 92,
+    statementDate: '2026-05-21',
+    summary: '示例客户 A 项目阶段款 CON-2026-005'
+  },
+  {
+    importedAccountName: seedSecondaryPaymentPublicAccountName,
+    ...seedSecondaryPaymentPublicAccountRef,
     amount: 12000,
     balance: 176000,
     bankSerialNo: 'CMB202606100001',
@@ -141,7 +244,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     direction: '出账',
     id: 'bank-statement-002',
     importedAt: '2026-06-11 10:10',
-    matchedTransactionId: 'fin-flow-003',
+    matchedTransactionIds: ['fin-flow-003'],
     matchReason: '金额、方向、员工姓名一致，待人工确认',
     matchStatus: '待确认',
     matchScore: 95,
@@ -149,7 +252,8 @@ const bankStatementSeeds: BankStatementRecord[] = [
     summary: '赵倩 2026-06 工资发放'
   },
   {
-    accountName: publicAccountName,
+    importedAccountName: seedSecondaryPaymentPublicAccountName,
+    ...seedSecondaryPaymentPublicAccountRef,
     amount: 1806.88,
     balance: 174193.12,
     bankSerialNo: 'CMB202606100002',
@@ -158,7 +262,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     direction: '出账',
     id: 'bank-statement-003',
     importedAt: '2026-06-12 09:15',
-    matchedTransactionId: 'fin-flow-002',
+    matchedTransactionIds: ['fin-flow-002'],
     matchReason: '系统流水仍在复核中，不能确认对账',
     matchStatus: '暂不可对账',
     matchScore: 82,
@@ -166,7 +270,8 @@ const bankStatementSeeds: BankStatementRecord[] = [
     summary: '陈思 2026-06 绩效预发'
   },
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
     amount: 9800,
     balance: 183993.12,
     bankSerialNo: 'CMB202606140001',
@@ -175,14 +280,16 @@ const bankStatementSeeds: BankStatementRecord[] = [
     direction: '入账',
     id: 'bank-statement-004',
     importedAt: '2026-06-14 16:40',
-    matchReason: '银行已有入账，系统尚未形成对公账户流水',
-    matchStatus: '银行未匹配',
-    matchScore: 42,
+    matchedTransactionIds: ['fin-flow-005'],
+    matchReason: '系统流水已生成，等待流水复核后确认对账',
+    matchStatus: '暂不可对账',
+    matchScore: 86,
     statementDate: '2026-06-14',
     summary: '星河餐饮集团门店设计首款'
   },
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
     amount: 3000,
     balance: 180993.12,
     bankSerialNo: 'CMB202606120002',
@@ -191,9 +298,9 @@ const bankStatementSeeds: BankStatementRecord[] = [
     direction: '出账',
     id: 'bank-statement-005',
     importedAt: '2026-06-14 16:40',
-    matchedTransactionId: 'fin-flow-004',
+    matchedTransactionIds: ['fin-flow-004'],
     matchReason: '对象和日期接近，但银行金额与系统金额不一致',
-    matchStatus: '金额异常',
+    matchStatus: '金额不一致',
     matchScore: 61,
     statementDate: '2026-06-12',
     summary: '空间设计外协任务结算'
@@ -202,36 +309,53 @@ const bankStatementSeeds: BankStatementRecord[] = [
 
 const importBatchSeeds: BankImportBatch[] = [
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
+    amountMismatchRows: 0,
     batchNo: 'BANK-IMP-202606-01',
     duplicateRows: 0,
-    exceptionRows: 0,
     fileName: '招商银行基本户_2026-06-01至2026-06-11.xlsx',
     id: 'bank-import-001',
     importedAt: '2026-06-11 10:10',
     matchedRows: 1,
-    period: '2026-06',
+    statementRange: '2026-06-03 至 2026-06-10',
     status: '已导入',
     totalRows: 2
   },
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
+    amountMismatchRows: 0,
+    batchNo: 'BANK-IMP-202605-01',
+    duplicateRows: 0,
+    fileName: '招商银行基本户_2026-05-21.xlsx',
+    id: 'bank-import-003',
+    importedAt: '2026-06-24 10:40',
+    matchedRows: 0,
+    statementRange: '2026-05-21',
+    status: '已导入',
+    totalRows: 1
+  },
+  {
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
+    amountMismatchRows: 1,
     batchNo: 'BANK-IMP-202606-02',
     duplicateRows: 0,
-    exceptionRows: 1,
     fileName: '招商银行基本户_2026-06-12至2026-06-14.xlsx',
     id: 'bank-import-002',
     importedAt: '2026-06-14 16:40',
     matchedRows: 0,
-    period: '2026-06',
+    statementRange: '2026-06-12 至 2026-06-14',
     status: '已导入',
     totalRows: 3
   }
 ];
 
-const importPreviewRows: BankStatementRecord[] = [
+const importPreviewSeedRows: BankStatementRecord[] = [
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
     amount: 9800,
     balance: 183993.12,
     bankSerialNo: 'CMB202606140001',
@@ -240,6 +364,7 @@ const importPreviewRows: BankStatementRecord[] = [
     direction: '入账',
     id: 'bank-preview-001',
     importedAt: financeToday,
+    matchedTransactionIds: [],
     matchReason: '银行已有入账，系统尚未形成对公账户流水',
     matchStatus: '银行未匹配',
     matchScore: 42,
@@ -247,7 +372,8 @@ const importPreviewRows: BankStatementRecord[] = [
     summary: '星河餐饮集团门店设计首款'
   },
   {
-    accountName: publicAccountName,
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
     amount: 3000,
     balance: 180993.12,
     bankSerialNo: 'CMB202606120002',
@@ -256,31 +382,53 @@ const importPreviewRows: BankStatementRecord[] = [
     direction: '出账',
     id: 'bank-preview-002',
     importedAt: financeToday,
-    matchedTransactionId: 'fin-flow-004',
+    matchedTransactionIds: ['fin-flow-004'],
     matchReason: '对象和日期接近，但银行金额与系统金额不一致',
-    matchStatus: '金额异常',
+    matchStatus: '金额不一致',
     matchScore: 61,
     statementDate: '2026-06-12',
     summary: '空间设计外协任务结算'
+  },
+  {
+    importedAccountName: seedBankPublicAccountName,
+    ...seedBankPublicAccountRef,
+    amount: 4600,
+    balance: 188593.12,
+    bankSerialNo: 'CMB202606150001',
+    batchNo: '导入预览',
+    counterparty: '麦田轻食',
+    direction: '入账',
+    id: 'bank-preview-003',
+    importedAt: financeToday,
+    matchedTransactionIds: [],
+    matchReason: '银行已有入账，系统尚未形成对公账户流水',
+    matchStatus: '银行未匹配',
+    matchScore: 40,
+    statementDate: '2026-06-15',
+    summary: '麦田轻食项目补充回款'
   }
 ];
 
-const defaultFilters: BankReconciliationFilters = {
-  keyword: '',
-  period: currentPeriod,
-  status: '全部'
-};
+function buildImportPreviewRowsForAccount(rows: BankStatementRecord[], publicAccountRef: PublicAccountRef) {
+  return rows.map((record) => ({
+    ...record,
+    importedAccountName: publicAccountRef.publicAccountSnapshot.displayName,
+    publicAccountId: publicAccountRef.publicAccountId,
+    publicAccountSnapshot: publicAccountRef.publicAccountSnapshot
+  }));
+}
 
 function isPublicAccountMovement(record: FinanceTransactionRecord) {
-  if (record.status === '已作废' || record.settlementAccountType !== '对公账户') {
+  if (record.status === '已作废' || !record.publicAccountId) {
     return false;
   }
 
   return (
     record.paymentMethod === '对公账户收款' ||
     record.paymentMethod === '对公账户付款' ||
-    record.direction === '内部转入' ||
-    Boolean(record.collectionSourceTransactionNo)
+    record.paymentMethod === '员工代收' ||
+    record.paymentMethod === '现金暂收' ||
+    record.direction === '内部转入'
   );
 }
 
@@ -336,52 +484,151 @@ function getSystemBankDirection(record: FinanceTransactionRecord): BankStatement
   return getPublicAccountSignedAmount(record) < 0 ? '出账' : '入账';
 }
 
-function getMatchAction(record: BankStatementRecord, systemRecord?: FinanceTransactionRecord): MatchAction {
-  if (record.matchStatus === '已对账') {
+function getPrimaryMatchedTransactionId(record: BankStatementRecord) {
+  return record.matchedTransactionIds[0];
+}
+
+function getPrimaryMatchedSystemRecord(
+  record: BankStatementRecord | undefined,
+  systemRowsById: Map<string, FinanceTransactionRecord>
+) {
+  const transactionId = record ? getPrimaryMatchedTransactionId(record) : undefined;
+
+  return transactionId ? systemRowsById.get(transactionId) : undefined;
+}
+
+function getStatementDateTime(date: string) {
+  const [year, month, day] = date.split('-').map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function getDateDistanceDays(firstDate: string, secondDate: string) {
+  return Math.abs(Math.round((getStatementDateTime(firstDate) - getStatementDateTime(secondDate)) / 86400000));
+}
+
+function getDateRelationLabel(record: BankStatementRecord, systemRecord?: FinanceTransactionRecord) {
+  if (!systemRecord) {
+    return '-';
+  }
+
+  const bankPeriod = getStatementPeriod(record.statementDate);
+  const systemPeriod = systemRecord.accountingPeriod;
+
+  if (record.statementDate === systemRecord.occurredAt) {
+    return '同日';
+  }
+
+  const distance = getDateDistanceDays(record.statementDate, systemRecord.occurredAt);
+
+  if (bankPeriod === systemPeriod) {
+    return `同月相差 ${distance} 天`;
+  }
+
+  return `${bankPeriod} 银行 / ${systemPeriod} 系统`;
+}
+
+function getMatchAction(
+  record: BankStatementRecord,
+  systemRecord?: FinanceTransactionRecord,
+  resolution?: BankReconciliationResolution
+): MatchAction {
+  const effectiveStatus = resolution?.effectiveStatus ?? record.matchStatus;
+
+  if (effectiveStatus === '已对账') {
     return {
       actionLabel: '已完成'
     };
   }
 
-  if (record.matchStatus === '银行未匹配') {
+  if (effectiveStatus === '银行未匹配') {
     return {
       actionLabel: '补登记系统流水'
     };
   }
 
-  if (record.matchStatus === '系统未匹配') {
+  if (effectiveStatus === '系统未匹配') {
     return {
-      actionLabel: '核对银行流水'
+      actionLabel: '补充银行流水'
     };
   }
 
-  if (record.matchStatus === '重复导入') {
+  if (effectiveStatus === '重复导入') {
     return {
-      actionLabel: '确认重复'
+      actionLabel: '自动跳过'
     };
   }
 
-  if (record.matchStatus === '金额异常') {
+  if (effectiveStatus === '金额不一致') {
     return {
-      actionLabel: '核对异常'
+      actionLabel: '核对匹配'
     };
   }
 
-  if (record.matchStatus === '暂不可对账' || systemRecord?.status === '待复核') {
+  if (resolution && resolution.pendingAdjustmentRecords.length > 0) {
+    return {
+      actionLabel: '等待调整复核'
+    };
+  }
+
+  if (systemRecord?.status === '待复核' || (effectiveStatus === '暂不可对账' && systemRecord?.status !== '已入账')) {
     return {
       actionLabel: '等待流水复核'
     };
   }
 
-  if (record.matchStatus === '待确认') {
+  if (effectiveStatus === '待确认') {
     return {
       actionLabel: '人工确认'
     };
   }
 
+  if (effectiveStatus === '暂不可对账' && systemRecord?.status === '已入账') {
+    return {
+      actionLabel: '待转确认'
+    };
+  }
+
   return {
-    actionLabel: '核对异常'
+    actionLabel: '核对匹配'
   };
+}
+
+function getQuickActionMode(
+  record: BankStatementRecord,
+  systemRecord?: FinanceTransactionRecord,
+  resolution?: BankReconciliationResolution
+): BankQuickActionMode | undefined {
+  const effectiveStatus = resolution?.effectiveStatus ?? record.matchStatus;
+
+  if (effectiveStatus === '银行未匹配') {
+    return 'create-system-flow';
+  }
+
+  if (effectiveStatus === '系统未匹配') {
+    return 'import-bank-statement';
+  }
+
+  if (
+    resolution?.pendingAdjustmentRecords.length ||
+    systemRecord?.status === '待复核' ||
+    (effectiveStatus === '暂不可对账' && systemRecord?.status !== '已入账')
+  ) {
+    return 'waiting-review';
+  }
+
+  return undefined;
+}
+
+function getQuickActionLabel(mode: BankQuickActionMode) {
+  if (mode === 'create-system-flow') {
+    return '补登记系统流水';
+  }
+
+  if (mode === 'import-bank-statement') {
+    return '补充银行流水';
+  }
+
+  return '查看复核进度';
 }
 
 function getCandidateScore(record: BankStatementRecord, systemRecord: FinanceTransactionRecord) {
@@ -399,8 +646,14 @@ function getCandidateScore(record: BankStatementRecord, systemRecord: FinanceTra
     score += 18;
   }
 
-  if (record.statementDate === systemRecord.occurredAt) {
+  const dateDistance = getDateDistanceDays(record.statementDate, systemRecord.occurredAt);
+
+  if (dateDistance === 0) {
     score += 15;
+  } else if (dateDistance <= 3) {
+    score += 10;
+  } else if (getStatementPeriod(record.statementDate) === systemRecord.accountingPeriod) {
+    score += 5;
   }
 
   if (record.counterparty.includes(systemRecord.counterparty) || systemRecord.counterparty.includes(record.counterparty)) {
@@ -416,6 +669,7 @@ function getCandidateScore(record: BankStatementRecord, systemRecord: FinanceTra
 
 function buildSystemCandidates(record: BankStatementRecord, systemRows: FinanceTransactionRecord[]) {
   return systemRows
+    .filter((systemRecord) => systemRecord.publicAccountId === record.publicAccountId)
     .map((systemRecord) => {
       const result = getCandidateScore(record, systemRecord);
       return {
@@ -432,22 +686,44 @@ function buildSystemCandidates(record: BankStatementRecord, systemRows: FinanceT
 function getConfirmEligibility(
   record: BankStatementRecord | undefined,
   systemRecord: FinanceTransactionRecord | undefined,
-  bankStatements: BankStatementRecord[]
+  bankStatements: BankStatementRecord[],
+  resolution?: BankReconciliationResolution
 ): ConfirmEligibility {
   if (!record) {
     return { canConfirm: false };
   }
 
-  if (record.matchStatus === '已对账') {
+  const effectiveStatus = resolution?.effectiveStatus ?? record.matchStatus;
+
+  if (effectiveStatus === '已对账') {
     return { canConfirm: false, reason: '已完成对账' };
+  }
+
+  if (effectiveStatus !== '待确认') {
+    return { canConfirm: false, reason: '当前状态需先处理，不能直接确认' };
   }
 
   if (!systemRecord) {
     return { canConfirm: false, reason: '没有匹配的系统流水' };
   }
 
+  if (systemRecord.publicAccountId !== record.publicAccountId) {
+    return { canConfirm: false, reason: '银行账户与系统流水账户不一致' };
+  }
+
   if (systemRecord.status !== '已入账') {
     return { canConfirm: false, reason: '系统流水尚未复核入账' };
+  }
+
+  if (resolution?.canConfirmWithAdjustments) {
+    const recordsToConfirm = [systemRecord, ...resolution.reviewedAdjustmentRecords];
+    const hasReconciledRecord = recordsToConfirm.some((item) => item.reconciliationStatus === '已对账');
+
+    if (hasReconciledRecord) {
+      return { canConfirm: false, reason: '关联流水已被对账' };
+    }
+
+    return { canConfirm: true };
   }
 
   if (record.direction !== getSystemBankDirection(systemRecord)) {
@@ -463,7 +739,7 @@ function getConfirmEligibility(
   const systemRecordUsed = bankStatements.some(
     (bankRecord) =>
       bankRecord.id !== record.id &&
-      bankRecord.matchedTransactionId === systemRecord.id &&
+      bankRecord.matchedTransactionIds.includes(systemRecord.id) &&
       bankRecord.matchStatus === '已对账'
   );
 
@@ -474,74 +750,135 @@ function getConfirmEligibility(
   return { canConfirm: true };
 }
 
-function matchesFilters(record: BankStatementRecord, filters: BankReconciliationFilters) {
-  if (filters.period !== '全部' && !record.statementDate.startsWith(filters.period)) {
-    return false;
-  }
-
-  if (filters.status !== '全部' && record.matchStatus !== filters.status) {
-    return false;
-  }
-
-  const keyword = filters.keyword.trim().toLowerCase();
-
-  if (!keyword) {
-    return true;
-  }
-
-  return [record.bankSerialNo, record.counterparty, record.summary, record.batchNo, record.matchedTransactionId]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(keyword));
-}
-
-function buildBatchNo(batchCount: number) {
-  return `BANK-IMP-${currentPeriod.replace('-', '')}-${String(batchCount + 1).padStart(2, '0')}`;
-}
-
-function DrawerTitle({ record }: { record: BankStatementRecord }) {
-  return (
-    <DetailDrawerTitle
-      status={record.matchStatus}
-      statusToneMap={matchStatusTone}
-      subtitle={`${record.bankSerialNo} / ${record.direction} / ${formatSignedMoney(record.amount, record.direction)}`}
-      title="银行对账详情"
-    />
-  );
+function buildBatchNo(batchCount: number, records: BankStatementRecord[]) {
+  return `BANK-IMP-${getStatementBatchPeriodCode(records, financeToday.replaceAll('-', ''))}-${String(batchCount + 1).padStart(2, '0')}`;
 }
 
 export function FinanceBankReconciliationPage() {
-  const { confirmBankReconciliation, financeRows, revokeBankReconciliation } = useFinanceManagement();
+  const { addFinanceTransaction, confirmBankReconciliation, financeRows } = useFinanceManagement();
+  const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, contextHolder] = message.useMessage();
   const [bankStatements, setBankStatements] = useState<BankStatementRecord[]>(bankStatementSeeds);
   const [importBatches, setImportBatches] = useState<BankImportBatch[]>(importBatchSeeds);
-  const [filters, setFilters] = useState<BankReconciliationFilters>(defaultFilters);
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
-  const [revokeRecordId, setRevokeRecordId] = useState<string>();
-  const [revokeReason, setRevokeReason] = useState('');
   const [selectedImportFileName, setSelectedImportFileName] = useState<string>();
+  const [quickActionMode, setQuickActionMode] = useState<BankQuickActionMode>();
+  const [quickActionRecordId, setQuickActionRecordId] = useState<string>();
+  const [adjustmentRecordId, setAdjustmentRecordId] = useState<string>();
+  const [selectedImportPublicAccountId, setSelectedImportPublicAccountId] = useState(seedBankPublicAccountRef.publicAccountId);
+  const [quickFlowForm, setQuickFlowForm] = useState<BankReconciliationFlowFormValue>(() => createBankReconciliationFlowForm());
+
+  const selectedImportPublicAccountRef = useMemo(
+    () =>
+      resolveActivePublicAccountRef(publicAccounts, selectedImportPublicAccountId, '银行对账') ??
+      getDefaultPublicAccountRef(publicAccounts, '银行对账'),
+    [publicAccounts, selectedImportPublicAccountId]
+  );
+  const selectedImportPublicAccountName = selectedImportPublicAccountRef?.publicAccountSnapshot.displayName ?? '';
+  const importPreviewRows = useMemo(
+    () => (selectedImportPublicAccountRef ? buildImportPreviewRowsForAccount(importPreviewSeedRows, selectedImportPublicAccountRef) : []),
+    [selectedImportPublicAccountRef]
+  );
+  const bankImportAccountOptions = useMemo(
+    () =>
+      publicAccounts
+        .filter((account) => account.status === '启用' && account.usage.includes('银行对账'))
+        .map((account) => ({ label: account.displayName, value: account.id })),
+    [publicAccounts]
+  );
 
   const publicAccountRows = useMemo(() => financeRows.filter(isPublicAccountMovement), [financeRows]);
   const systemRowsById = useMemo(() => new Map(publicAccountRows.map((record) => [record.id, record])), [publicAccountRows]);
-  const periodOptions = useMemo(
-    () => ['全部', ...Array.from(new Set(bankStatements.map((record) => record.statementDate.slice(0, 7)))).sort((first, second) => second.localeCompare(first))],
-    [bankStatements]
+  const bankResolutionById = useMemo(
+    () =>
+      new Map(
+        bankStatements.map((record) => [
+          record.id,
+          getBankReconciliationResolution(
+            record,
+            getPrimaryMatchedSystemRecord(record, systemRowsById),
+            publicAccountRows
+          )
+        ])
+      ),
+    [bankStatements, publicAccountRows, systemRowsById]
   );
+  const unreconciledSystemPeriodCounts = useMemo(
+    () =>
+      buildPeriodCounts(
+        publicAccountRows
+          .filter((record) => record.status === '已入账' && record.reconciliationStatus !== '已对账')
+          .map((record) => record.accountingPeriod)
+      ),
+    [publicAccountRows]
+  );
+  const queueRows = useMemo(
+    () =>
+      bankStatements
+        .filter((record) => {
+          const effectiveStatus = bankResolutionById.get(record.id)?.effectiveStatus ?? record.matchStatus;
+          return effectiveStatus !== '已对账' && effectiveStatus !== '重复导入';
+        })
+        .sort((first, second) => {
+          const firstStatus = bankResolutionById.get(first.id)?.effectiveStatus ?? first.matchStatus;
+          const secondStatus = bankResolutionById.get(second.id)?.effectiveStatus ?? second.matchStatus;
+          const statusOrder = queueStatusPriority[firstStatus] - queueStatusPriority[secondStatus];
+          return statusOrder === 0 ? second.statementDate.localeCompare(first.statementDate) : statusOrder;
+        }),
+    [bankResolutionById, bankStatements]
+  );
+  const activeRecord = useMemo(() => {
+    const selectedRecord = bankStatements.find((record) => record.id === activeRecordId);
+    const selectedEffectiveStatus = selectedRecord
+      ? (bankResolutionById.get(selectedRecord.id)?.effectiveStatus ?? selectedRecord.matchStatus)
+      : undefined;
 
-  const filteredStatements = useMemo(() => bankStatements.filter((record) => matchesFilters(record, filters)), [bankStatements, filters]);
-  const pendingRows = useMemo(() => filteredStatements.filter((record) => pendingMatchStatuses.has(record.matchStatus)), [filteredStatements]);
-  const matchedRows = useMemo(() => filteredStatements.filter((record) => record.matchStatus === '已对账'), [filteredStatements]);
-  const exceptionRows = useMemo(() => filteredStatements.filter((record) => exceptionMatchStatuses.has(record.matchStatus)), [filteredStatements]);
-  const activeRecord = useMemo(() => bankStatements.find((record) => record.id === activeRecordId), [bankStatements, activeRecordId]);
-  const activeSystemRecord = activeRecord?.matchedTransactionId ? systemRowsById.get(activeRecord.matchedTransactionId) : undefined;
-  const activeMatchAction = activeRecord ? getMatchAction(activeRecord, activeSystemRecord) : undefined;
+    if (selectedRecord && selectedEffectiveStatus !== '已对账' && selectedEffectiveStatus !== '重复导入') {
+      return selectedRecord;
+    }
+
+    return queueRows[0];
+  }, [activeRecordId, bankResolutionById, bankStatements, queueRows]);
+  const activeSystemRecord = getPrimaryMatchedSystemRecord(activeRecord, systemRowsById);
+  const activeResolution = activeRecord ? bankResolutionById.get(activeRecord.id) : undefined;
+  const activeEffectiveStatus = activeResolution?.effectiveStatus ?? activeRecord?.matchStatus;
+  const activeDisplayDifference = activeResolution?.relatedAdjustmentRecords.length
+    ? activeResolution.remainingDifference
+    : (activeRecord ? getAmountDifference(activeRecord, activeSystemRecord) : undefined);
+  const activeMatchAction = activeRecord ? getMatchAction(activeRecord, activeSystemRecord, activeResolution) : undefined;
+  const activeQuickActionMode = activeRecord ? getQuickActionMode(activeRecord, activeSystemRecord, activeResolution) : undefined;
+  const activeHasPendingAdjustment = Boolean(activeResolution?.pendingAdjustmentRecords.length);
+  const activeShowConfirmAction = activeEffectiveStatus === '待确认';
+  const activeShowAmountMismatchAction = Boolean(
+    activeRecord &&
+      activeRecord.matchStatus === '金额不一致' &&
+      activeSystemRecord &&
+      !activeHasPendingAdjustment &&
+      !activeResolution?.canConfirmWithAdjustments
+  );
+  const activeShowFooterActions = Boolean((activeRecord && activeQuickActionMode) || activeShowConfirmAction || activeShowAmountMismatchAction);
+  const quickActionRecord = useMemo(
+    () => bankStatements.find((record) => record.id === quickActionRecordId),
+    [bankStatements, quickActionRecordId]
+  );
+  const quickActionSystemRecord = getPrimaryMatchedSystemRecord(quickActionRecord, systemRowsById);
+  const quickActionResolution = quickActionRecord ? bankResolutionById.get(quickActionRecord.id) : undefined;
+  const quickActionWaitingRecord = quickActionResolution?.pendingAdjustmentRecords[0] ?? quickActionSystemRecord;
+  const adjustmentRecord = useMemo(
+    () => bankStatements.find((record) => record.id === adjustmentRecordId),
+    [adjustmentRecordId, bankStatements]
+  );
+  const adjustmentSystemRecord = getPrimaryMatchedSystemRecord(adjustmentRecord, systemRowsById);
+  const quickPrimaryCategoryOptions = quickActionRecord ? getBankReconciliationPrimaryCategoryOptions(quickActionRecord.direction) : [];
+  const quickCategoryOptions = quickActionRecord ? getBankReconciliationCategoryOptions(quickActionRecord.direction, quickFlowForm.primaryCategoryId) : [];
   const activeSystemCandidates = useMemo(
     () => (activeRecord ? buildSystemCandidates(activeRecord, publicAccountRows) : []),
     [activeRecord, publicAccountRows]
   );
   const activeConfirmEligibility = useMemo(
-    () => getConfirmEligibility(activeRecord, activeSystemRecord, bankStatements),
-    [activeRecord, activeSystemRecord, bankStatements]
+    () => getConfirmEligibility(activeRecord, activeSystemRecord, bankStatements, activeResolution),
+    [activeRecord, activeResolution, activeSystemRecord, bankStatements]
   );
   const activeOperationRecords = useMemo<OperationRecord[]>(
     () =>
@@ -551,48 +888,75 @@ export function FinanceBankReconciliationPage() {
     [activeSystemRecord]
   );
 
-  const currentPeriodStatements = useMemo(
-    () => bankStatements.filter((record) => record.statementDate.startsWith(currentPeriod)),
-    [bankStatements]
+  const matchedCount = bankStatements.filter((record) => (bankResolutionById.get(record.id)?.effectiveStatus ?? record.matchStatus) === '已对账').length;
+  const confirmCount = bankStatements.filter((record) => (bankResolutionById.get(record.id)?.effectiveStatus ?? record.matchStatus) === '待确认').length;
+  const amountMismatchCount = bankStatements.filter((record) => amountMismatchStatuses.has(bankResolutionById.get(record.id)?.effectiveStatus ?? record.matchStatus)).length;
+  const bankImportPrecheck = useMemo(
+    () =>
+      buildBankStatementImportPrecheck({
+        existingRows: bankStatements,
+        previewRows: importPreviewRows,
+        requiredPeriodCounts: unreconciledSystemPeriodCounts,
+        selectedPublicAccount: selectedImportPublicAccountRef
+      }),
+    [bankStatements, importPreviewRows, selectedImportPublicAccountRef, unreconciledSystemPeriodCounts]
   );
-  const importedAmount = currentPeriodStatements.reduce((total, record) => total + (record.direction === '入账' ? record.amount : -record.amount), 0);
-  const matchedCount = bankStatements.filter((record) => record.matchStatus === '已对账').length;
-  const pendingCount = bankStatements.filter((record) => pendingMatchStatuses.has(record.matchStatus)).length;
-  const exceptionCount = bankStatements.filter((record) => exceptionMatchStatuses.has(record.matchStatus)).length;
+  const importablePreviewRows = bankImportPrecheck.importableRows;
+  const importPrecheckItems = bankImportPrecheck.items;
+  const importHasBlockingPrecheck = bankImportPrecheck.hasBlockingIssue;
 
   function handleConfirmImport() {
     if (!selectedImportFileName) {
       return;
     }
 
-    const nextBatchNo = buildBatchNo(importBatches.length);
-    const nextRows = importPreviewRows.map((record, index) => ({
+    if (!selectedImportPublicAccountRef) {
+      void messageApi.warning('请先配置启用且支持银行对账的对公账户');
+      return;
+    }
+
+    if (importHasBlockingPrecheck) {
+      void messageApi.warning('导入预检未通过，请先修正文件');
+      return;
+    }
+
+    if (importablePreviewRows.length === 0) {
+      void messageApi.warning('本次文件没有可入池的新流水');
+      return;
+    }
+
+    const importTime = `${financeToday} 11:20`;
+    const importIdentity = Date.now();
+    const nextBatchNo = buildBatchNo(importBatches.length, importablePreviewRows);
+    const nextRows = importablePreviewRows.map((record, index) => ({
       ...record,
       batchNo: nextBatchNo,
-      id: `${record.id}-${Date.now()}-${index}`,
-      importedAt: `${financeToday} 11:20`
+      id: `${record.id}-${importIdentity}-${index}`,
+      importedAt: importTime
     }));
 
     setBankStatements((current) => [...nextRows, ...current]);
     setImportBatches((current) => [
       {
-        accountName: publicAccountName,
+        importedAccountName: selectedImportPublicAccountName,
+        publicAccountId: selectedImportPublicAccountRef.publicAccountId,
+        publicAccountSnapshot: selectedImportPublicAccountRef.publicAccountSnapshot,
+        amountMismatchRows: nextRows.filter((record) => amountMismatchStatuses.has(record.matchStatus)).length,
         batchNo: nextBatchNo,
-        duplicateRows: 0,
-        exceptionRows: nextRows.filter((record) => exceptionMatchStatuses.has(record.matchStatus)).length,
+        duplicateRows: bankImportPrecheck.summary.duplicateCount,
         fileName: selectedImportFileName,
-        id: `bank-import-${Date.now()}`,
-        importedAt: `${financeToday} 11:20`,
+        id: `bank-import-${importIdentity}`,
+        importedAt: importTime,
         matchedRows: nextRows.filter((record) => record.matchStatus === '已对账').length,
-        period: currentPeriod,
+        statementRange: getStatementDateRangeLabel(nextRows),
         status: '已导入',
-        totalRows: nextRows.length
+        totalRows: importPreviewRows.length
       },
       ...current
     ]);
     setSelectedImportFileName(undefined);
     setImportDrawerOpen(false);
-    void messageApi.success('银行流水已导入');
+    void messageApi.success(`已导入 ${nextRows.length} 条，跳过重复 ${bankImportPrecheck.summary.duplicateCount} 条`);
   }
 
   function handleConfirmActiveReconciliation() {
@@ -605,13 +969,21 @@ export function FinanceBankReconciliationPage() {
       return;
     }
 
-    confirmBankReconciliation(activeSystemRecord.id, activeRecord.bankSerialNo);
+    const recordsToConfirm = activeResolution?.canConfirmWithAdjustments
+      ? [activeSystemRecord, ...activeResolution.reviewedAdjustmentRecords]
+      : [activeSystemRecord];
+    const confirmedTransactionNos = recordsToConfirm.map((record) => record.transactionNo).join('、');
+
+    recordsToConfirm.forEach((record) => {
+      confirmBankReconciliation(record.id, activeRecord.bankSerialNo);
+    });
     setBankStatements((current) =>
       current.map((record) =>
         record.id === activeRecord.id
           ? {
               ...record,
-              matchReason: `已人工确认匹配系统流水 ${activeSystemRecord.transactionNo}`,
+              matchedTransactionIds: recordsToConfirm.map((item) => item.id),
+              matchReason: `已人工确认匹配系统流水 ${confirmedTransactionNos}`,
               matchScore: Math.max(record.matchScore, 95),
               matchStatus: '已对账'
             }
@@ -621,53 +993,83 @@ export function FinanceBankReconciliationPage() {
     void messageApi.success('已确认对账');
   }
 
-  function handleOpenRevokeReconciliation() {
-    if (!activeRecord || activeRecord.matchStatus !== '已对账') {
-      return;
-    }
-
-    setRevokeRecordId(activeRecord.id);
-    setRevokeReason('');
+  function updateQuickFlowForm<K extends keyof BankReconciliationFlowFormValue>(field: K, value: BankReconciliationFlowFormValue[K]) {
+    setQuickFlowForm((currentForm) => ({
+      ...currentForm,
+      [field]: value
+    }));
   }
 
-  function handleSubmitRevokeReconciliation() {
-    const reason = revokeReason.trim();
-    const targetRecord = bankStatements.find((record) => record.id === revokeRecordId);
-    const targetSystemRecord =
-      targetRecord?.matchedTransactionId && activeSystemRecord?.id === targetRecord.matchedTransactionId
-        ? activeSystemRecord
-        : targetRecord?.matchedTransactionId
-          ? systemRowsById.get(targetRecord.matchedTransactionId)
-          : undefined;
-
-    if (!targetRecord || !targetSystemRecord) {
-      void messageApi.warning('未找到可撤销的对账关系');
+  function handleQuickPrimaryCategoryChange(primaryCategoryId: string) {
+    if (!quickActionRecord) {
       return;
     }
 
-    if (!reason) {
-      void messageApi.warning('请填写撤销原因');
+    setQuickFlowForm((currentForm) => ({
+      ...currentForm,
+      category: getDefaultBankReconciliationCategory(quickActionRecord, primaryCategoryId),
+      primaryCategoryId
+    }));
+  }
+
+  function openQuickAction(record: BankStatementRecord, mode: BankQuickActionMode) {
+    setQuickActionRecordId(record.id);
+    setQuickActionMode(mode);
+
+    if (mode === 'create-system-flow') {
+      setQuickFlowForm(createBankReconciliationFlowForm(record));
+    }
+  }
+
+  function closeQuickAction() {
+    setQuickActionMode(undefined);
+    setQuickActionRecordId(undefined);
+  }
+
+  function handleCreateSystemFlowFromBankStatement() {
+    if (!quickActionRecord || quickActionMode !== 'create-system-flow') {
       return;
     }
 
-    revokeBankReconciliation(targetSystemRecord.id, targetRecord.bankSerialNo, reason);
+    if (!quickFlowForm.category || !quickFlowForm.sourceTitle.trim()) {
+      void messageApi.warning('请先补全类目和事项说明');
+      return;
+    }
+
+    const transaction = buildFinanceTransactionFromBankStatement(quickActionRecord, quickFlowForm, financeRows);
+    addFinanceTransaction(transaction);
     setBankStatements((current) =>
       current.map((record) =>
-        record.id === targetRecord.id
+        record.id === quickActionRecord.id
           ? {
               ...record,
-              matchReason: `已撤销对账，需重新确认。原因：${reason}`,
-              matchStatus: '待确认'
+              matchedTransactionIds: [transaction.id],
+              matchReason: `已补登记系统流水 ${transaction.transactionNo}，等待流水复核后确认对账`,
+              matchScore: Math.max(record.matchScore, 86),
+              matchStatus: '暂不可对账'
             }
           : record
       )
     );
-    setRevokeRecordId(undefined);
-    setRevokeReason('');
-    void messageApi.success('已撤销对账');
+    setActiveRecordId(quickActionRecord.id);
+    closeQuickAction();
+    void messageApi.success('已登记待复核系统流水');
   }
 
-  const statementColumns: TableColumnsType<BankStatementRecord> = [
+  function handleOpenImportFromQuickAction() {
+    closeQuickAction();
+    setImportDrawerOpen(true);
+  }
+
+  function handlePreviewFile(file: RelatedFileRecord) {
+    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
+  }
+
+  function handleDownloadFile(file: RelatedFileRecord) {
+    void messageApi.success(`${file.name} 下载请求已记录`);
+  }
+
+  const importPreviewColumns: TableColumnsType<BankStatementRecord> = [
     {
       title: '银行日期',
       dataIndex: 'statementDate',
@@ -698,19 +1100,39 @@ export function FinanceBankReconciliationPage() {
       render: (_, record) => <CompactCell primary={record.counterparty} secondary={record.summary} />
     },
     {
-      title: '匹配状态',
-      dataIndex: 'matchStatus',
+      title: '导入处理',
+      key: 'importResult',
       width: 112,
-      render: (status: BankMatchStatus) => <StatusTag toneMap={matchStatusTone} value={status} />
+      render: (_, record) => {
+        if (bankImportPrecheck.blockedRowIds.has(record.id)) {
+          return <StatusTag toneMap={importPreviewResultTone} value="阻断" />;
+        }
+
+        if (bankImportPrecheck.duplicateRowIds.has(record.id)) {
+          return <StatusTag toneMap={importPreviewResultTone} value="跳过" />;
+        }
+
+        return <StatusTag toneMap={importPreviewResultTone} value={getDisplayMatchStatus(record.matchStatus)} />;
+      }
+    }
+  ];
+
+  const importPrecheckColumns: TableColumnsType<BankImportPrecheckItem> = [
+    {
+      title: '检查项',
+      dataIndex: 'item',
+      width: 120
     },
     {
-      title: '处理建议',
-      key: 'matchAction',
-      width: 118,
-      render: (_, record) => {
-        const action = getMatchAction(record, record.matchedTransactionId ? systemRowsById.get(record.matchedTransactionId) : undefined);
-        return <CellText>{action.actionLabel}</CellText>;
-      }
+      title: '结果',
+      dataIndex: 'level',
+      width: 96,
+      render: (level: BankImportPrecheckLevel) => <StatusTag toneMap={importPrecheckTone} value={level} />
+    },
+    {
+      title: '说明',
+      dataIndex: 'result',
+      render: (result: string) => <CellText>{result}</CellText>
     }
   ];
 
@@ -733,10 +1155,16 @@ export function FinanceBankReconciliationPage() {
       render: (_, candidate) => <CellText tone={getSystemAmountTone(candidate.record)}>{getSystemAmountLabel(candidate.record)}</CellText>
     },
     {
-      title: '匹配度',
-      dataIndex: 'score',
-      width: 96,
-      render: (score: number) => `${score}%`
+      title: '系统期间',
+      key: 'accountingPeriod',
+      width: 108,
+      render: (_, candidate) => candidate.record.accountingPeriod
+    },
+    {
+      title: '日期关系',
+      key: 'dateRelation',
+      width: 138,
+      render: (_, candidate) => (activeRecord ? getDateRelationLabel(activeRecord, candidate.record) : '-')
     },
     {
       title: '差额',
@@ -746,71 +1174,32 @@ export function FinanceBankReconciliationPage() {
     }
   ];
 
-  const bankPoolColumns: TableColumnsType<BankStatementRecord> = [
-    ...statementColumns.slice(0, 5),
-    {
-      title: '余额',
-      dataIndex: 'balance',
-      width: 128,
-      render: (balance: number) => formatMoney(balance)
-    },
-    {
-      title: '匹配状态',
-      dataIndex: 'matchStatus',
-      width: 112,
-      render: (status: BankMatchStatus) => <StatusTag toneMap={matchStatusTone} value={status} />
-    }
-  ];
-
-  const importBatchColumns: TableColumnsType<BankImportBatch> = [
-    {
-      title: '导入批次',
-      key: 'batchNo',
-      width: 170,
-      render: (_, record) => <CompactCell primary={record.batchNo} secondary={record.period} />
-    },
-    {
-      title: '文件名称',
-      dataIndex: 'fileName',
-      width: 260
-    },
-    {
-      title: '对公账户',
-      dataIndex: 'accountName',
-      width: 150
-    },
-    {
-      title: '导入结果',
-      key: 'result',
-      width: 260,
-      render: (_, record) => {
-        const pendingRowsInBatch = Math.max(record.totalRows - record.matchedRows - record.exceptionRows, 0);
-        return `${record.totalRows} 条 / 已对账 ${record.matchedRows} / 待处理 ${pendingRowsInBatch} / 异常 ${record.exceptionRows}`;
+  const quickDrawerTitle = quickActionMode ? getQuickActionLabel(quickActionMode) : '处理对账待办';
+  const quickDrawerPrimaryAction = quickActionMode === 'create-system-flow'
+    ? {
+        label: '登记待复核流水',
+        onClick: handleCreateSystemFlowFromBankStatement,
+        type: 'primary' as const
       }
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 96,
-      render: (status: BankImportBatch['status']) => <StatusTag tone={status === '已导入' ? 'green' : 'blue'} value={status} />
-    },
-    {
-      title: '导入时间',
-      dataIndex: 'importedAt',
-      width: 138
-    }
-  ];
+    : quickActionMode === 'import-bank-statement'
+      ? {
+          icon: <CloudUploadOutlined />,
+          label: '打开导入',
+          onClick: handleOpenImportFromQuickAction,
+          type: 'primary' as const
+        }
+      : undefined;
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       metrics={
-        <MetricGrid spans={[6, 6, 6, 3, 3]}>
-          <MetricCard icon={<BankOutlined />} label="银行流水" value={bankStatements.length} />
-          <MetricCard icon={<WalletOutlined />} label="导入净额" value={formatMoney(importedAmount)} />
-          <MetricCard icon={<CheckCircleOutlined />} label="已对账" value={matchedCount} />
-          <MetricCard icon={<LinkOutlined />} label="待处理" value={pendingCount} />
-          <MetricCard icon={<WarningOutlined />} label="异常" value={exceptionCount} />
+        <MetricGrid columns={4}>
+          <MetricCard icon={<LinkOutlined />} label="待处理" value={queueRows.length} />
+          <MetricCard icon={<CheckCircleOutlined />} label="待确认" value={confirmCount} />
+          <MetricCard icon={<WarningOutlined />} label="金额不一致" value={amountMismatchCount} />
+          <MetricCard icon={<BankOutlined />} label="已对账" value={matchedCount} />
         </MetricGrid>
       }
       overview={
@@ -822,331 +1211,310 @@ export function FinanceBankReconciliationPage() {
               </span>
               <div>
                 <div className="bank-card-title">银行流水导入</div>
-                <div className="bank-card-subtitle">Excel / CSV 导入后进入银行流水池，不直接生成收支流水</div>
+                <div className="bank-card-subtitle">导入后形成对账待办，不直接生成收支流水</div>
+                <div className="bank-card-subhint">建议补充：{formatPeriodCountList(unreconciledSystemPeriodCounts)}</div>
               </div>
             </div>
-            <Space size={8}>
-              <Button data-testid="bank-reconciliation-import-button" icon={<CloudUploadOutlined />} type="primary" onClick={() => setImportDrawerOpen(true)}>
-                导入银行流水
-              </Button>
-            </Space>
-          </div>
-          <div className="bank-match-card">
-            <div className="bank-card-title">匹配依据</div>
-            <div className="bank-match-rule-grid">
-              <span>金额</span>
-              <span>方向</span>
-              <span>日期</span>
-              <span>户名</span>
-              <span>摘要</span>
-            </div>
+            <Button data-testid="bank-reconciliation-import-button" icon={<CloudUploadOutlined />} type="primary" onClick={() => setImportDrawerOpen(true)}>
+              导入银行流水
+            </Button>
           </div>
         </section>
       }
-      filters={
-        <FilterPanel>
-          <FilterBar>
-            <FilterField label="流水期间">
-              <Select
-                data-testid="bank-reconciliation-period-filter"
-                options={periodOptions.map((period) => ({ label: period, value: period }))}
-                value={filters.period}
-                onChange={(period) => setFilters((current) => ({ ...current, period }))}
-              />
-            </FilterField>
-            <FilterField label="匹配状态">
-              <Select
-                data-testid="bank-reconciliation-status-filter"
-                options={[
-                  { label: '全部', value: '全部' },
-                  { label: '待确认', value: '待确认' },
-                  { label: '已对账', value: '已对账' },
-                  { label: '银行未匹配', value: '银行未匹配' },
-                  { label: '系统未匹配', value: '系统未匹配' },
-                  { label: '金额异常', value: '金额异常' },
-                  { label: '重复导入', value: '重复导入' },
-                  { label: '暂不可对账', value: '暂不可对账' }
-                ]}
-                value={filters.status}
-                onChange={(status) => setFilters((current) => ({ ...current, status }))}
-              />
-            </FilterField>
-            <KeywordFilter
-              data-testid="bank-reconciliation-keyword-input"
-              placeholder="银行流水号 / 户名 / 摘要 / 系统流水"
-              value={filters.keyword}
-              width="wide"
-              onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}
-            />
-          </FilterBar>
-        </FilterPanel>
-      }
       pageId="finance-bank-reconciliation"
     >
+      <div className="task-submit-workbench bank-reconciliation-workbench" data-testid="bank-reconciliation-workbench">
+        <section className="task-submit-queue-card">
+          <div className="task-submit-section-head">
+            <div>
+              <div className="task-submit-section-title">对账待办</div>
+              <div className="task-submit-section-meta">{queueRows.length} 条待处理</div>
+            </div>
+          </div>
+          <div className="task-submit-card-list">
+            {queueRows.length > 0 ? (
+              queueRows.map((record) => {
+                const isActive = activeRecord?.id === record.id;
+                const resolution = bankResolutionById.get(record.id);
 
-      <section className="bank-reconciliation-workbench" data-testid="bank-reconciliation-workbench">
-        <TabbedManagementTable
-          tabs={[
-            createTabbedManagementTableItem<BankStatementRecord>({
-              key: 'pending',
-              label: '待处理',
-              table: {
-                columns: statementColumns,
-                count: { value: pendingRows.length, unit: '条待处理' },
-                dataSource: pendingRows,
-                rowKey: 'id',
-                rowTestIdPrefix: 'bank-reconciliation-pending-row',
-                tableTestId: 'bank-reconciliation-pending-table',
-                onRowClick: (record) => setActiveRecordId(record.id)
-              }
-            }),
-            createTabbedManagementTableItem<BankStatementRecord>({
-              key: 'matched',
-              label: '已对账',
-              table: {
-                columns: statementColumns,
-                count: { value: matchedRows.length, unit: '条已对账' },
-                dataSource: matchedRows,
-                rowKey: 'id',
-                rowTestIdPrefix: 'bank-reconciliation-matched-row',
-                tableTestId: 'bank-reconciliation-matched-table',
-                onRowClick: (record) => setActiveRecordId(record.id)
-              }
-            }),
-            createTabbedManagementTableItem<BankStatementRecord>({
-              key: 'exception',
-              label: '对账异常',
-              table: {
-                columns: statementColumns,
-                count: { value: exceptionRows.length, unit: '条对账异常' },
-                dataSource: exceptionRows,
-                rowKey: 'id',
-                rowTestIdPrefix: 'bank-reconciliation-exception-row',
-                tableTestId: 'bank-reconciliation-exception-table',
-                onRowClick: (record) => setActiveRecordId(record.id)
-              }
-            }),
-            createTabbedManagementTableItem<BankStatementRecord>({
-              key: 'bank-pool',
-              label: '银行流水',
-              table: {
-                columns: bankPoolColumns,
-                count: { value: filteredStatements.length, unit: '条银行流水' },
-                dataSource: filteredStatements,
-                rowKey: 'id',
-                rowTestIdPrefix: 'bank-reconciliation-bank-row',
-                tableTestId: 'bank-reconciliation-bank-table',
-                onRowClick: (record) => setActiveRecordId(record.id)
-              }
-            }),
-            createTabbedManagementTableItem<BankImportBatch>({
-              key: 'imports',
-              label: '导入记录',
-              table: {
-                columns: importBatchColumns,
-                count: { value: importBatches.length, unit: '个导入批次' },
-                dataSource: importBatches,
-                rowKey: 'id',
-                tableTestId: 'bank-reconciliation-import-table'
-              }
-            })
-          ]}
-        />
-      </section>
+                return (
+                  <button
+                    className={isActive ? 'finance-review-queue-row is-active' : 'finance-review-queue-row'}
+                    key={record.id}
+                    type="button"
+                    onClick={() => setActiveRecordId(record.id)}
+                  >
+                    <span className="finance-review-queue-row-main">
+                      <span className="finance-review-queue-row-title">{record.counterparty}</span>
+                      <CellText tone={getBankAmountTone(record.direction)}>{formatSignedMoney(record.amount, record.direction)}</CellText>
+                    </span>
+                    <span className="finance-review-queue-row-sub">
+                      <span>
+                        {record.bankSerialNo} / {getMatchAction(record, getPrimaryMatchedSystemRecord(record, systemRowsById), resolution)?.actionLabel}
+                      </span>
+                      <span>{record.statementDate.slice(5)}</span>
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <Empty description="暂无待处理对账" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
+          </div>
+        </section>
 
-      <WorkflowDrawerShell
-        bodyTestId="bank-reconciliation-detail-drawer"
-        className="finance-transaction-drawer"
-        closeAction={{ label: '关闭', onClick: () => setActiveRecordId(undefined) }}
-        dangerAction={
-          activeRecord?.matchStatus === '已对账'
-            ? {
-                label: '撤销对账',
-                testId: 'bank-reconciliation-revoke-button',
-                onClick: handleOpenRevokeReconciliation
-              }
-            : undefined
-        }
-        open={Boolean(activeRecord)}
-        primaryAction={
-          activeRecord?.matchStatus !== '已对账'
-            ? {
-                disabled: !activeConfirmEligibility.canConfirm,
-                label: '确认对账',
-                testId: 'bank-reconciliation-confirm-button',
-                onClick: handleConfirmActiveReconciliation
-              }
-            : undefined
-        }
-        title={activeRecord ? <DrawerTitle record={activeRecord} /> : null}
-        width={940}
-        onClose={() => setActiveRecordId(undefined)}
-      >
-        {activeRecord ? (
-          <>
-            <DetailSummaryCards
-              columns={4}
-              items={
-                [
-                  { icon: <BankOutlined />, key: 'bank', label: '银行流水', value: activeRecord.bankSerialNo },
-                  {
-                    icon: <WalletOutlined />,
-                    key: 'amount',
-                    label: activeRecord.direction === '入账' ? '银行入账' : '银行出账',
-                    value: formatSignedMoney(activeRecord.amount, activeRecord.direction)
-                  },
-                  { icon: <LinkOutlined />, key: 'status', label: '匹配状态', value: activeRecord.matchStatus },
-                  {
-                    icon: <AuditOutlined />,
-                    key: 'difference',
-                    label: '差额',
-                    value: formatDifference(getAmountDifference(activeRecord, activeSystemRecord))
-                  }
-                ].filter(Boolean) as DetailSummaryCardItem[]
-              }
-            />
-            <DetailTabs
-              defaultActiveKey="match"
-              items={[
-                {
-                  key: 'match',
-                  label: '匹配结果',
-                  children: (
-                    <div className="detail-tab-stack">
-                      <DetailSection icon={<LinkOutlined />} title="匹配信息">
-                        <DetailInfoGrid
-                          columns={3}
-                          items={[
-                            { label: '匹配状态', value: <StatusTag toneMap={matchStatusTone} value={activeRecord.matchStatus} /> },
-                            { label: '处理动作', value: activeMatchAction?.actionLabel },
-                            { label: '匹配度', value: `${activeRecord.matchScore}%` },
-                            {
-                              label: '差额',
-                              value: (
-                                <CellText tone={getDifferenceTone(getAmountDifference(activeRecord, activeSystemRecord))}>
-                                  {formatDifference(getAmountDifference(activeRecord, activeSystemRecord))}
-                                </CellText>
-                              )
-                            }
-                          ]}
-                        />
-                      </DetailSection>
-                      <DetailSection icon={<FileSearchOutlined />} title="候选系统流水">
-                        <CompactDetailTable<SystemCandidateRow>
-                          columns={candidateColumns}
-                          dataSource={activeSystemCandidates}
-                          emptyText="暂无候选系统流水，需要补登记或核对银行导入范围"
-                          rowKey={(candidate) => candidate.record.id}
-                          scrollX={680}
-                        />
-                      </DetailSection>
+        <section className="task-submit-panel">
+          {activeRecord ? (
+            <>
+              <div className="task-submit-panel-header">
+                <div>
+                  <div className="task-submit-panel-title">{activeRecord.counterparty}</div>
+                  <div className="task-submit-panel-sub">
+                    {activeRecord.bankSerialNo} / {activeRecord.summary}
+                  </div>
+                </div>
+                <Space size={6}>
+                  <StatusTag tone={activeRecord.direction === '入账' ? 'green' : 'red'} value={activeRecord.direction} />
+                  <StatusTag toneMap={displayMatchStatusTone} value={getDisplayMatchStatus(activeEffectiveStatus ?? activeRecord.matchStatus)} />
+                </Space>
+              </div>
+
+              <div className="task-submit-panel-body">
+                <div className="task-submit-summary-strip">
+                  {[
+                    { label: '银行日期', value: activeRecord.statementDate },
+                    { label: '银行金额', value: formatSignedMoney(activeRecord.amount, activeRecord.direction) },
+                    { label: '系统期间', value: activeSystemRecord?.accountingPeriod ?? '-' },
+                    { label: '日期关系', value: getDateRelationLabel(activeRecord, activeSystemRecord) }
+                  ].map((item) => (
+                    <div className="task-submit-summary-item" key={item.label}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
                     </div>
-                  )
-                },
-                {
-                  key: 'bank',
-                  label: '银行流水',
-                  children: (
-                    <DetailSection icon={<BankOutlined />} title="银行流水">
+                  ))}
+                </div>
+
+                <DetailSection icon={<LinkOutlined />} title="对账判断">
+                  <DetailInfoGrid
+                    columns={3}
+                    items={[
+                      {
+                        label: '处理状态',
+                        value: <StatusTag toneMap={displayMatchStatusTone} value={getDisplayMatchStatus(activeEffectiveStatus ?? activeRecord.matchStatus)} />
+                      },
+                      { label: '处理建议', value: activeMatchAction?.actionLabel },
+                      { label: '日期关系', value: getDateRelationLabel(activeRecord, activeSystemRecord) },
+                      {
+                        label: '差额',
+                        value: (
+                          <CellText tone={getDifferenceTone(activeDisplayDifference)}>
+                            {formatDifference(activeDisplayDifference)}
+                          </CellText>
+                        )
+                      },
+                      { label: '确认条件', value: activeConfirmEligibility.canConfirm ? '可确认' : (activeConfirmEligibility.reason ?? '待处理') },
+                      { label: '说明', value: activeResolution?.effectiveReason ?? activeRecord.matchReason, wide: true }
+                    ]}
+                  />
+                </DetailSection>
+
+                <DetailSection icon={<FileSearchOutlined />} title="候选系统流水">
+                  <CompactDetailTable<SystemCandidateRow>
+                    columns={candidateColumns}
+                    dataSource={activeSystemCandidates}
+                    emptyText="暂无候选系统流水"
+                    rowKey={(candidate) => candidate.record.id}
+                    scrollX={680}
+                  />
+                </DetailSection>
+
+                {activeSystemRecord ? (
+                  <>
+                    <DetailSection icon={<BankOutlined />} title="系统流水">
                       <DetailInfoGrid
                         columns={3}
                         items={[
-                          { label: '银行流水号', value: activeRecord.bankSerialNo },
-                          { label: '银行日期', value: activeRecord.statementDate },
-                          { label: '对公账户', value: activeRecord.accountName },
-                          { label: '方向', value: <StatusTag tone={activeRecord.direction === '入账' ? 'green' : 'red'} value={activeRecord.direction} /> },
+                          { label: '流水号', value: activeSystemRecord.transactionNo },
+                          { label: '发生日期', value: activeSystemRecord.occurredAt },
+                          { label: '系统期间', value: activeSystemRecord.accountingPeriod },
+                          { label: '对公账户', value: activeSystemRecord.publicAccountSnapshot.displayName },
+                          { label: '流水状态', value: <StatusTag toneMap={transactionStatusTone} value={activeSystemRecord.status} /> },
+                          { label: '财务类目', value: getFinanceRecordCategorySnapshot(activeSystemRecord).secondaryName },
                           {
-                            label: '银行金额',
-                            value: (
-                              <CellText tone={getBankAmountTone(activeRecord.direction)}>
-                                {formatSignedMoney(activeRecord.amount, activeRecord.direction)}
-                              </CellText>
-                            )
+                            label: '系统金额',
+                            value: <CellText tone={getSystemAmountTone(activeSystemRecord)}>{getSystemAmountLabel(activeSystemRecord)}</CellText>
                           },
-                          { label: '余额', value: formatMoney(activeRecord.balance) },
-                          { label: '对方户名', value: activeRecord.counterparty },
-                          { label: '导入批次', value: activeRecord.batchNo },
-                          { label: '银行摘要', value: activeRecord.summary, wide: true }
+                          {
+                            label: '对账状态',
+                            value: <StatusTag toneMap={reconciliationStatusTone} value={activeSystemRecord.reconciliationStatus} />
+                          },
+                          { label: '业务来源', value: activeSystemRecord.sourceType },
+                          { label: '事项说明', value: activeSystemRecord.sourceTitle, wide: true }
                         ]}
                       />
                     </DetailSection>
-                  )
-                },
-                {
-                  key: 'system',
-                  label: '系统流水',
-                  children: activeSystemRecord ? (
-                    <div className="detail-tab-stack">
-                      <DetailSection icon={<FileSearchOutlined />} title="系统流水">
-                        <DetailInfoGrid
-                          columns={3}
-                          items={[
-                            { label: '系统流水号', value: activeSystemRecord.transactionNo },
-                            { label: '发生日期', value: activeSystemRecord.occurredAt },
-                            { label: '系统状态', value: <StatusTag toneMap={transactionStatusTone} value={activeSystemRecord.status} /> },
-                            { label: '收支方向', value: <StatusTag toneMap={directionTone} value={activeSystemRecord.direction} /> },
-                            { label: '财务类目', value: getFinanceRecordCategorySnapshot(activeSystemRecord).secondaryName },
-                            {
-                              label: '系统金额',
-                              value: <CellText tone={getSystemAmountTone(activeSystemRecord)}>{getSystemAmountLabel(activeSystemRecord)}</CellText>
-                            },
-                            { label: '业务对象', value: activeSystemRecord.counterparty },
-                            { label: '业务来源', value: activeSystemRecord.sourceType },
-                            {
-                              label: '对账状态',
-                              value: (
-                                <StatusTag
-                                  toneMap={reconciliationStatusTone}
-                                  value={activeSystemRecord.reconciliationStatus}
-                                />
-                              )
-                            },
-                            { label: '事项说明', value: activeSystemRecord.sourceTitle, wide: true }
-                          ]}
-                        />
-                      </DetailSection>
-                      <DetailSection icon={<FileProtectOutlined />} title="系统凭证">
-                        <RelatedFileTable records={activeSystemRecord.files} />
-                      </DetailSection>
-                    </div>
-                  ) : (
-                    <DetailSection icon={<WarningOutlined />} title="系统流水">
-                      <div className="empty-state-text">暂无匹配的系统对公账户流水</div>
+                    <DetailSection icon={<FileProtectOutlined />} title="系统凭证">
+                      <RelatedFileTable records={activeSystemRecord.files} onDownload={handleDownloadFile} onPreview={handlePreviewFile} />
                     </DetailSection>
-                  )
-                },
-                {
-                  key: 'logs',
-                  label: '对账记录',
-                  children: activeSystemRecord ? (
-                    <OperationRecordSection icon={<AuditOutlined />} records={activeOperationRecords} title="对账记录" />
-                  ) : (
-                    <DetailSection icon={<AuditOutlined />} title="对账记录">
-                      <div className="empty-state-text">银行流水已导入，等待匹配或补登记系统流水</div>
-                    </DetailSection>
-                  )
-                }
-              ]}
-              tabTestIdPrefix="bank-reconciliation-detail-tab"
-              testId="bank-reconciliation-detail-tabs"
-            />
+                    <OperationRecordSection icon={<AuditOutlined />} records={activeOperationRecords} title="操作记录" />
+                  </>
+                ) : (
+                  <DetailSection icon={<WarningOutlined />} title="系统流水">
+                    <div className="empty-state-text">暂无匹配的系统对公账户流水</div>
+                  </DetailSection>
+                )}
+              </div>
+
+              {activeShowFooterActions ? (
+                <div className="task-submit-panel-footer">
+                  {activeRecord && activeQuickActionMode ? (
+                    <Button
+                      data-testid="bank-reconciliation-quick-action-button"
+                      icon={<FormOutlined />}
+                      onClick={() => openQuickAction(activeRecord, activeQuickActionMode)}
+                    >
+                      {getQuickActionLabel(activeQuickActionMode)}
+                    </Button>
+                  ) : null}
+                  {activeShowConfirmAction ? (
+                    <Button
+                      data-testid="bank-reconciliation-confirm-button"
+                      disabled={!activeConfirmEligibility.canConfirm}
+                      icon={<CheckCircleOutlined />}
+                      type="primary"
+                      onClick={handleConfirmActiveReconciliation}
+                    >
+                      确认对账
+                    </Button>
+                  ) : null}
+                  {activeShowAmountMismatchAction && activeRecord ? (
+                    <Button
+                      data-testid="bank-reconciliation-adjustment-button"
+                      icon={<SwapOutlined />}
+                      type="primary"
+                      onClick={() => setAdjustmentRecordId(activeRecord.id)}
+                    >
+                      处理金额不一致
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="task-submit-empty-panel">
+              <Empty description="暂无待处理对账" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            </div>
+          )}
+        </section>
+      </div>
+
+      <ImportDrawerShell
+        cancelAction={{ label: '关闭', onClick: closeQuickAction }}
+        className="finance-transaction-drawer"
+        open={Boolean(quickActionMode)}
+        primaryAction={quickDrawerPrimaryAction}
+        title={quickDrawerTitle}
+        width={760}
+        onClose={closeQuickAction}
+      >
+        {quickActionRecord ? (
+          <>
+            <DetailSection icon={<BankOutlined />} title="银行流水">
+              <DetailInfoGrid
+                columns={3}
+                items={[
+                  { label: '银行日期', value: quickActionRecord.statementDate },
+                  {
+                    label: '银行金额',
+                    value: <CellText tone={getBankAmountTone(quickActionRecord.direction)}>{formatSignedMoney(quickActionRecord.amount, quickActionRecord.direction)}</CellText>
+                  },
+                  { label: '对方户名', value: quickActionRecord.counterparty },
+                  { label: '绑定账户', value: quickActionRecord.publicAccountSnapshot.displayName },
+                  { label: '导入账户名', value: quickActionRecord.importedAccountName },
+                  { label: '银行流水号', value: quickActionRecord.bankSerialNo },
+                  { label: '摘要', value: quickActionRecord.summary, wide: true }
+                ]}
+              />
+            </DetailSection>
+
+            {quickActionMode === 'create-system-flow' ? (
+              <DetailSection icon={<FormOutlined />} title="补登记信息">
+                <DrawerFormGrid>
+                  <DrawerFormField label="一级类目" required>
+                    <Select
+                      options={quickPrimaryCategoryOptions.map((category) => ({ label: category.name, value: category.id }))}
+                      value={quickFlowForm.primaryCategoryId}
+                      onChange={handleQuickPrimaryCategoryChange}
+                    />
+                  </DrawerFormField>
+                  <DrawerFormField label="二级类目" required>
+                    <Select
+                      options={quickCategoryOptions.map((category) => ({ label: category.name, value: category.name }))}
+                      value={quickFlowForm.category}
+                      onChange={(value) => updateQuickFlowForm('category', value)}
+                    />
+                  </DrawerFormField>
+                  <DrawerFormField label="来源单号">
+                    <Input value={quickFlowForm.sourceNo} onChange={(event) => updateQuickFlowForm('sourceNo', event.target.value)} />
+                  </DrawerFormField>
+                  <DrawerFormField label="事项说明" required wide>
+                    <Input value={quickFlowForm.sourceTitle} onChange={(event) => updateQuickFlowForm('sourceTitle', event.target.value)} />
+                  </DrawerFormField>
+                  <DrawerFormField label="备注" wide>
+                    <Input.TextArea rows={3} value={quickFlowForm.note} onChange={(event) => updateQuickFlowForm('note', event.target.value)} />
+                  </DrawerFormField>
+                </DrawerFormGrid>
+                <div className="bank-action-note">登记后进入流水复核；复核入账后，本页再确认银行对账。</div>
+              </DetailSection>
+            ) : null}
+
+            {quickActionMode === 'import-bank-statement' ? (
+              <DetailSection icon={<CloudUploadOutlined />} title="补充导入">
+                <DetailInfoGrid
+                  columns={2}
+                  items={[
+                    { label: '建议账户', value: quickActionRecord.publicAccountSnapshot.displayName },
+                    { label: '建议期间', value: quickActionSystemRecord?.accountingPeriod ?? getStatementPeriod(quickActionRecord.statementDate) },
+                    { label: '处理方式', value: '导入银行原始明细后重新自动匹配', wide: true }
+                  ]}
+                />
+                <div className="bank-action-note">这里只打开导入入口，不直接生成或修改系统流水。</div>
+              </DetailSection>
+            ) : null}
+
+            {quickActionMode === 'waiting-review' ? (
+              <DetailSection icon={<AuditOutlined />} title="复核进度">
+                <DetailInfoGrid
+                  columns={3}
+                  items={[
+                    { label: '系统流水', value: quickActionWaitingRecord?.transactionNo ?? '-' },
+                    {
+                      label: '流水状态',
+                      value: quickActionWaitingRecord ? <StatusTag toneMap={transactionStatusTone} value={quickActionWaitingRecord.status} /> : '-'
+                    },
+                    { label: '复核期限', value: quickActionWaitingRecord?.reviewDueAt ?? '-' },
+                    { label: '处理方式', value: '先在流水复核完成入账，再回到本页确认对账', wide: true }
+                  ]}
+                />
+              </DetailSection>
+            ) : null}
           </>
-        ) : null}
-      </WorkflowDrawerShell>
+        ) : (
+          <Empty description="暂无可处理的对账事项" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
+      </ImportDrawerShell>
 
       <ImportDrawerShell
         bodyTestId="bank-reconciliation-import-drawer"
         cancelAction={{ label: '取消', onClick: () => setImportDrawerOpen(false) }}
         className="finance-transaction-drawer"
         open={importDrawerOpen}
-        primaryAction={{ disabled: !selectedImportFileName, label: '导入到银行流水池', onClick: handleConfirmImport }}
-        title={
-          <DetailDrawerTitle
-            status="导入预览"
-            statusTone="blue"
-            title="导入银行流水"
-          />
-        }
+        primaryAction={{
+          disabled: !selectedImportFileName || !selectedImportPublicAccountRef || importHasBlockingPrecheck || importablePreviewRows.length === 0,
+          label: '导入可入池流水',
+          onClick: handleConfirmImport
+        }}
+        title="导入银行流水"
         width={960}
         onClose={() => setImportDrawerOpen(false)}
       >
@@ -1154,8 +1522,24 @@ export function FinanceBankReconciliationPage() {
           <DetailInfoGrid
             columns={3}
             items={[
-              { label: '对公账户', value: publicAccountName },
-              { label: '流水期间', value: currentPeriod },
+              {
+                label: '对公账户',
+                value: (
+                  <Select
+                    disabled={bankImportAccountOptions.length === 0}
+                    options={bankImportAccountOptions}
+                    placeholder="选择启用且支持银行对账的对公账户"
+                    value={selectedImportPublicAccountRef?.publicAccountId}
+                    onChange={setSelectedImportPublicAccountId}
+                  />
+                )
+              },
+              {
+                label: '账单范围',
+                value: (
+                  <CellText tone="default">{bankImportPrecheck.statementRange}</CellText>
+                )
+              },
               { label: '文件格式', value: 'Excel / CSV' },
               {
                 label: '上传文件',
@@ -1181,63 +1565,75 @@ export function FinanceBankReconciliationPage() {
               }
             ]}
           />
+          <div className="bank-import-hint">
+            上传银行导出的原始明细，需包含{requiredBankStatementImportFieldLabels.join('、')}。
+          </div>
+          <div className="bank-import-coverage">
+            <span>本次预览覆盖：{formatPeriodList(bankImportPrecheck.coveredPeriods)}</span>
+            <span>仍建议补充：{formatPeriodCountList(bankImportPrecheck.uncoveredPeriodCounts)}</span>
+          </div>
+        </DetailSection>
+
+        <DetailSection icon={<WarningOutlined />} title="导入预检">
+          <CompactDetailTable<BankImportPrecheckItem>
+            columns={importPrecheckColumns}
+            dataSource={importPrecheckItems}
+            rowKey="item"
+            scrollX={520}
+          />
         </DetailSection>
 
         <DetailSection
-          extra={<CellText tone="subtle">预览 {importPreviewRows.length} 条银行流水</CellText>}
+          extra={
+            <CellText tone="subtle">
+              {`预览 ${bankImportPrecheck.summary.totalCount} 条 / 可入池 ${bankImportPrecheck.summary.importableCount} / 跳过 ${bankImportPrecheck.summary.duplicateCount} / 金额不一致 ${bankImportPrecheck.summary.amountMismatchCount}`}
+            </CellText>
+          }
           icon={<FileSearchOutlined />}
           title="导入预览"
         >
           <CompactDetailTable<BankStatementRecord>
-            columns={statementColumns}
+            columns={importPreviewColumns}
             dataSource={importPreviewRows}
             rowKey="id"
             scrollX={872}
           />
         </DetailSection>
       </ImportDrawerShell>
-      <Modal
-        destroyOnHidden
-        footer={
-          <Space>
-            <Button
-              onClick={() => {
-                setRevokeRecordId(undefined);
-                setRevokeReason('');
-              }}
-            >
-              取消
-            </Button>
-            <Button
-              danger
-              data-testid="bank-reconciliation-revoke-confirm-button"
-              disabled={!revokeReason.trim()}
-              type="primary"
-              onClick={handleSubmitRevokeReconciliation}
-            >
-              确认撤销
-            </Button>
-          </Space>
+      <FinanceTransactionAdjustmentDrawer
+        bankContext={
+          adjustmentRecord
+            ? {
+                amount: adjustmentRecord.amount,
+                bankSerialNo: adjustmentRecord.bankSerialNo,
+                counterparty: adjustmentRecord.counterparty,
+                direction: adjustmentRecord.direction,
+                statementDate: adjustmentRecord.statementDate,
+                summary: adjustmentRecord.summary
+              }
+            : undefined
         }
-        open={Boolean(revokeRecordId)}
-        title="撤销对账"
-        onCancel={() => {
-          setRevokeRecordId(undefined);
-          setRevokeReason('');
+        existingRows={financeRows}
+        open={Boolean(adjustmentRecordId)}
+        originRecord={adjustmentSystemRecord}
+        onClose={() => setAdjustmentRecordId(undefined)}
+        onSubmit={(record) => {
+          addFinanceTransaction(record);
+          setBankStatements((current) =>
+            current.map((bankRecord) =>
+              bankRecord.id === adjustmentRecordId
+                ? {
+                    ...bankRecord,
+                    matchedTransactionIds: Array.from(new Set([...bankRecord.matchedTransactionIds, record.id])),
+                    matchReason: `已生成调整流水 ${record.transactionNo}，等待流水复核后继续处理对账`
+                  }
+                : bankRecord
+            )
+          );
+          setAdjustmentRecordId(undefined);
+          void messageApi.success('已生成待复核调整流水');
         }}
-        onOk={handleSubmitRevokeReconciliation}
-      >
-        <div className="detail-tab-stack">
-          <div className="empty-state-text">撤销后银行流水会回到待确认，系统流水会回到未对账。请填写撤销原因。</div>
-          <Input.TextArea
-            data-testid="bank-reconciliation-revoke-reason-input"
-            placeholder="例如：匹配对象错误，需要重新选择系统流水"
-            rows={4}
-            value={revokeReason}
-            onChange={(event) => setRevokeReason(event.target.value)}
-          />
-        </div>
-      </Modal>
+      />
     </ManagementPageScaffold>
   );
 }

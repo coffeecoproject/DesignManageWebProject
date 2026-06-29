@@ -237,6 +237,7 @@ export function PeopleRolesPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={4}>
           <MetricCard label="业务角色" value={roleRows.length} icon={<SafetyCertificateOutlined />} />

@@ -72,6 +72,7 @@ export function TaskFeedbackPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<ShopOutlined />} label="归档任务" value={metrics.tasks} />

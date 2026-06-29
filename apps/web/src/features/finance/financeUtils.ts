@@ -2,7 +2,6 @@ import type { StatusTagTone } from '../../components/Detail';
 import type { CellTextTone } from '../../components/TableCell';
 import { financeSecondaryCategorySeeds, getFinanceCategorySnapshot } from './financeData';
 import type {
-  FinanceCollectionStatus,
   FinanceInvoiceDeclarationStatus,
   FinancePaymentMethod,
   FinanceReconciliationStatus,
@@ -15,6 +14,7 @@ import type {
 import type { FinanceTransactionInvoiceAssociation, FinanceTransactionInvoiceAssociationStatus } from './financeInvoiceModel';
 
 export const financeToday = '2026-06-15';
+export const financeReviewSlaDays = 1;
 
 export const directionTone = {
   收入: 'green',
@@ -40,17 +40,6 @@ export const voucherStatusTone = {
   待补充: 'amber'
 } as const satisfies Record<FinanceVoucherStatus, StatusTagTone>;
 
-export const collectionStatusTone = {
-  不适用: 'gray',
-  待转入对公: 'amber',
-  部分转入对公: 'blue',
-  已转入对公: 'green',
-  待存入对公: 'amber',
-  已存入对公: 'green',
-  待报销: 'amber',
-  已报销: 'green'
-} as const satisfies Record<FinanceCollectionStatus, StatusTagTone>;
-
 export const invoiceAssociationStatusTone = {
   无需关联: 'gray',
   未关联: 'amber',
@@ -69,17 +58,6 @@ export const invoiceDeclarationStatusTone = {
   后续开票待处理: 'amber',
   后续开票已处理: 'green'
 } as const satisfies Record<FinanceInvoiceDeclarationStatus, StatusTagTone>;
-
-export const collectionStatusDisplayName: Record<FinanceCollectionStatus, string> = {
-  不适用: '不适用',
-  待转入对公: '待转入对公',
-  部分转入对公: '部分转入对公',
-  已转入对公: '已转入对公',
-  待存入对公: '待存入对公',
-  已存入对公: '已存入对公',
-  待报销: '待报销',
-  已报销: '已报销'
-};
 
 export const financeCategoryDisplayName = Object.fromEntries(
   financeSecondaryCategorySeeds.map((category) => [category.name, category.name])
@@ -106,6 +84,38 @@ export function getAccountingPeriod(occurredAt: string) {
   return occurredAt.slice(0, 7);
 }
 
+function formatDate(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getUTCDate()}`.padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+export function addCalendarDays(dateText: string, days: number) {
+  const date = new Date(`${dateText}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+
+  return formatDate(date);
+}
+
+export function getDefaultFinanceReviewDueAt(occurredAt: string) {
+  return addCalendarDays(occurredAt, financeReviewSlaDays);
+}
+
+export function getFinanceTransactionReviewDueAt(
+  record: Pick<FinanceTransactionRecord, 'occurredAt' | 'reviewDueAt'>
+) {
+  return record.reviewDueAt ?? getDefaultFinanceReviewDueAt(record.occurredAt);
+}
+
+export function isFinanceTransactionReviewOverdue(
+  record: Pick<FinanceTransactionRecord, 'occurredAt' | 'reviewDueAt' | 'status'>,
+  today = financeToday
+) {
+  return record.status === '待复核' && getFinanceTransactionReviewDueAt(record) < today;
+}
+
 export function getSignedAmount(record: FinanceTransactionRecord) {
   if (!getFinanceRecordCategorySnapshot(record).includeInReport) {
     return 0;
@@ -119,7 +129,7 @@ export function getSignedAmount(record: FinanceTransactionRecord) {
 }
 
 export function getPublicAccountSignedAmount(record: FinanceTransactionRecord) {
-  if (record.settlementAccountType !== '对公账户') {
+  if (!record.publicAccountId) {
     return 0;
   }
 
@@ -197,10 +207,6 @@ export function getFinanceDirectionLabels(direction: FinanceTransactionDirection
 
   if (paymentMethod === '现金暂收') {
     handler = '现金经办人';
-  }
-
-  if (paymentMethod === '员工垫付') {
-    handler = '垫付员工';
   }
 
   return {

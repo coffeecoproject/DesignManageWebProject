@@ -8,6 +8,9 @@ Owner: `财务管理 / 会计凭证`
 
 Implementation preplan: `docs/governance/finance-accounting-backend-implementation-preplan-v1.md`
 
+Related tax/accounting source contract:
+`docs/data/finance-tax-accounting-backend-contract.md`
+
 ## 1. Purpose
 
 This contract defines the backend boundary for accounting voucher persistence,
@@ -26,11 +29,11 @@ There are four separate layers:
 | --- | --- | --- |
 | Voucher candidate | Derived from source facts such as receivable/payable, invoice, cash-flow, tax matter, or adjustment | no, query result |
 | Accounting voucher | Persisted accounting document with formal voucher number and immutable lines after posting | yes |
-| Posting result | State transition from `已生成` to `已入账`; writes general ledger entries atomically | yes |
+| Posting result | State transition from `已制单` to `已入账`; writes general ledger entries atomically | yes |
 | General ledger | Subject-level debit/credit ledger consumed by later reports | yes |
 
 The backend must not treat a frontend candidate row as an official accounting
-voucher until `POST /api/finance/accounting-vouchers/generate` persists it.
+voucher until `POST /api/finance/accounting-vouchers/prepare` persists it.
 
 ## 2.1 Source Fact Boundary
 
@@ -40,8 +43,8 @@ candidate rows server-side.
 
 | Source fact | Upstream owner | Candidate type | Minimum source status | Blocking facts |
 | --- | --- | --- | --- | --- |
-| Receivable/payable confirmation | `应收应付` | `权责凭证` | confirmation status `已确认` and not voided | missing source document, missing original evidence, missing accounting subject, invoice/tax mismatch |
-| Output invoice / input invoice | `发票台账` and `发票匹配` | supports `权责凭证` or `调整凭证` | invoice status complete enough for accounting treatment | missing original blue invoice for red invoice, missing tax amount, unmatched issued invoice |
+| Receivable/payable confirmation | `应收应付` | `权责凭证` | confirmation status `已确认` and not voided | missing source document, missing original evidence, missing accounting subject, tax basis pending, invoice/tax amount mismatch |
+| Output invoice / input invoice | `发票台账` and `发票匹配` | supports `权责凭证` or `调整凭证` | invoice status complete enough for accounting treatment and linked to a receivable/payable or business confirmation fact | missing original blue invoice for red invoice, missing tax amount, unmatched issued invoice, unmatched business confirmation |
 | System cash-flow row | `收支流水` and `流水复核` | `资金凭证` or `调整凭证` | cash-flow status `已入账` after review | missing voucher file, unreconciled bank statement, bank amount mismatch |
 | Bank statement reconciliation | `银行对账` | supports `资金凭证` | reconciliation status `已对账` | unmatched bank row, unresolved difference, duplicate or disputed import |
 | Tax matter | `税务办理` | `税费凭证` | tax matter confirmed and completed when payable amount exists | missing declaration receipt, missing payment receipt, external handling incomplete |
@@ -49,10 +52,47 @@ candidate rows server-side.
 | Reversal request | `会计凭证` | `冲销凭证` | original voucher status `已入账` | original period closed, already reversed, missing reason |
 
 Source facts keep their own lifecycle. The accounting service may read and
-snapshot them, but it must not mutate upstream business facts while generating
+snapshot them, but it must not mutate upstream business facts while preparing
 or posting vouchers. If upstream facts change after a candidate is shown, the
-backend must recompute the candidate and reject stale generate requests with
+backend must recompute the candidate and reject stale prepare requests with
 `VOUCHER_SOURCE_CHANGED`.
+
+Invoice facts used by `权责凭证` must be matched through business/accrual source
+references, not through ordinary cash-flow transaction numbers. Receivable/
+payable confirmation is the primary accrual fact. A fully matched normal blue
+invoice can provide the preferred tax basis, but missing or partial invoicing
+does not by itself block accrual recognition when the confirmed source fact
+already carries a valid tax basis. Cash-flow transaction refs are valid for
+`资金凭证`; they are not the primary link for accrual invoice-tax allocation. The
+only current exception is later-invoice handling for previously declared
+unbilled income, where the invoice can reference the historical unbilled-income
+cash-flow fact as declaration evidence rather than as an ordinary cash matching
+relation.
+
+Tax-basis and accounting-subject derivation must move behind the backend
+contract in `docs/data/finance-tax-accounting-backend-contract.md`.
+
+The current frontend shared profile
+`apps/web/src/features/finance/financeTaxPolicyModel.ts` defines the prototype
+taxpayer type, VAT calculation method, default output/input tax rate,
+input-tax treatment, VAT declaration threshold/surcharge, and
+corporate-income-tax preparation parameters. It is a mock fallback only. Backend
+voucher implementation must instead consume versioned `tax_policy_profiles`,
+immutable `invoice_tax_facts`, confirmed `receivable_payable_tax_facts`,
+effective `finance_category_accounting_mappings`, and active
+`accounting_subjects`.
+
+Accounting subjects are system-maintained and business-side read-only.
+Finance-category to accounting-subject mappings are finance/system
+configuration. Business documents and accounting voucher pages may display
+resolved subject snapshots, but they must not expose direct subject selection or
+mapping edits. Missing mapping blocks the source fact upstream instead of
+falling back to a default subject.
+
+Imported invoice rows remain external invoice facts and keep their own tax
+amount. A tax-policy profile controls how those facts are consumed; it must not
+overwrite the invoice fact itself. Confirmed receivable/payable tax facts remain
+the accrual fallback when invoice evidence is partial or pending.
 
 ## 2.2 Accounting Recognition Boundary
 
@@ -78,31 +118,31 @@ Candidate rows can be:
 ```text
 待生成
 需处理
-可生成
+待制单
 ```
 
-`可生成` is backend-facing wording for a complete candidate that can be
-persisted. The frontend may render the same state as `已生成` while it is still a
-prototype-only generation row.
+`待制单` means source facts are complete enough to create a formal accounting
+voucher. Candidate rows are still derived query results and are not official
+accounting vouchers.
 
 ### Persisted Voucher Status
 
 Persisted vouchers use:
 
 ```text
-已生成
+已制单
 已入账
 已冲销
 ```
 
 Rules:
 
-- `已生成` means persisted voucher exists, has a formal voucher number, and is not
+- `已制单` means persisted voucher exists, has a formal voucher number, and is not
   posted yet.
 - `已入账` means voucher lines were written to the general ledger.
 - `已冲销` means the original voucher has been reversed by a linked reversal
   voucher. Original voucher lines are not edited in place.
-- A closed accounting period blocks generation, posting, and reversal.
+- A closed accounting period blocks candidate-to-voucher preparation, posting, and reversal.
 
 ## 4. Minimal Data Model
 
@@ -150,7 +190,7 @@ Suggested voucher number format:
 | `voucher_no` | text | yes | unique within period |
 | `voucher_kind` | enum | yes | transfer/receipt/payment |
 | `business_type` | enum | yes | `权责凭证`, `资金凭证`, `税费凭证`, `调整凭证`, `冲销凭证` |
-| `status` | enum | yes | `已生成`, `已入账`, `已冲销` |
+| `status` | enum | yes | `已制单`, `已入账`, `已冲销` |
 | `accounting_period` | text | yes | references `accounting_periods.period` |
 | `voucher_date` | date | yes | must fall inside or be explicitly allowed for period |
 | `amount` | numeric(18,2) | yes | absolute voucher amount |
@@ -158,8 +198,8 @@ Suggested voucher number format:
 | `source_hash` | text | yes | deterministic hash of source facts used for idempotency |
 | `reversal_of_voucher_id` | uuid | no | set on reversal voucher |
 | `reversed_by_voucher_id` | uuid | no | set on original voucher after reversal |
-| `generated_at` | timestamptz | yes | creation time |
-| `generated_by` | uuid | yes | operator |
+| `prepared_at` | timestamptz | yes | formal voucher preparation time |
+| `prepared_by` | uuid | yes | preparation operator |
 | `posted_at` | timestamptz | no | set on posting |
 | `posted_by` | uuid | no | posting operator |
 | `reversed_at` | timestamptz | no | set on original after reversal |
@@ -171,8 +211,8 @@ Required constraints:
 
 - Unique `(accounting_period, voucher_no)`.
 - Unique active `source_hash` for non-reversal vouchers to prevent duplicate
-  generation from the same source fact.
-- `debit_total = credit_total` must be verified before insert and before post.
+  preparation from the same source fact.
+- `debit_total = credit_total` must be verified before preparation insert and before post.
 - `已入账` vouchers cannot update lines, source refs, amount, or period.
 
 ### `accounting_voucher_lines`
@@ -208,7 +248,10 @@ Required indexes:
 | `source_no` | text | yes | upstream display no |
 | `role` | enum | yes | `主来源`, `发票依据`, `申报依据`, `缴款依据`, `冲销依据` |
 | `source_version` | integer | no | source version at generation time |
-| `source_hash` | text | yes | hash of source facts used when the voucher was generated |
+| `source_hash` | text | yes | hash of source facts used when the voucher was prepared |
+| `source_tax_fact_id` | uuid | no | receivable/payable tax fact used by accrual candidates |
+| `tax_policy_profile_id` | uuid | no | tax policy profile snapshot reference |
+| `category_accounting_mapping_id` | uuid | no | finance-category accounting mapping snapshot reference |
 | `snapshot` | jsonb | yes | minimal immutable display/audit snapshot; no secret values |
 
 Required constraints:
@@ -216,6 +259,8 @@ Required constraints:
 - Unique `(voucher_id, source_module, source_id, role)`.
 - `snapshot` must include the user-facing source number/title, source amount,
   accounting period, and source status used for candidate generation.
+- Accrual source snapshots should include the source tax fact id, tax-policy
+  profile id, and category-accounting mapping id when those facts were used.
 
 ### `accounting_voucher_invoice_refs`
 
@@ -240,8 +285,8 @@ amounts, tax amounts, invoice color, and red/blue invoice relations.
 Required constraints:
 
 - Unique `(voucher_id, invoice_id)`.
-- Red invoices that affect a generated voucher must either link an original
-  blue invoice or produce `reversal_required` before generation.
+- Red invoices that affect a prepared voucher must either link an original
+  blue invoice or produce `reversal_required` before preparation.
 
 ### `general_ledger_entries`
 
@@ -348,7 +393,7 @@ Candidate response row shape:
   "candidateId": "candidate-source-hash",
   "businessType": "权责凭证",
   "voucherKind": "转账凭证",
-  "candidateStatus": "可生成",
+  "candidateStatus": "待制单",
   "accountingPeriod": "2026-06",
   "voucherDate": "2026-06-30",
   "amount": "68000.00",
@@ -359,13 +404,13 @@ Candidate response row shape:
   "lines": [],
   "issueReasons": [],
   "periodStatus": "开放",
-  "alreadyGeneratedVoucherId": null
+  "preparedVoucherId": null
 }
 ```
 
 If a candidate source hash is already persisted as a non-reversal voucher,
-`alreadyGeneratedVoucherId` must be populated and generation must be rejected as
-`VOUCHER_ALREADY_GENERATED`.
+`preparedVoucherId` must be populated and preparation must be rejected as
+`VOUCHER_ALREADY_PREPARED`.
 
 ### Read Candidate Detail
 
@@ -376,9 +421,9 @@ source snapshots, invoice/tax/bank evidence, issue reasons, and period status.
 This endpoint is the backend equivalent of the current frontend drawer detail
 before a voucher is persisted.
 
-### Generate Voucher
+### Prepare Voucher
 
-`POST /api/finance/accounting-vouchers/generate`
+`POST /api/finance/accounting-vouchers/prepare`
 
 Request:
 
@@ -397,11 +442,11 @@ Backend behavior:
 - Reject if period is closed.
 - Allocate formal voucher number inside the same transaction.
 - Persist voucher, lines, source refs, invoice refs when present, and event log.
-- Return persisted voucher in `已生成` status.
+- Return persisted voucher in `已制单` status.
 
-### Batch Generate Vouchers
+### Batch Prepare Vouchers
 
-`POST /api/finance/accounting-vouchers/batch-generate`
+`POST /api/finance/accounting-vouchers/batch-prepare`
 
 Request:
 
@@ -415,10 +460,10 @@ Request:
 Backend behavior:
 
 - Recompute every candidate server-side.
-- Generate only candidates that are complete and in open periods.
-- Run every generated voucher in its own database transaction or return a
+- Prepare only candidates that are complete and in open periods.
+- Run every prepared voucher in its own database transaction or return a
   per-row result list; do not partially hide failed rows.
-- Return per-candidate status: `generated`, `skipped`, or `failed` with error
+- Return per-candidate status: `prepared`, `skipped`, or `failed` with error
   code and source hash.
 
 ### Post Voucher
@@ -437,7 +482,7 @@ Request:
 Backend behavior:
 
 - Lock voucher row.
-- Reject if voucher status is not `已生成`.
+- Reject if voucher status is not `已制单`.
 - Reject if accounting period is closed.
 - Verify debit/credit balance again.
 - Write one general-ledger entry per voucher line.
@@ -485,7 +530,7 @@ Backend behavior:
 - Reject if original accounting period is closed.
 - Create a new `冲销凭证` with opposite debit/credit lines.
 - Allocate a new formal voucher number.
-- Post the reversal voucher in the same transaction, or return it as `已生成`
+- Post the reversal voucher in the same transaction, or return it as `已制单`
   only if the product later requires explicit review.
 - Mark original voucher `已冲销` and link both voucher ids.
 
@@ -552,7 +597,7 @@ reports or period close can rely on it.
 
 `GET /api/finance/accounting-periods`
 
-Returns period status, close/reopen metadata, generated voucher count, posted
+Returns period status, close/reopen metadata, prepared voucher count, posted
 voucher count, unposted voucher count, blocking candidate count, and trial
 balance status.
 
@@ -584,7 +629,7 @@ Request:
 
 Backend behavior:
 
-- Reject if any persisted voucher in the period is still `已生成`.
+- Reject if any persisted voucher in the period is still `已制单`.
 - Reject if any required source workflow has unresolved blocking candidate rows
   that the product decides must be closed before month-end.
 - Reject if trial balance is not balanced.
@@ -604,15 +649,15 @@ audit evidence. It is not part of normal frontend flow.
 | Code | Meaning |
 | --- | --- |
 | `ACCOUNTING_PERIOD_CLOSED` | Period is closed and blocks mutation |
-| `ACCOUNTING_PERIOD_HAS_UNPOSTED_VOUCHERS` | Period close found generated but unposted vouchers |
+| `ACCOUNTING_PERIOD_HAS_UNPOSTED_VOUCHERS` | Period close found prepared but unposted vouchers |
 | `ACCOUNTING_PERIOD_HAS_BLOCKING_CANDIDATES` | Period close found source facts that still block candidate generation |
 | `ACCOUNTING_TRIAL_BALANCE_UNBALANCED` | Trial balance is not balanced and blocks period close/report readiness |
 | `CANDIDATE_NOT_FOUND` | Candidate id cannot be recomputed from server facts |
-| `CANDIDATE_NOT_GENERATABLE` | Candidate status is not complete enough to persist |
+| `CANDIDATE_NOT_PREPARABLE` | Candidate status is not complete enough to prepare as a formal voucher |
 | `VOUCHER_SOURCE_CHANGED` | Candidate source hash no longer matches server facts |
 | `VOUCHER_HAS_BLOCKING_ISSUES` | Candidate still has issue reasons |
-| `VOUCHER_ALREADY_GENERATED` | Source hash already has a persisted active voucher |
-| `VOUCHER_NOT_GENERATED` | Posting requires persisted generated voucher |
+| `VOUCHER_ALREADY_PREPARED` | Source hash already has a persisted active voucher |
+| `VOUCHER_NOT_PREPARED` | Posting requires a persisted prepared voucher |
 | `VOUCHER_ALREADY_POSTED` | Duplicate post attempt |
 | `VOUCHER_ALREADY_REVERSED` | Duplicate reversal attempt |
 | `VOUCHER_UNBALANCED` | Debit and credit totals differ |
@@ -627,8 +672,8 @@ Required permission scopes:
 
 - `finance.accountingVoucher.read`
 - `finance.accountingVoucher.candidateRead`
-- `finance.accountingVoucher.generate`
-- `finance.accountingVoucher.batchGenerate`
+- `finance.accountingVoucher.prepare`
+- `finance.accountingVoucher.batchPrepare`
 - `finance.accountingVoucher.post`
 - `finance.accountingVoucher.batchPost`
 - `finance.accountingVoucher.reverse`
@@ -658,7 +703,7 @@ Audit event minimum payload:
 
 ## 8. Transaction And Concurrency Rules
 
-- Generate voucher, allocate voucher number, persist lines/source refs/invoice
+- Prepare voucher, allocate voucher number, persist lines/source refs/invoice
   refs, and append the event log in one database transaction.
 - Post voucher and write ledger entries in one database transaction.
 - Reverse voucher, create reversal voucher, post reversal entries, update the
@@ -678,20 +723,22 @@ Backend implementation must add contract tests before API readiness is claimed.
 
 | Scenario | Expected result |
 | --- | --- |
-| complete receivable plus matched output invoice | candidate `可生成`; generate creates transfer voucher with receivable/revenue/tax lines |
-| receivable missing output invoice or unbilled treatment | candidate `需处理`; generate returns `VOUCHER_HAS_BLOCKING_ISSUES` |
-| completed payable with input invoice under small-scale taxpayer baseline | cost/expense voucher generated without VAT input-deduction line |
-| reviewed cash-flow not bank-reconciled | candidate `待生成`; generate returns `CANDIDATE_NOT_GENERATABLE` |
-| reviewed and bank-reconciled cash-flow | candidate `可生成`; generate creates receipt/payment voucher |
-| bank amount mismatch | candidate `需处理`; no voucher generation until adjustment facts resolve difference |
-| completed tax matter missing receipt | candidate `需处理`; generate blocked |
-| posting generated voucher | voucher becomes `已入账`; exactly one ledger entry per line |
+| source period has no active tax-policy profile | source tax fact cannot be confirmed; no accrual voucher candidate is returned |
+| finance category lacks effective accounting mapping | source tax fact stays in source readiness; no voucher candidate is returned |
+| complete receivable plus matched output invoice | candidate `待制单`; prepare creates transfer voucher with receivable/revenue/tax lines |
+| receivable missing both invoice tax fact and source tax basis | row stays in source readiness; no accounting-voucher candidate is returned |
+| completed payable with input invoice under small-scale taxpayer baseline | cost/expense voucher prepared without VAT input-deduction line |
+| reviewed cash-flow not bank-reconciled | candidate `待生成`; prepare returns `CANDIDATE_NOT_PREPARABLE` |
+| reviewed and bank-reconciled cash-flow | candidate `待制单`; prepare creates receipt/payment voucher |
+| bank amount mismatch | candidate `需处理`; no voucher preparation until adjustment facts resolve difference |
+| completed tax matter missing receipt | candidate `需处理`; prepare blocked |
+| posting prepared voucher | voucher becomes `已入账`; exactly one ledger entry per line |
 | duplicate posting request | idempotent replay or `VOUCHER_ALREADY_POSTED`; no duplicate ledger rows |
 | reverse posted voucher | linked reversal voucher created; original becomes `已冲销` |
-| close period with generated unposted voucher | close returns `ACCOUNTING_PERIOD_HAS_UNPOSTED_VOUCHERS` |
+| close period with prepared unposted voucher | close returns `ACCOUNTING_PERIOD_HAS_UNPOSTED_VOUCHERS` |
 | close period with unbalanced trial balance | close returns `ACCOUNTING_TRIAL_BALANCE_UNBALANCED` |
-| closed period generate/post/reverse | mutation returns `ACCOUNTING_PERIOD_CLOSED` |
-| changed source hash after candidate display | generate returns `VOUCHER_SOURCE_CHANGED` |
+| closed period prepare/post/reverse | mutation returns `ACCOUNTING_PERIOD_CLOSED` |
+| changed source hash after candidate display | prepare returns `VOUCHER_SOURCE_CHANGED` |
 
 ## 10. Frontend API Adapter Boundary
 
@@ -702,8 +749,8 @@ directly from page components. Add an adapter boundary such as:
 financeAccountingVoucherRepository
   listCandidates
   readCandidate
-  generateVoucher
-  batchGenerateVouchers
+  prepareVoucher
+  batchPrepareVouchers
   listVouchers
   readVoucher
   postVoucher
@@ -730,7 +777,7 @@ Minimum release evidence before production use:
 - seed data that replays at least one accrual, cash, tax, adjustment, and
   reversal path;
 - API contract tests for all scenarios in this document;
-- permission tests for read/generate/post/reverse/period-close scopes;
+- permission tests for read/prepare/post/reverse/period-close scopes;
 - idempotency and sequence-concurrency tests;
 - backup/restore drill covering posted vouchers and ledger entries;
 - report-readiness proof that trial balance reads only posted ledger entries.
@@ -747,9 +794,11 @@ Rollback policy:
 Current frontend mapping:
 
 - Candidate rows are generated by `buildAccountingVouchers`.
-- Frontend `已生成` rows are still recalculated candidates.
-- Frontend `postAccountingVoucher` simulates backend generation plus posting in
-  one session-local action and assigns a mock formal voucher number.
+- Frontend `待制单` rows are still recalculated candidates.
+- Frontend `prepareAccountingVoucher` simulates backend formal voucher
+  preparation in one session-local action and assigns a mock formal voucher number.
+- Frontend `postAccountingVoucher` simulates posting a session-local `已制单`
+  voucher to ledger.
 - Frontend `reverseAccountingVoucher` simulates reversal by marking the row
   `已冲销`; backend must create a linked reversal voucher instead.
 - Frontend `buildAccountingLedgerEntries` derives ledger rows from session-local

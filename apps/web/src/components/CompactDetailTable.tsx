@@ -24,17 +24,19 @@ export function CompactDetailTable<T extends object>({
   const resolvedClassName = ['detail-table', 'detail-table-compact', className].filter(Boolean).join(' ');
 
   return (
-    <Table<T>
-      className={resolvedClassName}
-      columns={columns}
-      dataSource={dataSource}
-      expandable={expandable}
-      locale={emptyText ? { emptyText } : undefined}
-      pagination={false}
-      rowKey={rowKey}
-      rowSelection={rowSelection}
-      scroll={scroll}
-      size="small"
-    />
+    <div className="compact-detail-table-scroll">
+      <Table<T>
+        className={resolvedClassName}
+        columns={columns}
+        dataSource={dataSource}
+        expandable={expandable}
+        locale={emptyText ? { emptyText } : undefined}
+        pagination={false}
+        rowKey={rowKey}
+        rowSelection={rowSelection}
+        scroll={scroll}
+        size="small"
+      />
+    </div>
   );
 }

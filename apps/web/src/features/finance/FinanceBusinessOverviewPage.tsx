@@ -5,7 +5,7 @@ import {
 } from '@ant-design/icons';
 import { Segmented } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { useMemo, useState } from 'react';
+import { type CSSProperties, useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import {
   DateScopeFilter,
@@ -17,7 +17,7 @@ import { DashboardPanel } from '../../components/DashboardPanel';
 import { FilterBar, FilterField, FilterPanel } from '../../components/FilterControls';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { CellText, type CellTextTone } from '../../components/TableCell';
-import { getDefaultPublicAccount, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
+import { usePublicAccountConfigState } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from './FinanceManagementState';
 import {
   buildFinanceBusinessOverview,
@@ -26,9 +26,9 @@ import {
   type FinanceBusinessOverviewCategoryRow,
   type FinanceBusinessOverviewComparison,
   type FinanceBusinessOverviewMetric,
+  type FinanceBusinessOverviewPublicAccountBaseline,
   type FinanceBusinessOverviewStatusItem
 } from './financeBusinessOverviewModel';
-import { financeReceivablePayableRecords } from './financeReceivablesPayablesData';
 import { formatMoney } from './financeUtils';
 
 type BusinessOverviewDateScope = DateScopeFilterValue;
@@ -95,6 +95,12 @@ function getPeriodLabel(value: BusinessOverviewDateScope) {
   return `${value.range.startDate} 至 ${value.range.endDate}`;
 }
 
+function getStatusPanelTitle(basis: FinanceBusinessOverviewBasis, value: BusinessOverviewDateScope) {
+  const title = basis === 'business-confirmation' ? '确认状态' : '资金状态';
+
+  return `${title} · ${getPeriodLabel(value)}`;
+}
+
 function getMetricCardTone(metric: FinanceBusinessOverviewMetric) {
   if (metric.tone === 'income') return 'income';
   if (metric.tone === 'expense') return 'expense';
@@ -108,7 +114,7 @@ function renderAmount(amount: number, tone?: CellTextTone) {
 }
 
 function renderPercent(value: number) {
-  return <CellText tone="muted">{formatPercent(value)}</CellText>;
+  return <CellText tone="subtle">{formatPercent(value)}</CellText>;
 }
 
 function createCategoryColumns(amountTitle: string, amountTone: CellTextTone): TableColumnsType<FinanceBusinessOverviewCategoryRow> {
@@ -148,8 +154,10 @@ function createCategoryColumns(amountTitle: string, amountTone: CellTextTone): T
 }
 
 function BusinessOverviewMetricStrip({ metrics }: { metrics: FinanceBusinessOverviewMetric[] }) {
+  const gridStyle = { '--business-overview-stat-count': metrics.length } as CSSProperties;
+
   return (
-    <div className="business-overview-stat-grid">
+    <div className="business-overview-stat-grid" style={gridStyle}>
       {metrics.map((metric) => (
         <div className="business-overview-stat-card" data-tone={getMetricCardTone(metric)} key={metric.key}>
           <span className="business-overview-stat-label">{metric.label}</span>
@@ -179,23 +187,33 @@ function BusinessOverviewStatusStrip({ items }: { items: FinanceBusinessOverview
 }
 
 export function FinanceBusinessOverviewPage() {
-  const { financeRows } = useFinanceManagement();
+  const { financeRows, receivablePayableRows } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
   const [basis, setBasis] = useState<FinanceBusinessOverviewBasis>('business-confirmation');
   const [dateScope, setDateScope] = useState<BusinessOverviewDateScope>(defaultBusinessOverviewDateScope);
 
-  const publicAccountOpeningBalance = getDefaultPublicAccount(publicAccounts)?.openingBalance ?? 0;
+  const publicAccountBaselines = useMemo<FinanceBusinessOverviewPublicAccountBaseline[]>(
+    () =>
+      publicAccounts
+        .filter((account) => account.status === '启用')
+        .map((account) => ({
+          openingBalance: account.openingBalance,
+          openingBalanceDate: account.openingBalanceDate,
+          publicAccountId: account.id
+        })),
+    [publicAccounts]
+  );
   const range = useMemo(() => getDateScopeRange(dateScope, financeBusinessOverviewDefaultMonth), [dateScope]);
   const report = useMemo(
     () =>
       buildFinanceBusinessOverview({
-        accrualRecords: financeReceivablePayableRecords,
+        accrualRecords: receivablePayableRows,
         basis,
         financeRows,
-        publicAccountOpeningBalance,
+        publicAccountBaselines,
         range
       }),
-    [basis, financeRows, publicAccountOpeningBalance, range]
+    [basis, financeRows, publicAccountBaselines, range, receivablePayableRows]
   );
   const incomeColumns = useMemo(
     () => createCategoryColumns(basis === 'business-confirmation' ? '确认金额' : '入账金额', 'income'),
@@ -209,36 +227,34 @@ export function FinanceBusinessOverviewPage() {
   const costTitle = basis === 'business-confirmation' ? '成本确认' : '现金支出';
 
   return (
-    <ManagementPageScaffold
-      filters={
-        <FilterPanel>
-          <FilterBar>
-            <FilterField as="div" controlWidth="wide-select" label="经营视角">
-              <Segmented<FinanceBusinessOverviewBasis>
-                data-testid="finance-business-overview-basis"
-                options={businessOverviewBasisOptions}
-                value={basis}
-                onChange={setBasis}
-              />
-            </FilterField>
-            <DateScopeFilter
-              defaultMonth={financeBusinessOverviewDefaultMonth}
-              defaultRange={defaultBusinessOverviewMonthRange}
-              label="经营期间"
-              testIdPrefix="finance-business-overview-date"
-              value={dateScope}
-              onChange={setDateScope}
+    <ManagementPageScaffold pageId="finance-business-overview">
+      <FilterPanel>
+        <FilterBar>
+          <FilterField as="div" controlWidth="wide-select" label="经营视角">
+            <Segmented<FinanceBusinessOverviewBasis>
+              data-testid="finance-business-overview-basis"
+              options={businessOverviewBasisOptions}
+              value={basis}
+              onChange={setBasis}
             />
-          </FilterBar>
-        </FilterPanel>
-      }
-      metrics={<BusinessOverviewMetricStrip metrics={report.metrics} />}
-      pageId="finance-business-overview"
-    >
+          </FilterField>
+          <DateScopeFilter
+            defaultMonth={financeBusinessOverviewDefaultMonth}
+            defaultRange={defaultBusinessOverviewMonthRange}
+            label="经营期间"
+            testIdPrefix="finance-business-overview-date"
+            value={dateScope}
+            onChange={setDateScope}
+          />
+        </FilterBar>
+      </FilterPanel>
+
+      <BusinessOverviewMetricStrip metrics={report.metrics} />
+
       <DashboardPanel
         className="business-overview-period-panel"
         icon={<WarningOutlined />}
-        title={`经营状态 · ${getPeriodLabel(dateScope)}`}
+        title={getStatusPanelTitle(basis, dateScope)}
       >
         <BusinessOverviewStatusStrip items={report.statusItems} />
       </DashboardPanel>

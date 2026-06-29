@@ -122,19 +122,9 @@ const TaskFeedbackPage = lazy(() =>
     default: module.TaskFeedbackPage
   }))
 );
-const FinanceOverviewPage = lazy(() =>
-  import('../features/finance/FinanceOverviewPage').then((module) => ({
-    default: module.FinanceOverviewPage
-  }))
-);
 const FinanceBusinessOverviewPage = lazy(() =>
   import('../features/finance/FinanceBusinessOverviewPage').then((module) => ({
     default: module.FinanceBusinessOverviewPage
-  }))
-);
-const FinanceStatisticsPage = lazy(() =>
-  import('../features/finance/FinanceReportsPage').then((module) => ({
-    default: module.FinanceReportsPage
   }))
 );
 const FinanceReceivablesPayablesPage = lazy(() =>
@@ -177,14 +167,19 @@ const FinanceReviewPage = lazy(() =>
     default: module.FinanceReviewPage
   }))
 );
-const FinanceFundHandlingPage = lazy(() =>
-  import('../features/finance/FinanceFundHandlingPage').then((module) => ({
-    default: module.FinanceFundHandlingPage
+const FinanceAccountLedgerPage = lazy(() =>
+  import('../features/finance/FinanceAccountLedgerPage').then((module) => ({
+    default: module.FinanceAccountLedgerPage
   }))
 );
-const FinancePublicAccountPage = lazy(() =>
-  import('../features/finance/FinancePublicAccountPage').then((module) => ({
-    default: module.FinancePublicAccountPage
+const FinanceAccountingSubjectsPage = lazy(() =>
+  import('../features/finance/FinanceAccountingSubjectsPage').then((module) => ({
+    default: module.FinanceAccountingSubjectsPage
+  }))
+);
+const FinanceAccountingVouchersPage = lazy(() =>
+  import('../features/finance/FinanceAccountingVouchersPage').then((module) => ({
+    default: module.FinanceAccountingVouchersPage
   }))
 );
 const FinanceBankReconciliationPage = lazy(() =>
@@ -230,6 +225,16 @@ const MyTaskSubmitPage = lazy(() =>
 const MyTaskAcceptancePage = lazy(() =>
   import('../features/my-work/MyWorkPages').then((module) => ({
     default: module.MyTaskAcceptancePage
+  }))
+);
+const MyExpenseCollectionPage = lazy(() =>
+  import('../features/my-work/MyExpenseCollectionPage').then((module) => ({
+    default: module.MyExpenseCollectionPage
+  }))
+);
+const MyExpenseReviewPage = lazy(() =>
+  import('../features/my-work/MyExpenseReviewPage').then((module) => ({
+    default: module.MyExpenseReviewPage
   }))
 );
 const MyArchivePage = lazy(() =>
@@ -284,6 +289,14 @@ export const router = createBrowserRouter([
       {
         path: 'my-work/task-acceptance',
         element: withPageSuspense(<MyTaskAcceptancePage />)
+      },
+      {
+        path: 'my-work/expense-collection',
+        element: withPageSuspense(<MyExpenseCollectionPage />)
+      },
+      {
+        path: 'my-work/expense-review',
+        element: withPageSuspense(<MyExpenseReviewPage />)
       },
       {
         path: 'my-work/archive',
@@ -411,23 +424,15 @@ export const router = createBrowserRouter([
       },
       {
         path: 'finance',
-        element: <Navigate to="/finance/overview" replace />
+        element: <Navigate to="/finance/business-overview" replace />
       },
       {
         path: 'finance/overview',
-        element: withPageSuspense(<FinanceOverviewPage />)
+        element: <Navigate to="/finance/business-overview" replace />
       },
       {
         path: 'finance/business-overview',
         element: withPageSuspense(<FinanceBusinessOverviewPage />)
-      },
-      {
-        path: 'finance/statistics',
-        element: withPageSuspense(<FinanceStatisticsPage />)
-      },
-      {
-        path: 'finance/reports',
-        element: <Navigate to="/finance/statistics" replace />
       },
       {
         path: 'finance/receivables-payables',
@@ -442,16 +447,20 @@ export const router = createBrowserRouter([
         element: withPageSuspense(<FinanceReviewPage />)
       },
       {
-        path: 'finance/fund-handling',
-        element: withPageSuspense(<FinanceFundHandlingPage />)
-      },
-      {
-        path: 'finance/public-account',
-        element: withPageSuspense(<FinancePublicAccountPage />)
-      },
-      {
         path: 'finance/bank-reconciliation',
         element: withPageSuspense(<FinanceBankReconciliationPage />)
+      },
+      {
+        path: 'finance/account-ledger',
+        element: withPageSuspense(<FinanceAccountLedgerPage />)
+      },
+      {
+        path: 'finance/accounting-subjects',
+        element: withPageSuspense(<FinanceAccountingSubjectsPage />)
+      },
+      {
+        path: 'finance/accounting-vouchers',
+        element: withPageSuspense(<FinanceAccountingVouchersPage />)
       },
       {
         path: 'tax',

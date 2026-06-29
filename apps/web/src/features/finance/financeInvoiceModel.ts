@@ -1,5 +1,10 @@
 import type { FinanceTransactionRecord } from './financeData';
-import type { FinanceInvoiceDirection, FinanceInvoiceMatchStatus, FinanceInvoiceRecord } from './financeInvoiceData';
+import type {
+  FinanceInvoiceDirection,
+  FinanceInvoiceMatchedBusinessRef,
+  FinanceInvoiceMatchStatus,
+  FinanceInvoiceRecord
+} from './financeInvoiceData';
 
 export type FinanceTransactionInvoiceAssociationStatus = '无需关联' | '未关联' | '部分关联' | '已关联';
 export type FinanceRedInvoiceOriginalAssociationStatus = '待关联原票' | '已关联原票';
@@ -53,11 +58,11 @@ export function isSameMoneyAmount(left: number, right: number) {
 }
 
 export function getInvoiceMatchedAmount(record: FinanceInvoiceRecord) {
-  return record.matchedTransactions.reduce((total, match) => total + match.amount, 0);
+  return record.matchedBusinessRefs.reduce((total, match) => total + match.amount, 0);
 }
 
-export function getInvoiceMatchedTransactionNos(record: FinanceInvoiceRecord) {
-  return Array.from(new Set(record.matchedTransactions.map((match) => match.transactionNo)));
+export function getInvoiceMatchedBusinessNos(record: FinanceInvoiceRecord) {
+  return Array.from(new Set(record.matchedBusinessRefs.map((match) => match.recordNo)));
 }
 
 export function getInvoiceMatchStatus(record: FinanceInvoiceRecord): FinanceInvoiceMatchStatus {
@@ -144,12 +149,19 @@ export function isTransactionInvoiceAssociationRequired(record: FinanceTransacti
   return false;
 }
 
-function getMatchedTransactionContribution(invoice: FinanceInvoiceRecord, amount: number) {
+function getMatchedBusinessContribution(invoice: FinanceInvoiceRecord, amount: number) {
   if (invoice.invoiceStatus === '红冲') {
     return 0;
   }
 
   return Math.max(0, amount);
+}
+
+export function doesInvoiceBusinessRefMatchTransaction(
+  record: FinanceTransactionRecord,
+  ref: FinanceInvoiceMatchedBusinessRef
+) {
+  return ref.sourceNo === record.sourceNo || ref.recordNo === record.sourceNo || ref.sourceNo === record.transactionNo;
 }
 
 export function buildTransactionInvoiceAssociation(
@@ -158,8 +170,8 @@ export function buildTransactionInvoiceAssociation(
 ): FinanceTransactionInvoiceAssociation {
   const requiredAmount = isTransactionInvoiceAssociationRequired(record) ? record.amount : 0;
   const matchedInvoices = invoices.flatMap((invoice) =>
-    invoice.matchedTransactions
-      .filter((match) => match.transactionNo === record.transactionNo)
+    invoice.matchedBusinessRefs
+      .filter((match) => doesInvoiceBusinessRefMatchTransaction(record, match))
       .map((match) => ({
         amount: match.amount,
         counterparty: invoice.counterparty,
@@ -185,10 +197,10 @@ export function buildTransactionInvoiceAssociation(
   const matchedAmount = invoices.reduce(
     (total, invoice) =>
       total +
-      invoice.matchedTransactions.reduce(
+      invoice.matchedBusinessRefs.reduce(
         (invoiceTotal, match) =>
-          match.transactionNo === record.transactionNo
-            ? invoiceTotal + getMatchedTransactionContribution(invoice, match.amount)
+          doesInvoiceBusinessRefMatchTransaction(record, match)
+            ? invoiceTotal + getMatchedBusinessContribution(invoice, match.amount)
             : invoiceTotal,
         0
       ),

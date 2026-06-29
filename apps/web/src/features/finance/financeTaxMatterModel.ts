@@ -1,5 +1,6 @@
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import type { SalaryMonthlyReport } from '../salary/salaryDomain';
+import type { PublicAccountRef } from '../system/PublicAccountConfigState';
 import {
   getFinanceCategorySnapshot,
   type FinancePrimaryCategoryConfig,
@@ -13,7 +14,7 @@ import type {
   FinanceTaxMatterSourceItem,
   FinanceTaxMatterType
 } from './financeTaxFilingData';
-import { financeToday } from './financeUtils';
+import { financeToday, getDefaultFinanceReviewDueAt } from './financeUtils';
 
 export type SocialInsuranceTaxMatterSummary = {
   category: SocialInsuranceCategory;
@@ -456,16 +457,16 @@ export function buildTaxMatterPaymentTransaction({
   financePrimaryCategories,
   financeRows,
   financeSecondaryCategories,
+  publicAccountRef,
   record,
-  settlementAccount
 }: {
   financePrimaryCategories?: FinancePrimaryCategoryConfig[];
   financeRows: FinanceTransactionRecord[];
   financeSecondaryCategories?: FinanceSecondaryCategoryConfig[];
+  publicAccountRef?: PublicAccountRef;
   record: FinanceTaxMatterRecord;
-  settlementAccount: string;
 }): FinanceTransactionRecord | undefined {
-  if (!['部分缴纳', '已缴纳'].includes(record.paymentStatus) || record.paidAmount <= 0) {
+  if (!publicAccountRef || !['部分缴纳', '已缴纳'].includes(record.paymentStatus) || record.paidAmount <= 0) {
     return undefined;
   }
 
@@ -490,7 +491,6 @@ export function buildTaxMatterPaymentTransaction({
     amount: amountToRegister,
     category: '税费缴纳',
     categorySnapshot: getFinanceCategorySnapshot('税费缴纳', financePrimaryCategories, financeSecondaryCategories),
-    collectionStatus: '不适用',
     counterparty: getTaxMatterCounterparty(record.matterType),
     counterpartyType: '内部',
     currency: 'CNY',
@@ -510,10 +510,11 @@ export function buildTaxMatterPaymentTransaction({
       }
     ],
     paymentMethod: '对公账户付款',
+    publicAccountId: publicAccountRef.publicAccountId,
+    publicAccountSnapshot: publicAccountRef.publicAccountSnapshot,
     reconciliationStatus: '未对账',
     registeredBy: '李明',
-    settlementAccount,
-    settlementAccountType: '对公账户',
+    reviewDueAt: getDefaultFinanceReviewDueAt(occurredAt),
     sourceNo: record.matterNo,
     sourceTitle: record.title,
     sourceType: '税费事项',

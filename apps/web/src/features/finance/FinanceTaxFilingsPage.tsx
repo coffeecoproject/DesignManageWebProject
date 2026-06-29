@@ -30,11 +30,11 @@ import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
-import { RelatedFileTable } from '../../components/RelatedFileTable';
+import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { TagChip, type TagChipTone } from '../../components/TagChip';
 import { CompactCell } from '../../components/TableCell';
 import { useFinanceCategoryState } from '../system/FinanceCategoryState';
-import { buildPublicAccountOptions, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
+import { getDefaultPublicAccountRef, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
 import { isSalaryMonthlySettled } from '../salary/salaryDomain';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 import { useSalaryMonthlyReportBuilder } from '../salary/salaryReportBuilder';
@@ -48,7 +48,6 @@ import {
 import { PayrollIitEmployeeDetailPanel } from './PayrollIitEmployeeDetailPanel';
 import { SocialInsuranceContributionDetailPanel } from './SocialInsuranceContributionDetailPanel';
 import {
-  financeTaxMatterRecords,
   getTaxMatterFileStatus,
   taxMatterProcessStatusTone,
   taxMatterSourceStatusTone,
@@ -185,7 +184,7 @@ const taxMatterSourceTemplates: Record<FinanceTaxMatterType, Array<Pick<FinanceT
   ],
   印花税: [
     { name: '合同签署记录', sourceModule: '合同管理' },
-    { name: '特定业务事项', sourceModule: '财务统计' }
+    { name: '特定业务事项', sourceModule: '经营数据' }
   ],
   其他税费: [
     { name: '税费事项资料', sourceModule: '财务管理' }
@@ -752,13 +751,20 @@ function applyDeclarationPreparationsToTaxMatters(
 }
 
 function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterModuleScope }) {
-  const { addFinanceTransaction, declarationPreparationRows, financeRows, invoiceRows, updateDeclarationPreparationRecord } = useFinanceManagement();
+  const {
+    addFinanceTransaction,
+    declarationPreparationRows,
+    financeRows,
+    invoiceRows,
+    taxMatterRows,
+    updateDeclarationPreparationRecord,
+    updateTaxMatterRecord
+  } = useFinanceManagement();
   const { socialInsuranceRecords, updateSocialInsuranceRecordStatus } = useFinanceSocialInsuranceState();
   const { salaryMonthlyWorkflows } = useSalaryManagementState();
   const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, contextHolder] = message.useMessage();
-  const [taxMatterRows, setTaxMatterRows] = useState<FinanceTaxMatterRecord[]>(() => financeTaxMatterRecords);
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [activeScope, setActiveScope] = useState<TaxMatterScope>('pending');
   const [editorState, setEditorState] = useState<TaxMatterEditorState>();
@@ -792,8 +798,8 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     () => allDisplayTaxMatterRows.filter((record) => allowedMatterTypes.has(record.matterType)),
     [allDisplayTaxMatterRows, allowedMatterTypes]
   );
-  const defaultPaymentAccount = useMemo(
-    () => buildPublicAccountOptions(publicAccounts, '付款')[0]?.label ?? '未配置对公账户',
+  const defaultPaymentAccountRef = useMemo(
+    () => getDefaultPublicAccountRef(publicAccounts, '付款'),
     [publicAccounts]
   );
 
@@ -876,8 +882,8 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       financePrimaryCategories,
       financeRows,
       financeSecondaryCategories,
+      publicAccountRef: defaultPaymentAccountRef,
       record,
-      settlementAccount: defaultPaymentAccount
     });
     const nextRecord = attachTaxMatterPaymentTransaction(record, paymentTransaction);
 
@@ -885,9 +891,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       addFinanceTransaction(paymentTransaction);
     }
 
-    setTaxMatterRows((currentRows) => {
-      return currentRows.map((currentRecord) => (currentRecord.id === nextRecord.id ? nextRecord : currentRecord));
-    });
+    updateTaxMatterRecord(nextRecord.id, () => nextRecord);
     setActiveRecordId(nextRecord.id);
     setActiveScope(nextRecord.processStatus === '已完成' ? 'completed' : 'pending');
     setEditorState(undefined);
@@ -900,6 +904,14 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
           ? '已保存凭证'
           : '已保存回执'
     );
+  }
+
+  function handlePreviewFile(file: RelatedFileRecord) {
+    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
+  }
+
+  function handleDownloadFile(file: RelatedFileRecord) {
+    void messageApi.success(`${file.name} 下载请求已记录`);
   }
 
   function openOfficialHandling(record: FinanceTaxMatterRecord) {
@@ -924,7 +936,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       ]
     };
 
-    setTaxMatterRows((currentRows) => currentRows.map((currentRecord) => (currentRecord.id === record.id ? nextRecord : currentRecord)));
+    updateTaxMatterRecord(record.id, () => nextRecord);
     if (isDeclarationPreparationBackedTaxMatter(record)) {
       const preparation = findDeclarationPreparationForTaxMatter(record, displayDeclarationPreparationRows);
 
@@ -983,31 +995,25 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
 
     updateSocialInsuranceRecordStatus(employeeRecord.id, handlingStatus);
 
-    setTaxMatterRows((currentRows) =>
-      currentRows.map((currentRecord) =>
-        currentRecord.id === record.id
-          ? {
-              ...currentRecord,
-              dataStatus: '待复核',
-              paidAmount: handlingStatus === '待确认' ? 0 : currentRecord.paidAmount,
-              paymentStatus: handlingStatus === '待确认' ? '未开始' : currentRecord.paymentStatus,
-              processStatus: handlingStatus === '待确认' ? '数据待确认' : currentRecord.processStatus,
-              updatedAt: financeToday,
-              operationRecords: [
-                {
-                  action: handlingStatus === '待确认' ? '退回明细' : '更新缴费明细',
-                  actor: '李明',
-                  id: `tax-op-return-${employeeRecord.id}-${Date.now()}`,
-                  object: currentRecord.matterNo,
-                  summary: getSocialInsuranceHandlingSummary(employeeRecord, handlingStatus),
-                  time: `${financeToday} 14:40`
-                },
-                ...currentRecord.operationRecords
-              ]
-            }
-          : currentRecord
-      )
-    );
+    updateTaxMatterRecord(record.id, (currentRecord) => ({
+      ...currentRecord,
+      dataStatus: '待复核',
+      paidAmount: handlingStatus === '待确认' ? 0 : currentRecord.paidAmount,
+      paymentStatus: handlingStatus === '待确认' ? '未开始' : currentRecord.paymentStatus,
+      processStatus: handlingStatus === '待确认' ? '数据待确认' : currentRecord.processStatus,
+      updatedAt: financeToday,
+      operationRecords: [
+        {
+          action: handlingStatus === '待确认' ? '退回明细' : '更新缴费明细',
+          actor: '李明',
+          id: `tax-op-return-${employeeRecord.id}-${Date.now()}`,
+          object: currentRecord.matterNo,
+          summary: getSocialInsuranceHandlingSummary(employeeRecord, handlingStatus),
+          time: `${financeToday} 14:40`
+        },
+        ...currentRecord.operationRecords
+      ]
+    }));
     setActiveScope('pending');
     void messageApi.success(handlingStatus === '待确认' ? '已退回缴费明细' : '已更新缴费明细');
   }
@@ -1070,6 +1076,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       filters={
         <FilterPanel>
           <FilterBar>
@@ -1318,7 +1325,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
                 {
                   children: (
                     <DetailSection icon={<FileProtectOutlined />} title={isSocialInsuranceModule ? '缴费凭证' : '回执文件'}>
-                      <RelatedFileTable records={activeRecord.files} />
+                      <RelatedFileTable records={activeRecord.files} onDownload={handleDownloadFile} onPreview={handlePreviewFile} />
                     </DetailSection>
                   ),
                   key: 'files',

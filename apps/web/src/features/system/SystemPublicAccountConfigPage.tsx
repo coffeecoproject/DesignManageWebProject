@@ -40,17 +40,20 @@ const defaultForm: PublicAccountFormValue = {
   accountHolder: '',
   accountTailNumber: '',
   bankName: '',
+  defaultFor: ['收款', '付款', '银行对账'],
   displayName: '',
   note: '',
   openingBalance: 0,
+  openingBalanceDate: '2026-06-01',
   status: '启用',
-  usage: ['收款', '付款', '资金处理', '银行对账']
+  usage: ['收款', '付款', '银行对账']
 };
 
 function buildForm(record?: PublicAccountRecord): PublicAccountFormValue {
   if (!record) {
     return {
       ...defaultForm,
+      defaultFor: [...defaultForm.defaultFor],
       usage: [...defaultForm.usage]
     };
   }
@@ -59,9 +62,11 @@ function buildForm(record?: PublicAccountRecord): PublicAccountFormValue {
     accountHolder: record.accountHolder,
     accountTailNumber: record.accountTailNumber,
     bankName: record.bankName,
+    defaultFor: [...record.defaultFor],
     displayName: record.displayName,
     note: record.note,
     openingBalance: record.openingBalance,
+    openingBalanceDate: record.openingBalanceDate,
     status: record.status,
     usage: [...record.usage]
   };
@@ -73,6 +78,7 @@ function isValidForm(form: PublicAccountFormValue) {
     Boolean(form.bankName.trim()) &&
     Boolean(form.accountHolder.trim()) &&
     Boolean(form.accountTailNumber.trim()) &&
+    Boolean(form.openingBalanceDate.trim()) &&
     form.usage.length > 0 &&
     Number.isFinite(form.openingBalance)
   );
@@ -84,8 +90,10 @@ function normalizeForm(form: PublicAccountFormValue): PublicAccountFormValue {
     accountHolder: form.accountHolder.trim(),
     accountTailNumber: form.accountTailNumber.trim(),
     bankName: form.bankName.trim(),
+    defaultFor: form.defaultFor.filter((usage) => form.usage.includes(usage)),
     displayName: form.displayName.trim(),
-    note: form.note.trim()
+    note: form.note.trim(),
+    openingBalanceDate: form.openingBalanceDate.trim()
   };
 }
 
@@ -120,7 +128,7 @@ function PublicAccountDrawer({
     const nextValue = normalizeForm(form);
 
     if (!isValidForm(nextValue)) {
-      void messageApi.warning('请补全账户名称、开户行、户名、尾号和用途');
+      void messageApi.warning('请补全账户名称、开户行、户名、尾号和账户能力');
       return;
     }
 
@@ -147,18 +155,31 @@ function PublicAccountDrawer({
     { label: '账户户名', value: record?.accountHolder },
     { label: '账号尾号', value: record ? formatPublicAccountTail(record.accountTailNumber) : undefined },
     {
-      label: '适用用途',
+      label: '账户能力',
       value: record ? (
         <TagChipList
           items={record.usage}
-          maxVisible={4}
+          maxVisible={5}
           tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]}
           wrap
         />
       ) : undefined,
       wide: true
     },
+    {
+      label: '默认承接',
+      value: record?.defaultFor.length ? (
+        <TagChipList
+          items={record.defaultFor}
+          maxVisible={5}
+          tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]}
+          wrap
+        />
+      ) : '-',
+      wide: true
+    },
     { label: '初始余额', value: record ? formatMoney(record.openingBalance) : undefined },
+    { label: '余额日期', value: record?.openingBalanceDate },
     { label: '状态', value: record ? <StatusTag toneMap={publicAccountStatusTone} value={record.status} /> : undefined },
     { label: '最近更新', value: record?.updatedAt },
     { label: '备注', value: record?.note, wide: true }
@@ -182,13 +203,32 @@ function PublicAccountDrawer({
       value: <Input maxLength={4} placeholder="后四位" value={form.accountTailNumber} onChange={(event) => updateForm('accountTailNumber', event.target.value)} />
     },
     {
-      label: '适用用途 *',
+      label: '账户能力 *',
       value: (
         <Select
           mode="multiple"
           options={publicAccountUsageOptions.map((usage) => ({ label: usage, value: usage }))}
           value={form.usage}
-          onChange={(value) => updateForm('usage', value)}
+          onChange={(value) => {
+            updateForm('usage', value);
+            updateForm(
+              'defaultFor',
+              form.defaultFor.filter((usage) => value.includes(usage))
+            );
+          }}
+        />
+      ),
+      wide: true
+    },
+    {
+      label: '默认承接',
+      value: (
+        <Select
+          mode="multiple"
+          options={form.usage.map((usage) => ({ label: usage, value: usage }))}
+          placeholder="选择默认承接的账户能力"
+          value={form.defaultFor}
+          onChange={(value) => updateForm('defaultFor', value)}
         />
       ),
       wide: true
@@ -202,6 +242,16 @@ function PublicAccountDrawer({
           style={{ width: '100%' }}
           value={form.openingBalance}
           onChange={(value) => updateForm('openingBalance', value ?? 0)}
+        />
+      )
+    },
+    {
+      label: '余额日期 *',
+      value: (
+        <Input
+          placeholder="YYYY-MM-DD"
+          value={form.openingBalanceDate}
+          onChange={(event) => updateForm('openingBalanceDate', event.target.value)}
         />
       )
     },
@@ -223,7 +273,7 @@ function PublicAccountDrawer({
       value: (
         <Input.TextArea
           autoSize={{ minRows: 3, maxRows: 5 }}
-          placeholder="记录账户用途或内部备注"
+          placeholder="记录账户使用说明或内部备注"
           value={form.note}
           onChange={(event) => updateForm('note', event.target.value)}
         />
@@ -248,10 +298,10 @@ function PublicAccountDrawer({
           <DetailInfoGrid
             columns={2}
             items={[
-              { label: '收支流水', value: record?.usage.includes('收款') || record?.usage.includes('付款') ? '可引用' : '不适用' },
-              { label: '资金处理', value: record?.usage.includes('资金处理') ? '可引用' : '不适用' },
-              { label: '对公账户流水', value: '可归集' },
-              { label: '银行对账', value: record?.usage.includes('银行对账') ? '可引用' : '不适用' }
+              { label: '收款登记', value: record?.usage.includes('收款') ? '可引用' : '不适用' },
+              { label: '付款登记', value: record?.usage.includes('付款') ? '可引用' : '不适用' },
+              { label: '银行对账', value: record?.usage.includes('银行对账') ? '可引用' : '不适用' },
+              { label: '账户台账', value: '可归集' }
             ]}
           />
         </DetailSection>
@@ -422,12 +472,19 @@ export function SystemPublicAccountConfigPage() {
       render: (tailNumber: string) => formatPublicAccountTail(tailNumber)
     },
     {
-      title: '适用用途',
+      title: '账户能力',
       dataIndex: 'usage',
       width: 240,
       render: (items: PublicAccountUsage[]) => (
-        <TagChipList items={items} maxVisible={4} tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]} wrap />
+        <TagChipList items={items} maxVisible={5} tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]} wrap />
       )
+    },
+    {
+      title: '默认承接',
+      dataIndex: 'defaultFor',
+      width: 190,
+      render: (items: PublicAccountUsage[]) =>
+        items.length ? <TagChipList items={items} maxVisible={3} tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]} wrap /> : '-'
     },
     {
       title: '初始余额',
@@ -450,6 +507,7 @@ export function SystemPublicAccountConfigPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       filters={
         <FilterPanel>
@@ -462,7 +520,7 @@ export function SystemPublicAccountConfigPage() {
                 onChange={(value) => setStatusFilter(value)}
               />
             </FilterField>
-            <FilterField label="用途">
+            <FilterField label="账户能力">
               <Select
                 className="field-control"
                 options={['全部', ...publicAccountUsageOptions].map((usage) => ({ label: usage, value: usage }))}
@@ -478,7 +536,7 @@ export function SystemPublicAccountConfigPage() {
         <MetricGrid columns={4}>
           <MetricCard icon={<BankOutlined />} label="对公账户" value={publicAccounts.length} />
           <MetricCard icon={<CheckCircleOutlined />} label="启用账户" value={enabledCount} />
-          <MetricCard icon={<ProfileOutlined />} label="用途类型" value={usageCount} />
+          <MetricCard icon={<ProfileOutlined />} label="账户能力" value={usageCount} />
           <MetricCard icon={<WalletOutlined />} label="默认账户" value={defaultAccount?.displayName ?? '-'} />
         </MetricGrid>
       }

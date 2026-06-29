@@ -366,6 +366,7 @@ export function MyTasksPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={5}>
           <MetricCard icon={<FileTextOutlined />} label="当前任务" value={taskSummary.currentTaskCount} />
@@ -694,6 +695,7 @@ export function MySalaryPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<BankOutlined />} label="最新月份" value={latestSalaryReport?.month ?? '-'} />

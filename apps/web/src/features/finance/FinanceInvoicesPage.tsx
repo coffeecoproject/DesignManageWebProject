@@ -25,7 +25,6 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { createTabbedManagementTableItem, TabbedManagementTable } from '../../components/TabbedManagementTable';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
-import type { FinanceTransactionRecord } from './financeData';
 import {
   applyDeclarationPreparationSourceState,
   declarationPreparationStatusTone,
@@ -44,8 +43,8 @@ import {
   buildOriginalInvoiceRedSummary,
   type FinanceRedInvoiceOriginalAssociationStatus,
   getInvoiceAmount,
+  getInvoiceMatchedBusinessNos,
   getInvoiceMatchedAmount,
-  getInvoiceMatchedTransactionNos,
   getInvoiceMatchStatus,
   getInvoiceTaxAmount,
   getOriginalInvoiceForRedInvoice,
@@ -108,6 +107,11 @@ type InvoiceDeclarationPeriodRow = {
 
 type InvoiceMatchRelationRow = {
   allocationStatus: '全额占用' | '部分占用';
+  businessAmount: number;
+  businessNo: string;
+  businessSourceNo: string;
+  businessSourceTitle: string;
+  businessSourceModule: string;
   id: string;
   invoiceAmount: number;
   invoiceCounterparty: string;
@@ -115,10 +119,6 @@ type InvoiceMatchRelationRow = {
   invoiceStatus: FinanceInvoiceStatus;
   invoiceNo: string;
   matchedAmount: number;
-  transactionAmount?: number;
-  transactionCounterparty: string;
-  transactionDate: string;
-  transactionNo: string;
 };
 
 type RedInvoiceOriginalRelationRow = {
@@ -404,7 +404,7 @@ function matchesKeyword(row: InvoiceLedgerRow, keyword: string) {
       invoice.invoiceStatus,
       invoice.invoiceStatus === '红冲' ? getRedInvoiceOriginalAssociationStatus(invoice) : getInvoiceMatchStatus(invoice),
       invoice.originalInvoiceId ?? '',
-      ...getInvoiceMatchedTransactionNos(invoice)
+      ...getInvoiceMatchedBusinessNos(invoice)
     ]
       .join(' ')
       .toLowerCase()
@@ -447,28 +447,28 @@ function matchesDeclarationFilters(row: InvoiceDeclarationPeriodRow, filters: In
   return periodMatched && statusMatched && keywordMatched;
 }
 
-function buildInvoiceMatchRelationRows(row: InvoiceLedgerRow, transactionByNo: Map<string, FinanceTransactionRecord>): InvoiceMatchRelationRow[] {
+function buildInvoiceMatchRelationRows(row: InvoiceLedgerRow): InvoiceMatchRelationRow[] {
   return row.invoices.flatMap((invoice) =>
-    invoice.invoiceStatus === '红冲' ? [] : invoice.matchedTransactions.map((match) => {
-      const transaction = transactionByNo.get(match.transactionNo);
+    invoice.invoiceStatus === '红冲' ? [] : invoice.matchedBusinessRefs.map((match) => {
       const allocationStatus =
-        transaction && isSameMoneyAmount(Math.abs(match.amount), Math.abs(transaction.amount))
+        isSameMoneyAmount(Math.abs(match.amount), Math.abs(invoice.totalAmount))
             ? '全额占用'
             : '部分占用';
 
       return {
         allocationStatus,
+        businessAmount: match.amount,
+        businessNo: match.recordNo,
+        businessSourceModule: match.sourceModule,
+        businessSourceNo: match.sourceNo,
+        businessSourceTitle: match.sourceTitle,
         id: match.id,
         invoiceAmount: invoice.totalAmount,
         invoiceCounterparty: invoice.counterparty,
         invoiceId: invoice.id,
         invoiceStatus: invoice.invoiceStatus,
         invoiceNo: invoice.invoiceNo,
-        matchedAmount: match.amount,
-        transactionAmount: transaction?.amount,
-        transactionCounterparty: transaction?.counterparty ?? '-',
-        transactionDate: transaction?.occurredAt ?? '-',
-        transactionNo: match.transactionNo
+        matchedAmount: match.amount
       };
     })
   );
@@ -507,10 +507,6 @@ function buildRedOriginalRelationRows(row: InvoiceLedgerRow, invoices: FinanceIn
 
 function renderMoney(amount: number) {
   return <CellText tone={amount < 0 ? 'expense' : amount > 0 ? 'strong' : 'subtle'}>{formatMoney(amount)}</CellText>;
-}
-
-function renderOptionalMoney(amount?: number) {
-  return amount === undefined ? <CellText tone="subtle">-</CellText> : renderMoney(amount);
 }
 
 function renderRelationStatus(status: FinanceInvoiceMatchStatus) {
@@ -561,7 +557,6 @@ export function FinanceInvoicesPage() {
   const [importForm, setImportForm] = useState<InvoiceImportForm>(defaultImportForm);
 
   const invoiceRows = useMemo(() => buildInvoiceLedgerRows(invoiceRecordRows, financeInvoiceImportBatches), [invoiceRecordRows]);
-  const transactionByNo = useMemo(() => new Map(financeRows.map((record) => [record.transactionNo, record])), [financeRows]);
   const displayDeclarationPreparationRows = useMemo(
     () => applyDeclarationPreparationSourceState(declarationPreparationRows, invoiceRecordRows, financeRows),
     [declarationPreparationRows, financeRows, invoiceRecordRows]
@@ -790,21 +785,22 @@ export function FinanceInvoicesPage() {
 
   const matchDetailColumns: TableColumnsType<InvoiceMatchRelationRow> = [
     {
-      title: '流水',
-      dataIndex: 'transactionNo',
+      title: '业务确认',
+      dataIndex: 'businessNo',
       width: 190,
-      render: (transactionNo: string, record) => <CompactCell primary={transactionNo} secondary={record.transactionDate} />
+      render: (businessNo: string, record) => <CompactCell primary={businessNo} secondary={record.businessSourceModule} />
     },
     {
-      title: '对象',
-      dataIndex: 'transactionCounterparty',
-      width: 150
+      title: '来源单据',
+      dataIndex: 'businessSourceNo',
+      width: 190,
+      render: (businessSourceNo: string, record) => <CompactCell primary={businessSourceNo} secondary={record.businessSourceTitle} />
     },
     {
-      title: '流水金额',
-      dataIndex: 'transactionAmount',
+      title: '业务金额',
+      dataIndex: 'businessAmount',
       width: 120,
-      render: renderOptionalMoney
+      render: renderMoney
     },
     {
       title: '占用金额',
@@ -828,13 +824,13 @@ export function FinanceInvoicesPage() {
       render: (_: string, record) => <CompactCell primary={record.invoice.invoiceNo} secondary={record.invoice.counterparty} />
     },
     {
-      title: '流水关联',
+      title: '业务关联',
       dataIndex: 'matchStatus',
       width: 110,
       render: renderRelationStatus
     },
     {
-      title: '对应流水',
+      title: '对应业务',
       dataIndex: 'relations',
       width: 96,
       render: (relations: InvoiceMatchRelationRow[]) => (relations.length > 0 ? <CellText>{relations.length} 条</CellText> : <CellText tone="subtle">-</CellText>)
@@ -986,7 +982,7 @@ export function FinanceInvoicesPage() {
     }
   ];
 
-  const matchRelationRows = activeRow ? buildInvoiceMatchRelationRows(activeRow, transactionByNo) : [];
+  const matchRelationRows = activeRow ? buildInvoiceMatchRelationRows(activeRow) : [];
   const matchSummaryRows = activeRow ? buildInvoiceMatchSummaryRows(activeRow, matchRelationRows) : [];
   const redOriginalRows = activeRow ? buildRedOriginalRelationRows(activeRow, invoiceRecordRows) : [];
   const declarationRedOriginalRows = activeDeclarationRow ? buildRedOriginalRelationRows(
@@ -1022,6 +1018,7 @@ export function FinanceInvoicesPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       filters={
         <FilterPanel>
@@ -1047,7 +1044,7 @@ export function FinanceInvoicesPage() {
             </FilterField>
             <KeywordFilter
               data-testid="finance-invoice-keyword-input"
-              placeholder="月份 / 发票号 / 对象 / 流水号"
+              placeholder="月份 / 发票号 / 对象 / 来源单号"
               value={filters.keyword}
               width="wide"
               onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}
@@ -1162,7 +1159,7 @@ export function FinanceInvoicesPage() {
                           { label: '发票月份', value: activeRow.accountingPeriod },
                           { label: '发票方向', value: <StatusTag toneMap={invoiceDirectionTone} value={activeRow.direction} /> },
                           { label: '发票份数', value: `${activeRow.summary.invoiceCount} 份` },
-                          { label: '流水关联', value: <StatusTag tone={getMatchTone(activeRow.summary)} value={getMatchText(activeRow.summary)} /> },
+                          { label: '业务关联', value: <StatusTag tone={getMatchTone(activeRow.summary)} value={getMatchText(activeRow.summary)} /> },
                           { label: '最近导入', value: activeRow.latestImportedAt },
                           { label: '导入批次', value: `${activeRow.importBatches.length} 个` },
                           { label: '待关联发票', value: `${getPendingCount(activeRow)} 条` }
@@ -1188,21 +1185,21 @@ export function FinanceInvoicesPage() {
                 },
                 {
                   key: 'match',
-                  label: '关联关系',
+                  label: '业务关联',
                   children: (
                     <>
-                      <DetailSection icon={<LinkOutlined />} title="流水关联">
+                      <DetailSection icon={<LinkOutlined />} title="业务关联">
                         <CompactDetailTable<InvoiceMatchSummaryRow>
                           columns={matchSummaryColumns}
                           dataSource={matchSummaryRows}
-                          emptyText="暂无流水关联"
+                          emptyText="暂无业务关联"
                           expandable={{
                             expandedRowRender: (record) => (
                               <div className="finance-invoice-match-expanded">
                                 <CompactDetailTable<InvoiceMatchRelationRow>
                                   columns={matchDetailColumns}
                                   dataSource={record.relations}
-                                  emptyText="暂无对应流水"
+                                  emptyText="暂无对应业务"
                                   rowKey="id"
                                   scrollX={false}
                                 />

@@ -21,6 +21,7 @@ export type FinancePrimaryCategoryFormValue = Pick<
 export type FinanceSecondaryCategoryFormValue = Pick<
   FinanceSecondaryCategoryConfig,
   | 'counterpartyScope'
+  | 'defaultAccountingSubjectCode'
   | 'defaultSourceType'
   | 'includeInReport'
   | 'name'
@@ -46,7 +47,6 @@ export const financeReportAggregationOptions: FinanceReportAggregation[] = [
   '项目成本',
   '人员支出',
   '运营费用',
-  '资金处理',
   '其他'
 ];
 
@@ -60,11 +60,36 @@ export const financeSourceTypeOptions: FinanceSourceType[] = [
   '税费事项',
   '员工代收流水',
   '现金暂收流水',
-  '员工垫付单',
+  '流水冲正',
+  '流水补差',
   '手工登记'
 ];
-export const financePaymentMethodOptions: FinancePaymentMethod[] = ['对公账户收款', '对公账户付款', '员工代收', '现金暂收', '员工垫付'];
+export const financePaymentMethodOptions: FinancePaymentMethod[] = ['对公账户收款', '对公账户付款', '员工代收', '现金暂收'];
 export const financeDirectionOptions: FinanceTransactionDirection[] = ['收入', '支出', '内部转入'];
+
+export function getDefaultAccountingSubjectCodeForPrimary(primary?: Pick<FinancePrimaryCategoryConfig, 'direction' | 'name' | 'reportAggregation'>) {
+  if (!primary) {
+    return '';
+  }
+
+  if (primary.direction === '收入') {
+    return primary.reportAggregation === '其他' ? '6051' : '1122';
+  }
+
+  if (primary.reportAggregation === '人员支出') {
+    return '2211.01';
+  }
+
+  if (primary.reportAggregation === '项目成本') {
+    return '2202';
+  }
+
+  if (primary.name.includes('税费')) {
+    return '2221';
+  }
+
+  return '6602';
+}
 
 function getNextSequence(rows: Array<{ code: string }>, prefix: string) {
   return (

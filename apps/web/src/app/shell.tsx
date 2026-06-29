@@ -16,6 +16,7 @@ import {
   MenuUnfoldOutlined,
   MessageOutlined,
   PercentageOutlined,
+  PartitionOutlined,
   ProfileOutlined,
   ProjectOutlined,
   SafetyCertificateOutlined,
@@ -50,6 +51,14 @@ const pageMeta: Record<string, { module: string; title: string }> = {
   '/my-work/task-acceptance': {
     module: '我的工作',
     title: '待我验收'
+  },
+  '/my-work/expense-collection': {
+    module: '我的工作',
+    title: '费用与代收'
+  },
+  '/my-work/expense-review': {
+    module: '我的工作',
+    title: '费用报销审核'
   },
   '/my-work/archive': {
     module: '我的工作',
@@ -151,21 +160,9 @@ const pageMeta: Record<string, { module: string; title: string }> = {
     module: '薪酬社保',
     title: '社保公积金'
   },
-  '/finance/overview': {
-    module: '财务管理',
-    title: '财务总览'
-  },
   '/finance/business-overview': {
     module: '财务管理',
     title: '经营总览'
-  },
-  '/finance/statistics': {
-    module: '财务管理',
-    title: '财务统计'
-  },
-  '/finance/reports': {
-    module: '财务管理',
-    title: '财务统计'
   },
   '/finance/receivables-payables': {
     module: '财务管理',
@@ -195,17 +192,21 @@ const pageMeta: Record<string, { module: string; title: string }> = {
     module: '财务管理',
     title: '流水复核'
   },
-  '/finance/fund-handling': {
-    module: '财务管理',
-    title: '资金处理'
-  },
-  '/finance/public-account': {
-    module: '财务管理',
-    title: '对公账户'
-  },
   '/finance/bank-reconciliation': {
     module: '财务管理',
     title: '银行对账'
+  },
+  '/finance/account-ledger': {
+    module: '财务管理',
+    title: '账户台账'
+  },
+  '/finance/accounting-subjects': {
+    module: '财务管理',
+    title: '会计科目'
+  },
+  '/finance/accounting-vouchers': {
+    module: '财务管理',
+    title: '会计凭证'
   },
   '/system/roles': {
     module: '系统管理',
@@ -252,6 +253,14 @@ function getSelectedKeys(pathname: string) {
 
   if (pathname.startsWith('/my-work/task-acceptance')) {
     return ['my-work-task-acceptance'];
+  }
+
+  if (pathname.startsWith('/my-work/expense-collection')) {
+    return ['my-work-expense-collection'];
+  }
+
+  if (pathname.startsWith('/my-work/expense-review')) {
+    return ['my-work-expense-review'];
   }
 
   if (pathname.startsWith('/my-work/archive')) {
@@ -370,16 +379,8 @@ function getSelectedKeys(pathname: string) {
     return ['salary-social-insurance'];
   }
 
-  if (pathname.startsWith('/finance/overview')) {
-    return ['finance-overview'];
-  }
-
   if (pathname.startsWith('/finance/business-overview')) {
     return ['finance-business-overview'];
-  }
-
-  if (pathname.startsWith('/finance/statistics') || pathname.startsWith('/finance/reports')) {
-    return ['finance-statistics'];
   }
 
   if (pathname.startsWith('/finance/receivables-payables')) {
@@ -410,16 +411,20 @@ function getSelectedKeys(pathname: string) {
     return ['finance-review'];
   }
 
-  if (pathname.startsWith('/finance/fund-handling')) {
-    return ['finance-fund-handling'];
-  }
-
-  if (pathname.startsWith('/finance/public-account')) {
-    return ['finance-public-account'];
-  }
-
   if (pathname.startsWith('/finance/bank-reconciliation')) {
     return ['finance-bank-reconciliation'];
+  }
+
+  if (pathname.startsWith('/finance/account-ledger')) {
+    return ['finance-account-ledger'];
+  }
+
+  if (pathname.startsWith('/finance/accounting-subjects')) {
+    return ['finance-accounting-subjects'];
+  }
+
+  if (pathname.startsWith('/finance/accounting-vouchers')) {
+    return ['finance-accounting-vouchers'];
   }
 
   if (pathname.startsWith('/system/social-insurance-config')) {
@@ -484,6 +489,16 @@ export function AppShell() {
             key: 'my-work-task-acceptance',
             icon: <CheckCircleOutlined />,
             label: '待我验收'
+          },
+          {
+            key: 'my-work-expense-collection',
+            icon: <WalletOutlined />,
+            label: '费用与代收'
+          },
+          {
+            key: 'my-work-expense-review',
+            icon: <AuditOutlined />,
+            label: '费用报销审核'
           },
           {
             key: 'my-work-archive',
@@ -648,19 +663,9 @@ export function AppShell() {
         label: '财务管理',
         children: [
           {
-            key: 'finance-overview',
-            icon: <DashboardOutlined />,
-            label: '财务总览'
-          },
-          {
             key: 'finance-business-overview',
             icon: <LineChartOutlined />,
             label: '经营总览'
-          },
-          {
-            key: 'finance-statistics',
-            icon: <LineChartOutlined />,
-            label: '财务统计'
           },
           {
             key: 'finance-receivables-payables',
@@ -678,19 +683,24 @@ export function AppShell() {
             label: '流水复核'
           },
           {
-            key: 'finance-fund-handling',
-            icon: <SwapOutlined />,
-            label: '资金处理'
-          },
-          {
-            key: 'finance-public-account',
-            icon: <BankOutlined />,
-            label: '对公账户'
-          },
-          {
             key: 'finance-bank-reconciliation',
             icon: <FileSearchOutlined />,
             label: '银行对账'
+          },
+          {
+            key: 'finance-account-ledger',
+            icon: <BankOutlined />,
+            label: '账户台账'
+          },
+          {
+            key: 'finance-accounting-subjects',
+            icon: <PartitionOutlined />,
+            label: '会计科目'
+          },
+          {
+            key: 'finance-accounting-vouchers',
+            icon: <FileTextOutlined />,
+            label: '会计凭证'
           }
         ]
       },
@@ -806,6 +816,14 @@ export function AppShell() {
               navigate('/my-work/task-acceptance');
             }
 
+            if (key === 'my-work-expense-collection') {
+              navigate('/my-work/expense-collection');
+            }
+
+            if (key === 'my-work-expense-review') {
+              navigate('/my-work/expense-review');
+            }
+
             if (key === 'my-work-archive') {
               navigate('/my-work/archive');
             }
@@ -902,16 +920,8 @@ export function AppShell() {
               navigate('/salary/social-insurance');
             }
 
-            if (key === 'finance-overview') {
-              navigate('/finance/overview');
-            }
-
             if (key === 'finance-business-overview') {
               navigate('/finance/business-overview');
-            }
-
-            if (key === 'finance-statistics') {
-              navigate('/finance/statistics');
             }
 
             if (key === 'finance-receivables-payables') {
@@ -942,16 +952,20 @@ export function AppShell() {
               navigate('/finance/review');
             }
 
-            if (key === 'finance-fund-handling') {
-              navigate('/finance/fund-handling');
-            }
-
-            if (key === 'finance-public-account') {
-              navigate('/finance/public-account');
-            }
-
             if (key === 'finance-bank-reconciliation') {
               navigate('/finance/bank-reconciliation');
+            }
+
+            if (key === 'finance-account-ledger') {
+              navigate('/finance/account-ledger');
+            }
+
+            if (key === 'finance-accounting-subjects') {
+              navigate('/finance/accounting-subjects');
+            }
+
+            if (key === 'finance-accounting-vouchers') {
+              navigate('/finance/accounting-vouchers');
             }
 
             if (key === 'system-roles') {

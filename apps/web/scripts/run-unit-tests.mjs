@@ -12,6 +12,7 @@ const bundledPeopleMovementRecordModelTestFile = join(outDir, 'peopleMovementRec
 const bundledPeopleExpiryModelTestFile = join(outDir, 'peopleExpiryModel.test.mjs');
 const bundledTaskAssignmentCandidateTestFile = join(outDir, 'taskAssignmentCandidates.test.mjs');
 const bundledRegionSearchSelectTestFile = join(outDir, 'RegionSearchSelect.test.mjs');
+const bundledPublicAccountConfigStateTestFile = join(outDir, 'PublicAccountConfigState.test.mjs');
 const bundledTaskDomainModelTestFile = join(outDir, 'taskDomainModel.test.mjs');
 const bundledTaskFeedbackModelTestFile = join(outDir, 'taskFeedbackModel.test.mjs');
 const bundledPersonTaskViewModelTestFile = join(outDir, 'personTaskViewModel.test.mjs');
@@ -19,7 +20,18 @@ const bundledSalaryDomainTestFile = join(outDir, 'salaryDomain.test.mjs');
 const bundledFinanceSocialInsuranceModelTestFile = join(outDir, 'financeSocialInsuranceModel.test.mjs');
 const bundledFinanceTaxMatterModelTestFile = join(outDir, 'financeTaxMatterModel.test.mjs');
 const bundledFinanceBusinessOverviewModelTestFile = join(outDir, 'financeBusinessOverviewModel.test.mjs');
+const bundledFinanceAccountingSubjectDataTestFile = join(outDir, 'financeAccountingSubjectData.test.mjs');
+const bundledFinanceAccountingVoucherModelTestFile = join(outDir, 'financeAccountingVoucherModel.test.mjs');
+const bundledFinanceCategoryAccountingMappingTestFile = join(outDir, 'financeCategoryAccountingMapping.test.mjs');
+const bundledFinanceReceivablesPayablesModelTestFile = join(outDir, 'financeReceivablesPayablesModel.test.mjs');
+const bundledFinanceInvoiceMatchingModelTestFile = join(outDir, 'financeInvoiceMatchingModel.test.mjs');
+const bundledFinanceReviewModelTestFile = join(outDir, 'financeReviewModel.test.mjs');
+const bundledFinanceBankImportContractTestFile = join(outDir, 'financeBankImportContract.test.mjs');
+const bundledFinanceBankReconciliationModelTestFile = join(outDir, 'financeBankReconciliationModel.test.mjs');
+const bundledFinanceTransactionAdjustmentModelTestFile = join(outDir, 'financeTransactionAdjustmentModel.test.mjs');
 const bundledMyWorkModelTestFile = join(outDir, 'myWorkModel.test.mjs');
+const bundledMyWorkExpenseCollectionModelTestFile = join(outDir, 'myWorkExpenseCollectionModel.test.mjs');
+const bundledMyWorkExpenseReviewModelTestFile = join(outDir, 'myWorkExpenseReviewModel.test.mjs');
 const bundledPerformanceDashboardModelTestFile = join(outDir, 'performanceDashboardModel.test.mjs');
 const bundledPerformanceMonthlyModelTestFile = join(outDir, 'performanceMonthlyModel.test.mjs');
 const bundledPerformanceRuleModelTestFile = join(outDir, 'performanceRuleModel.test.mjs');
@@ -57,6 +69,11 @@ const testModules = [
     runExport: 'runRegionSearchSelectTests'
   },
   {
+    bundledFile: bundledPublicAccountConfigStateTestFile,
+    entry: 'src/features/system/PublicAccountConfigState.test.ts',
+    runExport: 'runPublicAccountConfigStateTests'
+  },
+  {
     bundledFile: bundledTaskDomainModelTestFile,
     entry: 'src/features/tasks/taskDomainModel.test.ts',
     runExport: 'runTaskDomainModelTests'
@@ -92,9 +109,64 @@ const testModules = [
     runExport: 'runFinanceBusinessOverviewModelTests'
   },
   {
+    bundledFile: bundledFinanceAccountingSubjectDataTestFile,
+    entry: 'src/features/finance/financeAccountingSubjectData.test.ts',
+    runExport: 'runFinanceAccountingSubjectDataTests'
+  },
+  {
+    bundledFile: bundledFinanceAccountingVoucherModelTestFile,
+    entry: 'src/features/finance/financeAccountingVoucherModel.test.ts',
+    runExport: 'runFinanceAccountingVoucherModelTests'
+  },
+  {
+    bundledFile: bundledFinanceCategoryAccountingMappingTestFile,
+    entry: 'src/features/finance/financeCategoryAccountingMapping.test.ts',
+    runExport: 'runFinanceCategoryAccountingMappingTests'
+  },
+  {
+    bundledFile: bundledFinanceReceivablesPayablesModelTestFile,
+    entry: 'src/features/finance/financeReceivablesPayablesModel.test.ts',
+    runExport: 'runFinanceReceivablesPayablesModelTests'
+  },
+  {
+    bundledFile: bundledFinanceInvoiceMatchingModelTestFile,
+    entry: 'src/features/finance/financeInvoiceMatchingModel.test.ts',
+    runExport: 'runFinanceInvoiceMatchingModelTests'
+  },
+  {
+    bundledFile: bundledFinanceReviewModelTestFile,
+    entry: 'src/features/finance/financeReviewModel.test.ts',
+    runExport: 'runFinanceReviewModelTests'
+  },
+  {
+    bundledFile: bundledFinanceBankImportContractTestFile,
+    entry: 'src/features/finance/financeBankImportContract.test.ts',
+    runExport: 'runFinanceBankImportContractTests'
+  },
+  {
+    bundledFile: bundledFinanceBankReconciliationModelTestFile,
+    entry: 'src/features/finance/financeBankReconciliationModel.test.ts',
+    runExport: 'runFinanceBankReconciliationModelTests'
+  },
+  {
+    bundledFile: bundledFinanceTransactionAdjustmentModelTestFile,
+    entry: 'src/features/finance/financeTransactionAdjustmentModel.test.ts',
+    runExport: 'runFinanceTransactionAdjustmentModelTests'
+  },
+  {
     bundledFile: bundledMyWorkModelTestFile,
     entry: 'src/features/my-work/myWorkModel.test.ts',
     runExport: 'runMyWorkModelTests'
+  },
+  {
+    bundledFile: bundledMyWorkExpenseCollectionModelTestFile,
+    entry: 'src/features/my-work/myWorkExpenseCollectionModel.test.ts',
+    runExport: 'runMyWorkExpenseCollectionModelTests'
+  },
+  {
+    bundledFile: bundledMyWorkExpenseReviewModelTestFile,
+    entry: 'src/features/my-work/myWorkExpenseReviewModel.test.ts',
+    runExport: 'runMyWorkExpenseReviewModelTests'
   },
   {
     bundledFile: bundledPerformanceDashboardModelTestFile,

@@ -28,8 +28,6 @@ import {
 import { useSalaryMonthlyReportBuilder } from './salaryReportBuilder';
 
 const salaryOverviewDefaultMonthRange = getDateScopeMonthRange(salaryOverviewDefaultMonth);
-const salaryOverviewTableScrollY = 'calc(100vh - 470px)';
-
 export function SalaryOverviewPage() {
   const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
   const [filters, setFilters] = useState<SalaryOverviewFilters>(defaultSalaryOverviewFilters);
@@ -57,6 +55,7 @@ export function SalaryOverviewPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       filters={
         <FilterPanel>
           <FilterBar>
@@ -98,7 +97,6 @@ export function SalaryOverviewPage() {
           rowKey="id"
           rowTestIdPrefix="salary-overview-board-row"
           scrollX={560}
-          scrollY={salaryOverviewTableScrollY}
           tableTestId="salary-overview-board-table"
           title="板块汇总"
         />
@@ -110,7 +108,6 @@ export function SalaryOverviewPage() {
           rowKey="id"
           rowTestIdPrefix="salary-overview-employee-row"
           scrollX={460}
-          scrollY={salaryOverviewTableScrollY}
           tableTestId="salary-overview-employee-table"
           title="员工薪酬排序"
         />

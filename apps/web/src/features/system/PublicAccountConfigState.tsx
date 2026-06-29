@@ -3,16 +3,30 @@ import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { TagChipTone } from '../../components/TagChip';
 
 export type PublicAccountStatus = '启用' | '停用';
-export type PublicAccountUsage = '收款' | '付款' | '资金处理' | '银行对账';
+export type PublicAccountUsage = '收款' | '付款' | '银行对账';
+
+export type PublicAccountSnapshot = {
+  accountHolder: string;
+  accountTailNumber: string;
+  bankName: string;
+  displayName: string;
+};
+
+export type PublicAccountRef = {
+  publicAccountId: string;
+  publicAccountSnapshot: PublicAccountSnapshot;
+};
 
 export type PublicAccountRecord = {
   accountHolder: string;
   accountTailNumber: string;
   bankName: string;
+  defaultFor: PublicAccountUsage[];
   displayName: string;
   id: string;
   note: string;
   openingBalance: number;
+  openingBalanceDate: string;
   operationRecords: OperationRecord[];
   status: PublicAccountStatus;
   updatedAt: string;
@@ -21,7 +35,16 @@ export type PublicAccountRecord = {
 
 export type PublicAccountFormValue = Pick<
   PublicAccountRecord,
-  'accountHolder' | 'accountTailNumber' | 'bankName' | 'displayName' | 'note' | 'openingBalance' | 'status' | 'usage'
+  | 'accountHolder'
+  | 'accountTailNumber'
+  | 'bankName'
+  | 'defaultFor'
+  | 'displayName'
+  | 'note'
+  | 'openingBalance'
+  | 'openingBalanceDate'
+  | 'status'
+  | 'usage'
 >;
 
 type PublicAccountConfigStateValue = {
@@ -32,7 +55,7 @@ type PublicAccountConfigStateValue = {
 };
 
 export const publicAccountConfigToday = '2026-06-17';
-export const publicAccountUsageOptions: PublicAccountUsage[] = ['收款', '付款', '资金处理', '银行对账'];
+export const publicAccountUsageOptions: PublicAccountUsage[] = ['收款', '付款', '银行对账'];
 
 export const publicAccountStatusTone: Record<PublicAccountStatus, TagChipTone> = {
   停用: 'gray',
@@ -42,7 +65,6 @@ export const publicAccountStatusTone: Record<PublicAccountStatus, TagChipTone> =
 export const publicAccountUsageTone: Record<PublicAccountUsage, TagChipTone> = {
   收款: 'green',
   付款: 'red',
-  资金处理: 'blue',
   银行对账: 'purple'
 };
 
@@ -51,10 +73,12 @@ export const publicAccountSeeds: PublicAccountRecord[] = [
     accountHolder: '示例企业管理有限公司',
     accountTailNumber: '0821',
     bankName: '招商银行',
+    defaultFor: ['收款', '付款', '银行对账'],
     displayName: '招商银行基本户',
     id: 'public-account-cmb-basic',
     note: '公司正式对公结算账户。',
     openingBalance: 120000,
+    openingBalanceDate: '2026-06-01',
     operationRecords: [
       {
         action: '初始化',
@@ -66,7 +90,53 @@ export const publicAccountSeeds: PublicAccountRecord[] = [
     ],
     status: '启用',
     updatedAt: publicAccountConfigToday,
-    usage: ['收款', '付款', '资金处理', '银行对账']
+    usage: ['收款', '付款', '银行对账']
+  },
+  {
+    accountHolder: '示例企业管理有限公司',
+    accountTailNumber: '3912',
+    bankName: '工商银行',
+    defaultFor: [],
+    displayName: '工商银行备用付款户',
+    id: 'public-account-icbc-payment-reserve',
+    note: '用于备用付款和银行对账场景，具体业务由来源单据决定。',
+    openingBalance: 80000,
+    openingBalanceDate: '2026-06-01',
+    operationRecords: [
+      {
+        action: '初始化',
+        actor: '系统',
+        object: '工商银行备用付款户',
+        summary: '建立备用付款账户配置',
+        time: '2026-06-16 10:25'
+      }
+    ],
+    status: '启用',
+    updatedAt: publicAccountConfigToday,
+    usage: ['付款', '银行对账']
+  },
+  {
+    accountHolder: '示例企业管理有限公司',
+    accountTailNumber: '7766',
+    bankName: '建设银行',
+    defaultFor: [],
+    displayName: '建设银行备用付款户',
+    id: 'public-account-ccb-payment-reserve',
+    note: '用于备用付款和银行对账场景，具体业务由来源单据决定。',
+    openingBalance: 50000,
+    openingBalanceDate: '2026-06-01',
+    operationRecords: [
+      {
+        action: '初始化',
+        actor: '系统',
+        object: '建设银行备用付款户',
+        summary: '建立付款账户配置',
+        time: '2026-06-16 10:28'
+      }
+    ],
+    status: '启用',
+    updatedAt: publicAccountConfigToday,
+    usage: ['付款', '银行对账']
   }
 ];
 
@@ -89,14 +159,19 @@ function normalizeTailNumber(value: string) {
 }
 
 function normalizePublicAccountValue(nextValue: PublicAccountFormValue): PublicAccountFormValue {
+  const usage = [...new Set(nextValue.usage)];
+  const defaultFor = [...new Set(nextValue.defaultFor)].filter((item) => usage.includes(item));
+
   return {
     ...nextValue,
     accountHolder: nextValue.accountHolder.trim(),
     accountTailNumber: normalizeTailNumber(nextValue.accountTailNumber),
     bankName: nextValue.bankName.trim(),
+    defaultFor,
     displayName: nextValue.displayName.trim(),
     note: nextValue.note.trim(),
-    usage: [...new Set(nextValue.usage)]
+    openingBalanceDate: nextValue.openingBalanceDate.trim(),
+    usage
   };
 }
 
@@ -107,7 +182,23 @@ export function formatPublicAccountTail(accountTailNumber: string) {
   return tail ? `**** ${tail}` : '-';
 }
 
-export function getPublicAccountDisplayName(record?: PublicAccountRecord) {
+export function buildPublicAccountSnapshot(record: PublicAccountRecord): PublicAccountSnapshot {
+  return {
+    accountHolder: record.accountHolder,
+    accountTailNumber: record.accountTailNumber,
+    bankName: record.bankName,
+    displayName: record.displayName
+  };
+}
+
+export function buildPublicAccountRef(record: PublicAccountRecord): PublicAccountRef {
+  return {
+    publicAccountId: record.id,
+    publicAccountSnapshot: buildPublicAccountSnapshot(record)
+  };
+}
+
+export function getPublicAccountDisplayName(record?: PublicAccountRecord | PublicAccountSnapshot) {
   return record?.displayName ?? '未配置对公账户';
 }
 
@@ -116,12 +207,34 @@ export function getActivePublicAccounts(rows: PublicAccountRecord[], usage?: Pub
 }
 
 export function getDefaultPublicAccount(rows: PublicAccountRecord[], usage?: PublicAccountUsage) {
-  return getActivePublicAccounts(rows, usage)[0] ?? rows[0];
+  const activeRows = getActivePublicAccounts(rows, usage);
+
+  if (usage) {
+    return activeRows.find((row) => row.defaultFor.includes(usage)) ?? activeRows[0];
+  }
+
+  return activeRows.find((row) => row.defaultFor.length > 0) ?? activeRows[0];
+}
+
+export function getDefaultPublicAccountRef(rows: PublicAccountRecord[], usage?: PublicAccountUsage) {
+  const account = getDefaultPublicAccount(rows, usage);
+  return account ? buildPublicAccountRef(account) : undefined;
+}
+
+export function resolvePublicAccountRef(rows: PublicAccountRecord[], publicAccountId: string) {
+  const account = rows.find((row) => row.id === publicAccountId);
+  return account ? buildPublicAccountRef(account) : undefined;
+}
+
+export function resolveActivePublicAccountRef(rows: PublicAccountRecord[], publicAccountId: string, usage?: PublicAccountUsage) {
+  const account = getActivePublicAccounts(rows, usage).find((row) => row.id === publicAccountId);
+  return account ? buildPublicAccountRef(account) : undefined;
 }
 
 export function buildPublicAccountOptions(rows: PublicAccountRecord[], usage?: PublicAccountUsage) {
   return getActivePublicAccounts(rows, usage).map((row) => ({
     label: row.displayName,
+    snapshot: buildPublicAccountSnapshot(row),
     type: '对公账户' as const,
     value: row.id
   }));

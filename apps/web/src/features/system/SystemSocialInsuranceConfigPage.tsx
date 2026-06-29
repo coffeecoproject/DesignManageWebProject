@@ -965,6 +965,7 @@ export function SystemSocialInsuranceConfigPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       filters={
         <FilterPanel>

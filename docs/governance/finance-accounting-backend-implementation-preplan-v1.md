@@ -9,6 +9,7 @@ Owner: finance-management backend readiness
 Related contract:
 
 - `docs/data/finance-accounting-voucher-ledger-contract.md`
+- `docs/data/finance-tax-accounting-backend-contract.md`
 - `docs/governance/finance-accounting-voucher-full-workflow-plan-v1.md`
 - `docs/api/api-contract-placeholder.md`
 - `docs/data/frontend-cross-module-contracts.md`
@@ -20,6 +21,7 @@ Related contract:
 目标不是直接写 production migration，也不是把当前前端 mock 直接接成正式账务。目标是先让后端实现具备以下前置条件：
 
 - 数据库表和 migration 顺序明确。
+- 税务口径、发票税额、应收应付税额、会计科目和类目映射的事实源明确。
 - 正式凭证号序列具备事务锁设计。
 - 候选凭证、持久凭证、入账、冲销、期间关闭和总账读取 API 边界明确。
 - 权限、审计、幂等和并发策略明确。
@@ -41,6 +43,7 @@ Related contract:
 
 ```text
 source facts
+  税务口径 / 会计科目 / 类目映射
   应收应付 / 发票台账 / 收支流水 / 银行对账 / 税务办理
     ↓
 accounting candidate service
@@ -70,7 +73,28 @@ reporting read models
 
 ## 4. 非生产 Migration 顺序
 
-建议分 5 个 migration 批次，先在本地/非生产环境执行。
+建议分 6 个 migration 批次，先在本地/非生产环境执行。
+
+### Batch 0: 税务口径与会计科目事实源
+
+| Table | Purpose | Notes |
+| --- | --- | --- |
+| `tax_policy_profiles` | 税务口径版本 | 先写入当前小规模纳税人原型口径，状态 `生效中` |
+| `tax_policy_profile_events` | 税务口径事件 | append-only |
+| `accounting_subjects` | 会计科目主数据 | 系统维护；业务侧只读；禁止页面侧 fallback 默认科目 |
+| `finance_category_accounting_mappings` | 财务类目到会计科目映射 | 财务配置；业务侧只读；按生效期和审计事件维护 |
+| `invoice_tax_facts` | 发票税额事实 | 从发票导入/台账确认产生，不由活跃税务口径回写 |
+| `receivable_payable_tax_facts` | 应收应付税额和科目快照 | 应收应付确认前置事实，含 source hash |
+
+验收：
+
+- 没有覆盖期间的 `生效中` 税务口径时，应收应付税额事实不能确认。
+- 财务类目缺会计科目映射时，来源事实停留在 `待配置`。
+- 业务单据只能选择业务/财务类目，不能直接选择或修改会计科目。
+- 类目到科目映射不需要双人审批，但必须记录生效期、操作人、时间和变更原因。
+- 发票税额事实导入后不因税务口径版本变化被改写。
+- 已确认应收应付税额事实保留税务口径、会计科目和类目映射快照。
+- 已结账期间拒绝重建或确认来源税额事实。
 
 ### Batch A: 基础会计主数据
 
@@ -98,9 +122,9 @@ reporting read models
 
 验收：
 
-- 一个候选生成一张 `已生成` 凭证。
+- 一个 `待制单` 候选制成一张 `已制单` 凭证。
 - 分录借贷平衡才能写入。
-- 同一 source hash 不能重复生成非冲销凭证。
+- 同一 source hash 不能重复制单非冲销凭证。
 - 来源快照和发票快照可在详情中复现当时依据。
 
 ### Batch C: 入账与总账
@@ -129,7 +153,7 @@ reporting read models
 - 已入账凭证可生成关联冲销凭证。
 - 已冲销凭证不能再次冲销。
 - 有未入账凭证、阻断候选或试算不平时不能结账。
-- 已结账期间拒绝生成、入账、冲销。
+- 已结账期间拒绝制单、入账、冲销。
 
 ### Batch E: 前端 API Adapter 切换
 
@@ -137,7 +161,7 @@ reporting read models
 | --- | --- |
 | `financeAccountingVoucherRepository.listCandidates` | 调用候选列表 API |
 | `readCandidate` | 调用候选详情 API |
-| `generateVoucher` / `batchGenerateVouchers` | 持久化候选 |
+| `prepareVoucher` / `batchPrepareVouchers` | 候选制单并持久化正式凭证 |
 | `listVouchers` / `readVoucher` | 读取正式凭证 |
 | `postVoucher` / `batchPostVouchers` | 入账 |
 | `reverseVoucher` | 冲销 |
@@ -184,7 +208,7 @@ COMMIT;
 | `finance.accountingPeriod.read` | 查看期间和关闭检查 | medium |
 | `finance.accountingPeriod.close` | 关闭期间 | high |
 | `finance.accountingPeriod.reopen` | 异常重开 | critical |
-| `finance.accountingVoucher.generate` | 生成凭证 | high |
+| `finance.accountingVoucher.prepare` | 制单 | high |
 | `finance.accountingVoucher.post` | 入账 | high |
 | `finance.accountingVoucher.reverse` | 冲销 | high |
 | `finance.generalLedger.read` | 读取总账 | high |
@@ -193,7 +217,7 @@ COMMIT;
 
 关闭期间必须检查：
 
-- 没有 `已生成` 但未 `已入账` 的凭证。
+- 没有 `已制单` 但未 `已入账` 的凭证。
 - 没有必须处理的阻断候选。
 - 银行对账没有阻断当期资金凭证的未解决事项。
 - 税务办理没有阻断当期税费凭证的未完成事项。
@@ -230,20 +254,25 @@ COMMIT;
 
 | Test | Expected |
 | --- | --- |
-| 完整应收 + 销项发票 | 可生成权责凭证，分录含应收、收入、应交税费 |
-| 应收缺发票/未开票口径 | 候选需处理，生成失败 |
-| 应付 + 小规模进项发票 | 生成成本/费用凭证，不生成进项税额抵扣 |
+| 来源期间缺生效中税务口径 | 应收应付税额事实不能确认，不进入权责凭证候选 |
+| 财务类目缺会计科目映射 | 来源事实停留 `待配置`，不返回凭证候选 |
+| 发票税额事实导入后税务口径变更 | 已导入发票税额不被改写 |
+| 已结账期间重建或确认来源税额事实 | 返回 `CLOSED_ACCOUNTING_PERIOD` |
+| 完整应收 + 销项发票 | `待制单` 权责凭证，分录含应收、收入、应交税费 |
+| 应收缺发票但已确认来源税额事实 | `待制单` 权责凭证，发票证据保留待补/部分匹配 |
+| 应收缺发票且缺来源税额事实 | 不返回权责凭证候选，来源事实停留待补 |
+| 应付 + 小规模进项发票 | 制单成本/费用凭证，不生成进项税额抵扣 |
 | 已复核流水未银行对账 | 资金凭证待生成 |
-| 已复核且已银行对账流水 | 可生成资金凭证 |
-| 银行金额异常 | 候选需处理，不能生成资金凭证 |
+| 已复核且已银行对账流水 | `待制单` 资金凭证 |
+| 银行金额异常 | 候选需处理，不能制单资金凭证 |
 | 税务事项完成但缺回执 | 候选需处理 |
 | 入账成功 | 生成总账行，凭证状态已入账 |
 | 重复入账 | 不产生重复总账行 |
 | 已入账冲销 | 生成冲销凭证，原凭证已冲销 |
 | 关闭期间存在未入账凭证 | 关闭失败 |
 | 关闭期间试算不平 | 关闭失败 |
-| 已结账期间生成/入账/冲销 | 全部拒绝 |
-| source hash 变化 | 生成失败并提示来源已变化 |
+| 已结账期间制单/入账/冲销 | 全部拒绝 |
+| source hash 变化 | 制单失败并提示来源已变化 |
 
 ## 9. Frontend Cutover Plan
 
@@ -261,7 +290,7 @@ COMMIT;
 
 ### Stage 3: Mutating API Mode
 
-- 生成、入账、冲销走后端 API。
+- 制单、入账、冲销走后端 API。
 - 前端移除会话内 lifecycle overlay。
 - 所有操作依赖后端返回状态和事件记录。
 
@@ -307,7 +336,7 @@ COMMIT;
 4. non-production migration apply
 5. seed data replay
 6. backend candidate list/read
-7. backend generate voucher
+7. backend prepare voucher
 8. backend post voucher + ledger entries
 9. backend reverse voucher
 10. accounting period close checks

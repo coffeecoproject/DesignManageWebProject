@@ -1,4 +1,4 @@
-import type { FinanceTransactionRecord } from './financeData';
+import { getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
 import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
 import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
 import type { SalaryMonthlyReport } from '../salary/salaryDomain';
@@ -8,6 +8,7 @@ import {
   financeDeclarationPreparationRecords,
   getDeclarationPreparationProgress
 } from './financeDeclarationPreparationData';
+import { getActiveFinanceTaxPolicyProfile } from './financeTaxPolicyModel';
 import {
   applyPayrollIitSummaryToTaxMatter,
   applySocialInsuranceSummaryToTaxMatter,
@@ -94,15 +95,25 @@ function createFinanceRow(overrides: Partial<FinanceTransactionRecord> = {}): Fi
     accountingPeriod: '2026-07',
     amount: 1000,
     category: '税费缴纳',
-    categorySnapshot: {
-      includeInReport: false,
-      primaryCode: 'FC1-EXP-TAX',
-      primaryName: '税费处理',
-      reportAggregation: '其他',
+      categorySnapshot: {
+        accountingSubject: {
+          balanceDirection: '贷方',
+          code: '2221',
+          name: '应交税费',
+          type: '负债类'
+        },
+        accountingSubjectMappings: {
+          cashCredit: '1002',
+          cashDebit: '2221.99'
+        },
+        includeInReport: false,
+        mappingStatus: '已配置',
+        primaryCode: 'FC1-EXP-TAX',
+        primaryName: '税费处理',
+        reportAggregation: '其他',
       secondaryCode: 'FC2-EXP-TAX-PAYMENT',
       secondaryName: '税费缴纳'
     },
-    collectionStatus: '不适用',
     counterparty: '社保经办机构',
     counterpartyType: '内部',
     currency: 'CNY',
@@ -113,10 +124,9 @@ function createFinanceRow(overrides: Partial<FinanceTransactionRecord> = {}): Fi
     occurredAt: '2026-07-15',
     operationRecords: [],
     paymentMethod: '对公账户付款',
+    ...getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
     reconciliationStatus: '未对账',
     registeredBy: '李明',
-    settlementAccount: '招商银行基本户',
-    settlementAccountType: '对公账户',
     sourceNo: 'TAX-202606-SOCIAL',
     sourceTitle: '2026-06 社保缴纳',
     sourceType: '税费事项',
@@ -171,6 +181,7 @@ const tests: UnitTest[] = [
   {
     name: 'keeps corporate income tax preparation on small low-profit prepayment basis',
     run: () => {
+      const taxPolicy = getActiveFinanceTaxPolicyProfile().corporateIncomeTax;
       const preparationRows = applyDeclarationPreparationSourceState(financeDeclarationPreparationRecords, [], []);
       const q2CitPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q2-CIT');
       const q1CitPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q1-CIT');
@@ -185,14 +196,15 @@ const tests: UnitTest[] = [
       const q2ProfitSourceItem = q2CitPreparation.items.find((item) => item.type === '利润数据确认');
 
       assertEqual(q2CitPreparation.citSummary?.smallLowProfitEligible, true, 'Q2 CIT should be treated as small low-profit candidate');
-      assertEqual(q2CitPreparation.citSummary?.effectiveTaxRate, 0.05, 'Q2 CIT should use 5% effective prepayment estimate');
+      assertEqual(q2CitPreparation.citSummary?.effectiveTaxRate, taxPolicy.smallLowProfitEffectiveTaxRate, 'Q2 CIT should use configured effective prepayment estimate');
+      assertEqual(q2CitPreparation.citSummary?.smallLowProfitTaxableIncomeLimit, taxPolicy.smallLowProfitTaxableIncomeLimit, 'Q2 CIT should use configured taxable income limit');
       assertEqual(q2CitPreparation.citSummary?.estimatedCorporateIncomeTaxAmount, 815, 'Q2 CIT estimate should use taxable income times effective rate');
       assertEqual(q2ProfitSourceItem?.status, '无需确认', 'Q2 CIT synced profit source should be read-only');
       assertDeepEqual(
         q2SourceRows.map((row) => [row.name, row.sourceModule, row.status]),
         [
-          ['经营收入', '财务统计', '已同步'],
-          ['成本费用', '财务统计', '已同步'],
+          ['经营收入', '经营数据', '已同步'],
+          ['成本费用', '经营数据', '已同步'],
           ['薪酬社保', '薪酬社保', '已同步'],
           ['纳税调整', '申报准备', '待确认'],
           ['弥补亏损', '历史亏损台账', '待确认'],
@@ -204,6 +216,22 @@ const tests: UnitTest[] = [
       assertEqual(q2Progress.pendingCount, 3, 'Q2 CIT should still require adjustment, eligibility, and prepayment-basis confirmation');
       assertEqual(q1CitPreparation.citSummary?.estimatedCorporateIncomeTaxAmount, 500, 'Q1 completed CIT fixture should align with small low-profit estimate');
       assertEqual(q1Progress.pendingCount, 0, 'Q1 completed CIT fixture should not expose pending preparation items');
+    }
+  },
+  {
+    name: 'uses shared VAT policy in declaration preparation measurement',
+    run: () => {
+      const vatPolicy = getActiveFinanceTaxPolicyProfile().vatDeclaration;
+      const preparationRows = applyDeclarationPreparationSourceState(financeDeclarationPreparationRecords, [], []);
+      const q2VatPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!q2VatPreparation) {
+        throw new Error('missing VAT declaration preparation fixture');
+      }
+
+      assertEqual(q2VatPreparation.vatSummary.quarterlyExemptionThreshold, vatPolicy.quarterlyExemptionThreshold, 'VAT preparation should use configured quarterly threshold');
+      assertEqual(q2VatPreparation.vatSummary.isBelowQuarterlyExemptionThreshold, true, 'empty Q2 VAT fixture should be below configured threshold');
+      assertEqual(q2VatPreparation.items.some((item) => item.sourceModule === '税务口径'), false, 'VAT items should not duplicate tax policy as a manual source row');
     }
   },
   {
@@ -500,8 +528,8 @@ const tests: UnitTest[] = [
       });
       const transaction = buildTaxMatterPaymentTransaction({
         financeRows: [existingRow],
-        record: matter,
-        settlementAccount: '招商银行基本户'
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: matter
       });
       const attachedMatter = attachTaxMatterPaymentTransaction(matter, transaction);
 
@@ -536,8 +564,8 @@ const tests: UnitTest[] = [
       });
       const transaction = buildTaxMatterPaymentTransaction({
         financeRows: [],
-        record: matter,
-        settlementAccount: '招商银行基本户'
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: matter
       });
 
       assertEqual(transaction, undefined, 'tax payment flow should wait until payment voucher is available');

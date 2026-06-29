@@ -1086,6 +1086,7 @@ export function SystemWorkCalendarPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       metrics={
         <MetricGrid columns={6}>

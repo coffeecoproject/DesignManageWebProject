@@ -725,6 +725,7 @@ export function PeoplePositionManagementPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={4}>
           <MetricCard label="岗位数" value={positionRows.length} icon={<SolutionOutlined />} />

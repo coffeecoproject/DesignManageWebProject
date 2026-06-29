@@ -25,6 +25,7 @@ type FileSlotProps<T extends FileSlotFile> = {
   density?: 'default' | 'compact';
   multiple?: boolean;
   replaceText?: string;
+  showFileList?: boolean;
   status?: ReactNode;
   statusTone?: StatusTagTone;
   title: ReactNode;
@@ -98,6 +99,7 @@ export function FileSlot<T extends FileSlotFile>({
   files,
   multiple,
   replaceText = '替换',
+  showFileList = true,
   status,
   statusTone,
   title,
@@ -136,9 +138,11 @@ export function FileSlot<T extends FileSlotFile>({
             {renderUploadButton({ accept, disabled, fileSelected, multiple, replaceText, uploadText, onSelect })}
           </Space>
         </div>
-        <div className="file-slot-list-panel">
-          <FileTagList emptyText={emptyText} files={slotFiles} onDownload={onDownload} onPreview={onPreview} onRemove={onRemove} />
-        </div>
+        {showFileList ? (
+          <div className="file-slot-list-panel">
+            <FileTagList emptyText={emptyText} files={slotFiles} onDownload={onDownload} onPreview={onPreview} onRemove={onRemove} />
+          </div>
+        ) : null}
       </div>
     );
   }

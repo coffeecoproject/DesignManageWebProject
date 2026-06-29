@@ -150,72 +150,108 @@ Owner: `财务管理 / 会计凭证`.
 
 Related frontend modules: `应收应付`, `收支流水`, `流水复核`, `银行对账`, `发票台账`, `税务办理`.
 
-Contract version: `finance-accounting-voucher-status-v5`.
+Contract version: `finance-accounting-voucher-status-v8`.
 
-The frontend voucher page is a statusized generation result, not a posted
+Tax policy source boundary:
+
+- `apps/web/src/features/finance/financeTaxPolicyModel.ts` owns the current
+  frontend tax-policy profile for tax-basis derivation. It is structured
+  configuration for the prototype, not official filing evidence and not the
+  future source of truth after backend cutover.
+- Backend cutover must follow
+  `docs/data/finance-tax-accounting-backend-contract.md`: versioned
+  `tax_policy_profiles`, immutable `invoice_tax_facts`, confirmed
+  `receivable_payable_tax_facts`, effective
+  `finance_category_accounting_mappings`, and active `accounting_subjects`
+  become the authoritative facts for tax-basis and accounting-subject
+  derivation.
+- Accounting subjects are system-maintained and business-side read-only.
+  Business documents and employee self-service flows select business/finance
+  categories only; they must not expose accounting-subject selection or mapping
+  editing. Finance-category to accounting-subject mapping is finance/system
+  configuration with effective-period and audit controls.
+- `financeTaxBasisModel.ts`, `financeDeclarationPreparationData.ts`,
+  `financeInvoiceMatchingModel.ts`, and `system/taxPolicyData.ts` consume this
+  profile instead of keeping their own VAT rate, taxpayer type, input-treatment,
+  exemption-threshold, or small-low-profit parameter copies.
+- Imported invoice rows still carry their own invoice tax rate and tax amount as
+  external invoice facts. The shared policy decides how those facts are used by
+  accrual, declaration-preparation, and display logic; it does not overwrite an
+  imported invoice.
+- Final taxable/payable results still require official tax-handling result and
+  receipt evidence before they can be treated as backend-grade tax facts.
+
+The frontend voucher page is a statusized voucher-candidate result, not a posted
 general-ledger record. Rows are derived from immutable frontend facts:
 
-- confirmed `应收应付` rows plus matched `发票台账` facts create `权责凭证`
-  generation rows;
-- reviewed and bank-reconciled `收支流水` rows create `资金凭证` generation
+- confirmed and frontloaded-ready `应收应付` rows plus matched `发票台账`
+  facts create `权责凭证` candidate rows;
+- reviewed and bank-reconciled `收支流水` rows create `资金凭证` candidate
   rows; reviewed but unreconciled cash-flow rows stay as `待生成`;
 - reviewed and bank-reconciled `流水冲正` and `流水补差` rows create `调整凭证`
-  generation rows; reviewed but unreconciled adjustment rows stay as `待生成`.
+  candidate rows; reviewed but unreconciled adjustment rows stay as `待生成`.
 - unresolved red invoices in `发票台账` create `调整凭证` handling rows when the
   original blue invoice relation is missing.
-- confirmed `税务办理` rows with a payable amount create `税费凭证` generation
+- confirmed `税务办理` rows with a payable amount create `税费凭证` candidate
   rows. Tax matters that are confirmed but not completed stay as `待生成`; completed
   tax matters missing required declaration/payment receipts stay as `需处理`.
 
-Voucher status is hard-cut to `待生成`, `需处理`, `已生成`, `已入账`, and `已冲销`.
-The current frontend generator emits `已生成` when the source facts can produce
-balanced entries, and `需处理` when a blocking issue is found. A frontend-session
-lifecycle overlay can mark a generated row as `已入账` or `已冲销` for prototype
-verification. Backend readiness still requires persisted vouchers, formal
-voucher numbers, posting events, period locks, and general-ledger entries as
-defined in `docs/data/finance-accounting-voucher-ledger-contract.md`.
+Voucher status is hard-cut to `待生成`, `需处理`, `待制单`, `已制单`, `已入账`, and
+`已冲销`. The current frontend generator emits `待制单` when the source facts can
+produce balanced entries, and `需处理` when a non-accrual blocking issue is found. A
+frontend-session lifecycle overlay can mark a candidate row as `已制单`,
+`已入账`, or `已冲销` for prototype verification. Backend readiness still
+requires tax/accounting source facts, persisted vouchers, formal voucher
+numbers, posting events, period locks, and general-ledger entries as defined in
+`docs/data/finance-tax-accounting-backend-contract.md` and
+`docs/data/finance-accounting-voucher-ledger-contract.md`.
 
 `issueReasons` is the explicit blocking reason list. The first implemented
 frontend checks are:
 
-- missing or incomplete source document facts;
-- missing original evidence such as source attachments or cash-flow vouchers;
-- missing accounting subject mapping;
+- missing or incomplete source document facts outside the frontloaded accrual path;
+- missing original evidence such as cash-flow vouchers or tax receipts;
+- missing accounting subject mapping outside the frontloaded accrual path;
 - invalid amount;
 - unbalanced debit and credit entries.
-- missing matched output invoice for receivable confirmation;
-- partial output invoicing that still needs unbilled-income handling;
-- output invoice tax missing or amount exceeding the confirmation amount;
+- tax basis pending on non-frontloaded voucher sources;
+- output invoice tax missing when invoice-ledger tax is the selected basis, or invoice amount exceeding the confirmation amount;
 - red invoice missing its original blue-invoice relation.
 - reviewed cash-flow row still waiting for bank reconciliation;
 - bank reconciliation amount mismatch or abnormal reconciliation state.
 - confirmed tax matter still waiting for external handling completion;
 - completed tax matter missing required tax declaration or payment receipt files.
 
-For receivable accrual vouchers, matched normal output invoices split the
-confirmation amount into revenue and output-tax lines. The debit remains the
-full receivable amount. If matched normal output invoices cover only part of
-the confirmed receivable amount, the row stays `需处理` with
-`unbilled_income_pending` instead of silently duplicating unbilled income.
+For receivable accrual vouchers, resolved tax basis splits the confirmation
+amount into revenue and output-tax lines. The debit remains the full receivable
+amount. Fully matched normal output invoices are preferred as the tax basis.
+If invoices are partial or not yet issued, the confirmed source tax basis on
+the receivable/payable fact is used, and invoice evidence remains visible as
+`发票部分匹配` or `发票待补` without blocking accrual generation. Only a missing
+source tax basis or matched invoice tax fact keeps the receivable/payable row
+outside the voucher queue until `应收应付` or `发票匹配` supplies the missing fact.
+Invoice amount exceeding the confirmation amount or unresolved red-invoice
+relation also prevents the accrual row from entering the voucher queue.
 
 For payable accrual vouchers, matched normal input invoices are retained as
 cost evidence in `invoiceRefs`, but the current small-scale taxpayer baseline
 does not generate a VAT input-deduction line. Input tax is therefore not posted
 to `2221` in this frontend phase.
 
-Rows expose `sourceRefs` and `invoiceRefs` so the detail drawer can show the
-source module, source number, invoice number, direction, status, declaration
-treatment, tax-exclusive amount, tax amount, and tax-included amount without
-requiring users to inspect internal mock-data fields.
+Rows expose `sourceRefs`, `taxBasis`, and `invoiceRefs` so the detail drawer can
+show the source module, source number, selected tax-basis source, invoice
+evidence status, invoice number, direction, status, declaration treatment,
+tax-exclusive amount, tax amount, and tax-included amount without requiring
+users to inspect internal mock-data fields.
 
-Bank reconciliation is a prerequisite for frontend cash-voucher generation in
+Bank reconciliation is a prerequisite for frontend cash-voucher preparation in
 this phase. A reviewed public-account cash-flow row with
 `reconciliationStatus = 未对账` is rendered as `待生成` with
-`bank_reconciliation_pending`; it is not counted as `已生成`. A row with
+`bank_reconciliation_pending`; it is not counted as `待制单`. A row with
 `reconciliationStatus = 对账异常` is rendered as `需处理` with
 `bank_amount_mismatch`. Once bank reconciliation confirms the system cash-flow
 row, `reconciliationStatus = 已对账` allows the cash voucher to become
-`已生成` if all other source facts are complete.
+`待制单` if all other source facts are complete.
 
 Tax matters are consumed as tax-accrual facts, not as payment facts. A confirmed
 tax matter with `processStatus != 已完成` is rendered as `待生成` with

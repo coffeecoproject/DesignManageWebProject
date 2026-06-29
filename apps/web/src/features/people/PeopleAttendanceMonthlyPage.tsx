@@ -590,6 +590,7 @@ export function PeopleAttendanceMonthlyPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       filters={
         <FilterPanel>
           <FilterBar>

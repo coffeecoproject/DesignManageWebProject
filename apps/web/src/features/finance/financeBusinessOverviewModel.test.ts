@@ -1,5 +1,5 @@
 import type { FinanceTransactionRecord } from './financeData';
-import { getFinanceCategorySnapshot } from './financeData';
+import { getFinanceCategorySnapshot, getFinanceSeedPublicAccountRef } from './financeData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import {
   buildFinanceBusinessOverview,
@@ -32,6 +32,7 @@ function createAccrualRecord(overrides: Partial<FinanceReceivablePayableRecord> 
     category,
     categorySnapshot: getFinanceCategorySnapshot(category),
     confirmDate: '2026-06-10',
+    confirmationStatus: '已确认',
     counterparty: '测试客户',
     counterpartyType: '客户',
     direction: '应收',
@@ -45,10 +46,17 @@ function createAccrualRecord(overrides: Partial<FinanceReceivablePayableRecord> 
     owner: '李明',
     reportAggregation: getFinanceCategorySnapshot(category).reportAggregation,
     settledAmount: 0,
+    settlementStatus: '未结清',
     sourceNo: 'SRC-001',
     sourceTitle: '测试来源',
     sourceType: '合同应收',
-    status: '未结清',
+    taxBasis: {
+      basisSource: '来源单据',
+      taxAmount: 9.9,
+      taxExcludedAmount: 990.1,
+      taxIncludedAmount: 1000,
+      taxRate: '1%'
+    },
     updatedAt: '2026-06-10',
     ...overrides
   };
@@ -62,7 +70,6 @@ function createCashRecord(overrides: Partial<FinanceTransactionRecord> = {}): Fi
     amount: 1000,
     category,
     categorySnapshot: getFinanceCategorySnapshot(category),
-    collectionStatus: '不适用',
     counterparty: '测试对象',
     counterpartyType: '客户',
     currency: 'CNY',
@@ -73,12 +80,11 @@ function createCashRecord(overrides: Partial<FinanceTransactionRecord> = {}): Fi
     occurredAt: '2026-06-10',
     operationRecords: [],
     paymentMethod: '对公账户收款',
+    ...getFinanceSeedPublicAccountRef(),
     reconciliationStatus: '已对账',
     registeredBy: '李明',
     reviewedAt: '2026-06-10 12:00',
     reviewedBy: '财务复核',
-    settlementAccount: '招商银行基本户',
-    settlementAccountType: '对公账户',
     sourceNo: 'SRC-001',
     sourceTitle: '测试来源',
     sourceType: '合同应收',
@@ -134,6 +140,10 @@ const tests: UnitTest[] = [
       assertEqual(report.summary.payableOutstanding, 500, 'payable outstanding should use unsettled payable amount');
       assertEqual(report.incomeRows.length, 1, 'income table should aggregate income categories');
       assertEqual(report.costRows.length, 2, 'cost table should aggregate cost categories');
+      assertEqual(report.metrics[0]?.label, '已确认收入', 'business-confirmation income metric should use confirmed wording');
+      assertEqual(report.metrics[1]?.label, '已确认成本', 'business-confirmation cost metric should use confirmed wording');
+      assertEqual(report.metrics[6]?.label, '未收金额', 'business-confirmation receivable metric should use amount wording');
+      assertEqual(report.metrics[7]?.label, '未付金额', 'business-confirmation payable metric should use amount wording');
     }
   },
   {
@@ -170,7 +180,7 @@ const tests: UnitTest[] = [
             amount: 700,
             id: 'employee-handled',
             paymentMethod: '员工代收',
-            settlementAccountType: '员工经办资金',
+            status: '待复核',
             transactionNo: 'FIN-TEST-004'
           }),
           createCashRecord({
@@ -186,7 +196,7 @@ const tests: UnitTest[] = [
       assertEqual(report.summary.income, 1000, 'cash income should include entered public-account income only');
       assertEqual(report.summary.totalCost, 300, 'cash expense should include entered public-account expense only');
       assertEqual(report.summary.netProfit, 700, 'cash net inflow should subtract cash expense from cash income');
-      assertEqual(report.summary.pendingReviewAmount, 200, 'cash view should separately summarize pending-review public-account rows');
+      assertEqual(report.summary.pendingReviewAmount, 900, 'cash view should separately summarize pending-review public-account rows');
       assertEqual(report.summary.unreconciledAmount, 300, 'cash view should separately summarize unreconciled entered rows');
       assertEqual(report.metrics.length, 6, 'cash result metrics should not duplicate status summary items');
     }
@@ -200,7 +210,7 @@ const tests: UnitTest[] = [
             amount: 1000,
             id: 'unsettled-receivable',
             settledAmount: 400,
-            status: '部分结清'
+            settlementStatus: '部分结清'
           }),
           createAccrualRecord({
             amount: 500,
@@ -211,14 +221,14 @@ const tests: UnitTest[] = [
             id: 'unsettled-payable',
             settledAmount: 100,
             sourceType: '外协结算',
-            status: '未结清'
+            settlementStatus: '未结清'
           }),
           createAccrualRecord({
             amount: 700,
             dueDate: '2026-06-05',
             id: 'overdue-receivable',
             settledAmount: 100,
-            status: '已逾期'
+            settlementStatus: '未结清'
           }),
           createAccrualRecord({
             amount: 300,
@@ -230,7 +240,13 @@ const tests: UnitTest[] = [
             id: 'overdue-payable',
             settledAmount: 0,
             sourceType: '员工报销',
-            status: '已逾期'
+            settlementStatus: '未结清'
+          }),
+          createAccrualRecord({
+            amount: 999,
+            confirmationStatus: '待确认',
+            id: 'pending-confirmation',
+            settlementStatus: '未结清'
           })
         ],
         basis: 'business-confirmation',
@@ -246,7 +262,9 @@ const tests: UnitTest[] = [
       assertEqual(statusByKey.overdueReceivable?.value, 600, 'overdue receivable should use outstanding receivable amount');
       assertEqual(statusByKey.overdueReceivable?.valueType, 'amount', 'overdue receivable should use amount value');
       assertEqual(statusByKey.overduePayable?.value, 300, 'overdue payable should use outstanding payable amount');
+      assertEqual(statusByKey.unsettledReceivable?.label, '未收事项', 'unsettled receivable status should use item wording');
       assertEqual(statusByKey.unsettledReceivable?.value, 2, 'unsettled receivable should count unsettled receivable records');
+      assertEqual(statusByKey.unsettledPayable?.label, '未付事项', 'unsettled payable status should use item wording');
       assertEqual(statusByKey.unsettledPayable?.value, 2, 'unsettled payable should count unsettled payable records');
       assertEqual(statusByKey.pendingReview?.value, undefined, 'business-confirmation status should not expose cash review state');
     }
@@ -254,6 +272,7 @@ const tests: UnitTest[] = [
   {
     name: 'builds cash-flow status summary from public-account, review, reconciliation, and fund states',
     run: () => {
+      const seedPublicAccountRef = getFinanceSeedPublicAccountRef();
       const report = buildFinanceBusinessOverview({
         accrualRecords: [
           createAccrualRecord({
@@ -261,11 +280,18 @@ const tests: UnitTest[] = [
             dueDate: '2026-06-05',
             id: 'overdue-accrual',
             settledAmount: 100,
-            status: '已逾期'
+            settlementStatus: '未结清'
           })
         ],
         basis: 'cash-flow',
         financeRows: [
+          createCashRecord({
+            accountingPeriod: '2026-05',
+            amount: 900,
+            id: 'pre-opening-income',
+            occurredAt: '2026-05-20',
+            transactionNo: 'FIN-TEST-000'
+          }),
           createCashRecord({ amount: 500, id: 'entered-income' }),
           createCashRecord({
             amount: 200,
@@ -285,37 +311,42 @@ const tests: UnitTest[] = [
           }),
           createCashRecord({
             amount: 400,
-            collectionStatus: '部分转入对公',
-            collectedAmount: 100,
             id: 'pending-transfer',
             paymentMethod: '员工代收',
-            settlementAccountType: '员工经办资金',
+            status: '待复核',
             transactionNo: 'FIN-TEST-007'
           }),
           createCashRecord({
             amount: 250,
-            category: '办公费用',
-            collectionStatus: '待报销',
-            direction: '支出',
-            id: 'pending-reimburse',
-            paymentMethod: '员工垫付',
-            settlementAccountType: '员工经办资金',
+            category: '现金暂收',
+            id: 'pending-cash-deposit',
+            paymentMethod: '现金暂收',
+            status: '待复核',
             transactionNo: 'FIN-TEST-008'
           })
         ],
-        publicAccountOpeningBalance: 1000,
+        publicAccountBaselines: [
+          {
+            openingBalance: 1000,
+            openingBalanceDate: '2026-06-01',
+            publicAccountId: seedPublicAccountRef.publicAccountId
+          }
+        ],
         range: juneRange
       });
       const statusByKey = Object.fromEntries(report.statusItems.map((item) => [item.key, item]));
 
-      assertEqual(report.statusItems.length, 4, 'cash-flow status should render four cash-side status cards');
+      assertEqual(report.statusItems.length, 3, 'cash-flow status should render supported cash-side status cards');
       assertEqual(statusByKey.publicAccountBalance?.value, 1300, 'public account balance should include opening balance and entered public movements');
       assertEqual(statusByKey.publicAccountBalance?.valueType, 'amount', 'public account balance should use amount value');
-      assertEqual(statusByKey.pendingReview?.value, 300, 'pending review summary should total pending public-account operating rows');
+      assertEqual(statusByKey.pendingReview?.value, 950, 'pending review summary should total pending public-account operating rows');
       assertEqual(statusByKey.unreconciled?.value, 500, 'unreconciled summary should include unreconciled public-account movements in range');
       assertEqual(statusByKey.overdueReceivable?.value, undefined, 'cash-flow status should not expose receivable overdue state');
-      assertEqual(statusByKey.pendingFund?.value, 550, 'pending fund summary should combine pending transfer and reimbursement amounts');
-      assertEqual(statusByKey.pendingFund?.meta, '转入 1 / 报销 1', 'pending fund summary should keep transfer and reimbursement counts');
+      assertEqual(
+        report.statusItems.some((item) => item.label === '待处理资金'),
+        false,
+        'cash-flow status should not expose handled-fund state'
+      );
     }
   },
   {
@@ -335,6 +366,35 @@ const tests: UnitTest[] = [
 
       assertClose(incomeMetric?.monthOverMonth?.value, 1, 'income month-over-month should compare against previous month');
       assertClose(incomeMetric?.yearOverYear?.value, 3, 'income year-over-year should compare against same range last year');
+    }
+  },
+  {
+    name: 'does not compare rate metrics when previous period has no income basis',
+    run: () => {
+      const report = buildFinanceBusinessOverview({
+        accrualRecords: [
+          createAccrualRecord({ amount: 1000, confirmDate: '2026-06-10', id: 'current' }),
+          createAccrualRecord({
+            amount: 500,
+            accountingPeriod: '2026-05',
+            category: '工资发放',
+            confirmDate: '2026-05-10',
+            counterpartyType: '员工',
+            direction: '应付',
+            documentNo: 'AP-PREVIOUS-001',
+            id: 'previous-cost-only',
+            sourceType: '薪酬发放'
+          })
+        ],
+        basis: 'business-confirmation',
+        financeRows: [],
+        range: juneRange
+      });
+      const netMarginMetric = report.metrics.find((metric) => metric.key === 'netMargin');
+      const grossMarginMetric = report.metrics.find((metric) => metric.key === 'grossMargin');
+
+      assertEqual(netMarginMetric?.monthOverMonth, undefined, 'net margin should not compare when previous income is zero');
+      assertEqual(grossMarginMetric?.monthOverMonth, undefined, 'gross margin should not compare when previous income is zero');
     }
   }
 ];

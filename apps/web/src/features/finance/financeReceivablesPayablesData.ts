@@ -3,20 +3,30 @@ import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import type { StatusTagTone } from '../../components/Detail';
 import type { FinanceCategorySnapshot, FinanceReportAggregation, FinanceTransactionCategory } from './financeData';
 import { getFinanceCategorySnapshot } from './financeData';
+import {
+  getDefaultReceivablePayableTaxBasis,
+  type FinanceTaxBasis,
+  type FinanceTaxBasisSource
+} from './financeTaxBasisModel';
 
 export type FinanceReceivablePayableDirection = '应收' | '应付';
-export type FinanceReceivablePayableStatus = '未结清' | '部分结清' | '已结清' | '已逾期';
+export type FinanceReceivablePayableConfirmationStatus = '待确认' | '已确认' | '已作废';
+export type FinanceReceivablePayableSettlementStatus = '未结清' | '部分结清' | '已结清';
+export type FinanceReceivablePayableReviewProgressStatus = '待复核' | '部分待复核';
+export type FinanceReceivablePayableTaxBasisSource = FinanceTaxBasisSource;
 export type FinanceReceivablePayableCounterpartyType = '客户' | '员工' | '外协' | '供应商' | '内部';
 export type FinanceReceivablePayableSourceType =
   | '合同应收'
   | '项目阶段确认'
   | '月度绩效'
+  | '季度绩效'
   | '薪酬发放'
   | '员工报销'
   | '外协结算'
   | '材料采购'
-  | '运营费用'
-  | '手工登记';
+  | '运营费用';
+
+export type FinanceReceivablePayableTaxBasis = FinanceTaxBasis;
 
 export type FinanceReceivablePayableRecord = {
   accountingPeriod: string;
@@ -24,6 +34,7 @@ export type FinanceReceivablePayableRecord = {
   category: FinanceTransactionCategory;
   categorySnapshot: FinanceCategorySnapshot;
   confirmDate: string;
+  confirmationStatus: FinanceReceivablePayableConfirmationStatus;
   counterparty: string;
   counterpartyType: FinanceReceivablePayableCounterpartyType;
   direction: FinanceReceivablePayableDirection;
@@ -37,10 +48,11 @@ export type FinanceReceivablePayableRecord = {
   owner: string;
   reportAggregation: FinanceReportAggregation;
   settledAmount: number;
+  settlementStatus: FinanceReceivablePayableSettlementStatus;
   sourceNo: string;
   sourceTitle: string;
   sourceType: FinanceReceivablePayableSourceType;
-  status: FinanceReceivablePayableStatus;
+  taxBasis: FinanceReceivablePayableTaxBasis;
   updatedAt: string;
 };
 
@@ -49,20 +61,53 @@ export const receivablePayableDirectionTone = {
   应付: 'red'
 } as const satisfies Record<FinanceReceivablePayableDirection, StatusTagTone>;
 
-export const receivablePayableStatusTone = {
+export const receivablePayableConfirmationStatusTone = {
+  待确认: 'amber',
+  已确认: 'green',
+  已作废: 'gray'
+} as const satisfies Record<FinanceReceivablePayableConfirmationStatus, StatusTagTone>;
+
+export const receivablePayableSettlementStatusTone = {
   未结清: 'amber',
   部分结清: 'blue',
-  已结清: 'green',
-  已逾期: 'red'
-} as const satisfies Record<FinanceReceivablePayableStatus, StatusTagTone>;
+  已结清: 'green'
+} as const satisfies Record<FinanceReceivablePayableSettlementStatus, StatusTagTone>;
+
+export const receivablePayableReviewProgressTone = {
+  待复核: 'blue',
+  部分待复核: 'blue'
+} as const satisfies Record<FinanceReceivablePayableReviewProgressStatus, StatusTagTone>;
+
+export const financeReceivablePayableDirectionOptions: FinanceReceivablePayableDirection[] = ['应收', '应付'];
+
+export const financeReceivablePayableConfirmationStatusOptions: FinanceReceivablePayableConfirmationStatus[] = [
+  '待确认',
+  '已确认',
+  '已作废'
+];
+
+export const financeReceivablePayableSettlementStatusOptions: FinanceReceivablePayableSettlementStatus[] = [
+  '未结清',
+  '部分结清',
+  '已结清'
+];
+
+export const financeReceivablePayableCounterpartyTypeOptions: FinanceReceivablePayableCounterpartyType[] = [
+  '客户',
+  '员工',
+  '外协',
+  '供应商',
+  '内部'
+];
 
 export function getReceivablePayableOutstandingAmount(record: FinanceReceivablePayableRecord) {
   return Math.max(0, record.amount - record.settledAmount);
 }
 
-type FinanceReceivablePayableRecordSeed = Omit<FinanceReceivablePayableRecord, 'categorySnapshot' | 'reportAggregation'> & {
+type FinanceReceivablePayableRecordSeed = Omit<FinanceReceivablePayableRecord, 'categorySnapshot' | 'reportAggregation' | 'taxBasis'> & {
   categorySnapshot?: FinanceCategorySnapshot;
   reportAggregation?: FinanceReportAggregation;
+  taxBasis?: FinanceReceivablePayableTaxBasis;
 };
 
 export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] = ([
@@ -71,6 +116,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 68000,
     category: '客户回款',
     confirmDate: '2026-06-01',
+    confirmationStatus: '已确认',
     counterparty: '奈雪华南区域',
     counterpartyType: '客户',
     direction: '应收',
@@ -108,10 +154,10 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 68000,
+    settlementStatus: '已结清',
     sourceNo: 'CON-2026-001',
     sourceTitle: '奈雪华南门店设计服务合同',
     sourceType: '合同应收',
-    status: '已结清',
     updatedAt: '2026-06-04 09:12'
   },
   {
@@ -119,6 +165,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 18000,
     category: '客户回款',
     confirmDate: '2026-06-08',
+    confirmationStatus: '已确认',
     counterparty: '星河餐饮集团',
     counterpartyType: '客户',
     direction: '应收',
@@ -156,10 +203,10 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 9800,
+    settlementStatus: '部分结清',
     sourceNo: 'CON-2026-009',
     sourceTitle: '星河餐饮集团空间设计项目',
     sourceType: '合同应收',
-    status: '部分结清',
     updatedAt: '2026-06-15 09:20'
   },
   {
@@ -167,6 +214,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 12800,
     category: '客户回款',
     confirmDate: '2026-06-12',
+    confirmationStatus: '已确认',
     counterparty: '光谷商业空间',
     counterpartyType: '客户',
     direction: '应收',
@@ -196,10 +244,10 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 0,
+    settlementStatus: '未结清',
     sourceNo: 'PRJ-202606-003',
     sourceTitle: '光谷商业空间方案阶段',
     sourceType: '项目阶段确认',
-    status: '未结清',
     updatedAt: '2026-06-12 16:20'
   },
   {
@@ -207,11 +255,12 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 3613.75,
     category: '绩效发放',
     confirmDate: '2026-06-10',
+    confirmationStatus: '已确认',
     counterparty: '陈思',
     counterpartyType: '员工',
     direction: '应付',
     documentNo: 'AP-202606-001',
-    dueDate: '2026-06-15',
+    dueDate: '2026-07-15',
     files: [
       {
         id: 'rp-file-004',
@@ -244,10 +293,10 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 1806.88,
+    settlementStatus: '部分结清',
     sourceNo: 'PERF-202606-20260011',
     sourceTitle: '陈思 2026-06 月度绩效',
     sourceType: '月度绩效',
-    status: '部分结清',
     updatedAt: '2026-06-10 11:30'
   },
   {
@@ -255,11 +304,12 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 12000,
     category: '工资发放',
     confirmDate: '2026-06-10',
+    confirmationStatus: '已确认',
     counterparty: '赵倩',
     counterpartyType: '员工',
     direction: '应付',
     documentNo: 'AP-202606-002',
-    dueDate: '2026-06-10',
+    dueDate: '2026-07-15',
     files: [
       {
         id: 'rp-file-005',
@@ -292,10 +342,10 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 12000,
+    settlementStatus: '已结清',
     sourceNo: 'PAY-202606-20260004',
     sourceTitle: '赵倩 2026-06 工资发放',
     sourceType: '薪酬发放',
-    status: '已结清',
     updatedAt: '2026-06-11 10:04'
   },
   {
@@ -303,6 +353,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 3200,
     category: '外协付款',
     confirmDate: '2026-06-11',
+    confirmationStatus: '已确认',
     counterparty: '示例兼职 B',
     counterpartyType: '外协',
     direction: '应付',
@@ -332,10 +383,10 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 0,
+    settlementStatus: '未结清',
     sourceNo: 'OUT-202606-0008',
     sourceTitle: '示例兼职 B 外协结算',
     sourceType: '外协结算',
-    status: '未结清',
     updatedAt: '2026-06-11 14:40'
   },
   {
@@ -343,6 +394,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     amount: 486.5,
     category: '差旅交通',
     confirmDate: '2026-05-30',
+    confirmationStatus: '已确认',
     counterparty: '刘宇',
     counterpartyType: '员工',
     direction: '应付',
@@ -358,8 +410,8 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
       }
     ],
     id: 'ap-202605-018',
-    linkedTransactionNos: ['FIN-202605-0018'],
-    note: '员工垫付已登记，尚未完成对公报销付款。',
+    linkedTransactionNos: [],
+    note: '费用报销审核通过后生成应付，尚未登记付款流水。',
     operationRecords: [
       {
         id: 'rp-op-011',
@@ -372,12 +424,12 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     ],
     owner: '李明',
     settledAmount: 0,
+    settlementStatus: '未结清',
     sourceNo: 'EXP-202605-0012',
     sourceTitle: '刘宇 差旅交通报销',
     sourceType: '员工报销',
-    status: '已逾期',
     updatedAt: '2026-05-30 17:20'
-  }
+  },
 ] satisfies FinanceReceivablePayableRecordSeed[]).map((record) => {
   const seedRecord = record as FinanceReceivablePayableRecordSeed;
   const categorySnapshot = seedRecord.categorySnapshot ?? getFinanceCategorySnapshot(seedRecord.category);
@@ -385,6 +437,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
   return {
     ...seedRecord,
     categorySnapshot,
-    reportAggregation: seedRecord.reportAggregation ?? categorySnapshot.reportAggregation
+    reportAggregation: seedRecord.reportAggregation ?? categorySnapshot.reportAggregation,
+    taxBasis: seedRecord.taxBasis ?? getDefaultReceivablePayableTaxBasis(seedRecord)
   };
 });

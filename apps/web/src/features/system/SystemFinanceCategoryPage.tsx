@@ -25,18 +25,23 @@ import {
   financePaymentMethodOptions,
   financeReportAggregationOptions,
   financeSourceTypeOptions,
+  getDefaultAccountingSubjectCodeForPrimary,
   type FinancePrimaryCategoryFormValue,
   type FinanceSecondaryCategoryFormValue,
   useFinanceCategoryState
 } from './FinanceCategoryState';
-import type {
-  FinanceCategoryStatus,
-  FinancePrimaryCategoryConfig,
-  FinancePaymentMethod,
-  FinanceReportAggregation,
-  FinanceSecondaryCategoryConfig,
-  FinanceTransactionDirection
+import {
+  financeAccountingSubjectRoleLabels,
+  financeCategoryAccountingSubjectMappings,
+  type FinanceAccountingSubjectRole,
+  type FinanceCategoryStatus,
+  type FinancePrimaryCategoryConfig,
+  type FinancePaymentMethod,
+  type FinanceReportAggregation,
+  type FinanceSecondaryCategoryConfig,
+  type FinanceTransactionDirection
 } from '../finance/financeData';
+import { accountingSubjectSeedRows, getAccountingSubjectByCode } from '../finance/financeAccountingSubjectData';
 
 type FinanceCategoryDrawerContext =
   | {
@@ -69,7 +74,6 @@ const reportAggregationTone = {
   项目成本: 'red',
   人员支出: 'amber',
   运营费用: 'blue',
-  资金处理: 'gray',
   其他: 'gray'
 } as const;
 
@@ -83,6 +87,7 @@ const defaultPrimaryForm: FinancePrimaryCategoryFormValue = {
 
 const defaultSecondaryForm: FinanceSecondaryCategoryFormValue = {
   counterpartyScope: '客户',
+  defaultAccountingSubjectCode: '1122',
   defaultSourceType: '合同应收',
   includeInReport: true,
   name: '',
@@ -134,6 +139,7 @@ function buildSecondaryForm(
 
   return {
     counterpartyScope: record.counterpartyScope,
+    defaultAccountingSubjectCode: record.defaultAccountingSubjectCode,
     defaultSourceType: record.defaultSourceType,
     includeInReport: record.includeInReport,
     name: record.name,
@@ -158,7 +164,7 @@ function getPrimaryFormForDirection(direction: FinanceTransactionDirection): Fin
       ...defaultPrimaryForm,
       direction,
       includeInReport: false,
-      reportAggregation: '资金处理'
+      reportAggregation: '其他'
     };
   }
 
@@ -179,7 +185,7 @@ function getDefaultPaymentMethods(direction: FinanceTransactionDirection): Finan
 
 function getSecondaryDefaultsForPrimary(primary?: FinancePrimaryCategoryConfig): Pick<
   FinanceSecondaryCategoryFormValue,
-  'counterpartyScope' | 'defaultSourceType' | 'includeInReport' | 'paymentMethods' | 'primaryId'
+  'counterpartyScope' | 'defaultAccountingSubjectCode' | 'defaultSourceType' | 'includeInReport' | 'paymentMethods' | 'primaryId'
 > {
   if (!primary) {
     return defaultSecondaryForm;
@@ -187,11 +193,32 @@ function getSecondaryDefaultsForPrimary(primary?: FinancePrimaryCategoryConfig):
 
   return {
     counterpartyScope: primary.direction === '收入' ? '客户' : primary.direction === '支出' ? '供应商' : '内部',
+    defaultAccountingSubjectCode: getDefaultAccountingSubjectCodeForPrimary(primary),
     defaultSourceType: primary.direction === '收入' ? '合同应收' : primary.direction === '支出' ? '报销单' : '手工登记',
     includeInReport: primary.includeInReport,
     paymentMethods: [...getDefaultPaymentMethods(primary.direction)],
     primaryId: primary.id
   };
+}
+
+function buildAccountingRoleMappingItems(categoryName: string) {
+  const mappings = financeCategoryAccountingSubjectMappings[categoryName] ?? {};
+  const roles = Object.keys(financeAccountingSubjectRoleLabels) as FinanceAccountingSubjectRole[];
+  const mappedItems = roles
+    .filter((role) => mappings[role])
+    .map((role) => {
+      const subjectCode = mappings[role];
+      const subject = subjectCode ? getAccountingSubjectByCode(subjectCode) : undefined;
+
+      return {
+        label: financeAccountingSubjectRoleLabels[role],
+        value: subject ? `${subject.code} ${subject.name}` : '待配置'
+      };
+    });
+
+  return mappedItems.length > 0
+    ? mappedItems
+    : [{ label: '映射状态', value: '待配置' }];
 }
 
 function FinanceCategoryDrawer({
@@ -234,11 +261,20 @@ function FinanceCategoryDrawer({
   const activePrimary = isPrimaryTarget ? primaryRecord : primaryRows.find((row) => row.id === secondaryForm.primaryId);
   const activeStatus = isPrimaryTarget ? (primaryRecord?.status ?? '启用') : (secondaryRecord?.status ?? '启用');
   const activeCode = isPrimaryTarget ? (primaryRecord?.code ?? '保存后生成') : (secondaryRecord?.code ?? '保存后生成');
+  const activeAccountingSubject = getAccountingSubjectByCode(secondaryForm.defaultAccountingSubjectCode);
+  const accountingSubjectOptions = accountingSubjectSeedRows.map((subject) => ({
+    label: `${subject.code} ${subject.name}`,
+    value: subject.code
+  }));
   const normalizedPrimaryName = primaryForm.name.trim();
   const normalizedSecondaryName = secondaryForm.name.trim();
   const saveDisabled = isPrimaryTarget
     ? !normalizedPrimaryName
-    : !normalizedSecondaryName || !secondaryForm.primaryId || secondaryForm.paymentMethods.length === 0 || !secondaryForm.voucherRequirement.trim();
+    : !normalizedSecondaryName ||
+      !secondaryForm.primaryId ||
+      !secondaryForm.defaultAccountingSubjectCode ||
+      secondaryForm.paymentMethods.length === 0 ||
+      !secondaryForm.voucherRequirement.trim();
 
   function updatePrimaryForm<T extends keyof FinancePrimaryCategoryFormValue>(key: T, value: FinancePrimaryCategoryFormValue[T]) {
     drawer.setForm((currentValue) => ({
@@ -342,6 +378,11 @@ function FinanceCategoryDrawer({
 
     if (nextValue.paymentMethods.length === 0) {
       void messageApi.warning('请至少选择一个适用收付方式');
+      return;
+    }
+
+    if (!getAccountingSubjectByCode(nextValue.defaultAccountingSubjectCode)) {
+      void messageApi.warning('请选择默认会计科目');
       return;
     }
 
@@ -496,6 +537,12 @@ function FinanceCategoryDrawer({
                 />
               </DetailSection>
 
+              {isDetailMode ? (
+                <DetailSection icon={<BankOutlined />} title="会计映射">
+                  <DetailInfoGrid columns={2} items={buildAccountingRoleMappingItems(secondaryForm.name)} />
+                </DetailSection>
+              ) : null}
+
               <DetailSection icon={<FileProtectOutlined />} title="说明">
                 {isDetailMode ? (
                   <div className="task-config-note-text">{primaryForm.note || '暂无说明'}</div>
@@ -547,6 +594,18 @@ function FinanceCategoryDrawer({
                           options={financeCounterpartyScopeOptions.map((scope) => ({ label: scope, value: scope }))}
                           value={secondaryForm.counterpartyScope}
                           onChange={(value) => updateSecondaryForm('counterpartyScope', value)}
+                        />
+                      )
+                    },
+                    {
+                      label: '默认会计科目 *',
+                      value: isDetailMode ? (
+                        activeAccountingSubject ? `${activeAccountingSubject.code} ${activeAccountingSubject.name}` : '-'
+                      ) : (
+                        <Select
+                          options={accountingSubjectOptions}
+                          value={secondaryForm.defaultAccountingSubjectCode}
+                          onChange={(value) => updateSecondaryForm('defaultAccountingSubjectCode', value)}
                         />
                       )
                     },
@@ -674,7 +733,16 @@ export function SystemFinanceCategoryPage() {
     : undefined;
   const enabledPrimaryCount = financePrimaryCategories.filter((row) => row.status === '启用').length;
   const enabledSecondaryCount = financeSecondaryCategories.filter((row) => row.status === '启用').length;
-  const reportCategoryCount = financeSecondaryCategories.filter((row) => row.includeInReport && row.status === '启用').length;
+  const mappedSecondaryCount = financeSecondaryCategories.filter((row) => {
+    const roleMappings = Object.values(financeCategoryAccountingSubjectMappings[row.name] ?? {});
+
+    return (
+      row.status === '启用' &&
+      Boolean(getAccountingSubjectByCode(row.defaultAccountingSubjectCode)) &&
+      roleMappings.length > 0 &&
+      roleMappings.every((subjectCode) => getAccountingSubjectByCode(subjectCode))
+    );
+  }).length;
 
   const filteredSecondaryRows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -684,9 +752,20 @@ export function SystemFinanceCategoryPage() {
       const matchesStatus = statusFilter === '全部' || row.status === statusFilter;
       const matchesDirection = directionFilter === '全部' || row.direction === directionFilter;
       const matchesAggregation = aggregationFilter === '全部' || row.reportAggregation === aggregationFilter;
+      const accountingSubject = getAccountingSubjectByCode(row.defaultAccountingSubjectCode);
       const matchesKeyword =
         !normalizedKeyword ||
-        [row.name, row.code, row.note, row.voucherRequirement, row.reportAggregation, primary?.name, ...row.paymentMethods]
+        [
+          row.name,
+          row.code,
+          row.note,
+          row.voucherRequirement,
+          row.reportAggregation,
+          primary?.name,
+          accountingSubject?.code,
+          accountingSubject?.name,
+          ...row.paymentMethods
+        ]
           .join(' ')
           .toLowerCase()
           .includes(normalizedKeyword);
@@ -808,6 +887,16 @@ export function SystemFinanceCategoryPage() {
       render: (items: string[]) => <TagChipList items={items} maxVisible={2} wrap />
     },
     {
+      title: '默认科目',
+      dataIndex: 'defaultAccountingSubjectCode',
+      width: 160,
+      render: (subjectCode: string) => {
+        const subject = getAccountingSubjectByCode(subjectCode);
+
+        return <CompactCell primary={subject ? `${subject.code} ${subject.name}` : '未映射'} secondary={subject?.type ?? '-'} />;
+      }
+    },
+    {
       title: '报表/凭证',
       key: 'report',
       width: 168,
@@ -830,13 +919,14 @@ export function SystemFinanceCategoryPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<PartitionOutlined />} label="启用一级" value={`${enabledPrimaryCount}/${financePrimaryCategories.length}`} />
           <MetricCard icon={<ProfileOutlined />} label="二级类目" value={financeSecondaryCategories.length} />
           <MetricCard icon={<CheckCircleOutlined />} label="启用二级" value={enabledSecondaryCount} />
-          <MetricCard icon={<BankOutlined />} label="统计归集" value={reportCategoryCount} />
+          <MetricCard icon={<BankOutlined />} label="科目映射" value={`${mappedSecondaryCount}/${enabledSecondaryCount}`} />
         </MetricGrid>
       }
       filters={

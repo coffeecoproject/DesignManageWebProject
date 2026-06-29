@@ -191,6 +191,7 @@ export function SalaryMonthlyPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       filters={
         <FilterPanel>
           <FilterBar>

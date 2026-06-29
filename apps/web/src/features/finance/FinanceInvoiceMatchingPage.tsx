@@ -1,15 +1,12 @@
 import { FileSearchOutlined, FileTextOutlined, LinkOutlined, RollbackOutlined, WalletOutlined } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Button, Select, message } from 'antd';
+import { Button, Empty, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
-import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
+import { DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { DetailSummaryCards, type DetailSummaryCardItem } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
-import { DetailDrawerShell } from '../../components/DrawerShell';
-import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
-import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
@@ -17,47 +14,44 @@ import { useFinanceManagement } from './FinanceManagementState';
 import type { FinanceTransactionRecord } from './financeData';
 import { type FinanceInvoiceDirection, type FinanceInvoiceRecord } from './financeInvoiceData';
 import {
+  compareInvoiceReceivablePayableMatchLabel,
+  doesInvoiceBusinessRefMatchReceivablePayable,
+  getFinanceReceivablePayableInvoiceDirection,
+  getInvoiceReceivablePayableMatchLabel,
+  isFinanceReceivablePayableInvoiceMatchApplicable,
+  type FinanceInvoiceReceivablePayableMatchLabel
+} from './financeInvoiceMatchingModel';
+import {
   buildOriginalInvoiceRedSummary,
   buildTransactionInvoiceAssociation,
   getInvoiceMatchedAmount,
   getInvoiceMatchStatus,
   getOriginalInvoiceForRedInvoice,
   getRedInvoiceOriginalAssociationStatus,
-  isInvoiceEffective,
-  isTransactionInvoiceAssociationRequired
+  isInvoiceEffective
 } from './financeInvoiceModel';
+import {
+  type FinanceReceivablePayableRecord
+} from './financeReceivablesPayablesData';
 import { financeToday, formatMoney, getFinanceTransactionInvoiceDeclarationStatus } from './financeUtils';
 
-type InvoiceMatchingTodoType = '发票待关联流水' | '流水待关联发票' | '红冲待关联原票' | '后续开票待处理';
-type InvoiceMatchingTodoStatus = '待处理' | '部分关联' | '待确认原票';
-type InvoiceMatchingTodoTypeFilter = '全部' | InvoiceMatchingTodoType;
-type InvoiceMatchingDirectionFilter = '全部' | FinanceInvoiceDirection;
-type InvoiceMatchingPeriodFilter = '全部' | string;
-type InvoiceMatchingStatusFilter = '全部' | InvoiceMatchingTodoStatus;
-
-type InvoiceMatchingFilters = {
-  direction: InvoiceMatchingDirectionFilter;
-  keyword: string;
-  period: InvoiceMatchingPeriodFilter;
-  status: InvoiceMatchingStatusFilter;
-  type: InvoiceMatchingTodoTypeFilter;
-};
+type InvoiceMatchingWorkflowStatus = '待补票税依据' | '待处理差异' | '已匹配';
 
 type DetailTabItem = Parameters<typeof DetailTabs>[0]['items'][number];
 
-type CashFlowCandidateRow = {
+type BusinessCandidateRow = {
   allocatedAmount: number;
   availableAmount: number;
+  businessRecord: FinanceReceivablePayableRecord;
   id: string;
-  matchLabel: '对象一致' | '同方向候选';
-  transaction: FinanceTransactionRecord;
+  matchLabel: FinanceInvoiceReceivablePayableMatchLabel;
 };
 
 type InvoiceCandidateRow = {
   availableAmount: number;
   id: string;
   invoice: FinanceInvoiceRecord;
-  matchLabel: '对象一致' | '同方向候选';
+  matchLabel: FinanceInvoiceReceivablePayableMatchLabel;
   matchedAmount: number;
 };
 
@@ -68,15 +62,17 @@ type RedOriginalInvoiceCandidateRow = {
   id: string;
   isOverLimit: boolean;
   invoice: FinanceInvoiceRecord;
-  matchLabel: '对象一致' | '同方向候选';
+  matchLabel: '对象一致';
   remainingAfterCurrentAmount: number;
 };
 
-type InvoiceCurrentCashFlowMatchRow = {
+type InvoiceCurrentBusinessMatchRow = {
   amount: number;
+  businessRecord?: FinanceReceivablePayableRecord;
+  businessRecordNo: string;
+  businessSourceNo: string;
+  businessSourceTitle: string;
   id: string;
-  transaction?: FinanceTransactionRecord;
-  transactionNo: string;
 };
 
 type SubsequentInvoiceMatchedTransactionRow = {
@@ -85,20 +81,20 @@ type SubsequentInvoiceMatchedTransactionRow = {
   transaction: FinanceTransactionRecord;
 };
 
-type TransactionCurrentInvoiceMatchRow = {
+type BusinessCurrentInvoiceMatchRow = {
   amount: number;
   id: string;
   invoice: FinanceInvoiceRecord;
   matchId: string;
 };
 
-type SelectedCashFlowMatchRow = CashFlowCandidateRow & {
-  allocationStatus: '全额占用' | '部分占用';
+type SelectedBusinessMatchRow = BusinessCandidateRow & {
+  allocationStatus: '全额关联' | '部分关联';
   matchAmount: number;
 };
 
 type SelectedInvoiceMatchRow = InvoiceCandidateRow & {
-  allocationStatus: '全额占用' | '部分占用';
+  allocationStatus: '全额关联' | '部分关联';
   matchAmount: number;
 };
 
@@ -116,8 +112,8 @@ type InvoiceMatchingTodoRow =
       remainingAmount: number;
       sourceNo: string;
       sourceType: 'invoice';
-      status: InvoiceMatchingTodoStatus;
-      type: '发票待关联流水';
+      status: InvoiceMatchingWorkflowStatus;
+      type: '发票待关联权责事项';
     }
   | {
       amount: number;
@@ -130,10 +126,10 @@ type InvoiceMatchingTodoRow =
       period: string;
       remainingAmount: number;
       sourceNo: string;
-      sourceType: 'transaction';
-      status: InvoiceMatchingTodoStatus;
-      transaction: FinanceTransactionRecord;
-      type: '流水待关联发票';
+      businessRecord: FinanceReceivablePayableRecord;
+      sourceType: 'business';
+      status: InvoiceMatchingWorkflowStatus;
+      type: '权责事项待补票税依据';
     }
   | {
       amount: number;
@@ -148,8 +144,8 @@ type InvoiceMatchingTodoRow =
       remainingAmount: number;
       sourceNo: string;
       sourceType: 'red-invoice';
-      status: '待确认原票';
-      type: '红冲待关联原票';
+      status: '待处理差异';
+      type: '红冲发票待关联原票';
     }
   | {
       amount: number;
@@ -164,56 +160,59 @@ type InvoiceMatchingTodoRow =
       remainingAmount: number;
       sourceNo: string;
       sourceType: 'subsequent-invoice';
-      status: '待处理';
+      status: '待处理差异';
       subsequentRows: SubsequentInvoiceMatchedTransactionRow[];
-      type: '后续开票待处理';
+      type: '后续开票待确认';
+    }
+  | {
+      amount: number;
+      candidateCount: number;
+      counterparty: string;
+      direction: FinanceInvoiceDirection;
+      id: string;
+      invoice: FinanceInvoiceRecord;
+      latestDate: string;
+      matchedAmount: number;
+      period: string;
+      remainingAmount: number;
+      sourceNo: string;
+      sourceType: 'matched-invoice';
+      status: '已匹配';
+      type: '票税依据已匹配';
     };
-
-const defaultFilters: InvoiceMatchingFilters = {
-  direction: '全部',
-  keyword: '',
-  period: '全部',
-  status: '全部',
-  type: '全部'
-};
 
 const invoiceDirectionTone = {
   销项: 'green',
   进项: 'blue'
 } as const;
 
-const todoTypeTone = {
-  发票待关联流水: 'blue',
-  流水待关联发票: 'green',
-  红冲待关联原票: 'amber',
-  后续开票待处理: 'blue'
-} as const satisfies Record<InvoiceMatchingTodoType, 'amber' | 'blue' | 'green'>;
-
-const todoStatusTone = {
-  待处理: 'amber',
-  部分关联: 'blue',
-  待确认原票: 'amber'
-} as const satisfies Record<InvoiceMatchingTodoStatus, 'amber' | 'blue'>;
+const workflowStatusTone = {
+  待补票税依据: 'amber',
+  待处理差异: 'red',
+  已匹配: 'green'
+} as const satisfies Record<InvoiceMatchingWorkflowStatus, 'amber' | 'green' | 'red'>;
 
 const allocationStatusTone = {
-  全额占用: 'green',
-  部分占用: 'blue'
+  全额关联: 'green',
+  部分关联: 'blue'
 } as const;
 
-function normalizeKeyword(keyword: string) {
-  return keyword.trim().toLowerCase();
-}
+const invoiceMatchLabelTone = {
+  来源一致: 'green',
+  对象一致: 'green',
+  报销票据: 'blue'
+} as const satisfies Record<FinanceInvoiceReceivablePayableMatchLabel, 'blue' | 'green'>;
 
-function getCashFlowAllocatedAmount(invoice: FinanceInvoiceRecord, amount: number) {
+function getBusinessAllocatedAmount(invoice: FinanceInvoiceRecord, amount: number) {
   return invoice.invoiceStatus === '红冲' ? 0 : Math.max(0, amount);
 }
 
-function getAllocatedAmountByTransaction(invoices: FinanceInvoiceRecord[]) {
+function getAllocatedAmountByBusinessRecord(invoices: FinanceInvoiceRecord[]) {
   const allocatedAmountMap = new Map<string, number>();
 
   invoices.forEach((invoice) => {
-    invoice.matchedTransactions.forEach((match) => {
-      allocatedAmountMap.set(match.transactionNo, (allocatedAmountMap.get(match.transactionNo) ?? 0) + getCashFlowAllocatedAmount(invoice, match.amount));
+    invoice.matchedBusinessRefs.forEach((match) => {
+      allocatedAmountMap.set(match.recordNo, (allocatedAmountMap.get(match.recordNo) ?? 0) + getBusinessAllocatedAmount(invoice, match.amount));
     });
   });
 
@@ -224,37 +223,23 @@ function getInvoiceRemainingAmount(invoice: FinanceInvoiceRecord) {
   return Math.max(0, invoice.totalAmount - getInvoiceMatchedAmount(invoice));
 }
 
-function getInvoiceDirectionFromTransaction(transaction: FinanceTransactionRecord): FinanceInvoiceDirection {
-  return transaction.direction === '收入' ? '销项' : '进项';
-}
-
-function isDirectionMatched(invoice: FinanceInvoiceRecord, transaction: FinanceTransactionRecord) {
-  if (invoice.direction === '销项') {
-    return transaction.direction === '收入' && transaction.counterpartyType === '客户';
-  }
-
-  return transaction.direction === '支出' && (transaction.counterpartyType === '供应商' || transaction.counterpartyType === '外协');
-}
-
-function buildCashFlowCandidateRows(
+function buildBusinessCandidateRows(
   invoice: FinanceInvoiceRecord,
   invoices: FinanceInvoiceRecord[],
-  financeRows: FinanceTransactionRecord[]
-): CashFlowCandidateRow[] {
-  const allocatedAmountMap = getAllocatedAmountByTransaction(invoices);
+  receivablePayableRows: FinanceReceivablePayableRecord[]
+): BusinessCandidateRow[] {
+  const allocatedAmountMap = getAllocatedAmountByBusinessRecord(invoices);
 
-  return financeRows
-    .flatMap((transaction) => {
-      if (transaction.accountingPeriod !== invoice.accountingPeriod || transaction.status !== '已入账') {
+  return receivablePayableRows
+    .flatMap((record) => {
+      const matchLabel = getInvoiceReceivablePayableMatchLabel(invoice, record);
+
+      if (!matchLabel) {
         return [];
       }
 
-      if (!isDirectionMatched(invoice, transaction)) {
-        return [];
-      }
-
-      const allocatedAmount = allocatedAmountMap.get(transaction.transactionNo) ?? 0;
-      const availableAmount = Number((transaction.amount - allocatedAmount).toFixed(2));
+      const allocatedAmount = allocatedAmountMap.get(record.documentNo) ?? 0;
+      const availableAmount = Number((record.amount - allocatedAmount).toFixed(2));
 
       if (availableAmount <= 0.01) {
         return [];
@@ -264,23 +249,25 @@ function buildCashFlowCandidateRows(
         {
           allocatedAmount,
           availableAmount,
-          id: `${invoice.id}-${transaction.id}`,
-          matchLabel: transaction.counterparty === invoice.counterparty ? '对象一致' : '同方向候选',
-          transaction
-        } satisfies CashFlowCandidateRow
+          businessRecord: record,
+          id: `${invoice.id}-${record.id}`,
+          matchLabel
+        } satisfies BusinessCandidateRow
       ];
     })
-    .sort(compareCandidateRows);
+    .sort(compareBusinessCandidateRows);
 }
 
-function buildInvoiceCandidateRows(transaction: FinanceTransactionRecord, invoices: FinanceInvoiceRecord[]): InvoiceCandidateRow[] {
+function buildInvoiceCandidateRows(record: FinanceReceivablePayableRecord, invoices: FinanceInvoiceRecord[]): InvoiceCandidateRow[] {
   return invoices
     .flatMap((invoice) => {
-      if (invoice.accountingPeriod !== transaction.accountingPeriod || invoice.invoiceStatus !== '正常' || !isInvoiceEffective(invoice)) {
+      if (invoice.invoiceStatus !== '正常' || !isInvoiceEffective(invoice)) {
         return [];
       }
 
-      if (!isDirectionMatched(invoice, transaction)) {
+      const matchLabel = getInvoiceReceivablePayableMatchLabel(invoice, record);
+
+      if (!matchLabel) {
         return [];
       }
 
@@ -294,9 +281,9 @@ function buildInvoiceCandidateRows(transaction: FinanceTransactionRecord, invoic
       return [
         {
           availableAmount,
-          id: `${transaction.id}-${invoice.id}`,
+          id: `${record.id}-${invoice.id}`,
           invoice,
-          matchLabel: transaction.counterparty === invoice.counterparty ? '对象一致' : '同方向候选',
+          matchLabel,
           matchedAmount
         } satisfies InvoiceCandidateRow
       ];
@@ -308,6 +295,10 @@ function buildRedOriginalInvoiceCandidates(redInvoice: FinanceInvoiceRecord, inv
   return invoices
     .flatMap((invoice) => {
       if (invoice.id === redInvoice.id || invoice.invoiceStatus !== '正常' || invoice.direction !== redInvoice.direction) {
+        return [];
+      }
+
+      if (invoice.counterparty !== redInvoice.counterparty) {
         return [];
       }
 
@@ -325,7 +316,7 @@ function buildRedOriginalInvoiceCandidates(redInvoice: FinanceInvoiceRecord, inv
           id: `${redInvoice.id}-${invoice.id}`,
           isOverLimit: redSummary.isOverLimit,
           invoice,
-          matchLabel: invoice.counterparty === redInvoice.counterparty ? '对象一致' : '同方向候选',
+          matchLabel: '对象一致',
           remainingAfterCurrentAmount: redSummary.remainingAfterCurrentAmount
         } satisfies RedOriginalInvoiceCandidateRow
       ];
@@ -333,46 +324,52 @@ function buildRedOriginalInvoiceCandidates(redInvoice: FinanceInvoiceRecord, inv
     .sort(compareRedOriginalCandidateRows);
 }
 
-function compareCandidateRows(left: CashFlowCandidateRow, right: CashFlowCandidateRow) {
+function compareBusinessCandidateRows(left: BusinessCandidateRow, right: BusinessCandidateRow) {
   if (left.matchLabel !== right.matchLabel) {
-    return left.matchLabel === '对象一致' ? -1 : 1;
+    return compareInvoiceReceivablePayableMatchLabel(left.matchLabel, right.matchLabel);
   }
 
-  return left.transaction.occurredAt.localeCompare(right.transaction.occurredAt);
+  if (left.businessRecord.accountingPeriod !== right.businessRecord.accountingPeriod) {
+    return right.businessRecord.accountingPeriod.localeCompare(left.businessRecord.accountingPeriod);
+  }
+
+  return left.businessRecord.confirmDate.localeCompare(right.businessRecord.confirmDate);
 }
 
 function compareInvoiceCandidateRows(left: InvoiceCandidateRow, right: InvoiceCandidateRow) {
   if (left.matchLabel !== right.matchLabel) {
-    return left.matchLabel === '对象一致' ? -1 : 1;
+    return compareInvoiceReceivablePayableMatchLabel(left.matchLabel, right.matchLabel);
+  }
+
+  if (left.invoice.accountingPeriod !== right.invoice.accountingPeriod) {
+    return right.invoice.accountingPeriod.localeCompare(left.invoice.accountingPeriod);
   }
 
   return left.invoice.invoiceDate.localeCompare(right.invoice.invoiceDate);
 }
 
 function compareRedOriginalCandidateRows(left: RedOriginalInvoiceCandidateRow, right: RedOriginalInvoiceCandidateRow) {
-  if (left.matchLabel !== right.matchLabel) {
-    return left.matchLabel === '对象一致' ? -1 : 1;
-  }
-
   return right.invoice.invoiceDate.localeCompare(left.invoice.invoiceDate);
 }
 
-function buildCurrentCashFlowMatchRows(
+function buildCurrentBusinessMatchRows(
   invoice: FinanceInvoiceRecord,
-  transactionByNo: Map<string, FinanceTransactionRecord>
-): InvoiceCurrentCashFlowMatchRow[] {
-  return invoice.matchedTransactions.map((match) => ({
+  businessRecordByNo: Map<string, FinanceReceivablePayableRecord>
+): InvoiceCurrentBusinessMatchRow[] {
+  return invoice.matchedBusinessRefs.map((match) => ({
     amount: match.amount,
+    businessRecord: businessRecordByNo.get(match.recordNo) ?? businessRecordByNo.get(match.sourceNo),
+    businessRecordNo: match.recordNo,
+    businessSourceNo: match.sourceNo,
+    businessSourceTitle: match.sourceTitle,
     id: match.id,
-    transaction: transactionByNo.get(match.transactionNo),
-    transactionNo: match.transactionNo
   }));
 }
 
-function buildCurrentInvoiceMatchRows(transaction: FinanceTransactionRecord, invoices: FinanceInvoiceRecord[]): TransactionCurrentInvoiceMatchRow[] {
+function buildCurrentInvoiceMatchRows(record: FinanceReceivablePayableRecord, invoices: FinanceInvoiceRecord[]): BusinessCurrentInvoiceMatchRow[] {
   return invoices.flatMap((invoice) =>
-    invoice.matchedTransactions
-      .filter((match) => match.transactionNo === transaction.transactionNo)
+    invoice.matchedBusinessRefs
+      .filter((match) => doesInvoiceBusinessRefMatchReceivablePayable(match, record))
       .map((match) => ({
         amount: match.amount,
         id: `${invoice.id}-${match.id}`,
@@ -404,11 +401,11 @@ function getAllocatedCandidateIds(
   return allocatedCandidateIds;
 }
 
-function buildSelectedCashFlowRows(
-  candidates: CashFlowCandidateRow[],
+function buildSelectedBusinessRows(
+  candidates: BusinessCandidateRow[],
   candidateIds: string[],
   remainingAmount: number
-): SelectedCashFlowMatchRow[] {
+): SelectedBusinessMatchRow[] {
   const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   let availableMatchAmount = remainingAmount;
 
@@ -425,9 +422,9 @@ function buildSelectedCashFlowRows(
     return [
       {
         ...candidate,
-        allocationStatus: candidate.availableAmount - matchAmount > 0.01 ? '部分占用' : '全额占用',
+        allocationStatus: candidate.availableAmount - matchAmount > 0.01 ? '部分关联' : '全额关联',
         matchAmount
-      } satisfies SelectedCashFlowMatchRow
+      } satisfies SelectedBusinessMatchRow
     ];
   });
 }
@@ -453,7 +450,7 @@ function buildSelectedInvoiceRows(
     return [
       {
         ...candidate,
-        allocationStatus: candidate.availableAmount - matchAmount > 0.01 ? '部分占用' : '全额占用',
+        allocationStatus: candidate.availableAmount - matchAmount > 0.01 ? '部分关联' : '全额关联',
         matchAmount
       } satisfies SelectedInvoiceMatchRow
     ];
@@ -470,7 +467,8 @@ function resolveCandidateSelectionOrder(currentCandidateIds: string[], nextCandi
 
 function buildInvoiceMatchingTodos(
   invoices: FinanceInvoiceRecord[],
-  financeRows: FinanceTransactionRecord[]
+  financeRows: FinanceTransactionRecord[],
+  receivablePayableRows: FinanceReceivablePayableRecord[]
 ): InvoiceMatchingTodoRow[] {
   const financeRowByNo = new Map(financeRows.map((financeRow) => [financeRow.transactionNo, financeRow]));
   const invoiceTodos = invoices
@@ -481,7 +479,7 @@ function buildInvoiceMatchingTodos(
 
       return {
         amount: invoice.totalAmount,
-        candidateCount: buildCashFlowCandidateRows(invoice, invoices, financeRows).length,
+        candidateCount: buildBusinessCandidateRows(invoice, invoices, receivablePayableRows).length,
         counterparty: invoice.counterparty,
         direction: invoice.direction,
         id: `invoice-todo-${invoice.id}`,
@@ -492,15 +490,15 @@ function buildInvoiceMatchingTodos(
         remainingAmount,
         sourceNo: invoice.invoiceNo,
         sourceType: 'invoice',
-        status: matchedAmount > 0 ? '部分关联' : '待处理',
-        type: '发票待关联流水'
+        status: '待处理差异',
+        type: '发票待关联权责事项'
       } satisfies InvoiceMatchingTodoRow;
     });
   const subsequentInvoiceTodos = invoices
     .filter((invoice) => isInvoiceEffective(invoice) && invoice.invoiceStatus === '正常' && getInvoiceMatchStatus(invoice) === '已匹配')
     .flatMap((invoice) => {
-      const subsequentRows = invoice.matchedTransactions.flatMap((match): SubsequentInvoiceMatchedTransactionRow[] => {
-        const financeRow = financeRowByNo.get(match.transactionNo);
+      const subsequentRows = invoice.matchedBusinessRefs.flatMap((match): SubsequentInvoiceMatchedTransactionRow[] => {
+        const financeRow = match.sourceModule === '未开票收入' ? financeRowByNo.get(match.sourceNo) : undefined;
 
         if (!financeRow || financeRow.invoiceDeclarationStatus !== '未开票已申报') {
           return [];
@@ -544,37 +542,49 @@ function buildInvoiceMatchingTodos(
           remainingAmount: subsequentAmount,
           sourceNo: invoice.invoiceNo,
           sourceType: 'subsequent-invoice',
-          status: '待处理',
+          status: '待处理差异',
           subsequentRows,
-          type: '后续开票待处理'
+          type: '后续开票待确认'
         } satisfies InvoiceMatchingTodoRow
       ];
     });
-  const transactionTodos = financeRows
-    .filter((transaction) => transaction.status === '已入账' && isTransactionInvoiceAssociationRequired(transaction))
-    .flatMap((transaction) => {
-      const association = buildTransactionInvoiceAssociation(transaction, invoices);
+  const businessTodos = receivablePayableRows
+    .filter(isFinanceReceivablePayableInvoiceMatchApplicable)
+    .flatMap((record) => {
+      const matchedAmount = invoices.reduce(
+        (total, invoice) =>
+          total +
+          invoice.matchedBusinessRefs.reduce(
+            (invoiceTotal, match) =>
+              doesInvoiceBusinessRefMatchReceivablePayable(match, record)
+                ? invoiceTotal + (invoice.invoiceStatus === '红冲' ? 0 : Math.max(0, match.amount))
+                : invoiceTotal,
+            0
+          ),
+        0
+      );
+      const remainingAmount = Math.max(0, record.amount - matchedAmount);
 
-      if (association.status === '已关联') {
+      if (remainingAmount <= 0.01) {
         return [];
       }
 
       return [
         {
-          amount: association.requiredAmount,
-          candidateCount: buildInvoiceCandidateRows(transaction, invoices).length,
-          counterparty: transaction.counterparty,
-          direction: getInvoiceDirectionFromTransaction(transaction),
-          id: `transaction-todo-${transaction.id}`,
-          latestDate: transaction.occurredAt,
-          matchedAmount: association.matchedAmount,
-          period: transaction.accountingPeriod,
-          remainingAmount: association.remainingAmount,
-          sourceNo: transaction.transactionNo,
-          sourceType: 'transaction',
-          status: association.status === '部分关联' ? '部分关联' : '待处理',
-          transaction,
-          type: '流水待关联发票'
+          amount: record.amount,
+          businessRecord: record,
+          candidateCount: buildInvoiceCandidateRows(record, invoices).length,
+          counterparty: record.counterparty,
+          direction: getFinanceReceivablePayableInvoiceDirection(record),
+          id: `business-todo-${record.id}`,
+          latestDate: record.confirmDate,
+          matchedAmount,
+          period: record.accountingPeriod,
+          remainingAmount,
+          sourceNo: record.documentNo,
+          sourceType: 'business',
+          status: '待补票税依据',
+          type: '权责事项待补票税依据'
         } satisfies InvoiceMatchingTodoRow
       ];
     });
@@ -596,28 +606,54 @@ function buildInvoiceMatchingTodos(
         remainingAmount: Math.abs(invoice.totalAmount),
         sourceNo: invoice.invoiceNo,
         sourceType: 'red-invoice',
-        status: '待确认原票',
-        type: '红冲待关联原票'
+        status: '待处理差异',
+        type: '红冲发票待关联原票'
       } satisfies InvoiceMatchingTodoRow;
     });
 
-  return [...invoiceTodos, ...subsequentInvoiceTodos, ...transactionTodos, ...redInvoiceTodos].sort((left, right) => right.latestDate.localeCompare(left.latestDate));
-}
+  const matchedInvoiceRows = invoices
+    .filter((invoice) => isInvoiceEffective(invoice) && invoice.invoiceStatus === '正常' && getInvoiceMatchStatus(invoice) === '已匹配')
+    .filter((invoice) =>
+      !subsequentInvoiceTodos.some((todo) => todo.sourceType === 'subsequent-invoice' && todo.invoice.id === invoice.id)
+    )
+    .map((invoice) => {
+      const matchedAmount = getInvoiceMatchedAmount(invoice);
 
-function matchesFilters(row: InvoiceMatchingTodoRow, filters: InvoiceMatchingFilters) {
-  const keyword = normalizeKeyword(filters.keyword);
-  const typeMatched = filters.type === '全部' || row.type === filters.type;
-  const periodMatched = filters.period === '全部' || row.period === filters.period;
-  const directionMatched = filters.direction === '全部' || row.direction === filters.direction;
-  const statusMatched = filters.status === '全部' || row.status === filters.status;
-  const keywordMatched =
-    !keyword ||
-    [row.period, row.direction, row.counterparty, row.sourceNo, row.type, row.status]
-      .join(' ')
-      .toLowerCase()
-      .includes(keyword);
+      return {
+        amount: invoice.totalAmount,
+        candidateCount: invoice.matchedBusinessRefs.length,
+        counterparty: invoice.counterparty,
+        direction: invoice.direction,
+        id: `matched-invoice-${invoice.id}`,
+        invoice,
+        latestDate: invoice.invoiceDate,
+        matchedAmount,
+        period: invoice.accountingPeriod,
+        remainingAmount: 0,
+        sourceNo: invoice.invoiceNo,
+        sourceType: 'matched-invoice',
+        status: '已匹配',
+        type: '票税依据已匹配'
+      } satisfies InvoiceMatchingTodoRow;
+    });
 
-  return typeMatched && periodMatched && directionMatched && statusMatched && keywordMatched;
+  return [
+    ...invoiceTodos,
+    ...subsequentInvoiceTodos,
+    ...businessTodos,
+    ...redInvoiceTodos,
+    ...matchedInvoiceRows
+  ].sort((left, right) => {
+    if (left.status === '已匹配' && right.status !== '已匹配') {
+      return 1;
+    }
+
+    if (left.status !== '已匹配' && right.status === '已匹配') {
+      return -1;
+    }
+
+    return right.latestDate.localeCompare(left.latestDate);
+  });
 }
 
 function renderMoney(amount: number) {
@@ -628,50 +664,52 @@ function renderDirection(direction: FinanceInvoiceDirection) {
   return <StatusTag toneMap={invoiceDirectionTone} value={direction} />;
 }
 
-function renderTodoType(type: InvoiceMatchingTodoType) {
-  return <StatusTag toneMap={todoTypeTone} value={type} />;
+function renderWorkflowStatus(status: InvoiceMatchingWorkflowStatus) {
+  return <StatusTag toneMap={workflowStatusTone} value={status} />;
 }
 
-function renderTodoStatus(status: InvoiceMatchingTodoStatus) {
-  return <StatusTag toneMap={todoStatusTone} value={status} />;
-}
-
-function renderAllocationStatus(status: SelectedCashFlowMatchRow['allocationStatus'] | SelectedInvoiceMatchRow['allocationStatus']) {
+function renderAllocationStatus(status: SelectedBusinessMatchRow['allocationStatus'] | SelectedInvoiceMatchRow['allocationStatus']) {
   return <StatusTag toneMap={allocationStatusTone} value={status} />;
 }
 
-function DrawerTitle({ row }: { row: InvoiceMatchingTodoRow }) {
-  return (
-    <DetailDrawerTitle
-      status={row.status}
-      statusTone={todoStatusTone[row.status]}
-      subtitle={`${row.direction} / ${row.period}`}
-      title={row.type}
-    />
-  );
+function renderInvoiceMatchLabel(matchLabel: FinanceInvoiceReceivablePayableMatchLabel) {
+  return <StatusTag toneMap={invoiceMatchLabelTone} value={matchLabel} />;
+}
+
+function getTodoQueueDate(row: InvoiceMatchingTodoRow) {
+  return row.latestDate.slice(5);
+}
+
+function getTodoQueueAmount(row: InvoiceMatchingTodoRow) {
+  return row.status === '已匹配' ? row.matchedAmount : row.remainingAmount;
 }
 
 export function FinanceInvoiceMatchingPage() {
   const [messageApi, contextHolder] = message.useMessage();
-  const { financeRows, invoiceRows, updateFinanceTransactionsByNo, updateInvoiceRecord } = useFinanceManagement();
-  const [filters, setFilters] = useState<InvoiceMatchingFilters>(defaultFilters);
+  const { financeRows, invoiceRows, receivablePayableRows, updateFinanceTransactionsByNo, updateInvoiceRecord } = useFinanceManagement();
   const [activeTodoId, setActiveTodoId] = useState<string | undefined>();
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
 
-  const transactionByNo = useMemo(() => new Map(financeRows.map((record) => [record.transactionNo, record])), [financeRows]);
-  const matchingTodos = useMemo(
-    () => buildInvoiceMatchingTodos(invoiceRows, financeRows),
-    [financeRows, invoiceRows]
+  const businessRecordByNo = useMemo(
+    () => new Map(receivablePayableRows.flatMap((record) => [[record.documentNo, record], [record.sourceNo, record]] as const)),
+    [receivablePayableRows]
   );
-  const rows = useMemo(() => matchingTodos.filter((row) => matchesFilters(row, filters)), [filters, matchingTodos]);
-  const activeTodo = useMemo(() => matchingTodos.find((row) => row.id === activeTodoId), [activeTodoId, matchingTodos]);
-  const periodOptions = useMemo(() => ['全部', ...Array.from(new Set(matchingTodos.map((row) => row.period)))], [matchingTodos]);
-  const cashFlowCandidates = useMemo(
-    () => (activeTodo?.sourceType === 'invoice' ? buildCashFlowCandidateRows(activeTodo.invoice, invoiceRows, financeRows) : []),
-    [activeTodo, financeRows, invoiceRows]
+  const matchingTodos = useMemo(
+    () => buildInvoiceMatchingTodos(invoiceRows, financeRows, receivablePayableRows),
+    [financeRows, invoiceRows, receivablePayableRows]
+  );
+  const rows = matchingTodos;
+  const openRows = useMemo(() => rows.filter((row) => row.status !== '已匹配'), [rows]);
+  const activeTodo = useMemo(
+    () => rows.find((row) => row.id === activeTodoId) ?? openRows[0] ?? rows[0],
+    [activeTodoId, openRows, rows]
+  );
+  const businessCandidates = useMemo(
+    () => (activeTodo?.sourceType === 'invoice' ? buildBusinessCandidateRows(activeTodo.invoice, invoiceRows, receivablePayableRows) : []),
+    [activeTodo, invoiceRows, receivablePayableRows]
   );
   const invoiceCandidates = useMemo(
-    () => (activeTodo?.sourceType === 'transaction' ? buildInvoiceCandidateRows(activeTodo.transaction, invoiceRows) : []),
+    () => (activeTodo?.sourceType === 'business' ? buildInvoiceCandidateRows(activeTodo.businessRecord, invoiceRows) : []),
     [activeTodo, invoiceRows]
   );
   const redOriginalCandidates = useMemo(
@@ -681,31 +719,33 @@ export function FinanceInvoiceMatchingPage() {
   const activeRedOriginalInvoice = activeTodo?.sourceType === 'red-invoice'
     ? getOriginalInvoiceForRedInvoice(activeTodo.invoice, invoiceRows)
     : undefined;
-  const currentCashFlowMatches = activeTodo?.sourceType === 'invoice' ? buildCurrentCashFlowMatchRows(activeTodo.invoice, transactionByNo) : [];
-  const currentInvoiceMatches = activeTodo?.sourceType === 'transaction' ? buildCurrentInvoiceMatchRows(activeTodo.transaction, invoiceRows) : [];
-  const selectedCashFlowRows = useMemo<SelectedCashFlowMatchRow[]>(
-    () => (activeTodo?.sourceType === 'invoice' ? buildSelectedCashFlowRows(cashFlowCandidates, selectedCandidateIds, activeTodo.remainingAmount) : []),
-    [activeTodo, cashFlowCandidates, selectedCandidateIds]
+  const currentBusinessMatches = activeTodo?.sourceType === 'invoice' || activeTodo?.sourceType === 'matched-invoice'
+    ? buildCurrentBusinessMatchRows(activeTodo.invoice, businessRecordByNo)
+    : [];
+  const currentInvoiceMatches = activeTodo?.sourceType === 'business' ? buildCurrentInvoiceMatchRows(activeTodo.businessRecord, invoiceRows) : [];
+  const selectedBusinessRows = useMemo<SelectedBusinessMatchRow[]>(
+    () => (activeTodo?.sourceType === 'invoice' ? buildSelectedBusinessRows(businessCandidates, selectedCandidateIds, activeTodo.remainingAmount) : []),
+    [activeTodo, businessCandidates, selectedCandidateIds]
   );
   const selectedInvoiceRows = useMemo<SelectedInvoiceMatchRow[]>(
-    () => (activeTodo?.sourceType === 'transaction' ? buildSelectedInvoiceRows(invoiceCandidates, selectedCandidateIds, activeTodo.remainingAmount) : []),
+    () => (activeTodo?.sourceType === 'business' ? buildSelectedInvoiceRows(invoiceCandidates, selectedCandidateIds, activeTodo.remainingAmount) : []),
     [activeTodo, invoiceCandidates, selectedCandidateIds]
   );
-  const selectedMatchRows = activeTodo?.sourceType === 'transaction' ? selectedInvoiceRows : selectedCashFlowRows;
+  const selectedMatchRows = activeTodo?.sourceType === 'business' ? selectedInvoiceRows : selectedBusinessRows;
   const selectedMatchTotal = selectedMatchRows.reduce((total, row) => total + row.matchAmount, 0);
   const selectedAfterRemaining = (activeTodo?.remainingAmount ?? 0) - selectedMatchTotal;
   const selectedMatchOverLimit = selectedMatchTotal - (activeTodo?.remainingAmount ?? 0) > 0.01;
-  const invoiceTodoCount = rows.filter((row) => row.sourceType === 'invoice').length;
-  const transactionTodoCount = rows.filter((row) => row.sourceType === 'transaction').length;
-  const redTodoCount = rows.filter((row) => row.sourceType === 'red-invoice').length;
-  const pendingAmount = rows.reduce((total, row) => total + row.remainingAmount, 0);
+  const taxBasisTodoCount = rows.filter((row) => row.status === '待补票税依据').length;
+  const discrepancyTodoCount = rows.filter((row) => row.status === '待处理差异').length;
+  const matchedTodoCount = rows.filter((row) => row.status === '已匹配').length;
+  const pendingAmount = openRows.reduce((total, row) => total + row.remainingAmount, 0);
   const subsequentDeclaredPeriods = activeTodo?.sourceType === 'subsequent-invoice'
     ? Array.from(new Set(activeTodo.subsequentRows.map((currentRow) => currentRow.transaction.invoiceDeclarationPeriod ?? currentRow.transaction.accountingPeriod)))
     : [];
 
   useEffect(() => {
     setSelectedCandidateIds([]);
-  }, [activeTodoId]);
+  }, [activeTodo?.id]);
 
   function updateInvoiceMatch(invoiceId: string, updater: (invoice: FinanceInvoiceRecord) => FinanceInvoiceRecord) {
     updateInvoiceRecord(invoiceId, updater);
@@ -723,14 +763,14 @@ export function FinanceInvoiceMatchingPage() {
       setSelectedCandidateIds(
         getAllocatedCandidateIds(
           orderedCandidateIds,
-          new Map(cashFlowCandidates.map((candidate) => [candidate.id, candidate.availableAmount])),
+          new Map(businessCandidates.map((candidate) => [candidate.id, candidate.availableAmount])),
           activeTodo.remainingAmount
         )
       );
       return;
     }
 
-    if (activeTodo?.sourceType === 'transaction') {
+    if (activeTodo?.sourceType === 'business') {
       setSelectedCandidateIds(
         getAllocatedCandidateIds(
           orderedCandidateIds,
@@ -748,21 +788,21 @@ export function FinanceInvoiceMatchingPage() {
     setSelectedCandidateIds([]);
   }
 
-  function handleSaveInvoiceToCashFlows(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'invoice' }>) {
-    if (selectedCashFlowRows.length === 0) {
-      void messageApi.warning('请选择需要关联的流水');
+  function handleSaveInvoiceToBusiness(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'invoice' }>) {
+    if (selectedBusinessRows.length === 0) {
+      void messageApi.warning('请选择需要关联的业务');
       return;
     }
 
     if (selectedMatchTotal - row.remainingAmount > 0.01) {
-      void messageApi.warning('本次占用金额不能超过发票待关联金额');
+      void messageApi.warning('本次关联金额不能超过待处理金额');
       return;
     }
 
     updateInvoiceMatch(row.invoice.id, (invoice) => ({
       ...invoice,
-      matchedTransactions: selectedCashFlowRows.reduce((matches, selectedRow) => {
-        const existingMatchIndex = matches.findIndex((match) => match.transactionNo === selectedRow.transaction.transactionNo);
+      matchedBusinessRefs: selectedBusinessRows.reduce((matches, selectedRow) => {
+        const existingMatchIndex = matches.findIndex((match) => match.recordNo === selectedRow.businessRecord.documentNo);
 
         if (existingMatchIndex >= 0) {
           return matches.map((match, index) =>
@@ -779,37 +819,45 @@ export function FinanceInvoiceMatchingPage() {
           ...matches,
           {
             amount: Number(selectedRow.matchAmount.toFixed(2)),
-            id: `invoice-match-${invoice.id}-${selectedRow.transaction.id}-${Date.now()}`,
-            transactionNo: selectedRow.transaction.transactionNo
+            id: `invoice-match-${invoice.id}-${selectedRow.businessRecord.id}-${Date.now()}`,
+            recordId: selectedRow.businessRecord.id,
+            recordNo: selectedRow.businessRecord.documentNo,
+            sourceModule: '应收应付' as const,
+            sourceNo: selectedRow.businessRecord.sourceNo,
+            sourceTitle: selectedRow.businessRecord.sourceTitle
           }
         ];
-      }, invoice.matchedTransactions)
+      }, invoice.matchedBusinessRefs)
     }));
     setActiveTodoId(undefined);
     handleClearSelection();
-    void messageApi.success(`已保存 ${selectedCashFlowRows.length} 条关联关系`);
+    void messageApi.success(`已保存 ${selectedBusinessRows.length} 条关联关系`);
   }
 
-  function handleSaveTransactionToInvoices(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'transaction' }>) {
+  function handleSaveBusinessToInvoices(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'business' }>) {
     if (selectedInvoiceRows.length === 0) {
       void messageApi.warning('请选择需要关联的发票');
       return;
     }
 
     if (selectedMatchTotal - row.remainingAmount > 0.01) {
-      void messageApi.warning('本次占用金额不能超过流水待关联金额');
+      void messageApi.warning('本次关联金额不能超过待补票税金额');
       return;
     }
 
     selectedInvoiceRows.forEach((selectedRow) => {
       updateInvoiceMatch(selectedRow.invoice.id, (invoice) => ({
         ...invoice,
-        matchedTransactions: [
-          ...invoice.matchedTransactions,
+        matchedBusinessRefs: [
+          ...invoice.matchedBusinessRefs,
           {
             amount: Number(selectedRow.matchAmount.toFixed(2)),
-            id: `invoice-match-${invoice.id}-${row.transaction.id}-${Date.now()}`,
-            transactionNo: row.transaction.transactionNo
+            id: `invoice-match-${invoice.id}-${row.businessRecord.id}-${Date.now()}`,
+            recordId: row.businessRecord.id,
+            recordNo: row.businessRecord.documentNo,
+            sourceModule: '应收应付' as const,
+            sourceNo: row.businessRecord.sourceNo,
+            sourceTitle: row.businessRecord.sourceTitle
           }
         ]
       }));
@@ -822,7 +870,7 @@ export function FinanceInvoiceMatchingPage() {
   function handleRemoveInvoiceMatch(invoiceId: string, matchId: string) {
     updateInvoiceMatch(invoiceId, (invoice) => ({
       ...invoice,
-      matchedTransactions: invoice.matchedTransactions.filter((match) => match.id !== matchId)
+      matchedBusinessRefs: invoice.matchedBusinessRefs.filter((match) => match.id !== matchId)
     }));
     void messageApi.success('已撤销关联');
   }
@@ -847,7 +895,7 @@ export function FinanceInvoiceMatchingPage() {
 
     updateInvoiceMatch(row.invoice.id, (invoice) => ({
       ...invoice,
-      matchedTransactions: [],
+      matchedBusinessRefs: [],
       originalInvoiceId: selectedCandidate.invoice.id
     }));
     setActiveTodoId(undefined);
@@ -878,77 +926,21 @@ export function FinanceInvoiceMatchingPage() {
     void messageApi.success('后续开票已确认');
   }
 
-  const columns: TableColumnsType<InvoiceMatchingTodoRow> = [
+  const currentBusinessColumns: TableColumnsType<InvoiceCurrentBusinessMatchRow> = [
     {
-      title: '待办事项',
-      dataIndex: 'type',
-      width: 210,
-      render: (_: InvoiceMatchingTodoType, record) => <CompactCell primarySlot={renderTodoType(record.type)} secondary={record.sourceNo} />
-    },
-    {
-      title: '对象',
-      dataIndex: 'counterparty',
-      width: 160,
-      render: (counterparty: string, record) => <CompactCell primary={counterparty} secondary={record.period} />
-    },
-    {
-      title: '方向',
-      dataIndex: 'direction',
-      width: 88,
-      render: renderDirection
-    },
-    {
-      title: '金额',
-      dataIndex: 'amount',
-      width: 124,
-      render: renderMoney
-    },
-    {
-      title: '已关联',
-      dataIndex: 'matchedAmount',
-      width: 124,
-      render: renderMoney
-    },
-    {
-      title: '待关联',
-      dataIndex: 'remainingAmount',
-      width: 124,
-      render: renderMoney
-    },
-    {
-      title: '候选',
-      dataIndex: 'candidateCount',
-      width: 92,
-      render: (candidateCount: number) => (candidateCount > 0 ? <CellText>{candidateCount} 条</CellText> : <CellText tone="subtle">-</CellText>)
-    },
-    {
-      title: '最近日期',
-      dataIndex: 'latestDate',
-      width: 118
-    },
-    {
-      title: '处理状态',
-      dataIndex: 'status',
-      width: 118,
-      render: renderTodoStatus
-    }
-  ];
-
-  const currentCashFlowColumns: TableColumnsType<InvoiceCurrentCashFlowMatchRow> = [
-    {
-      title: '流水',
-      dataIndex: 'transactionNo',
+      title: '权责事项',
+      dataIndex: 'businessRecordNo',
       width: 190,
-      render: (transactionNo: string, record) => <CompactCell primary={transactionNo} secondary={record.transaction?.occurredAt ?? '-'} />
+      render: (businessRecordNo: string, record) => <CompactCell primary={businessRecordNo} secondary={record.businessRecord?.confirmDate ?? record.businessSourceNo} />
     },
     {
       title: '对象',
-      dataIndex: ['transaction', 'counterparty'],
+      dataIndex: ['businessRecord', 'counterparty'],
       width: 150,
-      render: (_: string, record) => record.transaction?.counterparty ?? '-'
+      render: (_: string, record) => record.businessRecord?.counterparty ?? '-'
     },
     {
-      title: '占用金额',
+      title: '关联金额',
       dataIndex: 'amount',
       width: 120,
       render: renderMoney
@@ -968,7 +960,7 @@ export function FinanceInvoiceMatchingPage() {
     }
   ];
 
-  const currentInvoiceColumns: TableColumnsType<TransactionCurrentInvoiceMatchRow> = [
+  const currentInvoiceColumns: TableColumnsType<BusinessCurrentInvoiceMatchRow> = [
     {
       title: '发票',
       dataIndex: ['invoice', 'invoiceNo'],
@@ -982,7 +974,7 @@ export function FinanceInvoiceMatchingPage() {
       render: (_: string, record) => record.invoice.counterparty
     },
     {
-      title: '占用金额',
+      title: '关联金额',
       dataIndex: 'amount',
       width: 120,
       render: renderMoney
@@ -1001,7 +993,7 @@ export function FinanceInvoiceMatchingPage() {
 
   const subsequentInvoiceColumns: TableColumnsType<SubsequentInvoiceMatchedTransactionRow> = [
     {
-      title: '前期流水',
+      title: '前期未开票收入',
       dataIndex: ['transaction', 'transactionNo'],
       width: 190,
       render: (_transactionNo: string, record) => (
@@ -1028,27 +1020,33 @@ export function FinanceInvoiceMatchingPage() {
     }
   ];
 
-  const cashFlowCandidateColumns: TableColumnsType<CashFlowCandidateRow> = [
+  const businessCandidateColumns: TableColumnsType<BusinessCandidateRow> = [
     {
-      title: '流水',
-      dataIndex: ['transaction', 'transactionNo'],
+      title: '权责事项',
+      dataIndex: ['businessRecord', 'documentNo'],
       width: 190,
-      render: (_: string, record) => <CompactCell primary={record.transaction.transactionNo} secondary={record.transaction.occurredAt} />
+      render: (_: string, record) => <CompactCell primary={record.businessRecord.documentNo} secondary={record.businessRecord.confirmDate} />
+    },
+    {
+      title: '权责月份',
+      dataIndex: ['businessRecord', 'accountingPeriod'],
+      width: 112,
+      render: (_: string, record) => record.businessRecord.accountingPeriod
     },
     {
       title: '对象',
-      dataIndex: ['transaction', 'counterparty'],
+      dataIndex: ['businessRecord', 'counterparty'],
       width: 150,
-      render: (_: string, record) => record.transaction.counterparty
+      render: (_: string, record) => record.businessRecord.counterparty
     },
     {
-      title: '流水金额',
-      dataIndex: ['transaction', 'amount'],
+      title: '业务金额',
+      dataIndex: ['businessRecord', 'amount'],
       width: 120,
       render: renderMoney
     },
     {
-      title: '已占用',
+      title: '已关联',
       dataIndex: 'allocatedAmount',
       width: 120,
       render: renderMoney
@@ -1063,7 +1061,7 @@ export function FinanceInvoiceMatchingPage() {
       title: '建议',
       dataIndex: 'matchLabel',
       width: 104,
-      render: (matchLabel: CashFlowCandidateRow['matchLabel']) => <StatusTag tone={matchLabel === '对象一致' ? 'green' : 'blue'} value={matchLabel} />
+      render: renderInvoiceMatchLabel
     }
   ];
 
@@ -1073,6 +1071,12 @@ export function FinanceInvoiceMatchingPage() {
       dataIndex: ['invoice', 'invoiceNo'],
       width: 190,
       render: (_: string, record) => <CompactCell primary={record.invoice.invoiceNo} secondary={record.invoice.invoiceDate} />
+    },
+    {
+      title: '开票月份',
+      dataIndex: ['invoice', 'accountingPeriod'],
+      width: 112,
+      render: (_: string, record) => record.invoice.accountingPeriod
     },
     {
       title: '对象',
@@ -1087,7 +1091,7 @@ export function FinanceInvoiceMatchingPage() {
       render: renderMoney
     },
     {
-      title: '已占用',
+      title: '已关联',
       dataIndex: 'matchedAmount',
       width: 120,
       render: renderMoney
@@ -1102,20 +1106,20 @@ export function FinanceInvoiceMatchingPage() {
       title: '建议',
       dataIndex: 'matchLabel',
       width: 104,
-      render: (matchLabel: InvoiceCandidateRow['matchLabel']) => <StatusTag tone={matchLabel === '对象一致' ? 'green' : 'blue'} value={matchLabel} />
+      render: renderInvoiceMatchLabel
     }
   ];
 
-  const selectedMatchColumns: TableColumnsType<SelectedCashFlowMatchRow | SelectedInvoiceMatchRow> = [
+  const selectedMatchColumns: TableColumnsType<SelectedBusinessMatchRow | SelectedInvoiceMatchRow> = [
     {
       title: '对象',
       key: 'source',
       width: 220,
       render: (_, record) =>
-        'transaction' in record ? (
-          <CompactCell primary={record.transaction.transactionNo} secondary={record.transaction.counterparty} />
+        'businessRecord' in record ? (
+          <CompactCell primary={record.businessRecord.documentNo} secondary={`${record.businessRecord.counterparty} / ${record.businessRecord.accountingPeriod}`} />
         ) : (
-          <CompactCell primary={record.invoice.invoiceNo} secondary={record.invoice.counterparty} />
+          <CompactCell primary={record.invoice.invoiceNo} secondary={`${record.invoice.counterparty} / ${record.invoice.accountingPeriod}`} />
         )
     },
     {
@@ -1125,13 +1129,13 @@ export function FinanceInvoiceMatchingPage() {
       render: renderMoney
     },
     {
-      title: '本次占用',
+      title: '本次关联',
       dataIndex: 'matchAmount',
       width: 120,
       render: renderMoney
     },
     {
-      title: '占用方式',
+      title: '关联方式',
       dataIndex: 'allocationStatus',
       width: 108,
       render: renderAllocationStatus
@@ -1196,15 +1200,15 @@ export function FinanceInvoiceMatchingPage() {
           columns={4}
           items={[
             { label: '已选项目', value: `${selectedMatchRows.length} 条` },
-            { label: '待关联金额', value: formatMoney(activeTodo?.remainingAmount ?? 0) },
-            { label: '本次占用', value: formatMoney(selectedMatchTotal) },
+            { label: '待处理金额', value: formatMoney(activeTodo?.remainingAmount ?? 0) },
+            { label: '本次关联', value: formatMoney(selectedMatchTotal) },
             { label: selectedMatchOverLimit ? '超出金额' : '剩余金额', value: formatMoney(Math.abs(selectedAfterRemaining)) }
           ]}
         />
-        <CompactDetailTable<SelectedCashFlowMatchRow | SelectedInvoiceMatchRow>
+        <CompactDetailTable<SelectedBusinessMatchRow | SelectedInvoiceMatchRow>
           columns={selectedMatchColumns}
           dataSource={selectedMatchRows}
-          emptyText="暂无本次占用"
+          emptyText="暂无本次关联"
           rowKey="id"
           scrollX={620}
         />
@@ -1223,18 +1227,57 @@ export function FinanceInvoiceMatchingPage() {
     );
   }
 
-  function buildDrawerTabs(row: InvoiceMatchingTodoRow): DetailTabItem[] {
+  function buildDetailTabs(row: InvoiceMatchingTodoRow): DetailTabItem[] {
+    if (row.sourceType === 'matched-invoice') {
+      return [
+        {
+          key: 'current',
+          label: '已匹配事项',
+          children: (
+            <DetailSection icon={<LinkOutlined />} title="已匹配事项">
+              <CompactDetailTable<InvoiceCurrentBusinessMatchRow>
+                columns={currentBusinessColumns}
+                dataSource={currentBusinessMatches}
+                emptyText="暂无已匹配事项"
+                rowKey="id"
+                scrollX={620}
+              />
+            </DetailSection>
+          )
+        },
+        {
+          key: 'invoice',
+          label: '发票信息',
+          children: (
+            <DetailSection icon={<FileTextOutlined />} title="发票信息">
+              <DetailInfoGrid
+                columns={3}
+                items={[
+                  { label: '发票号', value: row.invoice.invoiceNo },
+                  { label: '对象', value: row.invoice.counterparty },
+                  { label: '发票方向', value: renderDirection(row.invoice.direction) },
+                  { label: '发票日期', value: row.invoice.invoiceDate },
+                  { label: '开票月份', value: row.invoice.accountingPeriod },
+                  { label: '来源文件', value: row.invoice.sourceFile }
+                ]}
+              />
+            </DetailSection>
+          )
+        }
+      ];
+    }
+
     if (row.sourceType === 'invoice') {
       return [
         {
           key: 'match',
-          label: '处理匹配',
+          label: '关联权责事项',
           children: (
-            <DetailSection icon={<FileSearchOutlined />} title="候选流水">
-              <CompactDetailTable<CashFlowCandidateRow>
-                columns={cashFlowCandidateColumns}
-                dataSource={cashFlowCandidates}
-                emptyText="暂无候选流水"
+            <DetailSection icon={<FileSearchOutlined />} title="可关联权责事项">
+              <CompactDetailTable<BusinessCandidateRow>
+                columns={businessCandidateColumns}
+                dataSource={businessCandidates}
+                emptyText="暂无可关联权责事项"
                 rowKey="id"
                 rowSelection={{
                   selectedRowKeys: selectedCandidateIds,
@@ -1242,7 +1285,7 @@ export function FinanceInvoiceMatchingPage() {
                 }}
                 scrollX={860}
               />
-              {renderSelectedMatchConfirm(() => handleSaveInvoiceToCashFlows(row))}
+              {renderSelectedMatchConfirm(() => handleSaveInvoiceToBusiness(row))}
             </DetailSection>
           )
         },
@@ -1251,9 +1294,9 @@ export function FinanceInvoiceMatchingPage() {
           label: '当前关联',
           children: (
             <DetailSection icon={<LinkOutlined />} title="当前关联">
-              <CompactDetailTable<InvoiceCurrentCashFlowMatchRow>
-                columns={currentCashFlowColumns}
-                dataSource={currentCashFlowMatches}
+              <CompactDetailTable<InvoiceCurrentBusinessMatchRow>
+                columns={currentBusinessColumns}
+                dataSource={currentBusinessMatches}
                 emptyText="暂无当前关联"
                 rowKey="id"
                 scrollX={620}
@@ -1273,7 +1316,7 @@ export function FinanceInvoiceMatchingPage() {
                   { label: '对象', value: row.invoice.counterparty },
                   { label: '发票方向', value: renderDirection(row.invoice.direction) },
                   { label: '发票日期', value: row.invoice.invoiceDate },
-                  { label: '所属月份', value: row.invoice.accountingPeriod },
+                  { label: '开票月份', value: row.invoice.accountingPeriod },
                   { label: '来源文件', value: row.invoice.sourceFile }
                 ]}
               />
@@ -1283,17 +1326,17 @@ export function FinanceInvoiceMatchingPage() {
       ];
     }
 
-    if (row.sourceType === 'transaction') {
+    if (row.sourceType === 'business') {
       return [
         {
           key: 'match',
-          label: '处理匹配',
+          label: '关联发票/票据',
           children: (
-            <DetailSection icon={<FileSearchOutlined />} title="候选发票">
+            <DetailSection icon={<FileSearchOutlined />} title="可关联发票/票据">
               <CompactDetailTable<InvoiceCandidateRow>
                 columns={invoiceCandidateColumns}
                 dataSource={invoiceCandidates}
-                emptyText="暂无候选发票"
+                emptyText="暂无可关联发票/票据"
                 rowKey="id"
                 rowSelection={{
                   selectedRowKeys: selectedCandidateIds,
@@ -1301,7 +1344,7 @@ export function FinanceInvoiceMatchingPage() {
                 }}
                 scrollX={860}
               />
-              {renderSelectedMatchConfirm(() => handleSaveTransactionToInvoices(row))}
+              {renderSelectedMatchConfirm(() => handleSaveBusinessToInvoices(row))}
             </DetailSection>
           )
         },
@@ -1310,7 +1353,7 @@ export function FinanceInvoiceMatchingPage() {
           label: '当前关联',
           children: (
             <DetailSection icon={<LinkOutlined />} title="当前关联">
-              <CompactDetailTable<TransactionCurrentInvoiceMatchRow>
+              <CompactDetailTable<BusinessCurrentInvoiceMatchRow>
                 columns={currentInvoiceColumns}
                 dataSource={currentInvoiceMatches}
                 emptyText="暂无当前关联"
@@ -1321,19 +1364,20 @@ export function FinanceInvoiceMatchingPage() {
           )
         },
         {
-          key: 'transaction',
-          label: '流水信息',
+          key: 'business',
+          label: '权责事项',
           children: (
-            <DetailSection icon={<WalletOutlined />} title="流水信息">
+            <DetailSection icon={<WalletOutlined />} title="权责事项">
               <DetailInfoGrid
                 columns={3}
                 items={[
-                  { label: '流水号', value: row.transaction.transactionNo },
-                  { label: '对象', value: row.transaction.counterparty },
-                  { label: '发生日期', value: row.transaction.occurredAt },
-                  { label: '收支方向', value: row.transaction.direction },
-                  { label: '财务类目', value: row.transaction.category },
-                  { label: '复核状态', value: row.transaction.status }
+                  { label: '事项单号', value: row.businessRecord.documentNo },
+                  { label: '对象', value: row.businessRecord.counterparty },
+                  { label: '归属月份', value: row.businessRecord.accountingPeriod },
+                  { label: '确认日期', value: row.businessRecord.confirmDate },
+                  { label: '收付方向', value: row.businessRecord.direction },
+                  { label: '财务类目', value: row.businessRecord.category },
+                  { label: '票据口径', value: row.businessRecord.taxBasis.basisSource }
                 ]}
               />
             </DetailSection>
@@ -1395,7 +1439,7 @@ export function FinanceInvoiceMatchingPage() {
                   { label: '对象', value: row.invoice.counterparty },
                   { label: '发票方向', value: renderDirection(row.invoice.direction) },
                   { label: '发票日期', value: row.invoice.invoiceDate },
-                  { label: '所属月份', value: row.invoice.accountingPeriod },
+                  { label: '开票月份', value: row.invoice.accountingPeriod },
                   { label: '来源文件', value: row.invoice.sourceFile }
                 ]}
               />
@@ -1425,7 +1469,7 @@ export function FinanceInvoiceMatchingPage() {
             <CompactDetailTable<RedOriginalInvoiceCandidateRow>
               columns={redOriginalCandidateColumns}
               dataSource={redOriginalCandidates}
-              emptyText="暂无候选原蓝票"
+              emptyText="暂无可关联原蓝票"
               rowKey="id"
               rowSelection={{
                 type: 'radio',
@@ -1477,119 +1521,113 @@ export function FinanceInvoiceMatchingPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
-      filters={
-        <FilterPanel>
-          <FilterBar>
-            <FilterField label="待办类型">
-              <Select
-                data-testid="finance-invoice-matching-type-filter"
-                options={(['全部', '发票待关联流水', '流水待关联发票', '红冲待关联原票', '后续开票待处理'] satisfies InvoiceMatchingTodoTypeFilter[]).map((type) => ({
-                  label: type,
-                  value: type
-                }))}
-                value={filters.type}
-                onChange={(type) => setFilters((current) => ({ ...current, type }))}
-              />
-            </FilterField>
-            <FilterField label="期间">
-              <Select
-                data-testid="finance-invoice-matching-period-filter"
-                options={periodOptions.map((period) => ({ label: period, value: period }))}
-                value={filters.period}
-                onChange={(period) => setFilters((current) => ({ ...current, period }))}
-              />
-            </FilterField>
-            <FilterField label="发票方向">
-              <Select
-                data-testid="finance-invoice-matching-direction-filter"
-                options={(['全部', '销项', '进项'] satisfies InvoiceMatchingDirectionFilter[]).map((direction) => ({
-                  label: direction,
-                  value: direction
-                }))}
-                value={filters.direction}
-                onChange={(direction) => setFilters((current) => ({ ...current, direction }))}
-              />
-            </FilterField>
-            <FilterField label="处理状态">
-              <Select
-                data-testid="finance-invoice-matching-status-filter"
-                options={(['全部', '待处理', '部分关联', '待确认原票'] satisfies InvoiceMatchingStatusFilter[]).map((status) => ({
-                  label: status,
-                  value: status
-                }))}
-                value={filters.status}
-                onChange={(status) => setFilters((current) => ({ ...current, status }))}
-              />
-            </FilterField>
-            <KeywordFilter
-              data-testid="finance-invoice-matching-keyword-input"
-              placeholder="事项 / 对象 / 发票号 / 流水号"
-              value={filters.keyword}
-              width="wide"
-              onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}
-            />
-          </FilterBar>
-        </FilterPanel>
-      }
       metrics={
-        <MetricGrid columns={5}>
-          <MetricCard icon={<FileSearchOutlined />} label="待办项" value={rows.length} />
-          <MetricCard icon={<FileTextOutlined />} label="发票待关联" value={invoiceTodoCount} />
-          <MetricCard icon={<WalletOutlined />} label="流水待关联" value={transactionTodoCount} />
-          <MetricCard icon={<RollbackOutlined />} label="红冲待处理" value={redTodoCount} />
-          <MetricCard icon={<LinkOutlined />} label="待关联金额" value={formatMoney(pendingAmount)} />
+        <MetricGrid columns={4}>
+          <MetricCard icon={<WalletOutlined />} label="待补票税依据" value={taxBasisTodoCount} />
+          <MetricCard icon={<FileSearchOutlined />} label="待处理差异" value={discrepancyTodoCount} />
+          <MetricCard icon={<LinkOutlined />} label="已匹配" value={matchedTodoCount} />
+          <MetricCard icon={<FileTextOutlined />} label="待处理金额" value={formatMoney(pendingAmount)} />
         </MetricGrid>
       }
       pageId="finance-invoice-matching"
     >
-      <ManagementTable<InvoiceMatchingTodoRow>
-        columns={columns}
-        count={{ value: rows.length, unit: '条待办' }}
-        dataSource={rows}
-        rowKey="id"
-        rowTestIdPrefix="finance-invoice-matching-table-row"
-        tableTestId="finance-invoice-matching-table"
-        onRowClick={(row) => setActiveTodoId(row.id)}
-      />
+      <div className="task-submit-workbench">
+        <section className="task-submit-queue-card">
+          <div className="task-submit-section-head">
+            <div>
+              <div className="task-submit-section-title">票税处理队列</div>
+              <div className="task-submit-section-meta">{openRows.length} 条待处理 / {matchedTodoCount} 条已匹配</div>
+            </div>
+          </div>
+          <div className="task-submit-card-list">
+            {rows.length > 0 ? (
+              rows.map((row) => {
+                const isActive = activeTodo?.id === row.id;
 
-      <DetailDrawerShell
-        bodyTestId="finance-invoice-matching-detail-drawer"
-        className="finance-invoice-drawer"
-        closeAction={{ label: '关闭', testId: 'finance-invoice-matching-close-button', onClick: () => setActiveTodoId(undefined) }}
-        open={Boolean(activeTodo)}
-        title={activeTodo ? <DrawerTitle row={activeTodo} /> : null}
-        width={980}
-        onClose={() => setActiveTodoId(undefined)}
-      >
-        {activeTodo ? (
-          <>
-            <DetailSummaryCards
-              columns={4}
-              items={
-                [
-                  { icon: <FileSearchOutlined />, key: 'type', label: '待办事项', value: activeTodo.type },
-                  { icon: <FileTextOutlined />, key: 'source', label: '处理对象', value: activeTodo.sourceNo },
-                  { icon: <WalletOutlined />, key: 'amount', label: '事项金额', value: formatMoney(activeTodo.amount) },
-                  { icon: <LinkOutlined />, key: 'remaining', label: '待关联', value: formatMoney(activeTodo.remainingAmount) }
-                ] satisfies DetailSummaryCardItem[]
-              }
-            />
-            <DetailTabs
-              defaultActiveKey={
-                activeTodo.sourceType === 'red-invoice'
-                  ? 'original'
-                  : activeTodo.sourceType === 'subsequent-invoice'
-                    ? 'subsequent'
-                    : 'match'
-              }
-              tabTestIdPrefix="finance-invoice-matching-detail-tab"
-              testId="finance-invoice-matching-detail-tabs"
-              items={buildDrawerTabs(activeTodo)}
-            />
-          </>
-        ) : null}
-      </DetailDrawerShell>
+                return (
+                  <button
+                    className={isActive ? 'finance-review-queue-row is-active' : 'finance-review-queue-row'}
+                    data-testid={`finance-invoice-matching-queue-row-${row.id}`}
+                    key={row.id}
+                    type="button"
+                    onClick={() => setActiveTodoId(row.id)}
+                  >
+                    <span className="finance-review-queue-row-main">
+                      <span className="finance-review-queue-row-title">{row.counterparty}</span>
+                      {renderMoney(getTodoQueueAmount(row))}
+                    </span>
+                    <span className="finance-review-queue-row-sub">
+                      <span>{row.sourceNo} / {row.type}</span>
+                      <span>{getTodoQueueDate(row)}</span>
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <Empty description="暂无票税处理事项" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
+          </div>
+        </section>
+
+        <section className="task-submit-panel finance-invoice-task-panel" data-testid="finance-invoice-matching-detail-panel">
+          {activeTodo ? (
+            <>
+              <div className="task-submit-panel-header">
+                <div>
+                  <div className="task-submit-panel-title">{activeTodo.counterparty}</div>
+                  <div className="task-submit-panel-sub">
+                    {activeTodo.sourceNo} / {activeTodo.type}
+                  </div>
+                </div>
+                <div className="finance-invoice-match-panel-tags">
+                  {renderDirection(activeTodo.direction)}
+                  {renderWorkflowStatus(activeTodo.status)}
+                </div>
+              </div>
+
+              <div className="task-submit-panel-body finance-invoice-match-panel-body">
+                <DetailSummaryCards
+                  columns={4}
+                  items={
+                    [
+                      { icon: <FileSearchOutlined />, key: 'type', label: '处理类型', value: activeTodo.type },
+                      { icon: <FileTextOutlined />, key: 'source', label: '单号', value: activeTodo.sourceNo },
+                      { icon: <WalletOutlined />, key: 'amount', label: '含税金额', value: formatMoney(activeTodo.amount) },
+                      {
+                        icon: <LinkOutlined />,
+                        key: 'remaining',
+                        label: activeTodo.status === '已匹配' ? '已关联' : '待处理',
+                        value: formatMoney(activeTodo.status === '已匹配' ? activeTodo.matchedAmount : activeTodo.remainingAmount)
+                      }
+                    ] satisfies DetailSummaryCardItem[]
+                  }
+                />
+                <DetailTabs
+                  defaultActiveKey={
+                    activeTodo.sourceType === 'matched-invoice'
+                      ? 'current'
+                      : activeTodo.sourceType === 'red-invoice'
+                      ? 'original'
+                      : activeTodo.sourceType === 'subsequent-invoice'
+                        ? 'subsequent'
+                        : 'match'
+                  }
+                  key={activeTodo.id}
+                  tabTestIdPrefix="finance-invoice-matching-detail-tab"
+                  testId="finance-invoice-matching-detail-tabs"
+                  items={buildDetailTabs(activeTodo)}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="task-submit-empty-panel">
+              <Empty description="暂无票税处理事项" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            </div>
+          )}
+        </section>
+      </div>
     </ManagementPageScaffold>
   );
 }

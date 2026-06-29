@@ -2,6 +2,11 @@ import dayjs from 'dayjs';
 import type { FinanceReportAggregation, FinanceTransactionRecord } from './financeData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import { getReceivablePayableOutstandingAmount } from './financeReceivablesPayablesData';
+import {
+  getFinanceReceivablePayableDueDate,
+  isFinanceReceivablePayableConfirmed,
+  isFinanceReceivablePayableOverdue
+} from './financeReceivablesPayablesModel';
 import { financeToday, getFinanceRecordCategorySnapshot, getPublicAccountSignedAmount } from './financeUtils';
 
 export type FinanceBusinessOverviewBasis = 'business-confirmation' | 'cash-flow';
@@ -69,11 +74,17 @@ export type FinanceBusinessOverviewReport = {
   summary: FinanceBusinessOverviewSummary;
 };
 
+export type FinanceBusinessOverviewPublicAccountBaseline = {
+  openingBalance: number;
+  openingBalanceDate: string;
+  publicAccountId: string;
+};
+
 type FinanceBusinessOverviewBuildInput = {
   accrualRecords: FinanceReceivablePayableRecord[];
   basis: FinanceBusinessOverviewBasis;
   financeRows: FinanceTransactionRecord[];
-  publicAccountOpeningBalance?: number;
+  publicAccountBaselines?: FinanceBusinessOverviewPublicAccountBaseline[];
   range?: FinanceBusinessOverviewRange;
 };
 
@@ -84,7 +95,6 @@ type FinanceBusinessOverviewDataset = {
 };
 
 const directCostAggregations = new Set<FinanceReportAggregation>(['项目成本']);
-const pendingCollectionStatuses = new Set(['待转入对公', '部分转入对公', '待存入对公', '待报销']);
 
 export const financeBusinessOverviewDefaultMonth = financeToday.slice(0, 7);
 
@@ -112,7 +122,11 @@ function isDateInRange(date: string, range?: FinanceBusinessOverviewRange) {
 }
 
 function isReportableAccrualRecord(record: FinanceReceivablePayableRecord, range?: FinanceBusinessOverviewRange) {
-  return record.categorySnapshot.includeInReport && isDateInRange(record.confirmDate, range);
+  return (
+    isFinanceReceivablePayableConfirmed(record) &&
+    record.categorySnapshot.includeInReport &&
+    isDateInRange(record.confirmDate, range)
+  );
 }
 
 function isReportableCashRecord(record: FinanceTransactionRecord, range?: FinanceBusinessOverviewRange) {
@@ -121,7 +135,6 @@ function isReportableCashRecord(record: FinanceTransactionRecord, range?: Financ
   return (
     category.includeInReport &&
     record.direction !== '内部转入' &&
-    record.settlementAccountType === '对公账户' &&
     record.status === '已入账' &&
     isDateInRange(record.occurredAt, range)
   );
@@ -133,31 +146,24 @@ function isPendingReviewCashRecord(record: FinanceTransactionRecord, range?: Fin
   return (
     category.includeInReport &&
     record.direction !== '内部转入' &&
-    record.settlementAccountType === '对公账户' &&
     record.status === '待复核' &&
     isDateInRange(record.occurredAt, range)
   );
 }
 
 function isPublicAccountMovement(record: FinanceTransactionRecord, range?: FinanceBusinessOverviewRange) {
-  if (!isActiveFinanceRecord(record) || record.settlementAccountType !== '对公账户') {
+  if (!isActiveFinanceRecord(record) || !record.publicAccountId) {
     return false;
   }
 
   return (
     (record.paymentMethod === '对公账户收款' ||
       record.paymentMethod === '对公账户付款' ||
+      record.paymentMethod === '员工代收' ||
+      record.paymentMethod === '现金暂收' ||
       record.direction === '内部转入') &&
     isDateInRange(record.occurredAt, range)
   );
-}
-
-function getPendingCollectionAmount(record: FinanceTransactionRecord) {
-  if (!pendingCollectionStatuses.has(record.collectionStatus)) {
-    return 0;
-  }
-
-  return Math.max(0, record.amount - (record.collectedAmount ?? 0));
 }
 
 function getStatusTone(amount: number): FinanceBusinessOverviewStatusTone {
@@ -309,7 +315,11 @@ function buildBusinessConfirmationStatusItems(input: FinanceBusinessOverviewBuil
   const unsettledReceivableRows = receivableRows.filter((record) => getReceivablePayableOutstandingAmount(record) > 0);
   const unsettledPayableRows = payableRows.filter((record) => getReceivablePayableOutstandingAmount(record) > 0);
   const overdueRows = input.accrualRecords.filter(
-    (record) => record.categorySnapshot.includeInReport && record.status === '已逾期' && isDateInRange(record.dueDate, input.range)
+    (record) =>
+      isFinanceReceivablePayableConfirmed(record) &&
+      record.categorySnapshot.includeInReport &&
+      isFinanceReceivablePayableOverdue(record) &&
+      isDateInRange(getFinanceReceivablePayableDueDate(record), input.range)
   );
   const overdueReceivableRows = overdueRows.filter((record) => record.direction === '应收');
   const overduePayableRows = overdueRows.filter((record) => record.direction === '应付');
@@ -349,7 +359,7 @@ function buildBusinessConfirmationStatusItems(input: FinanceBusinessOverviewBuil
     },
     {
       key: 'unsettledReceivable',
-      label: '未结清应收',
+      label: '未收事项',
       meta: `含逾期 ${overdueReceivableRows.length}`,
       tone: unsettledReceivableRows.length > 0 ? 'default' : 'success',
       value: unsettledReceivableRows.length,
@@ -357,7 +367,7 @@ function buildBusinessConfirmationStatusItems(input: FinanceBusinessOverviewBuil
     },
     {
       key: 'unsettledPayable',
-      label: '未结清应付',
+      label: '未付事项',
       meta: `含逾期 ${overduePayableRows.length}`,
       tone: unsettledPayableRows.length > 0 ? 'default' : 'success',
       value: unsettledPayableRows.length,
@@ -368,26 +378,13 @@ function buildBusinessConfirmationStatusItems(input: FinanceBusinessOverviewBuil
 
 function buildCashFlowStatusItems(input: FinanceBusinessOverviewBuildInput): FinanceBusinessOverviewStatusItem[] {
   const activeRows = input.financeRows.filter(isActiveFinanceRecord);
-  const publicAccountBalance =
-    (input.publicAccountOpeningBalance ?? 0) +
-    activeRows
-      .filter((record) => record.status === '已入账' && isPublicAccountMovement(record))
-      .reduce((total, record) => total + getPublicAccountSignedAmount(record), 0);
+  const publicAccountBalance = buildPublicAccountBalance(input, activeRows);
   const pendingReviewRows = activeRows.filter((record) => isPendingReviewCashRecord(record, input.range));
   const pendingReviewAmount = pendingReviewRows.reduce((total, record) => total + record.amount, 0);
   const unreconciledRows = activeRows.filter(
     (record) => isPublicAccountMovement(record, input.range) && record.reconciliationStatus !== '已对账'
   );
   const unreconciledAmount = unreconciledRows.reduce((total, record) => total + record.amount, 0);
-  const pendingCollectionRows = activeRows.filter(
-    (record) => isDateInRange(record.occurredAt, input.range) && getPendingCollectionAmount(record) > 0
-  );
-  const pendingTransferRows = pendingCollectionRows.filter((record) => record.collectionStatus !== '待报销');
-  const pendingReimburseRows = pendingCollectionRows.filter((record) => record.collectionStatus === '待报销');
-  const pendingTransferAmount = pendingTransferRows.reduce((total, record) => total + getPendingCollectionAmount(record), 0);
-  const pendingReimburseAmount = pendingReimburseRows.reduce((total, record) => total + getPendingCollectionAmount(record), 0);
-  const pendingFundAmount = pendingTransferAmount + pendingReimburseAmount;
-
   return [
     {
       key: 'publicAccountBalance',
@@ -412,16 +409,24 @@ function buildCashFlowStatusItems(input: FinanceBusinessOverviewBuildInput): Fin
       tone: getStatusTone(unreconciledAmount),
       value: unreconciledAmount,
       valueType: 'amount'
-    },
-    {
-      key: 'pendingFund',
-      label: '待处理资金',
-      meta: `转入 ${pendingTransferRows.length} / 报销 ${pendingReimburseRows.length}`,
-      tone: getStatusTone(pendingFundAmount),
-      value: pendingFundAmount,
-      valueType: 'amount'
     }
   ];
+}
+
+function buildPublicAccountBalance(input: FinanceBusinessOverviewBuildInput, activeRows: FinanceTransactionRecord[]) {
+  return (input.publicAccountBaselines ?? []).reduce((total, account) => {
+    const accountMovementTotal = activeRows
+      .filter(
+        (record) =>
+          record.status === '已入账' &&
+          isPublicAccountMovement(record) &&
+          record.publicAccountId === account.publicAccountId &&
+          record.occurredAt >= account.openingBalanceDate
+      )
+      .reduce((sum, record) => sum + getPublicAccountSignedAmount(record), 0);
+
+    return total + account.openingBalance + accountMovementTotal;
+  }, 0);
 }
 
 function buildStatusItems(input: FinanceBusinessOverviewBuildInput): FinanceBusinessOverviewStatusItem[] {
@@ -487,19 +492,36 @@ function compareRate(current: number, previous: number): FinanceBusinessOverview
   };
 }
 
+function buildMetricComparison(
+  metric: Omit<FinanceBusinessOverviewMetric, 'monthOverMonth' | 'yearOverYear'>,
+  previousSummary?: FinanceBusinessOverviewSummary
+): FinanceBusinessOverviewComparison | undefined {
+  if (!previousSummary) {
+    return undefined;
+  }
+
+  if (metric.type === 'rate' && previousSummary.income === 0) {
+    return undefined;
+  }
+
+  const previousValue = getSummaryMetricValue(previousSummary, metric.key);
+
+  if (previousValue === undefined) {
+    return undefined;
+  }
+
+  return metric.type === 'rate' ? compareRate(metric.value, previousValue) : compareAmount(metric.value, previousValue);
+}
+
 function buildMetric(
   metric: Omit<FinanceBusinessOverviewMetric, 'monthOverMonth' | 'yearOverYear'>,
   previousSummary?: FinanceBusinessOverviewSummary,
   previousYearSummary?: FinanceBusinessOverviewSummary
 ): FinanceBusinessOverviewMetric {
-  const previousValue = previousSummary ? getSummaryMetricValue(previousSummary, metric.key) : undefined;
-  const previousYearValue = previousYearSummary ? getSummaryMetricValue(previousYearSummary, metric.key) : undefined;
-  const compare = metric.type === 'rate' ? compareRate : compareAmount;
-
   return {
     ...metric,
-    monthOverMonth: previousValue === undefined ? undefined : compare(metric.value, previousValue),
-    yearOverYear: previousYearValue === undefined ? undefined : compare(metric.value, previousYearValue)
+    monthOverMonth: buildMetricComparison(metric, previousSummary),
+    yearOverYear: buildMetricComparison(metric, previousYearSummary)
   };
 }
 
@@ -539,14 +561,14 @@ function buildMetrics(
   const baseMetrics: Array<Omit<FinanceBusinessOverviewMetric, 'monthOverMonth' | 'yearOverYear'>> =
     basis === 'business-confirmation'
       ? [
-          { key: 'income', label: '确认收入', tone: 'income', type: 'amount', value: summary.income },
-          { key: 'cost', label: '确认成本', tone: 'expense', type: 'amount', value: summary.totalCost },
+          { key: 'income', label: '已确认收入', tone: 'income', type: 'amount', value: summary.income },
+          { key: 'cost', label: '已确认成本', tone: 'expense', type: 'amount', value: summary.totalCost },
           { key: 'net', label: '净利润', tone: summary.netProfit >= 0 ? 'income' : 'expense', type: 'amount', value: summary.netProfit },
           { key: 'gross', label: '毛利', tone: summary.grossProfit >= 0 ? 'income' : 'expense', type: 'amount', value: summary.grossProfit },
           { key: 'netMargin', label: '净利率', tone: summary.netMargin >= 0 ? 'income' : 'expense', type: 'rate', value: summary.netMargin },
           { key: 'grossMargin', label: '毛利率', tone: summary.grossMargin >= 0 ? 'income' : 'expense', type: 'rate', value: summary.grossMargin },
-          { key: 'receivableOutstanding', label: '应收未收', tone: 'muted', type: 'amount', value: summary.receivableOutstanding },
-          { key: 'payableOutstanding', label: '应付未付', tone: 'muted', type: 'amount', value: summary.payableOutstanding }
+          { key: 'receivableOutstanding', label: '未收金额', tone: 'muted', type: 'amount', value: summary.receivableOutstanding },
+          { key: 'payableOutstanding', label: '未付金额', tone: 'muted', type: 'amount', value: summary.payableOutstanding }
         ]
       : [
           { key: 'income', label: '现金收入', tone: 'income', type: 'amount', value: summary.income },

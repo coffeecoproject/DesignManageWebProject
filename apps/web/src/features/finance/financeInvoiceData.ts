@@ -5,10 +5,14 @@ export type FinanceInvoiceColor = '蓝票' | '红票';
 export type FinanceInvoiceKind = '普通发票' | '专用发票';
 export type FinanceInvoiceDeclarationTreatment = '本期申报' | '前期未开票冲抵' | '不计入增值税申报' | '待处理';
 
-export type FinanceInvoiceMatchedTransaction = {
+export type FinanceInvoiceMatchedBusinessRef = {
   amount: number;
   id: string;
-  transactionNo: string;
+  recordId?: string;
+  recordNo: string;
+  sourceModule: '应收应付' | '业务单据' | '未开票收入';
+  sourceNo: string;
+  sourceTitle: string;
 };
 
 export type FinanceInvoiceRecord = {
@@ -24,7 +28,7 @@ export type FinanceInvoiceRecord = {
   invoiceKind: FinanceInvoiceKind;
   invoiceNo: string;
   invoiceStatus: FinanceInvoiceStatus;
-  matchedTransactions: FinanceInvoiceMatchedTransaction[];
+  matchedBusinessRefs: FinanceInvoiceMatchedBusinessRef[];
   netAmount: number;
   originalInvoiceId?: string;
   sourceFile: string;
@@ -77,6 +81,74 @@ function createInvoice(input: CreateInvoiceInput): FinanceInvoiceRecord {
   };
 }
 
+function receivablePayableRef({
+  amount,
+  id,
+  recordId,
+  recordNo,
+  sourceNo,
+  sourceTitle
+}: {
+  amount: number;
+  id: string;
+  recordId: string;
+  recordNo: string;
+  sourceNo: string;
+  sourceTitle: string;
+}): FinanceInvoiceMatchedBusinessRef {
+  return {
+    amount,
+    id,
+    recordId,
+    recordNo,
+    sourceModule: '应收应付',
+    sourceNo,
+    sourceTitle
+  };
+}
+
+function businessDocumentRef({
+  amount,
+  id,
+  sourceNo,
+  sourceTitle
+}: {
+  amount: number;
+  id: string;
+  sourceNo: string;
+  sourceTitle: string;
+}): FinanceInvoiceMatchedBusinessRef {
+  return {
+    amount,
+    id,
+    recordNo: sourceNo,
+    sourceModule: '业务单据',
+    sourceNo,
+    sourceTitle
+  };
+}
+
+function unbilledIncomeRef({
+  amount,
+  id,
+  sourceNo,
+  sourceTitle
+}: {
+  amount: number;
+  id: string;
+  sourceNo: string;
+  sourceTitle: string;
+}): FinanceInvoiceMatchedBusinessRef {
+  return {
+    amount,
+    id,
+    recordNo: sourceNo,
+    sourceModule: '未开票收入',
+    sourceNo,
+    sourceTitle
+  };
+}
+
 export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
   createInvoice({
     accountingPeriod: '2026-06',
@@ -89,7 +161,16 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610001',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 68000, id: 'invoice-match-out-202606-001-001', transactionNo: 'FIN-202606-0001' }],
+    matchedBusinessRefs: [
+      receivablePayableRef({
+        amount: 68000,
+        id: 'invoice-match-out-202606-001-001',
+        recordId: 'ar-202606-001',
+        recordNo: 'AR-202606-001',
+        sourceNo: 'CON-2026-001',
+        sourceTitle: '奈雪华南门店设计服务合同'
+      })
+    ],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 673.27,
     taxRate: '1%',
@@ -106,7 +187,16 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610002',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 9800, id: 'invoice-match-out-202606-002-001', transactionNo: 'FIN-202606-0005' }],
+    matchedBusinessRefs: [
+      receivablePayableRef({
+        amount: 9800,
+        id: 'invoice-match-out-202606-002-001',
+        recordId: 'ar-202606-002',
+        recordNo: 'AR-202606-002',
+        sourceNo: 'CON-2026-009',
+        sourceTitle: '星河餐饮集团空间设计项目'
+      })
+    ],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 97.03,
     taxRate: '1%',
@@ -123,9 +213,19 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610003',
     invoiceStatus: '正常',
-    matchedTransactions: [
-      { amount: 3000, id: 'invoice-match-out-202606-003-001', transactionNo: 'FIN-202606-0008' },
-      { amount: 2000, id: 'invoice-match-out-202606-003-002', transactionNo: 'FIN-202606-0009' }
+    matchedBusinessRefs: [
+      businessDocumentRef({
+        amount: 3000,
+        id: 'invoice-match-out-202606-003-001',
+        sourceNo: 'CON-2026-012',
+        sourceTitle: '美刻咖啡门店设计阶段款'
+      }),
+      businessDocumentRef({
+        amount: 2000,
+        id: 'invoice-match-out-202606-003-002',
+        sourceNo: 'CON-2026-012',
+        sourceTitle: '美刻咖啡门店设计阶段款'
+      })
     ],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 74.26,
@@ -143,7 +243,7 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610007',
     invoiceStatus: '正常',
-    matchedTransactions: [],
+    matchedBusinessRefs: [],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 99.01,
     taxRate: '1%',
@@ -160,7 +260,14 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610008',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 1000, id: 'invoice-match-out-202606-008-001', transactionNo: 'FIN-202603-0021' }],
+    matchedBusinessRefs: [
+      unbilledIncomeRef({
+        amount: 1000,
+        id: 'invoice-match-out-202606-008-001',
+        sourceNo: 'FIN-202603-0021',
+        sourceTitle: '前期未开票收入后续补开发票'
+      })
+    ],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 9.9,
     taxRate: '1%',
@@ -177,7 +284,7 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610004',
     invoiceStatus: '红冲',
-    matchedTransactions: [],
+    matchedBusinessRefs: [],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: -11.88,
     taxRate: '1%',
@@ -194,7 +301,14 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610005',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 8000, id: 'invoice-match-out-202606-005-001', transactionNo: 'FIN-202606-0010' }],
+    matchedBusinessRefs: [
+      businessDocumentRef({
+        amount: 8000,
+        id: 'invoice-match-out-202606-005-001',
+        sourceNo: 'CON-2026-015',
+        sourceTitle: '合众餐饮多门店设计结算款'
+      })
+    ],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 79.21,
     taxRate: '1%',
@@ -211,7 +325,14 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000610006',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 3800, id: 'invoice-match-out-202606-006-001', transactionNo: 'FIN-202606-0010' }],
+    matchedBusinessRefs: [
+      businessDocumentRef({
+        amount: 3800,
+        id: 'invoice-match-out-202606-006-001',
+        sourceNo: 'CON-2026-015',
+        sourceTitle: '合众餐饮多门店设计结算款'
+      })
+    ],
     sourceFile: '2026-06_销项发票_税务下载.xlsx',
     taxAmount: 37.62,
     taxRate: '1%',
@@ -228,7 +349,16 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000620001',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 3200, id: 'invoice-match-in-202606-001-001', transactionNo: 'FIN-202606-0004' }],
+    matchedBusinessRefs: [
+      receivablePayableRef({
+        amount: 3200,
+        id: 'invoice-match-in-202606-001-001',
+        recordId: 'ap-202606-003',
+        recordNo: 'AP-202606-003',
+        sourceNo: 'OUT-202606-0008',
+        sourceTitle: '示例兼职 B 外协结算'
+      })
+    ],
     sourceFile: '2026-06_进项发票_税务下载.xlsx',
     taxAmount: 31.68,
     taxRate: '1%',
@@ -245,7 +375,7 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000620002',
     invoiceStatus: '正常',
-    matchedTransactions: [],
+    matchedBusinessRefs: [],
     sourceFile: '2026-06_进项发票_税务下载.xlsx',
     taxAmount: 7.82,
     taxRate: '1%',
@@ -262,7 +392,7 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000620003',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 580, id: 'invoice-match-in-202606-003-001', transactionNo: 'FIN-202606-0004' }],
+    matchedBusinessRefs: [],
     sourceFile: '2026-06_进项发票_税务下载.xlsx',
     taxAmount: 5.94,
     taxRate: '1%',
@@ -279,7 +409,7 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000520001',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 486.5, id: 'invoice-match-in-202605-001-001', transactionNo: 'FIN-202605-0018' }],
+    matchedBusinessRefs: [],
     sourceFile: '2026-05_进项发票_税务下载.xlsx',
     taxAmount: 4.82,
     taxRate: '1%',
@@ -296,7 +426,14 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000510001',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 12000, id: 'invoice-match-out-202605-001-001', transactionNo: 'FIN-202605-0017' }],
+    matchedBusinessRefs: [
+      businessDocumentRef({
+        amount: 12000,
+        id: 'invoice-match-out-202605-001-001',
+        sourceNo: 'CON-2026-005',
+        sourceTitle: '示例客户 A 项目阶段款'
+      })
+    ],
     sourceFile: '2026-05_销项发票_税务下载.xlsx',
     taxAmount: 148.51,
     taxRate: '1%',
@@ -313,7 +450,14 @@ export const financeInvoiceRecords: FinanceInvoiceRecord[] = [
     invoiceKind: '普通发票',
     invoiceNo: '254420000000410001',
     invoiceStatus: '正常',
-    matchedTransactions: [{ amount: 32000, id: 'invoice-match-out-202604-001-001', transactionNo: 'FIN-202604-0005' }],
+    matchedBusinessRefs: [
+      businessDocumentRef({
+        amount: 32000,
+        id: 'invoice-match-out-202604-001-001',
+        sourceNo: 'CON-2026-004',
+        sourceTitle: '春序茶饮空间设计服务'
+      })
+    ],
     sourceFile: '2026-04_销项发票_税务下载.xlsx',
     taxAmount: 316.83,
     taxRate: '1%',

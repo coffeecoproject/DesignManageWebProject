@@ -449,6 +449,7 @@ export function PerformanceMonthlyPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<TeamOutlined />} label="绩效员工" value={employeeCount} />

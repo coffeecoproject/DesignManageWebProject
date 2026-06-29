@@ -11,6 +11,11 @@ import {
   isInvoiceEffective,
   isTransactionInvoiceAssociationRequired
 } from './financeInvoiceModel';
+import {
+  getActiveFinanceTaxPolicyProfile,
+  getFinanceTaxExcludedAmountFromIncludedAmount,
+  parseFinanceTaxRate
+} from './financeTaxPolicyModel';
 import { financeToday, getFinanceTransactionInvoiceDeclarationStatus } from './financeUtils';
 
 export type FinanceDeclarationPreparationTaxType = '增值税及附加' | '企业所得税' | '印花税';
@@ -131,9 +136,13 @@ export type FinanceDeclarationSubsequentInvoiceCandidate = {
   record: FinanceTransactionRecord;
 };
 
-export const VAT_QUARTERLY_EXEMPTION_THRESHOLD = 300000;
-const VAT_EFFECTIVE_LEVY_RATE = 0.01;
-const VAT_SURCHARGE_RATE = 0.12;
+const activeTaxPolicyProfile = getActiveFinanceTaxPolicyProfile();
+const activeVatDeclarationPolicy = activeTaxPolicyProfile.vatDeclaration;
+const activeCorporateIncomeTaxPolicy = activeTaxPolicyProfile.corporateIncomeTax;
+
+export const VAT_QUARTERLY_EXEMPTION_THRESHOLD = activeVatDeclarationPolicy.quarterlyExemptionThreshold;
+const VAT_EFFECTIVE_LEVY_RATE = parseFinanceTaxRate(activeVatDeclarationPolicy.unbilledIncomeTaxRate);
+const VAT_SURCHARGE_RATE = activeVatDeclarationPolicy.surchargeRate;
 
 export const declarationPreparationStatusTone = {
   准备中: 'amber',
@@ -174,7 +183,7 @@ const emptyCitSummary: FinanceCorporateIncomeTaxPreparationSummary = {
   averageAssetAmount: 0,
   averageEmployeeCount: 0,
   estimatedCorporateIncomeTaxAmount: 0,
-  effectiveTaxRate: 0.25,
+  effectiveTaxRate: activeCorporateIncomeTaxPolicy.ordinaryEffectiveTaxRate,
   industryRestrictionResult: '待确认',
   operatingCostAmount: 0,
   operatingRevenueAmount: 0,
@@ -183,16 +192,16 @@ const emptyCitSummary: FinanceCorporateIncomeTaxPreparationSummary = {
   policyBasis: '普通企业预缴口径',
   priorLossDeductionAmount: 0,
   profitBeforeTaxAmount: 0,
-  smallLowProfitAssetLimit: 50000000,
+  smallLowProfitAssetLimit: activeCorporateIncomeTaxPolicy.smallLowProfitAssetLimit,
   smallLowProfitEligible: false,
-  smallLowProfitEmployeeLimit: 300,
-  smallLowProfitTaxableIncomeLimit: 3000000,
-  statutoryTaxRate: 0.25,
+  smallLowProfitEmployeeLimit: activeCorporateIncomeTaxPolicy.smallLowProfitEmployeeLimit,
+  smallLowProfitTaxableIncomeLimit: activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeLimit,
+  statutoryTaxRate: activeCorporateIncomeTaxPolicy.ordinaryEffectiveTaxRate,
   taxableIncomeAmount: 0,
   taxableIncomeInclusionRate: 1,
   taxAdjustmentDecreaseAmount: 0,
   taxAdjustmentIncreaseAmount: 0,
-  taxRate: 0.25
+  taxRate: activeCorporateIncomeTaxPolicy.ordinaryEffectiveTaxRate
 };
 
 function calculateCorporateIncomeTaxAmount(summary: Omit<FinanceCorporateIncomeTaxPreparationSummary, 'estimatedCorporateIncomeTaxAmount'>) {
@@ -230,7 +239,7 @@ export function buildCorporateIncomeTaxSourceRows(record: FinanceDeclarationPrep
       id: `${record.id}-cit-source-revenue`,
       name: '经营收入',
       result: '本季度经营收入汇总',
-      sourceModule: '财务统计',
+      sourceModule: '经营数据',
       sourcePeriod: record.period,
       status: '已同步'
     },
@@ -239,7 +248,7 @@ export function buildCorporateIncomeTaxSourceRows(record: FinanceDeclarationPrep
       id: `${record.id}-cit-source-cost-expense`,
       name: '成本费用',
       result: `营业成本 ${roundMoney(summary.operatingCostAmount).toLocaleString('zh-CN')} 元 / 期间费用 ${roundMoney(summary.periodExpenseAmount).toLocaleString('zh-CN')} 元`,
-      sourceModule: '财务统计',
+      sourceModule: '经营数据',
       sourcePeriod: record.period,
       status: '已同步'
     },
@@ -383,8 +392,8 @@ function createCorporateIncomeTaxItems(
       amount: summary.profitBeforeTaxAmount,
       id: `declaration-prep-item-${suffix}-profit`,
       period,
-      result: `利润总额 ${formatDeclarationAmount(summary.profitBeforeTaxAmount)}，已从财务统计同步`,
-      sourceModule: '财务统计',
+      result: `利润总额 ${formatDeclarationAmount(summary.profitBeforeTaxAmount)}，已从经营数据同步`,
+      sourceModule: '经营数据',
       status: '无需确认',
       title: '利润总额来源',
       type: '利润数据确认',
@@ -430,7 +439,7 @@ const cit2026q2Summary: FinanceCorporateIncomeTaxPreparationSummary = {
   averageAssetAmount: 1260000,
   averageEmployeeCount: 5,
   estimatedCorporateIncomeTaxAmount: 0,
-  effectiveTaxRate: 0.05,
+  effectiveTaxRate: activeCorporateIncomeTaxPolicy.smallLowProfitEffectiveTaxRate,
   industryRestrictionResult: '符合',
   operatingCostAmount: 126400,
   operatingRevenueAmount: 212600,
@@ -439,23 +448,23 @@ const cit2026q2Summary: FinanceCorporateIncomeTaxPreparationSummary = {
   policyBasis: '',
   priorLossDeductionAmount: 5000,
   profitBeforeTaxAmount: 20800,
-  smallLowProfitAssetLimit: 50000000,
+  smallLowProfitAssetLimit: activeCorporateIncomeTaxPolicy.smallLowProfitAssetLimit,
   smallLowProfitEligible: true,
-  smallLowProfitEmployeeLimit: 300,
-  smallLowProfitTaxableIncomeLimit: 3000000,
-  statutoryTaxRate: 0.2,
+  smallLowProfitEmployeeLimit: activeCorporateIncomeTaxPolicy.smallLowProfitEmployeeLimit,
+  smallLowProfitTaxableIncomeLimit: activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeLimit,
+  statutoryTaxRate: activeCorporateIncomeTaxPolicy.smallLowProfitStatutoryTaxRate,
   taxableIncomeAmount: 16300,
-  taxableIncomeInclusionRate: 0.25,
+  taxableIncomeInclusionRate: activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeRatio,
   taxAdjustmentDecreaseAmount: 700,
   taxAdjustmentIncreaseAmount: 1200,
-  taxRate: 0.05
+  taxRate: activeCorporateIncomeTaxPolicy.smallLowProfitEffectiveTaxRate
 };
 
 const cit2026q1Summary: FinanceCorporateIncomeTaxPreparationSummary = {
   averageAssetAmount: 1180000,
   averageEmployeeCount: 5,
   estimatedCorporateIncomeTaxAmount: 0,
-  effectiveTaxRate: 0.05,
+  effectiveTaxRate: activeCorporateIncomeTaxPolicy.smallLowProfitEffectiveTaxRate,
   industryRestrictionResult: '符合',
   operatingCostAmount: 98000,
   operatingRevenueAmount: 156000,
@@ -464,16 +473,16 @@ const cit2026q1Summary: FinanceCorporateIncomeTaxPreparationSummary = {
   policyBasis: '',
   priorLossDeductionAmount: 2000,
   profitBeforeTaxAmount: 12000,
-  smallLowProfitAssetLimit: 50000000,
+  smallLowProfitAssetLimit: activeCorporateIncomeTaxPolicy.smallLowProfitAssetLimit,
   smallLowProfitEligible: true,
-  smallLowProfitEmployeeLimit: 300,
-  smallLowProfitTaxableIncomeLimit: 3000000,
-  statutoryTaxRate: 0.2,
+  smallLowProfitEmployeeLimit: activeCorporateIncomeTaxPolicy.smallLowProfitEmployeeLimit,
+  smallLowProfitTaxableIncomeLimit: activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeLimit,
+  statutoryTaxRate: activeCorporateIncomeTaxPolicy.smallLowProfitStatutoryTaxRate,
   taxableIncomeAmount: 10000,
-  taxableIncomeInclusionRate: 0.25,
+  taxableIncomeInclusionRate: activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeRatio,
   taxAdjustmentDecreaseAmount: 0,
   taxAdjustmentIncreaseAmount: 0,
-  taxRate: 0.05
+  taxRate: activeCorporateIncomeTaxPolicy.smallLowProfitEffectiveTaxRate
 };
 
 cit2026q2Summary.policyBasis = buildSmallLowProfitPolicyBasis(cit2026q2Summary);
@@ -693,13 +702,13 @@ function sumMoney<T>(rows: T[], selector: (row: T) => number) {
 }
 
 function getTaxExcludedAmountFromCashAmount(amount: number) {
-  return roundMoney(amount / (1 + VAT_EFFECTIVE_LEVY_RATE));
+  return getFinanceTaxExcludedAmountFromIncludedAmount(amount, activeVatDeclarationPolicy.unbilledIncomeTaxRate);
 }
 
 function getInvoicePendingAssociationRiskAmount(invoices: FinanceInvoiceRecord[]) {
   return sumMoney(
     invoices.filter((invoice) => invoice.invoiceStatus === '正常' && getInvoiceMatchStatus(invoice) !== '已匹配'),
-    (invoice) => Math.max(0, invoice.taxIncludedAmount - invoice.matchedTransactions.reduce((total, match) => total + match.amount, 0))
+    (invoice) => Math.max(0, invoice.taxIncludedAmount - invoice.matchedBusinessRefs.reduce((total, match) => total + match.amount, 0))
   );
 }
 
@@ -764,8 +773,8 @@ export function getDeclarationPreparationSubsequentInvoiceCandidates(
 
   return periodInvoices
     .flatMap((invoice): FinanceDeclarationSubsequentInvoiceCandidate[] =>
-      invoice.matchedTransactions.flatMap((match) => {
-        const financeRow = financeRowByNo.get(match.transactionNo);
+      invoice.matchedBusinessRefs.flatMap((match) => {
+        const financeRow = match.sourceModule === '未开票收入' ? financeRowByNo.get(match.sourceNo) : undefined;
 
         if (!financeRow || financeRow.invoiceDeclarationPreparationNo === record.preparationNo) {
           return [];
@@ -813,8 +822,8 @@ function buildDeclarationPreparationSourceSnapshotKey(
 ) {
   const invoiceSourceKey = periodInvoices
     .map((invoice) => {
-      const matchKey = invoice.matchedTransactions
-        .map((match) => `${match.transactionNo}:${match.amount}`)
+      const matchKey = invoice.matchedBusinessRefs
+        .map((match) => `${match.sourceModule}:${match.recordNo}:${match.sourceNo}:${match.amount}`)
         .sort()
         .join(',');
 
@@ -1096,8 +1105,8 @@ export function applyDeclarationPreparationSourceState(
           amount: pendingInvoiceAssociationRiskAmount,
           result:
             pendingInvoiceAssociationRiskAmount > 0
-              ? '存在发票和流水未完全关联，不阻断申报准备'
-              : '发票与流水关联无明显风险',
+              ? '存在发票和业务确认未完全关联，不阻断申报准备'
+              : '发票与业务确认关联无明显风险',
           status: '无需确认'
         };
       }

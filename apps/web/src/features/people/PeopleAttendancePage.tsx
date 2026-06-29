@@ -577,6 +577,7 @@ export function PeopleAttendancePage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       filters={
         <FilterPanel>
           <FilterBar>

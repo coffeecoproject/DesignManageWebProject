@@ -1356,6 +1356,7 @@ export function PeopleMovementPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={4}>
           <MetricCard label="异动记录" value={movementRows.length} icon={<SwapOutlined />} />

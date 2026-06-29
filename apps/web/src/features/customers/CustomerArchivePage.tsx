@@ -237,6 +237,7 @@ export function CustomerArchivePage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       feedback={contextHolder}
       metrics={
         <MetricGrid columns={4}>

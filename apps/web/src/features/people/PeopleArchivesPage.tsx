@@ -1726,6 +1726,7 @@ export function PeopleArchivesPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={5}>
           <MetricCard label="已齐全" value={completed} icon={<FileProtectOutlined />} />

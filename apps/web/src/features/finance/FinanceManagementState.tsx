@@ -1,22 +1,40 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
+import {
+  getNextAccountingVoucherFormalNo,
+  type AccountingPeriodLockRecord,
+  type AccountingVoucherLifecycleRecord,
+  type AccountingVoucherRecord
+} from './financeAccountingVoucherModel';
 import { financeTransactionRecords, type FinanceTransactionRecord } from './financeData';
 import {
   financeDeclarationPreparationRecords,
   type FinanceDeclarationPreparationRecord
 } from './financeDeclarationPreparationData';
 import { financeInvoiceRecords, type FinanceInvoiceRecord } from './financeInvoiceData';
+import {
+  financeReceivablePayableRecords,
+  type FinanceReceivablePayableRecord
+} from './financeReceivablesPayablesData';
+import { applyFinanceReceivablePayableSettlementReview } from './financeReceivablesPayablesModel';
+import {
+  financeTaxMatterRecords,
+  type FinanceTaxMatterRecord
+} from './financeTaxFilingData';
 import { financeToday } from './financeUtils';
 
 type FinanceManagementStateValue = {
   addFinanceTransaction: (record: FinanceTransactionRecord) => void;
   addTransactionVoucherFile: (transactionId: string, file: RelatedFileRecord) => void;
-  collectPersonalAccountTransaction: (sourceTransactionId: string, record: FinanceTransactionRecord) => void;
+  accountingPeriodLocks: AccountingPeriodLockRecord[];
+  accountingVoucherLifecycleRows: AccountingVoucherLifecycleRecord[];
   confirmBankReconciliation: (transactionId: string, bankSerialNo: string) => void;
   financeRows: FinanceTransactionRecord[];
   clearInvoiceMatches: (invoiceId: string) => void;
   declarationPreparationRows: FinanceDeclarationPreparationRecord[];
   invoiceRows: FinanceInvoiceRecord[];
+  receivablePayableRows: FinanceReceivablePayableRecord[];
+  taxMatterRows: FinanceTaxMatterRecord[];
   removeTransactionVoucherFile: (transactionId: string, fileId: string) => void;
   revokeBankReconciliation: (transactionId: string, bankSerialNo: string, reason: string) => void;
   returnFinanceTransaction: (transactionId: string) => void;
@@ -25,11 +43,22 @@ type FinanceManagementStateValue = {
     transactionNos: string[],
     updater: (record: FinanceTransactionRecord) => FinanceTransactionRecord
   ) => void;
+  updateReceivablePayableRecord: (
+    recordId: string,
+    updater: (record: FinanceReceivablePayableRecord) => FinanceReceivablePayableRecord
+  ) => void;
   updateInvoiceRecord: (invoiceId: string, updater: (invoice: FinanceInvoiceRecord) => FinanceInvoiceRecord) => void;
   updateDeclarationPreparationRecord: (
     recordId: string,
     updater: (record: FinanceDeclarationPreparationRecord) => FinanceDeclarationPreparationRecord
   ) => void;
+  updateTaxMatterRecord: (
+    recordId: string,
+    updater: (record: FinanceTaxMatterRecord) => FinanceTaxMatterRecord
+  ) => void;
+  prepareAccountingVoucher: (record: AccountingVoucherRecord) => void;
+  postAccountingVoucher: (record: AccountingVoucherRecord) => void;
+  reverseAccountingVoucher: (record: AccountingVoucherRecord, reason: string) => void;
   voidFinanceTransaction: (transactionId: string) => void;
 };
 
@@ -38,63 +67,22 @@ const FinanceManagementContext = createContext<FinanceManagementStateValue | und
 export function FinanceManagementProvider({ children }: { children: ReactNode }) {
   const [financeRows, setFinanceRows] = useState<FinanceTransactionRecord[]>(financeTransactionRecords);
   const [invoiceRows, setInvoiceRows] = useState<FinanceInvoiceRecord[]>(financeInvoiceRecords);
+  const [receivablePayableRows, setReceivablePayableRows] = useState<FinanceReceivablePayableRecord[]>(
+    financeReceivablePayableRecords
+  );
   const [declarationPreparationRows, setDeclarationPreparationRows] = useState<FinanceDeclarationPreparationRecord[]>(
     financeDeclarationPreparationRecords
   );
+  const [taxMatterRows, setTaxMatterRows] = useState<FinanceTaxMatterRecord[]>(financeTaxMatterRecords);
+  const [accountingVoucherLifecycleRows, setAccountingVoucherLifecycleRows] = useState<AccountingVoucherLifecycleRecord[]>([]);
+  const [accountingPeriodLocks] = useState<AccountingPeriodLockRecord[]>([]);
 
   const value = useMemo<FinanceManagementStateValue>(
     () => ({
+      accountingPeriodLocks,
+      accountingVoucherLifecycleRows,
       addFinanceTransaction(record) {
         setFinanceRows((current) => [record, ...current]);
-      },
-      collectPersonalAccountTransaction(sourceTransactionId, record) {
-        setFinanceRows((current) => {
-          const sourceRecord = current.find((currentRecord) => currentRecord.id === sourceTransactionId);
-          const sourceAmount = sourceRecord?.amount ?? 0;
-          const currentCollectedAmount = sourceRecord?.collectedAmount ?? 0;
-          const nextCollectedAmount = Math.min(sourceAmount, currentCollectedAmount + record.amount);
-          const currentStatus = sourceRecord?.collectionStatus ?? '不适用';
-          const nextCollectionStatus: FinanceTransactionRecord['collectionStatus'] =
-            currentStatus === '待报销' || currentStatus === '已报销'
-              ? nextCollectedAmount >= sourceAmount && sourceAmount > 0
-                ? '已报销'
-                : '待报销'
-              : currentStatus === '待存入对公' || currentStatus === '已存入对公'
-                ? nextCollectedAmount >= sourceAmount && sourceAmount > 0
-                  ? '已存入对公'
-                  : '待存入对公'
-                : nextCollectedAmount >= sourceAmount && sourceAmount > 0
-                  ? '已转入对公'
-                  : nextCollectedAmount > 0
-                    ? '部分转入对公'
-                    : '待转入对公';
-
-          return [
-            record,
-            ...current.map((currentRecord) =>
-              currentRecord.id === sourceTransactionId
-                ? {
-                    ...currentRecord,
-                    collectedAmount: nextCollectedAmount,
-                    collectionStatus: nextCollectionStatus,
-                    collectionTransactionNos: [...(currentRecord.collectionTransactionNos ?? []), record.transactionNo],
-                    updatedAt: `${financeToday} 10:45`,
-                    operationRecords: [
-                      ...currentRecord.operationRecords,
-                      {
-                        id: `fin-op-collect-source-${Date.now()}`,
-                        time: `${financeToday} 10:45`,
-                        actor: '李明',
-                        object: currentRecord.transactionNo,
-                        action: '登记资金处理',
-                        summary: `已登记处理流水 ${record.transactionNo}，处理金额 ${record.amount.toLocaleString('zh-CN')} 元`
-                      }
-                    ]
-                  }
-                : currentRecord
-            )
-          ];
-        });
       },
       confirmBankReconciliation(transactionId, bankSerialNo) {
         setFinanceRows((current) =>
@@ -127,7 +115,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
             invoice.id === invoiceId
               ? {
                   ...invoice,
-                  matchedTransactions: []
+                  matchedBusinessRefs: []
                 }
               : invoice
           )
@@ -238,12 +226,14 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         );
       },
       reviewFinanceTransaction(transactionId) {
+        const transactionToReview = financeRows.find((record) => record.id === transactionId);
+
         setFinanceRows((current) =>
           current.map((record) =>
             record.id === transactionId
               ? {
                   ...record,
-                  status: '已入账',
+                  status: '已入账' as const,
                   reviewedBy: '财务复核',
                   reviewedAt: `${financeToday} 15:30`,
                   updatedAt: `${financeToday} 15:30`,
@@ -262,6 +252,12 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
               : record
           )
         );
+
+        if (transactionToReview?.status === '待复核') {
+          setReceivablePayableRows((currentRows) =>
+            applyFinanceReceivablePayableSettlementReview(currentRows, transactionToReview)
+          );
+        }
       },
       updateFinanceTransactionsByNo(transactionNos, updater) {
         const transactionNoSet = new Set(transactionNos);
@@ -270,12 +266,70 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           current.map((record) => (transactionNoSet.has(record.transactionNo) ? updater(record) : record))
         );
       },
+      updateReceivablePayableRecord(recordId, updater) {
+        setReceivablePayableRows((currentRows) =>
+          currentRows.map((record) => (record.id === recordId ? updater(record) : record))
+        );
+      },
       updateInvoiceRecord(invoiceId, updater) {
         setInvoiceRows((currentRows) => currentRows.map((invoice) => (invoice.id === invoiceId ? updater(invoice) : invoice)));
       },
       updateDeclarationPreparationRecord(recordId, updater) {
         setDeclarationPreparationRows((currentRows) =>
           currentRows.map((record) => (record.id === recordId ? updater(record) : record))
+        );
+      },
+      updateTaxMatterRecord(recordId, updater) {
+        setTaxMatterRows((currentRows) =>
+          currentRows.map((record) => (record.id === recordId ? updater(record) : record))
+        );
+      },
+      prepareAccountingVoucher(record) {
+        setAccountingVoucherLifecycleRows((currentRows) => {
+          if (currentRows.some((row) => row.voucherId === record.id)) {
+            return currentRows;
+          }
+
+          return [
+            {
+              accountingPeriod: record.accountingPeriod,
+              formalVoucherNo: getNextAccountingVoucherFormalNo(currentRows, record.accountingPeriod),
+              preparedAt: `${financeToday} 17:00`,
+              preparedBy: '李明',
+              status: '已制单',
+              voucherId: record.id
+            },
+            ...currentRows
+          ];
+        });
+      },
+      postAccountingVoucher(record) {
+        setAccountingVoucherLifecycleRows((currentRows) =>
+          currentRows.map((row) =>
+            row.voucherId === record.id && row.status === '已制单'
+              ? {
+                  ...row,
+                  postedAt: `${financeToday} 17:10`,
+                  postedBy: '李明',
+                  status: '已入账'
+                }
+              : row
+          )
+        );
+      },
+      reverseAccountingVoucher(record, reason) {
+        setAccountingVoucherLifecycleRows((currentRows) =>
+          currentRows.map((row) =>
+            row.voucherId === record.id && row.status === '已入账'
+              ? {
+                  ...row,
+                  reversedAt: `${financeToday} 17:20`,
+                  reversedBy: '李明',
+                  reversalReason: reason,
+                  status: '已冲销'
+                }
+              : row
+          )
         );
       },
       voidFinanceTransaction(transactionId) {
@@ -305,9 +359,19 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       },
       declarationPreparationRows,
       financeRows,
-      invoiceRows
+      invoiceRows,
+      receivablePayableRows,
+      taxMatterRows
     }),
-    [declarationPreparationRows, financeRows, invoiceRows]
+    [
+      accountingPeriodLocks,
+      accountingVoucherLifecycleRows,
+      declarationPreparationRows,
+      financeRows,
+      invoiceRows,
+      receivablePayableRows,
+      taxMatterRows
+    ]
   );
 
   return <FinanceManagementContext.Provider value={value}>{children}</FinanceManagementContext.Provider>;

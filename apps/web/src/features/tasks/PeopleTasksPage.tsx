@@ -72,6 +72,7 @@ export function PeopleTasksPage() {
 
   return (
     <ManagementPageScaffold
+      layout="table-workbench"
       metrics={
         <MetricGrid columns={6}>
           <MetricCard icon={<TeamOutlined />} label="人员" value={metrics.people} />
