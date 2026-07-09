@@ -1,6 +1,6 @@
 import { FileSearchOutlined, FileTextOutlined, LinkOutlined, RollbackOutlined, WalletOutlined } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Button, Empty, message } from 'antd';
+import { Alert, Button, Empty, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
@@ -12,13 +12,17 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
 import type { FinanceTransactionRecord } from './financeData';
+import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import { type FinanceInvoiceDirection, type FinanceInvoiceRecord } from './financeInvoiceData';
 import {
   compareInvoiceReceivablePayableMatchLabel,
   doesInvoiceBusinessRefMatchReceivablePayable,
+  getFinanceReceivablePayableInvoiceTodoWorkflow,
   getFinanceReceivablePayableInvoiceDirection,
   getInvoiceReceivablePayableMatchLabel,
   isFinanceReceivablePayableInvoiceMatchApplicable,
+  type FinanceInvoiceBusinessTodoStatus,
+  type FinanceInvoiceBusinessTodoType,
   type FinanceInvoiceReceivablePayableMatchLabel
 } from './financeInvoiceMatchingModel';
 import {
@@ -35,7 +39,7 @@ import {
 } from './financeReceivablesPayablesData';
 import { financeToday, formatMoney, getFinanceTransactionInvoiceDeclarationStatus } from './financeUtils';
 
-type InvoiceMatchingWorkflowStatus = '待补票税依据' | '待处理差异' | '已匹配';
+type InvoiceMatchingWorkflowStatus = FinanceInvoiceBusinessTodoStatus | '待处理差异' | '已匹配';
 
 type DetailTabItem = Parameters<typeof DetailTabs>[0]['items'][number];
 
@@ -129,7 +133,7 @@ type InvoiceMatchingTodoRow =
       businessRecord: FinanceReceivablePayableRecord;
       sourceType: 'business';
       status: InvoiceMatchingWorkflowStatus;
-      type: '权责事项待补票税依据';
+      type: FinanceInvoiceBusinessTodoType;
     }
   | {
       amount: number;
@@ -187,10 +191,12 @@ const invoiceDirectionTone = {
 } as const;
 
 const workflowStatusTone = {
-  待补票税依据: 'amber',
+  税额依据待确认: 'amber',
+  发票待补: 'amber',
+  发票部分匹配: 'blue',
   待处理差异: 'red',
   已匹配: 'green'
-} as const satisfies Record<InvoiceMatchingWorkflowStatus, 'amber' | 'green' | 'red'>;
+} as const satisfies Record<InvoiceMatchingWorkflowStatus, 'amber' | 'blue' | 'green' | 'red'>;
 
 const allocationStatusTone = {
   全额关联: 'green',
@@ -569,6 +575,8 @@ function buildInvoiceMatchingTodos(
         return [];
       }
 
+      const workflow = getFinanceReceivablePayableInvoiceTodoWorkflow(record, invoices);
+
       return [
         {
           amount: record.amount,
@@ -583,8 +591,8 @@ function buildInvoiceMatchingTodos(
           remainingAmount,
           sourceNo: record.documentNo,
           sourceType: 'business',
-          status: '待补票税依据',
-          type: '权责事项待补票税依据'
+          status: workflow.status,
+          type: workflow.type
         } satisfies InvoiceMatchingTodoRow
       ];
     });
@@ -684,9 +692,28 @@ function getTodoQueueAmount(row: InvoiceMatchingTodoRow) {
   return row.status === '已匹配' ? row.matchedAmount : row.remainingAmount;
 }
 
+function getInvoiceMatchingTodoAccountingPeriod(row: InvoiceMatchingTodoRow) {
+  if (row.sourceType === 'business') {
+    return row.businessRecord.accountingPeriod;
+  }
+
+  if (row.sourceType === 'subsequent-invoice') {
+    return row.subsequentRows[0]?.transaction.accountingPeriod ?? row.invoice.accountingPeriod;
+  }
+
+  return row.invoice.accountingPeriod;
+}
+
 export function FinanceInvoiceMatchingPage() {
   const [messageApi, contextHolder] = message.useMessage();
-  const { financeRows, invoiceRows, receivablePayableRows, updateFinanceTransactionsByNo, updateInvoiceRecord } = useFinanceManagement();
+  const {
+    financeRows,
+    getAccountingPeriodGuard,
+    invoiceRows,
+    receivablePayableRows,
+    updateFinanceTransactionsByNo,
+    updateInvoiceRecord
+  } = useFinanceManagement();
   const [activeTodoId, setActiveTodoId] = useState<string | undefined>();
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
 
@@ -735,20 +762,28 @@ export function FinanceInvoiceMatchingPage() {
   const selectedMatchTotal = selectedMatchRows.reduce((total, row) => total + row.matchAmount, 0);
   const selectedAfterRemaining = (activeTodo?.remainingAmount ?? 0) - selectedMatchTotal;
   const selectedMatchOverLimit = selectedMatchTotal - (activeTodo?.remainingAmount ?? 0) > 0.01;
-  const taxBasisTodoCount = rows.filter((row) => row.status === '待补票税依据').length;
+  const invoiceEvidenceTodoCount = rows.filter((row) => row.status === '发票待补' || row.status === '发票部分匹配').length;
   const discrepancyTodoCount = rows.filter((row) => row.status === '待处理差异').length;
   const matchedTodoCount = rows.filter((row) => row.status === '已匹配').length;
   const pendingAmount = openRows.reduce((total, row) => total + row.remainingAmount, 0);
   const subsequentDeclaredPeriods = activeTodo?.sourceType === 'subsequent-invoice'
     ? Array.from(new Set(activeTodo.subsequentRows.map((currentRow) => currentRow.transaction.invoiceDeclarationPeriod ?? currentRow.transaction.accountingPeriod)))
     : [];
+  const activeTodoAccountingPeriod = activeTodo ? getInvoiceMatchingTodoAccountingPeriod(activeTodo) : undefined;
+  const activeTodoPeriodGuard = activeTodoAccountingPeriod
+    ? getAccountingPeriodGuard(activeTodoAccountingPeriod, '处理票税匹配')
+    : undefined;
+  const activeTodoPeriodLocked = activeTodoPeriodGuard?.allowed === false;
+  const activeTodoPeriodReadbackNotice = activeTodoAccountingPeriod && activeTodoPeriodLocked
+    ? getClosedAccountingPeriodReadbackNotice(activeTodoAccountingPeriod, '当前票税事项')
+    : undefined;
 
   useEffect(() => {
     setSelectedCandidateIds([]);
   }, [activeTodo?.id]);
 
   function updateInvoiceMatch(invoiceId: string, updater: (invoice: FinanceInvoiceRecord) => FinanceInvoiceRecord) {
-    updateInvoiceRecord(invoiceId, updater);
+    return updateInvoiceRecord(invoiceId, updater);
   }
 
   function handleSelectCandidates(candidateIds: string[]) {
@@ -789,6 +824,22 @@ export function FinanceInvoiceMatchingPage() {
   }
 
   function handleSaveInvoiceToBusiness(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'invoice' }>) {
+    const invoicePeriodGuard = getAccountingPeriodGuard(row.invoice.accountingPeriod, '调整发票匹配');
+
+    if (!invoicePeriodGuard.allowed) {
+      void messageApi.warning(invoicePeriodGuard.reason);
+      return;
+    }
+
+    const lockedBusinessRow = selectedBusinessRows.find((selectedRow) =>
+      !getAccountingPeriodGuard(selectedRow.businessRecord.accountingPeriod, '调整发票匹配').allowed
+    );
+
+    if (lockedBusinessRow) {
+      void messageApi.warning(getAccountingPeriodGuard(lockedBusinessRow.businessRecord.accountingPeriod, '调整发票匹配').reason);
+      return;
+    }
+
     if (selectedBusinessRows.length === 0) {
       void messageApi.warning('请选择需要关联的业务');
       return;
@@ -799,7 +850,7 @@ export function FinanceInvoiceMatchingPage() {
       return;
     }
 
-    updateInvoiceMatch(row.invoice.id, (invoice) => ({
+    const updated = updateInvoiceMatch(row.invoice.id, (invoice) => ({
       ...invoice,
       matchedBusinessRefs: selectedBusinessRows.reduce((matches, selectedRow) => {
         const existingMatchIndex = matches.findIndex((match) => match.recordNo === selectedRow.businessRecord.documentNo);
@@ -829,24 +880,46 @@ export function FinanceInvoiceMatchingPage() {
         ];
       }, invoice.matchedBusinessRefs)
     }));
+
+    if (!updated) {
+      void messageApi.warning(invoicePeriodGuard.reason ?? '当前会计期间已锁定，不能保存发票关联');
+      return;
+    }
+
     setActiveTodoId(undefined);
     handleClearSelection();
     void messageApi.success(`已保存 ${selectedBusinessRows.length} 条关联关系`);
   }
 
   function handleSaveBusinessToInvoices(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'business' }>) {
+    const businessPeriodGuard = getAccountingPeriodGuard(row.businessRecord.accountingPeriod, '调整发票匹配');
+
+    if (!businessPeriodGuard.allowed) {
+      void messageApi.warning(businessPeriodGuard.reason);
+      return;
+    }
+
+    const lockedInvoiceRow = selectedInvoiceRows.find((selectedRow) =>
+      !getAccountingPeriodGuard(selectedRow.invoice.accountingPeriod, '调整发票匹配').allowed
+    );
+
+    if (lockedInvoiceRow) {
+      void messageApi.warning(getAccountingPeriodGuard(lockedInvoiceRow.invoice.accountingPeriod, '调整发票匹配').reason);
+      return;
+    }
+
     if (selectedInvoiceRows.length === 0) {
       void messageApi.warning('请选择需要关联的发票');
       return;
     }
 
     if (selectedMatchTotal - row.remainingAmount > 0.01) {
-      void messageApi.warning('本次关联金额不能超过待补票税金额');
+      void messageApi.warning('本次关联金额不能超过待补发票金额');
       return;
     }
 
-    selectedInvoiceRows.forEach((selectedRow) => {
-      updateInvoiceMatch(selectedRow.invoice.id, (invoice) => ({
+    const allUpdated = selectedInvoiceRows
+      .map((selectedRow) => updateInvoiceMatch(selectedRow.invoice.id, (invoice) => ({
         ...invoice,
         matchedBusinessRefs: [
           ...invoice.matchedBusinessRefs,
@@ -860,22 +933,49 @@ export function FinanceInvoiceMatchingPage() {
             sourceTitle: row.businessRecord.sourceTitle
           }
         ]
-      }));
-    });
+      })))
+      .every(Boolean);
+
+    if (!allUpdated) {
+      void messageApi.warning(businessPeriodGuard.reason ?? '当前会计期间已锁定，不能保存发票关联');
+      return;
+    }
+
     setActiveTodoId(undefined);
     handleClearSelection();
     void messageApi.success(`已保存 ${selectedInvoiceRows.length} 条关联关系`);
   }
 
   function handleRemoveInvoiceMatch(invoiceId: string, matchId: string) {
-    updateInvoiceMatch(invoiceId, (invoice) => ({
+    const invoice = invoiceRows.find((record) => record.id === invoiceId);
+    const periodGuard = getAccountingPeriodGuard(invoice?.accountingPeriod, '撤销发票匹配');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
+    const updated = updateInvoiceMatch(invoiceId, (invoice) => ({
       ...invoice,
       matchedBusinessRefs: invoice.matchedBusinessRefs.filter((match) => match.id !== matchId)
     }));
+
+    if (!updated) {
+      void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能撤销发票匹配');
+      return;
+    }
+
     void messageApi.success('已撤销关联');
   }
 
   function handleConfirmRedOriginal(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'red-invoice' }>) {
+    const periodGuard = getAccountingPeriodGuard(row.invoice.accountingPeriod, '确认红冲原票关联');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     if (selectedCandidateIds.length !== 1) {
       void messageApi.warning('请选择原蓝字发票');
       return;
@@ -893,11 +993,24 @@ export function FinanceInvoiceMatchingPage() {
       return;
     }
 
-    updateInvoiceMatch(row.invoice.id, (invoice) => ({
+    const originalInvoicePeriodGuard = getAccountingPeriodGuard(selectedCandidate.invoice.accountingPeriod, '确认红冲原票关联');
+
+    if (!originalInvoicePeriodGuard.allowed) {
+      void messageApi.warning(originalInvoicePeriodGuard.reason);
+      return;
+    }
+
+    const updated = updateInvoiceMatch(row.invoice.id, (invoice) => ({
       ...invoice,
       matchedBusinessRefs: [],
       originalInvoiceId: selectedCandidate.invoice.id
     }));
+
+    if (!updated) {
+      void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能确认红冲原票关联');
+      return;
+    }
+
     setActiveTodoId(undefined);
     handleClearSelection();
     void messageApi.success('已确认红冲原票关联');
@@ -905,8 +1018,16 @@ export function FinanceInvoiceMatchingPage() {
 
   function handleConfirmSubsequentInvoice(row: Extract<InvoiceMatchingTodoRow, { sourceType: 'subsequent-invoice' }>) {
     const transactionNos = Array.from(new Set(row.subsequentRows.map((currentRow) => currentRow.transaction.transactionNo)));
+    const lockedTransactionRow = row.subsequentRows.find((currentRow) =>
+      !getAccountingPeriodGuard(currentRow.transaction.accountingPeriod, '确认后续开票').allowed
+    );
 
-    updateFinanceTransactionsByNo(transactionNos, (record) => ({
+    if (lockedTransactionRow) {
+      void messageApi.warning(getAccountingPeriodGuard(lockedTransactionRow.transaction.accountingPeriod, '确认后续开票').reason);
+      return;
+    }
+
+    const updated = updateFinanceTransactionsByNo(transactionNos, (record) => ({
       ...record,
       invoiceDeclarationStatus: '后续开票已处理',
       operationRecords: [
@@ -922,6 +1043,12 @@ export function FinanceInvoiceMatchingPage() {
       ],
       updatedAt: `${financeToday} 14:25`
     }));
+
+    if (!updated) {
+      void messageApi.warning('当前会计期间已锁定，不能确认后续开票');
+      return;
+    }
+
     setActiveTodoId(undefined);
     void messageApi.success('后续开票已确认');
   }
@@ -951,7 +1078,12 @@ export function FinanceInvoiceMatchingPage() {
       width: 96,
       render: (_, record) =>
         activeTodo?.sourceType === 'invoice' ? (
-          <Button icon={<RollbackOutlined />} size="small" onClick={() => handleRemoveInvoiceMatch(activeTodo.invoice.id, record.id)}>
+          <Button
+            disabled={activeTodoPeriodLocked}
+            icon={<RollbackOutlined />}
+            size="small"
+            onClick={() => handleRemoveInvoiceMatch(activeTodo.invoice.id, record.id)}
+          >
             撤销
           </Button>
         ) : (
@@ -984,7 +1116,12 @@ export function FinanceInvoiceMatchingPage() {
       key: 'action',
       width: 96,
       render: (_, record) => (
-        <Button icon={<RollbackOutlined />} size="small" onClick={() => handleRemoveInvoiceMatch(record.invoice.id, record.matchId)}>
+        <Button
+          disabled={activeTodoPeriodLocked}
+          icon={<RollbackOutlined />}
+          size="small"
+          onClick={() => handleRemoveInvoiceMatch(record.invoice.id, record.matchId)}
+        >
           撤销
         </Button>
       )
@@ -1216,7 +1353,7 @@ export function FinanceInvoiceMatchingPage() {
           <Button onClick={handleClearSelection}>清空选择</Button>
           <Button
             data-testid="finance-invoice-matching-confirm-button"
-            disabled={selectedMatchTotal <= 0 || selectedMatchOverLimit}
+            disabled={activeTodoPeriodLocked || selectedMatchTotal <= 0 || selectedMatchOverLimit}
             type="primary"
             onClick={onSave}
           >
@@ -1418,6 +1555,7 @@ export function FinanceInvoiceMatchingPage() {
               <div className="finance-invoice-match-confirm-action">
                 <Button
                   data-testid="finance-invoice-matching-confirm-subsequent-button"
+                  disabled={activeTodoPeriodLocked}
                   type="primary"
                   onClick={() => handleConfirmSubsequentInvoice(row)}
                 >
@@ -1485,7 +1623,7 @@ export function FinanceInvoiceMatchingPage() {
               <Button onClick={handleClearSelection}>清空选择</Button>
               <Button
                 data-testid="finance-invoice-matching-confirm-red-button"
-                disabled={selectedCandidateIds.length !== 1}
+                disabled={activeTodoPeriodLocked || selectedCandidateIds.length !== 1}
                 type="primary"
                 onClick={() => handleConfirmRedOriginal(row)}
               >
@@ -1525,7 +1663,7 @@ export function FinanceInvoiceMatchingPage() {
       feedback={contextHolder}
       metrics={
         <MetricGrid columns={4}>
-          <MetricCard icon={<WalletOutlined />} label="待补票税依据" value={taxBasisTodoCount} />
+          <MetricCard icon={<WalletOutlined />} label="发票待补" value={invoiceEvidenceTodoCount} />
           <MetricCard icon={<FileSearchOutlined />} label="待处理差异" value={discrepancyTodoCount} />
           <MetricCard icon={<LinkOutlined />} label="已匹配" value={matchedTodoCount} />
           <MetricCard icon={<FileTextOutlined />} label="待处理金额" value={formatMoney(pendingAmount)} />
@@ -1604,6 +1742,9 @@ export function FinanceInvoiceMatchingPage() {
                     ] satisfies DetailSummaryCardItem[]
                   }
                 />
+                {activeTodoPeriodReadbackNotice ? (
+                  <Alert className="finance-period-readback-alert" message={activeTodoPeriodReadbackNotice} showIcon type="info" />
+                ) : null}
                 <DetailTabs
                   defaultActiveKey={
                     activeTodo.sourceType === 'matched-invoice'

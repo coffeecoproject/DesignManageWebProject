@@ -285,6 +285,7 @@ const tests: UnitTest[] = [
         customerName: '测试客户',
         kind: '代收登记' as const,
         publicAccountId: testPublicAccountRef.publicAccountId,
+        relatedReceivableNo: 'AR-TEST-001',
         title: '客户临时代收',
         transferFiles: [
           {
@@ -305,6 +306,7 @@ const tests: UnitTest[] = [
       assertEqual(financeRecord.publicAccountId, testPublicAccountRef.publicAccountId, 'submitted collection should already point to public account');
       assertEqual(financeRecord.publicAccountSnapshot.displayName, testPublicAccountRef.publicAccountSnapshot.displayName, 'public account snapshot should be copied');
       assertEqual(financeRecord.sourceNo, collectionRecord.code, 'finance source should link to employee submission');
+      assertEqual(financeRecord.relatedReceivableNo, 'AR-TEST-001', 'finance transaction should retain related receivable number');
       assertEqual(linkMyWorkCollectionFinanceTransaction(collectionRecord, financeRecord.transactionNo).linkedFinanceTransactionNo, financeRecord.transactionNo, 'employee record should keep review transaction number');
     }
   },

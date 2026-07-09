@@ -7,7 +7,7 @@ import {
   WalletOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Button } from 'antd';
+import { Alert, Button } from 'antd';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
@@ -17,6 +17,7 @@ import { OperationRecordSection } from '../../components/OperationRecordSection'
 import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { TagChip } from '../../components/TagChip';
 import type { FinanceTransactionRecord } from './financeData';
+import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import type { FinanceInvoiceRecord } from './financeInvoiceData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import {
@@ -36,6 +37,8 @@ import {
   type FinanceReceivablePayableSettlementFormValue,
   getFinanceReceivablePayableSettlementProgress
 } from './financeReceivablesPayablesModel';
+import { resolveFinanceAccrualTaxBasis } from './financeTaxBasisModel';
+import type { FinanceTaxBasisSource, FinanceTaxEvidenceStatus } from './financeTaxBasisModel';
 import { formatMoney } from './financeUtils';
 import { FinanceReceivablesPayablesSettlementPanel } from './FinanceReceivablesPayablesSettlementPanel';
 import type { FinanceVoucherUploadFile } from './FinanceVoucherUploadPanel';
@@ -44,6 +47,7 @@ type FinanceReceivablesPayablesDetailDrawerProps = {
   accountOptions: Array<{ label: string; value: string }>;
   registerableAmount: number;
   recordEditable: boolean;
+  recordLockedReason?: string;
   settlementForm: FinanceReceivablePayableSettlementFormValue;
   settlementSubmitDisabled: boolean;
   linkedInvoiceRows: FinanceInvoiceRecord[];
@@ -73,10 +77,26 @@ const invoiceDirectionTone = {
   进项: 'blue'
 } as const;
 
+const taxBasisSourceTone = {
+  来源单据: 'blue',
+  发票台账: 'green',
+  不涉及发票: 'gray',
+  待确认: 'amber'
+} as const satisfies Record<FinanceTaxBasisSource, 'amber' | 'blue' | 'gray' | 'green'>;
+
+const taxEvidenceStatusTone = {
+  发票已匹配: 'green',
+  发票部分匹配: 'blue',
+  发票待补: 'amber',
+  不涉及发票: 'gray',
+  待确认: 'amber'
+} as const satisfies Record<FinanceTaxEvidenceStatus, 'amber' | 'blue' | 'gray' | 'green'>;
+
 export function FinanceReceivablesPayablesDetailDrawer({
   accountOptions,
   registerableAmount,
   recordEditable,
+  recordLockedReason,
   settlementForm,
   settlementSubmitDisabled,
   linkedInvoiceRows,
@@ -102,6 +122,10 @@ export function FinanceReceivablesPayablesDetailDrawer({
   const outstandingAmount = getReceivablePayableOutstandingAmount(record);
   const hasActiveSettlement = hasFinanceReceivablePayableActiveSettlement(linkedTransactionRows);
   const missingAccountingRoleLabels = getFinanceReceivablePayableMissingAccountingRoleLabels(record);
+  const taxBasis = resolveFinanceAccrualTaxBasis(record, linkedInvoiceRows);
+  const periodReadbackNotice = recordLockedReason
+    ? getClosedAccountingPeriodReadbackNotice(record.accountingPeriod, '当前权责事项')
+    : undefined;
   const linkedInvoiceDetailRows = linkedInvoiceRows.map((invoice) => ({
     id: invoice.id,
     invoice,
@@ -214,12 +238,15 @@ export function FinanceReceivablesPayablesDetailDrawer({
                       调整事项
                     </Button>
                   ) : (
-                    <TagChip label="已有收付进度，事项锁定" tone="blue" />
+                    <TagChip label={recordLockedReason ? '只读回看' : '已有收付进度，事项锁定'} tone="blue" />
                   )
                 }
                 icon={<ProfileOutlined />}
                 title="权责事项"
               >
+                {periodReadbackNotice ? (
+                  <Alert className="finance-period-readback-alert" message={periodReadbackNotice} showIcon type="info" />
+                ) : null}
                 <DetailInfoGrid
                   columns={3}
                   items={[
@@ -249,7 +276,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
                     },
                     { label: '财务类目', value: record.category },
                     {
-                      label: '权责制单科目',
+                      label: '权责记账科目',
                       value: missingAccountingRoleLabels.length > 0
                         ? `待配置：${missingAccountingRoleLabels.join(' / ')}`
                         : '科目已配置'
@@ -273,10 +300,12 @@ export function FinanceReceivablesPayablesDetailDrawer({
             children: (
               <FinanceReceivablesPayablesSettlementPanel
                 accountOptions={accountOptions}
-                form={settlementForm}
-                linkedTransactionRows={linkedTransactionRows}
-                maxAmount={registerableAmount}
-                record={record}
+                  form={settlementForm}
+                  linkedTransactionRows={linkedTransactionRows}
+                  lockedReason={recordLockedReason}
+                  lockedNotice={periodReadbackNotice}
+                  maxAmount={registerableAmount}
+                  record={record}
                 submitDisabled={settlementSubmitDisabled}
                 onDownloadFile={onDownloadFile}
                 onPreviewFile={onPreviewFile}
@@ -291,15 +320,37 @@ export function FinanceReceivablesPayablesDetailDrawer({
           },
           {
             children: (
-              <DetailSection icon={<FileTextOutlined />} title="发票/票据匹配">
-                <CompactDetailTable<LinkedInvoiceDetailRow>
-                  columns={invoiceColumns}
-                  dataSource={linkedInvoiceDetailRows}
-                  emptyText="暂无关联发票"
-                  rowKey="id"
-                  scrollX={760}
-                />
-              </DetailSection>
+              <>
+                <DetailSection icon={<FileTextOutlined />} title="税额依据">
+                  <DetailInfoGrid
+                    columns={3}
+                    items={[
+                      {
+                        label: '依据来源',
+                        value: <StatusTag toneMap={taxBasisSourceTone} value={taxBasis.basisSource} />
+                      },
+                      {
+                        label: '票据状态',
+                        value: <StatusTag toneMap={taxEvidenceStatusTone} value={taxBasis.evidenceStatus} />
+                      },
+                      { label: '税率', value: taxBasis.taxRate },
+                      { label: '价税合计', value: formatMoney(taxBasis.taxIncludedAmount) },
+                      { label: '不含税金额', value: formatMoney(taxBasis.taxExcludedAmount) },
+                      { label: '税额', value: formatMoney(taxBasis.taxAmount) },
+                      { label: '已匹配发票', value: formatMoney(taxBasis.matchedInvoiceAmount) }
+                    ]}
+                  />
+                </DetailSection>
+                <DetailSection icon={<FileTextOutlined />} title="发票/票据匹配">
+                  <CompactDetailTable<LinkedInvoiceDetailRow>
+                    columns={invoiceColumns}
+                    dataSource={linkedInvoiceDetailRows}
+                    emptyText="暂无关联发票"
+                    rowKey="id"
+                    scrollX={760}
+                  />
+                </DetailSection>
+              </>
             ),
             key: 'invoices',
             label: '发票/票据'

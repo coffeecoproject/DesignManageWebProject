@@ -268,6 +268,10 @@ export function setSalaryAdjustmentFormMonth(form: SalaryAdjustmentFormValue, mo
   };
 }
 
+export function getSalaryMonthlyAccountingPeriod(month: string) {
+  return month;
+}
+
 export function getSalaryAdjustmentMemberOptions(reports: SalaryMonthlyReport[]) {
   return reports
     .filter((report) => report.canAdjust)

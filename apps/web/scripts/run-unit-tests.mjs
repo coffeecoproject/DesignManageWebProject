@@ -21,9 +21,17 @@ const bundledFinanceSocialInsuranceModelTestFile = join(outDir, 'financeSocialIn
 const bundledFinanceTaxMatterModelTestFile = join(outDir, 'financeTaxMatterModel.test.mjs');
 const bundledFinanceBusinessOverviewModelTestFile = join(outDir, 'financeBusinessOverviewModel.test.mjs');
 const bundledFinanceAccountingSubjectDataTestFile = join(outDir, 'financeAccountingSubjectData.test.mjs');
+const bundledFinanceLedgerInitializationModelTestFile = join(outDir, 'financeLedgerInitializationModel.test.mjs');
 const bundledFinanceAccountingVoucherModelTestFile = join(outDir, 'financeAccountingVoucherModel.test.mjs');
+const bundledFinanceGeneralLedgerModelTestFile = join(outDir, 'financeGeneralLedgerModel.test.mjs');
+const bundledFinanceFinancialStatementsModelTestFile = join(outDir, 'financeFinancialStatementsModel.test.mjs');
+const bundledFinancePeriodCloseModelTestFile = join(outDir, 'financePeriodCloseModel.test.mjs');
+const bundledFinancePeriodCloseAcceptanceMatrixTestFile = join(outDir, 'financePeriodCloseAcceptanceMatrix.test.mjs');
+const bundledFinancePeriodCloseStageAuditMatrixTestFile = join(outDir, 'financePeriodCloseStageAuditMatrix.test.mjs');
+const bundledFinancePeriodCloseSourceMutationMatrixTestFile = join(outDir, 'financePeriodCloseSourceMutationMatrix.test.mjs');
 const bundledFinanceCategoryAccountingMappingTestFile = join(outDir, 'financeCategoryAccountingMapping.test.mjs');
 const bundledFinanceReceivablesPayablesModelTestFile = join(outDir, 'financeReceivablesPayablesModel.test.mjs');
+const bundledFinanceInvoiceImportModelTestFile = join(outDir, 'financeInvoiceImportModel.test.mjs');
 const bundledFinanceInvoiceMatchingModelTestFile = join(outDir, 'financeInvoiceMatchingModel.test.mjs');
 const bundledFinanceReviewModelTestFile = join(outDir, 'financeReviewModel.test.mjs');
 const bundledFinanceBankImportContractTestFile = join(outDir, 'financeBankImportContract.test.mjs');
@@ -114,9 +122,44 @@ const testModules = [
     runExport: 'runFinanceAccountingSubjectDataTests'
   },
   {
+    bundledFile: bundledFinanceLedgerInitializationModelTestFile,
+    entry: 'src/features/finance/financeLedgerInitializationModel.test.ts',
+    runExport: 'runFinanceLedgerInitializationModelTests'
+  },
+  {
     bundledFile: bundledFinanceAccountingVoucherModelTestFile,
     entry: 'src/features/finance/financeAccountingVoucherModel.test.ts',
     runExport: 'runFinanceAccountingVoucherModelTests'
+  },
+  {
+    bundledFile: bundledFinanceGeneralLedgerModelTestFile,
+    entry: 'src/features/finance/financeGeneralLedgerModel.test.ts',
+    runExport: 'runFinanceGeneralLedgerModelTests'
+  },
+  {
+    bundledFile: bundledFinanceFinancialStatementsModelTestFile,
+    entry: 'src/features/finance/financeFinancialStatementsModel.test.ts',
+    runExport: 'runFinanceFinancialStatementsModelTests'
+  },
+  {
+    bundledFile: bundledFinancePeriodCloseModelTestFile,
+    entry: 'src/features/finance/financePeriodCloseModel.test.ts',
+    runExport: 'runFinancePeriodCloseModelTests'
+  },
+  {
+    bundledFile: bundledFinancePeriodCloseAcceptanceMatrixTestFile,
+    entry: 'src/features/finance/financePeriodCloseAcceptanceMatrix.test.ts',
+    runExport: 'runFinancePeriodCloseAcceptanceMatrixTests'
+  },
+  {
+    bundledFile: bundledFinancePeriodCloseStageAuditMatrixTestFile,
+    entry: 'src/features/finance/financePeriodCloseStageAuditMatrix.test.ts',
+    runExport: 'runFinancePeriodCloseStageAuditMatrixTests'
+  },
+  {
+    bundledFile: bundledFinancePeriodCloseSourceMutationMatrixTestFile,
+    entry: 'src/features/finance/financePeriodCloseSourceMutationMatrix.test.ts',
+    runExport: 'runFinancePeriodCloseSourceMutationMatrixTests'
   },
   {
     bundledFile: bundledFinanceCategoryAccountingMappingTestFile,
@@ -127,6 +170,11 @@ const testModules = [
     bundledFile: bundledFinanceReceivablesPayablesModelTestFile,
     entry: 'src/features/finance/financeReceivablesPayablesModel.test.ts',
     runExport: 'runFinanceReceivablesPayablesModelTests'
+  },
+  {
+    bundledFile: bundledFinanceInvoiceImportModelTestFile,
+    entry: 'src/features/finance/financeInvoiceImportModel.test.ts',
+    runExport: 'runFinanceInvoiceImportModelTests'
   },
   {
     bundledFile: bundledFinanceInvoiceMatchingModelTestFile,

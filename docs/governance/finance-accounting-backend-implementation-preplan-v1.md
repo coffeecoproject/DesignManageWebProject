@@ -11,6 +11,7 @@ Related contract:
 - `docs/data/finance-accounting-voucher-ledger-contract.md`
 - `docs/data/finance-tax-accounting-backend-contract.md`
 - `docs/governance/finance-accounting-voucher-full-workflow-plan-v1.md`
+- `docs/governance/finance-period-close-industrial-execution-acceptance-plan-v1.md`
 - `docs/api/api-contract-placeholder.md`
 - `docs/data/frontend-cross-module-contracts.md`
 
@@ -23,7 +24,7 @@ Related contract:
 - 数据库表和 migration 顺序明确。
 - 税务口径、发票税额、应收应付税额、会计科目和类目映射的事实源明确。
 - 正式凭证号序列具备事务锁设计。
-- 候选凭证、持久凭证、入账、冲销、期间关闭和总账读取 API 边界明确。
+- 候选凭证、持久凭证、记账、冲销、期间关闭和总账读取 API 边界明确。
 - 权限、审计、幂等和并发策略明确。
 - 前端从 mock 生成器切换到 repository adapter 的路径明确。
 - 非生产 contract tests、回滚策略和恢复演练要求明确。
@@ -68,8 +69,8 @@ reporting read models
 - candidate 是查询结果，不是正式凭证。
 - persisted voucher 才有正式凭证号。
 - posted voucher 才写入 general ledger。
-- closed period 不允许新增、入账、冲销或调整当期凭证。
-- 已入账错误只能通过冲销或调整处理，不直接改原凭证。
+- closed period 不允许制单、记账、冲销或调整当期凭证。
+- 已记账错误只能通过冲销或调整处理，不直接改原凭证。
 
 ## 4. 非生产 Migration 顺序
 
@@ -127,18 +128,18 @@ reporting read models
 - 同一 source hash 不能重复制单非冲销凭证。
 - 来源快照和发票快照可在详情中复现当时依据。
 
-### Batch C: 入账与总账
+### Batch C: 记账与总账
 
 | Table | Purpose | Notes |
 | --- | --- | --- |
-| `general_ledger_entries` | 已入账分录 | `voucher_line_id` 唯一防重复 |
+| `general_ledger_entries` | 已记账分录 | `voucher_line_id` 唯一防重复 |
 | `general_ledger_subject_balances` | 科目余额/试算平衡读模型 | 可先以查询聚合替代物化表 |
 
 验收：
 
-- 入账在同一事务内写入总账并更新凭证状态。
-- 重复入账不会产生重复总账行。
-- 试算平衡接口只读取已入账凭证。
+- 记账在同一事务内写入总账并更新凭证状态。
+- 重复记账不会产生重复总账行。
+- 试算平衡接口只读取已记账凭证。
 
 ### Batch D: 冲销与期间关闭
 
@@ -150,10 +151,10 @@ reporting read models
 
 验收：
 
-- 已入账凭证可生成关联冲销凭证。
+- 已记账凭证可生成关联冲销凭证。
 - 已冲销凭证不能再次冲销。
-- 有未入账凭证、阻断候选或试算不平时不能结账。
-- 已结账期间拒绝制单、入账、冲销。
+- 有未记账凭证、阻断候选或试算不平时不能结账。
+- 已结账期间拒绝制单、记账、冲销。
 
 ### Batch E: 前端 API Adapter 切换
 
@@ -163,7 +164,7 @@ reporting read models
 | `readCandidate` | 调用候选详情 API |
 | `prepareVoucher` / `batchPrepareVouchers` | 候选制单并持久化正式凭证 |
 | `listVouchers` / `readVoucher` | 读取正式凭证 |
-| `postVoucher` / `batchPostVouchers` | 入账 |
+| `bookVoucher` / `batchBookVouchers` | 记账 |
 | `reverseVoucher` | 冲销 |
 | `listAccountingPeriods` / `readPeriodCloseChecks` / `closePeriod` | 期间管理 |
 | `listGeneralLedgerEntries` / `listSubjectBalances` | 总账读取 |
@@ -209,7 +210,7 @@ COMMIT;
 | `finance.accountingPeriod.close` | 关闭期间 | high |
 | `finance.accountingPeriod.reopen` | 异常重开 | critical |
 | `finance.accountingVoucher.prepare` | 制单 | high |
-| `finance.accountingVoucher.post` | 入账 | high |
+| `finance.accountingVoucher.book` | 记账 | high |
 | `finance.accountingVoucher.reverse` | 冲销 | high |
 | `finance.generalLedger.read` | 读取总账 | high |
 
@@ -217,7 +218,7 @@ COMMIT;
 
 关闭期间必须检查：
 
-- 没有 `已制单` 但未 `已入账` 的凭证。
+- 没有 `已制单` 但未 `已记账` 的凭证。
 - 没有必须处理的阻断候选。
 - 银行对账没有阻断当期资金凭证的未解决事项。
 - 税务办理没有阻断当期税费凭证的未完成事项。
@@ -266,12 +267,12 @@ COMMIT;
 | 已复核且已银行对账流水 | `待制单` 资金凭证 |
 | 银行金额异常 | 候选需处理，不能制单资金凭证 |
 | 税务事项完成但缺回执 | 候选需处理 |
-| 入账成功 | 生成总账行，凭证状态已入账 |
-| 重复入账 | 不产生重复总账行 |
-| 已入账冲销 | 生成冲销凭证，原凭证已冲销 |
-| 关闭期间存在未入账凭证 | 关闭失败 |
+| 记账成功 | 生成总账行，凭证状态已记账 |
+| 重复记账 | 不产生重复总账行 |
+| 已记账冲销 | 生成冲销凭证，原凭证已冲销 |
+| 关闭期间存在未记账凭证 | 关闭失败 |
 | 关闭期间试算不平 | 关闭失败 |
-| 已结账期间制单/入账/冲销 | 全部拒绝 |
+| 已结账期间制单/记账/冲销 | 全部拒绝 |
 | source hash 变化 | 制单失败并提示来源已变化 |
 
 ## 9. Frontend Cutover Plan
@@ -290,7 +291,7 @@ COMMIT;
 
 ### Stage 3: Mutating API Mode
 
-- 制单、入账、冲销走后端 API。
+- 制单、记账、冲销走后端 API。
 - 前端移除会话内 lifecycle overlay。
 - 所有操作依赖后端返回状态和事件记录。
 
@@ -298,7 +299,7 @@ COMMIT;
 
 - 期间状态和关闭检查走后端。
 - 总账影响改为后端 general-ledger 查询。
-- 报表只读取已入账总账。
+- 报表只读取已记账总账。
 
 ## 10. Release / Rollback / Recovery
 
@@ -322,8 +323,8 @@ COMMIT;
 
 生产后禁止：
 
-- destructive rollback 删除已入账凭证和总账。
-- 直接修改已入账凭证。
+- destructive rollback 删除已记账凭证和总账。
+- 直接修改已记账凭证。
 - 自动重开已结账期间。
 - 通过前端修正正式账务数据而不留审计事件。
 

@@ -7,13 +7,17 @@ import {
   RollbackOutlined,
   WarningOutlined
 } from '@ant-design/icons';
-import { Select } from 'antd';
+import { Alert, DatePicker, Input, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { useMemo, useState } from 'react';
+import dayjs from 'dayjs';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DateScopeFilter } from '../../components/DateFilterFields';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
+import { DetailTabs } from '../../components/DetailTabs';
 import { DetailDrawerShell } from '../../components/DrawerShell';
+import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { ManagementTable } from '../../components/ManagementTable';
@@ -27,21 +31,41 @@ import {
   accountingVoucherStatusOptions,
   applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
+  buildAccountingVoucherFromLaterPeriodAdjustment,
   buildAccountingVoucherMetrics,
   buildAccountingVouchers,
-  canPrepareAccountingVoucher,
-  canPostAccountingVoucher,
+  canBookAccountingVoucher,
+  canCreateLaterPeriodAccountingVoucherAdjustment,
   canReverseAccountingVoucher,
+  canSubmitLaterPeriodAccountingVoucherAdjustment,
+  createLaterPeriodAccountingVoucherAdjustmentRecord,
+  canSubmitAccountingVoucherReversal,
+  createReversalAccountingVoucherSnapshot,
   defaultAccountingVoucherFilters,
+  getAccountingVoucherDeepLinkTargetId,
+  getAccountingVoucherDefaultReversalDate,
+  getAccountingVoucherFiltersFromQueryString,
   getAccountingVoucherIssueSummary,
+  getAccountingVoucherPeriodLockNotice,
+  getAccountingVoucherReversalAccountingPeriod,
+  getAvailableLaterPeriodAdjustmentAccountingPeriod,
+  getDefaultLaterPeriodAdjustmentAccountingPeriod,
+  getExistingLaterPeriodAccountingVoucherAdjustment,
+  getNextAccountingVoucherNo,
+  isAccountingPeriodLocked,
   matchesAccountingVoucherFilters,
+  validateLaterPeriodAccountingVoucherAdjustment,
+  validateAccountingVoucherReversal,
   type AccountingLedgerEntry,
   type AccountingVoucherBusinessType,
   type AccountingVoucherFilters,
   type AccountingVoucherInvoiceRef,
   type AccountingVoucherIssueCode,
+  type AccountingVoucherLaterPeriodAdjustmentInput,
+  type AccountingVoucherLaterPeriodAdjustmentRecord,
   type AccountingVoucherLine,
   type AccountingVoucherRecord,
+  type AccountingVoucherReversalInput,
   type AccountingVoucherSourceRef,
   type AccountingVoucherStatus,
   type AccountingVoucherTaxBasisSource,
@@ -53,7 +77,8 @@ const voucherBusinessTone = {
   权责凭证: 'blue',
   资金凭证: 'green',
   税费凭证: 'purple',
-  调整凭证: 'amber'
+  调整凭证: 'amber',
+  冲销凭证: 'red'
 } as const;
 
 const voucherKindTone = {
@@ -70,9 +95,8 @@ const voucherLineSideTone = {
 const voucherStatusTone = {
   待生成: 'gray',
   需处理: 'amber',
-  待制单: 'green',
-  已制单: 'blue',
-  已入账: 'blue',
+  待记账: 'green',
+  已记账: 'blue',
   已冲销: 'red'
 } as const;
 
@@ -102,16 +126,62 @@ const taxEvidenceStatusTone = {
   待确认: 'amber'
 } as const;
 
-function getVoucherSubjects(record: AccountingVoucherRecord, side: AccountingVoucherLine['side']) {
-  return record.lines
-    .filter((line) => line.side === side)
-    .map((line) => (line.subject ? `${line.subject.code} ${line.subject.name}` : `未配置 ${line.subjectCode}`))
-    .join(' / ');
+const sessionVoucherStatuses = new Set<AccountingVoucherStatus>(['已记账', '已冲销']);
+const accountingVoucherWorkbenchStatusRank: Record<AccountingVoucherStatus, number> = {
+  待记账: 0,
+  需处理: 1,
+  待生成: 2,
+  已记账: 3,
+  已冲销: 4
+};
+
+type AccountingVoucherOperationRecord = {
+  action: string;
+  actor: string;
+  id: string;
+  summary: string;
+  time: string;
+};
+
+function normalizeDatePickerValue(dateString: string | string[]) {
+  return Array.isArray(dateString) ? dateString[0] ?? '' : dateString;
+}
+
+function hasSessionVoucherSnapshot(record: AccountingVoucherRecord) {
+  return sessionVoucherStatuses.has(record.status);
+}
+
+function getAccountingVoucherListIdentity(record: AccountingVoucherRecord) {
+  if (hasSessionVoucherSnapshot(record)) {
+    return {
+      primary: record.voucherNo,
+      secondary: `${record.sourceNo} / ${record.summary}`
+    };
+  }
+
+  return {
+    primary: record.sourceNo,
+    secondary: record.summary
+  };
+}
+
+function getAccountingVoucherDrawerTitle(record: AccountingVoucherRecord) {
+  if (hasSessionVoucherSnapshot(record)) {
+    return {
+      subtitle: `${record.voucherNo} / ${record.businessType}`,
+      title: '会计凭证详情'
+    };
+  }
+
+  return {
+    subtitle: `${record.sourceNo} / ${record.businessType}`,
+    title: '记账事项详情'
+  };
 }
 
 function getIssueAction(issue: AccountingVoucherIssueCode) {
   if (issue === 'missing_original_evidence') {
-    return '补齐来源凭证';
+    return '需补齐来源凭证';
   }
 
   if (issue === 'missing_accounting_subject') {
@@ -123,56 +193,142 @@ function getIssueAction(issue: AccountingVoucherIssueCode) {
   }
 
   if (issue === 'bank_reconciliation_pending') {
-    return '完成银行对账';
+    return '需完成银行对账';
+  }
+
+  if (issue === 'bank_reconciliation_source_missing') {
+    return '需补齐银行对账依据';
   }
 
   if (issue === 'bank_amount_mismatch') {
-    return '处理对账差异';
+    return '需处理银行对账差异';
   }
 
   if (issue === 'tax_matter_pending') {
-    return '完成税务办理';
+    return '需完成税务办理';
   }
 
   if (issue === 'tax_receipt_missing') {
-    return '补齐税费回执';
+    return '需补齐税费回执';
   }
 
   if (issue === 'tax_basis_pending' || issue === 'tax_amount_missing') {
-    return '确认税额依据';
+    return '需确认发票或来源税额';
   }
 
   if (issue === 'amount_invalid') {
-    return '修正来源金额';
+    return '需修正来源金额';
   }
 
-  return '回到来源模块处理';
+  return '需完成前置来源事项';
 }
 
-function AccountingVoucherDetailDrawer({
-  canPrepare,
-  canPost,
-  canReverse,
-  record,
-  onPrepare,
-  onPost,
-  onReverse,
-  onClose
-}: {
-  canPrepare: boolean;
-  canPost: boolean;
-  canReverse: boolean;
-  record?: AccountingVoucherRecord;
-  onPrepare: (record: AccountingVoucherRecord) => void;
-  onPost: (record: AccountingVoucherRecord) => void;
-  onReverse: (record: AccountingVoucherRecord) => void;
-  onClose: () => void;
-}) {
-  if (!record) {
-    return null;
+function getAccountingVoucherNextStep(
+  record: AccountingVoucherRecord,
+  canBook: boolean,
+  canReverse: boolean,
+  canCreateLaterAdjustment: boolean,
+  existingLaterAdjustment?: AccountingVoucherLaterPeriodAdjustmentRecord,
+  laterAdjustmentTargetPeriod?: string,
+  isClosedPeriod = false
+) {
+  if (isClosedPeriod && !['已记账', '已冲销'].includes(record.status)) {
+    return { primary: '只读回看', secondary: '期间已结账' };
   }
 
-  const lineColumns: TableColumnsType<AccountingVoucherLine> = [
+  if (record.status === '待记账') {
+    return canBook ? { primary: '记账', secondary: '确认分录入总账' } : { primary: '暂不可记账', secondary: '会计期间已结账' };
+  }
+
+  if (record.status === '已记账') {
+    if (record.reversalOfVoucherId) {
+      return { primary: '冲销凭证', secondary: '反向分录已记账' };
+    }
+
+    if (canReverse) {
+      return { primary: '已记账', secondary: '必要时可冲销' };
+    }
+
+    if (canCreateLaterAdjustment) {
+      return {
+        primary: '后续调整',
+        secondary: existingLaterAdjustment
+          ? `下个期间 ${laterAdjustmentTargetPeriod} / 已有 ${existingLaterAdjustment.adjustmentNo}`
+          : '原期间已结账，不改历史凭证'
+      };
+    }
+
+    if (existingLaterAdjustment) {
+      return {
+        primary: '已有后续调整',
+        secondary: `${existingLaterAdjustment.accountingPeriod} ${existingLaterAdjustment.adjustmentNo}`
+      };
+    }
+
+    return { primary: '已记账', secondary: '期间已结账' };
+  }
+
+  if (record.status === '已冲销') {
+    return { primary: '已冲销', secondary: record.reversedByVoucherId ? '已生成反向凭证' : record.reversalReason ?? '已保留原始凭证影响' };
+  }
+
+  if (record.status === '需处理') {
+    const firstIssue = record.issueReasons[0];
+
+    return {
+      primary: firstIssue ? getIssueAction(firstIssue) : '需完成前置处理',
+      secondary: getAccountingVoucherIssueSummary(record)
+    };
+  }
+
+  return {
+    primary: '等待前置完成',
+    secondary: getAccountingVoucherIssueSummary(record)
+  };
+}
+
+function getAccountingVoucherOperationRecords(record: AccountingVoucherRecord): AccountingVoucherOperationRecord[] {
+  const rows: AccountingVoucherOperationRecord[] = [];
+
+  if (record.bookedAt || record.bookedBy) {
+    rows.push({
+      action: '记账',
+      actor: record.bookedBy ?? '-',
+      id: `${record.id}-booked`,
+      summary: '确认分录入总账',
+      time: record.bookedAt ?? '-'
+    });
+  }
+
+  if (record.reversedAt || record.reversedBy) {
+    rows.push({
+      action: '冲销',
+      actor: record.reversedBy ?? '-',
+      id: `${record.id}-reversed`,
+      summary: record.reversedByVoucherId
+        ? `${record.reversalReason ?? '冲销已记账凭证'} / 反向凭证 ${record.reversedByVoucherId}`
+        : record.reversalReason ?? '冲销已记账凭证',
+      time: record.reversedAt ?? '-'
+    });
+  }
+
+  return rows;
+}
+
+function sortAccountingVoucherWorkbenchRows(rows: AccountingVoucherRecord[]) {
+  return [...rows].sort((left, right) => {
+    const statusDiff = accountingVoucherWorkbenchStatusRank[left.status] - accountingVoucherWorkbenchStatusRank[right.status];
+
+    if (statusDiff !== 0) {
+      return statusDiff;
+    }
+
+    return right.voucherDate.localeCompare(left.voucherDate);
+  });
+}
+
+function getAccountingVoucherLineColumns(): TableColumnsType<AccountingVoucherLine> {
+  return [
     {
       title: '借贷',
       dataIndex: 'side',
@@ -209,6 +365,38 @@ function AccountingVoucherDetailDrawer({
       render: (_, line) => (line.side === '贷方' ? <CellText tone="expense">{formatMoney(line.amount)}</CellText> : '-')
     }
   ];
+}
+
+function AccountingVoucherDetailDrawer({
+  canBook,
+  canReverse,
+  canCreateLaterAdjustment,
+  existingLaterAdjustment,
+  periodLockNotice,
+  record,
+  onBook,
+  onReverse,
+  onCreateLaterAdjustment,
+  onClose
+}: {
+  canBook: boolean;
+  canReverse: boolean;
+  canCreateLaterAdjustment: boolean;
+  existingLaterAdjustment?: AccountingVoucherLaterPeriodAdjustmentRecord;
+  periodLockNotice?: string;
+  record?: AccountingVoucherRecord;
+  onBook: (record: AccountingVoucherRecord) => void;
+  onReverse: (record: AccountingVoucherRecord) => void;
+  onCreateLaterAdjustment: (record: AccountingVoucherRecord) => void;
+  onClose: () => void;
+}) {
+  if (!record) {
+    return null;
+  }
+
+  const hasVoucherSnapshot = hasSessionVoucherSnapshot(record);
+  const drawerTitle = getAccountingVoucherDrawerTitle(record);
+  const lineColumns = getAccountingVoucherLineColumns();
   const sourceColumns: TableColumnsType<AccountingVoucherSourceRef> = [
     {
       title: '来源模块',
@@ -302,6 +490,30 @@ function AccountingVoucherDetailDrawer({
       width: 220
     }
   ];
+  const operationRecords = getAccountingVoucherOperationRecords(record);
+  const operationColumns: TableColumnsType<AccountingVoucherOperationRecord> = [
+    {
+      title: '操作',
+      dataIndex: 'action',
+      width: 96,
+      render: (action: string) => <CellText tone="strong">{action}</CellText>
+    },
+    {
+      title: '操作人',
+      dataIndex: 'actor',
+      width: 120
+    },
+    {
+      title: '时间',
+      dataIndex: 'time',
+      width: 150
+    },
+    {
+      title: '说明',
+      dataIndex: 'summary',
+      width: 260
+    }
+  ];
 
   return (
     <DetailDrawerShell
@@ -309,115 +521,475 @@ function AccountingVoucherDetailDrawer({
       className="finance-transaction-drawer"
       open={Boolean(record)}
       primaryAction={
-        record.status === '待制单'
+        record.status === '待记账'
           ? {
-              disabled: !canPrepare,
-              icon: <FileTextOutlined />,
-              label: '制单',
-              testId: 'finance-accounting-voucher-prepare',
-              onClick: () => onPrepare(record)
-            }
-          : record.status === '已制单'
-          ? {
-              disabled: !canPost,
+              disabled: !canBook,
               icon: <CheckCircleOutlined />,
-              label: '入账',
-              testId: 'finance-accounting-voucher-post',
-              onClick: () => onPost(record)
+              label: '记账',
+              testId: 'finance-accounting-voucher-book',
+              onClick: () => onBook(record)
             }
           : undefined
       }
       secondaryAction={
-        record.status === '已入账'
-          ? {
-              danger: true,
-              disabled: !canReverse,
-              icon: <RollbackOutlined />,
-              label: '冲销',
-              testId: 'finance-accounting-voucher-reverse',
-              onClick: () => onReverse(record)
-            }
+        record.status === '已记账'
+          ? canReverse
+            ? {
+                danger: true,
+                icon: <RollbackOutlined />,
+                label: '冲销',
+                testId: 'finance-accounting-voucher-reverse',
+                onClick: () => onReverse(record)
+              }
+            : canCreateLaterAdjustment
+            ? {
+                icon: <FileTextOutlined />,
+                label: '后续调整',
+                testId: 'finance-accounting-voucher-later-adjustment',
+                onClick: () => onCreateLaterAdjustment(record)
+              }
+            : undefined
           : undefined
       }
       title={
         <DetailDrawerTitle
           status={record.status}
           statusToneMap={voucherStatusTone}
-          subtitle={`${record.voucherNo} / ${record.businessType}`}
-          title="会计凭证详情"
+          subtitle={drawerTitle.subtitle}
+          title={drawerTitle.title}
         />
       }
       width={960}
       onClose={onClose}
     >
-      <DetailSection icon={<ProfileOutlined />} title="凭证信息">
+      {periodLockNotice ? (
+        <Alert
+          className="drawer-inline-alert"
+          message={periodLockNotice}
+          showIcon
+          type="warning"
+        />
+      ) : null}
+
+      <DetailTabs
+        defaultActiveKey="basis"
+        items={[
+          {
+            key: 'basis',
+            label: '依据',
+            children: (
+              <>
+                <DetailSection icon={<ProfileOutlined />} title={hasVoucherSnapshot ? '凭证信息' : '记账事项'}>
+                  <DetailInfoGrid
+                    columns={3}
+                    items={[
+                      { label: '当前状态', value: <StatusTag toneMap={voucherStatusTone} value={record.status} /> },
+                      hasVoucherSnapshot
+                        ? { label: '凭证号', value: record.voucherNo }
+                        : { label: '来源单号', value: record.sourceNo },
+                      { label: hasVoucherSnapshot ? '凭证日期' : '拟记账日期', value: record.voucherDate },
+                      { label: '归属月份', value: record.accountingPeriod },
+                      { label: '凭证字别', value: <StatusTag toneMap={voucherKindTone} value={record.kind} /> },
+                      { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={record.businessType} /> },
+                      ...(hasVoucherSnapshot ? [{ label: '来源单号', value: record.sourceNo }] : []),
+                      { label: '业务对象', value: record.counterparty },
+                      { label: '金额', value: formatMoney(record.amount) },
+                      ...(record.bookedAt || record.bookedBy
+                        ? [
+                            { label: '记账人', value: record.bookedBy },
+                            { label: '记账时间', value: record.bookedAt }
+                          ]
+                        : []),
+                      ...(existingLaterAdjustment
+                        ? [
+                            {
+                              label: '后续调整',
+                              value: `${existingLaterAdjustment.adjustmentNo} / ${existingLaterAdjustment.accountingPeriod}`
+                            }
+                          ]
+                        : []),
+                      { label: '摘要', value: record.summary, wide: true }
+                    ]}
+                  />
+                </DetailSection>
+
+                <DetailSection icon={<ProfileOutlined />} title="来源依据">
+                  <CompactDetailTable<AccountingVoucherSourceRef>
+                    columns={sourceColumns}
+                    dataSource={record.sourceRefs}
+                    rowKey={(sourceRef) => `${sourceRef.module}-${sourceRef.recordId}-${sourceRef.role}`}
+                    scrollX={420}
+                  />
+                </DetailSection>
+
+                {record.taxBasis ? (
+                  <DetailSection icon={<FileTextOutlined />} title="税额依据">
+                    <DetailInfoGrid columns={3} items={taxBasisItems} />
+                  </DetailSection>
+                ) : null}
+
+                {record.invoiceRefs.length > 0 ? (
+                  <DetailSection icon={<FileTextOutlined />} title="发票明细">
+                    <CompactDetailTable<AccountingVoucherInvoiceRef>
+                      columns={invoiceColumns}
+                      dataSource={record.invoiceRefs}
+                      rowKey="id"
+                      scrollX={760}
+                    />
+                  </DetailSection>
+                ) : null}
+
+                {record.issueReasons.length > 0 ? (
+                  <DetailSection icon={<ExclamationCircleOutlined />} title="前置条件">
+                    <DetailInfoGrid
+                      columns={2}
+                      items={record.issueReasons.map((issue) => ({
+                        label: accountingVoucherIssueLabels[issue],
+                        value: getIssueAction(issue)
+                      }))}
+                    />
+                  </DetailSection>
+                ) : null}
+              </>
+            )
+          },
+          {
+            key: 'entries',
+            label: '分录',
+            children: (
+              <>
+                <DetailSection icon={<FileTextOutlined />} title={hasVoucherSnapshot ? '分录明细' : '分录预览'}>
+                  <CompactDetailTable<AccountingVoucherLine>
+                    columns={lineColumns}
+                    dataSource={record.lines}
+                    rowKey="id"
+                    scrollX={720}
+                  />
+                </DetailSection>
+
+                {ledgerEntries.length > 0 ? (
+                  <DetailSection icon={<FileTextOutlined />} title="记账影响">
+                    <CompactDetailTable<AccountingLedgerEntry>
+                      columns={ledgerColumns}
+                      dataSource={ledgerEntries}
+                      rowKey="id"
+                      scrollX={720}
+                    />
+                  </DetailSection>
+                ) : null}
+              </>
+            )
+          },
+          ...(operationRecords.length > 0
+            ? [
+                {
+                  key: 'records',
+                  label: '记录',
+                  children: (
+                    <DetailSection icon={<ClockCircleOutlined />} title="操作记录">
+                      <CompactDetailTable<AccountingVoucherOperationRecord>
+                        columns={operationColumns}
+                        dataSource={operationRecords}
+                        rowKey="id"
+                        scrollX={640}
+                      />
+                    </DetailSection>
+                  )
+                }
+              ]
+            : [])
+        ]}
+        tabTestIdPrefix="finance-accounting-voucher-detail-tab"
+        testId="finance-accounting-voucher-detail-tabs"
+      />
+    </DetailDrawerShell>
+  );
+}
+
+function AccountingVoucherReversalDrawer({
+  canSubmit,
+  form,
+  voucherNo,
+  record,
+  validationIssues,
+  onClose,
+  onSubmit,
+  onUpdate
+}: {
+  canSubmit: boolean;
+  form: AccountingVoucherReversalInput;
+  voucherNo: string;
+  record?: AccountingVoucherRecord;
+  validationIssues: string[];
+  onClose: () => void;
+  onSubmit: () => void;
+  onUpdate: <K extends keyof AccountingVoucherReversalInput>(field: K, value: AccountingVoucherReversalInput[K]) => void;
+}) {
+  if (!record) {
+    return null;
+  }
+
+  const reversedAt = form.reversedAt ? `${form.reversedAt} 17:20` : `${getAccountingVoucherDefaultReversalDate(record)} 17:20`;
+  const reversalPeriod = form.reversedAt ? getAccountingVoucherReversalAccountingPeriod(form.reversedAt) : '-';
+  const reversalPreview = canSubmit && validationIssues.length === 0
+    ? createReversalAccountingVoucherSnapshot({
+        actor: '当前账号',
+        voucherNo,
+        originalRecord: record,
+        reason: form.reason.trim(),
+        reversedAt
+      })
+    : undefined;
+  const lineColumns = getAccountingVoucherLineColumns();
+
+  return (
+    <DetailDrawerShell
+      bodyTestId="finance-accounting-voucher-reversal-drawer"
+      className="finance-transaction-drawer"
+      closeAction={{
+        label: '取消',
+        onClick: onClose
+      }}
+      open={Boolean(record)}
+      primaryAction={{
+        danger: true,
+        disabled: !canSubmit,
+        icon: <RollbackOutlined />,
+        label: '确认冲销',
+        testId: 'finance-accounting-voucher-reversal-submit',
+        onClick: onSubmit
+      }}
+      title={
+        <DetailDrawerTitle
+          status="冲销"
+          statusTone="red"
+          subtitle={`${record.voucherNo} / ${record.summary}`}
+          title="冲销确认"
+        />
+      }
+      width={860}
+      onClose={onClose}
+    >
+      <DetailSection icon={<RollbackOutlined />} title="冲销信息">
+        <DrawerFormGrid>
+          <DrawerFormField label="冲销日期" required>
+            <DatePicker
+              inputReadOnly
+              value={form.reversedAt ? dayjs(form.reversedAt) : undefined}
+              onChange={(_, dateString) => onUpdate('reversedAt', normalizeDatePickerValue(dateString))}
+            />
+          </DrawerFormField>
+          <DrawerFormField label="冲销期间">
+            <Input disabled value={reversalPeriod} />
+          </DrawerFormField>
+          <DrawerFormField label="冲销原因" required wide>
+            <Input.TextArea
+              autoSize={{ minRows: 3, maxRows: 5 }}
+              data-testid="finance-accounting-voucher-reversal-reason"
+              placeholder="填写冲销原因，作为反向凭证摘要和操作记录"
+              value={form.reason}
+              onChange={(event) => onUpdate('reason', event.target.value)}
+            />
+          </DrawerFormField>
+        </DrawerFormGrid>
+
+        {validationIssues.length > 0 ? (
+          <Alert
+            className="drawer-inline-alert"
+            message={validationIssues[0]}
+            showIcon
+            type="warning"
+          />
+        ) : null}
+      </DetailSection>
+
+      <DetailSection icon={<ProfileOutlined />} title="原凭证">
         <DetailInfoGrid
           columns={3}
           items={[
-            { label: '凭证状态', value: <StatusTag toneMap={voucherStatusTone} value={record.status} /> },
-            { label: '凭证日期', value: record.voucherDate },
-            { label: '会计期间', value: record.accountingPeriod },
-            { label: '凭证类型', value: <StatusTag toneMap={voucherKindTone} value={record.kind} /> },
-            { label: '来源单号', value: record.sourceNo },
+            { label: '凭证号', value: record.voucherNo },
+            { label: '归属月份', value: record.accountingPeriod },
+            { label: '金额', value: formatMoney(record.amount) },
+            { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={record.businessType} /> },
             { label: '业务对象', value: record.counterparty },
-            { label: '凭证金额', value: formatMoney(record.amount) },
+            { label: '记账时间', value: record.bookedAt },
             { label: '摘要', value: record.summary, wide: true }
           ]}
         />
       </DetailSection>
 
-      <DetailSection icon={<ProfileOutlined />} title="来源依据">
-        <CompactDetailTable<AccountingVoucherSourceRef>
-          columns={sourceColumns}
-          dataSource={record.sourceRefs}
-          rowKey={(sourceRef) => `${sourceRef.module}-${sourceRef.recordId}-${sourceRef.role}`}
-          scrollX={420}
-        />
-      </DetailSection>
-
-      {record.taxBasis ? (
-        <DetailSection icon={<FileTextOutlined />} title="税额依据">
-          <DetailInfoGrid columns={3} items={taxBasisItems} />
-        </DetailSection>
-      ) : null}
-
-      {record.invoiceRefs.length > 0 ? (
-        <DetailSection icon={<FileTextOutlined />} title="发票明细">
-          <CompactDetailTable<AccountingVoucherInvoiceRef>
-            columns={invoiceColumns}
-            dataSource={record.invoiceRefs}
-            rowKey="id"
-            scrollX={760}
-          />
-        </DetailSection>
-      ) : null}
-
-      {record.issueReasons.length > 0 ? (
-        <DetailSection icon={<ExclamationCircleOutlined />} title="前置条件">
+      {reversalPreview ? (
+        <DetailSection icon={<FileTextOutlined />} title="反向凭证预览">
           <DetailInfoGrid
-            columns={2}
-            items={record.issueReasons.map((issue) => ({
-              label: accountingVoucherIssueLabels[issue],
-              value: getIssueAction(issue)
-            }))}
+            columns={3}
+            items={[
+              { label: '凭证号', value: voucherNo },
+              { label: '凭证日期', value: reversalPreview.voucherDate },
+              { label: '归属月份', value: reversalPreview.accountingPeriod },
+              { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={reversalPreview.businessType} /> },
+              { label: '凭证字别', value: <StatusTag toneMap={voucherKindTone} value={reversalPreview.kind} /> },
+              { label: '金额', value: formatMoney(reversalPreview.amount) }
+            ]}
+          />
+          <CompactDetailTable<AccountingVoucherLine>
+            columns={lineColumns}
+            dataSource={reversalPreview.lines}
+            rowKey="id"
+            scrollX={720}
           />
         </DetailSection>
       ) : null}
+    </DetailDrawerShell>
+  );
+}
 
-      <DetailSection icon={<FileTextOutlined />} title="分录明细">
-        <CompactDetailTable<AccountingVoucherLine>
-          columns={lineColumns}
-          dataSource={record.lines}
-          rowKey="id"
-          scrollX={720}
+function AccountingVoucherLaterAdjustmentDrawer({
+  canSubmit,
+  existingRows,
+  form,
+  record,
+  validationIssues,
+  onClose,
+  onSubmit,
+  onUpdate
+}: {
+  canSubmit: boolean;
+  existingRows: AccountingVoucherLaterPeriodAdjustmentRecord[];
+  form: AccountingVoucherLaterPeriodAdjustmentInput;
+  record?: AccountingVoucherRecord;
+  validationIssues: string[];
+  onClose: () => void;
+  onSubmit: () => void;
+  onUpdate: <K extends keyof AccountingVoucherLaterPeriodAdjustmentInput>(
+    field: K,
+    value: AccountingVoucherLaterPeriodAdjustmentInput[K]
+  ) => void;
+}) {
+  if (!record) {
+    return null;
+  }
+
+  const previewAccountingPeriod = form.accountingPeriod || getDefaultLaterPeriodAdjustmentAccountingPeriod(record);
+  const previewAdjustedAt = form.adjustedAt || `${previewAccountingPeriod}-01`;
+  const previewSource = canSubmit && validationIssues.length === 0
+    ? createLaterPeriodAccountingVoucherAdjustmentRecord({
+        actor: '当前账号',
+        existingRows,
+        input: {
+          accountingPeriod: previewAccountingPeriod,
+          adjustedAt: previewAdjustedAt,
+          reason: form.reason.trim()
+        },
+        originalRecord: record
+      })
+    : undefined;
+  const adjustmentPreview = previewSource ? buildAccountingVoucherFromLaterPeriodAdjustment(previewSource, 0) : undefined;
+  const lineColumns = getAccountingVoucherLineColumns();
+
+  return (
+    <DetailDrawerShell
+      bodyTestId="finance-accounting-voucher-later-adjustment-drawer"
+      className="finance-transaction-drawer"
+      closeAction={{
+        label: '取消',
+        onClick: onClose
+      }}
+      open={Boolean(record)}
+      primaryAction={{
+        disabled: !canSubmit,
+        icon: <FileTextOutlined />,
+        label: '创建调整事项',
+        testId: 'finance-accounting-voucher-later-adjustment-submit',
+        onClick: onSubmit
+      }}
+      title={
+        <DetailDrawerTitle
+          status="后续调整"
+          statusTone="amber"
+          subtitle={`${record.voucherNo} / ${record.accountingPeriod}`}
+          title="后续期间调整"
+        />
+      }
+      width={860}
+      onClose={onClose}
+    >
+      <DetailSection icon={<FileTextOutlined />} title="调整内容">
+        <DrawerFormGrid>
+          <DrawerFormField label="调整期间" required>
+            <DatePicker
+              inputReadOnly
+              picker="month"
+              value={form.accountingPeriod ? dayjs(`${form.accountingPeriod}-01`) : undefined}
+              onChange={(_, dateString) => {
+                const accountingPeriod = normalizeDatePickerValue(dateString);
+
+                onUpdate('accountingPeriod', accountingPeriod);
+
+                if (accountingPeriod && (!form.adjustedAt || form.adjustedAt.slice(0, 7) !== accountingPeriod)) {
+                  onUpdate('adjustedAt', `${accountingPeriod}-01`);
+                }
+              }}
+            />
+          </DrawerFormField>
+          <DrawerFormField label="调整日期" required>
+            <DatePicker
+              inputReadOnly
+              value={form.adjustedAt ? dayjs(form.adjustedAt) : undefined}
+              onChange={(_, dateString) => onUpdate('adjustedAt', normalizeDatePickerValue(dateString))}
+            />
+          </DrawerFormField>
+          <DrawerFormField label="调整原因" required wide>
+            <Input.TextArea
+              autoSize={{ minRows: 3, maxRows: 5 }}
+              data-testid="finance-accounting-voucher-later-adjustment-reason"
+              placeholder="填写历史期间错误原因和本期调整依据"
+              value={form.reason}
+              onChange={(event) => onUpdate('reason', event.target.value)}
+            />
+          </DrawerFormField>
+        </DrawerFormGrid>
+
+        {validationIssues.length > 0 ? (
+          <Alert
+            className="drawer-inline-alert"
+            message={validationIssues[0]}
+            showIcon
+            type="warning"
+          />
+        ) : null}
+      </DetailSection>
+
+      <DetailSection icon={<ProfileOutlined />} title="原凭证">
+        <DetailInfoGrid
+          columns={3}
+          items={[
+            { label: '凭证号', value: record.voucherNo },
+            { label: '原归属月份', value: record.accountingPeriod },
+            { label: '金额', value: formatMoney(record.amount) },
+            { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={record.businessType} /> },
+            { label: '业务对象', value: record.counterparty },
+            { label: '记账时间', value: record.bookedAt },
+            { label: '摘要', value: record.summary, wide: true }
+          ]}
         />
       </DetailSection>
 
-      {ledgerEntries.length > 0 ? (
-        <DetailSection icon={<FileTextOutlined />} title="总账影响">
-          <CompactDetailTable<AccountingLedgerEntry>
-            columns={ledgerColumns}
-            dataSource={ledgerEntries}
+      {adjustmentPreview && previewSource ? (
+        <DetailSection icon={<FileTextOutlined />} title="调整凭证预览">
+          <DetailInfoGrid
+            columns={3}
+            items={[
+              { label: '调整事项号', value: previewSource.adjustmentNo },
+              { label: '凭证日期', value: adjustmentPreview.voucherDate },
+              { label: '归属月份', value: adjustmentPreview.accountingPeriod },
+              { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={adjustmentPreview.businessType} /> },
+              { label: '凭证字别', value: <StatusTag toneMap={voucherKindTone} value={adjustmentPreview.kind} /> },
+              { label: '金额', value: formatMoney(adjustmentPreview.amount) }
+            ]}
+          />
+          <CompactDetailTable<AccountingVoucherLine>
+            columns={lineColumns}
+            dataSource={adjustmentPreview.lines}
             rowKey="id"
             scrollX={720}
           />
@@ -429,29 +1001,85 @@ function AccountingVoucherDetailDrawer({
 
 export function FinanceAccountingVouchersPage() {
   const {
+    addAccountingVoucherLaterPeriodAdjustment,
     accountingPeriodLocks,
+    accountingVoucherLaterPeriodAdjustmentRows,
     accountingVoucherLifecycleRows,
+    bankReconciliationRows,
     financeRows,
     invoiceRows,
-    prepareAccountingVoucher,
-    postAccountingVoucher,
+    ledgerOpeningAdjustmentRows,
+    bookAccountingVoucher,
     receivablePayableRows,
     reverseAccountingVoucher,
     taxMatterRows
   } = useFinanceManagement();
-  const [filters, setFilters] = useState<AccountingVoucherFilters>(defaultAccountingVoucherFilters);
+  const [messageApi, contextHolder] = message.useMessage();
+  const [searchParams] = useSearchParams();
+  const deepLinkQuery = searchParams.toString();
+  const handledDeepLinkRef = useRef('');
+  const [filters, setFilters] = useState<AccountingVoucherFilters>(() =>
+    getAccountingVoucherFiltersFromQueryString(deepLinkQuery, defaultAccountingVoucherFilters)
+  );
   const [activeVoucherId, setActiveVoucherId] = useState<string>();
+  const [laterAdjustmentVoucherId, setLaterAdjustmentVoucherId] = useState<string>();
+  const [laterAdjustmentForm, setLaterAdjustmentForm] = useState<AccountingVoucherLaterPeriodAdjustmentInput>({
+    accountingPeriod: '',
+    adjustedAt: '',
+    reason: ''
+  });
+  const [reversalVoucherId, setReversalVoucherId] = useState<string>();
+  const [reversalForm, setReversalForm] = useState<AccountingVoucherReversalInput>({
+    reason: '',
+    reversedAt: ''
+  });
 
   const generatedVoucherRows = useMemo(
-    () => buildAccountingVouchers(receivablePayableRows, financeRows, invoiceRows, taxMatterRows),
-    [financeRows, invoiceRows, receivablePayableRows, taxMatterRows]
+    () => buildAccountingVouchers(
+      receivablePayableRows,
+      financeRows,
+      invoiceRows,
+      taxMatterRows,
+      bankReconciliationRows,
+      ledgerOpeningAdjustmentRows,
+      accountingVoucherLaterPeriodAdjustmentRows
+    ),
+    [
+      accountingVoucherLaterPeriodAdjustmentRows,
+      bankReconciliationRows,
+      financeRows,
+      invoiceRows,
+      ledgerOpeningAdjustmentRows,
+      receivablePayableRows,
+      taxMatterRows
+    ]
   );
   const voucherRows = useMemo(
     () => applyAccountingVoucherLifecycle(generatedVoucherRows, accountingVoucherLifecycleRows),
     [accountingVoucherLifecycleRows, generatedVoucherRows]
   );
+
+  useEffect(() => {
+    setFilters((currentFilters) => getAccountingVoucherFiltersFromQueryString(deepLinkQuery, currentFilters));
+  }, [deepLinkQuery]);
+
+  useEffect(() => {
+    if (!deepLinkQuery || handledDeepLinkRef.current === deepLinkQuery) {
+      return;
+    }
+
+    const targetId = getAccountingVoucherDeepLinkTargetId(voucherRows, deepLinkQuery);
+
+    if (!targetId) {
+      return;
+    }
+
+    handledDeepLinkRef.current = deepLinkQuery;
+    setActiveVoucherId(targetId);
+  }, [deepLinkQuery, voucherRows]);
+
   const filteredRows = useMemo(
-    () => voucherRows.filter((record) => matchesAccountingVoucherFilters(record, filters)),
+    () => sortAccountingVoucherWorkbenchRows(voucherRows.filter((record) => matchesAccountingVoucherFilters(record, filters))),
     [filters, voucherRows]
   );
   const metrics = useMemo(() => buildAccountingVoucherMetrics(filteredRows), [filteredRows]);
@@ -459,25 +1087,190 @@ export function FinanceAccountingVouchersPage() {
     () => voucherRows.find((record) => record.id === activeVoucherId),
     [activeVoucherId, voucherRows]
   );
-  const canPrepareActiveRecord = activeRecord ? canPrepareAccountingVoucher(activeRecord, accountingPeriodLocks) : false;
-  const canPostActiveRecord = activeRecord ? canPostAccountingVoucher(activeRecord, accountingPeriodLocks) : false;
+  const reversalRecord = useMemo(
+    () => voucherRows.find((record) => record.id === reversalVoucherId),
+    [reversalVoucherId, voucherRows]
+  );
+  const laterAdjustmentRecord = useMemo(
+    () => voucherRows.find((record) => record.id === laterAdjustmentVoucherId),
+    [laterAdjustmentVoucherId, voucherRows]
+  );
+  const reversalVoucherNo = useMemo(
+    () => reversalRecord ? getNextAccountingVoucherNo(accountingVoucherLifecycleRows, reversalRecord.accountingPeriod) : '',
+    [accountingVoucherLifecycleRows, reversalRecord]
+  );
+  const reversalValidationIssues = useMemo(
+    () => reversalRecord ? validateAccountingVoucherReversal(reversalRecord, reversalForm, accountingPeriodLocks) : [],
+    [accountingPeriodLocks, reversalForm, reversalRecord]
+  );
+  const canSubmitReversal = reversalRecord
+    ? canSubmitAccountingVoucherReversal(reversalRecord, reversalForm, accountingPeriodLocks)
+    : false;
+  const laterAdjustmentValidationIssues = useMemo(
+    () => laterAdjustmentRecord
+      ? validateLaterPeriodAccountingVoucherAdjustment(
+          laterAdjustmentRecord,
+          laterAdjustmentForm,
+          accountingPeriodLocks,
+          accountingVoucherLaterPeriodAdjustmentRows
+        )
+      : [],
+    [accountingPeriodLocks, accountingVoucherLaterPeriodAdjustmentRows, laterAdjustmentForm, laterAdjustmentRecord]
+  );
+  const canSubmitLaterAdjustment = laterAdjustmentRecord
+    ? canSubmitLaterPeriodAccountingVoucherAdjustment(
+        laterAdjustmentRecord,
+        laterAdjustmentForm,
+        accountingPeriodLocks,
+        accountingVoucherLaterPeriodAdjustmentRows
+      )
+    : false;
+  const canBookActiveRecord = activeRecord ? canBookAccountingVoucher(activeRecord, accountingPeriodLocks) : false;
   const canReverseActiveRecord = activeRecord ? canReverseAccountingVoucher(activeRecord, accountingPeriodLocks) : false;
+  const activeDefaultLaterAdjustmentTargetPeriod = activeRecord
+    ? getDefaultLaterPeriodAdjustmentAccountingPeriod(activeRecord)
+    : undefined;
+  const activeLaterAdjustmentTargetPeriod = activeRecord
+    ? getAvailableLaterPeriodAdjustmentAccountingPeriod(
+        activeRecord,
+        accountingPeriodLocks,
+        accountingVoucherLaterPeriodAdjustmentRows
+      )
+    : undefined;
+  const activeExistingLaterAdjustment = activeRecord && activeDefaultLaterAdjustmentTargetPeriod
+    ? getExistingLaterPeriodAccountingVoucherAdjustment(
+        activeRecord,
+        activeDefaultLaterAdjustmentTargetPeriod,
+        accountingVoucherLaterPeriodAdjustmentRows
+      )
+    : undefined;
+  const canCreateLaterAdjustmentActiveRecord = activeRecord
+    ? Boolean(activeLaterAdjustmentTargetPeriod) && canCreateLaterPeriodAccountingVoucherAdjustment(
+        activeRecord,
+        accountingPeriodLocks,
+        activeLaterAdjustmentTargetPeriod,
+        accountingVoucherLaterPeriodAdjustmentRows
+      )
+    : false;
+  const activePeriodLockNotice = activeRecord
+    ? getAccountingVoucherPeriodLockNotice(activeRecord, accountingPeriodLocks)
+    : undefined;
+
+  function openReversalDrawer(record: AccountingVoucherRecord) {
+    setReversalForm({
+      reason: '',
+      reversedAt: getAccountingVoucherDefaultReversalDate(record)
+    });
+    setReversalVoucherId(record.id);
+  }
+
+  function updateReversalForm<K extends keyof AccountingVoucherReversalInput>(
+    field: K,
+    value: AccountingVoucherReversalInput[K]
+  ) {
+    setReversalForm((currentForm) => ({
+      ...currentForm,
+      [field]: value
+    }));
+  }
+
+  function openLaterAdjustmentDrawer(record: AccountingVoucherRecord) {
+    const defaultAccountingPeriod = getAvailableLaterPeriodAdjustmentAccountingPeriod(
+      record,
+      accountingPeriodLocks,
+      accountingVoucherLaterPeriodAdjustmentRows
+    );
+
+    if (!defaultAccountingPeriod) {
+      void messageApi.warning('当前凭证暂无可用后续调整期间');
+      return;
+    }
+
+    setLaterAdjustmentForm({
+      accountingPeriod: defaultAccountingPeriod,
+      adjustedAt: `${defaultAccountingPeriod}-01`,
+      reason: ''
+    });
+    setLaterAdjustmentVoucherId(record.id);
+  }
+
+  function updateLaterAdjustmentForm<K extends keyof AccountingVoucherLaterPeriodAdjustmentInput>(
+    field: K,
+    value: AccountingVoucherLaterPeriodAdjustmentInput[K]
+  ) {
+    setLaterAdjustmentForm((currentForm) => ({
+      ...currentForm,
+      [field]: value
+    }));
+  }
+
+  function handleBookVoucher(record: AccountingVoucherRecord) {
+    if (!bookAccountingVoucher(record)) {
+      void messageApi.warning('当前凭证不可记账');
+      return;
+    }
+
+    setActiveVoucherId(record.id);
+    void messageApi.success('凭证已记账');
+  }
+
+  function submitReversal() {
+    if (!reversalRecord || !canSubmitReversal) {
+      return;
+    }
+
+    if (!reverseAccountingVoucher(reversalRecord, reversalForm)) {
+      void messageApi.warning('当前凭证不可冲销');
+      return;
+    }
+
+    setActiveVoucherId(reversalRecord.id);
+    setReversalVoucherId(undefined);
+    void messageApi.success('冲销凭证已生成');
+  }
+
+  function submitLaterAdjustment() {
+    if (!laterAdjustmentRecord || !canSubmitLaterAdjustment) {
+      return;
+    }
+
+    const adjustmentRecord = createLaterPeriodAccountingVoucherAdjustmentRecord({
+      actor: '李明',
+      existingRows: accountingVoucherLaterPeriodAdjustmentRows,
+      input: laterAdjustmentForm,
+      originalRecord: laterAdjustmentRecord
+    });
+    const created = addAccountingVoucherLaterPeriodAdjustment(adjustmentRecord);
+
+    if (!created) {
+      void messageApi.warning('后续调整事项未创建，请检查调整期间或是否已存在');
+      return;
+    }
+
+    setActiveVoucherId(`voucher-later-adjustment-${adjustmentRecord.id}`);
+    setLaterAdjustmentVoucherId(undefined);
+    void messageApi.success('后续调整事项已创建');
+  }
 
   const columns: TableColumnsType<AccountingVoucherRecord> = [
     {
-      title: '凭证',
+      title: '记账事项',
       key: 'voucher',
-      width: 230,
-      render: (_, record) => <CompactCell primary={record.voucherNo} secondary={record.summary} />
+      width: 260,
+      render: (_, record) => {
+        const identity = getAccountingVoucherListIdentity(record);
+
+        return <CompactCell primary={identity.primary} secondary={identity.secondary} />;
+      }
     },
     {
-      title: '凭证业务',
+      title: '业务环节',
       dataIndex: 'businessType',
       width: 112,
       render: (businessType: AccountingVoucherBusinessType) => <StatusTag toneMap={voucherBusinessTone} value={businessType} />
     },
     {
-      title: '凭证状态',
+      title: '状态',
       dataIndex: 'status',
       width: 104,
       render: (status: AccountingVoucherStatus) => <StatusTag toneMap={voucherStatusTone} value={status} />
@@ -493,6 +1286,40 @@ export function FinanceAccountingVouchersPage() {
       )
     },
     {
+      title: '下一步',
+      key: 'nextStep',
+      width: 180,
+      render: (_, record) => {
+        const defaultLaterAdjustmentTargetPeriod = getDefaultLaterPeriodAdjustmentAccountingPeriod(record);
+        const laterAdjustmentTargetPeriod = getAvailableLaterPeriodAdjustmentAccountingPeriod(
+          record,
+          accountingPeriodLocks,
+          accountingVoucherLaterPeriodAdjustmentRows
+        );
+        const existingLaterAdjustment = getExistingLaterPeriodAccountingVoucherAdjustment(
+          record,
+          defaultLaterAdjustmentTargetPeriod,
+          accountingVoucherLaterPeriodAdjustmentRows
+        );
+        const nextStep = getAccountingVoucherNextStep(
+          record,
+          canBookAccountingVoucher(record, accountingPeriodLocks),
+          canReverseAccountingVoucher(record, accountingPeriodLocks),
+          Boolean(laterAdjustmentTargetPeriod) && canCreateLaterPeriodAccountingVoucherAdjustment(
+            record,
+            accountingPeriodLocks,
+            laterAdjustmentTargetPeriod,
+            accountingVoucherLaterPeriodAdjustmentRows
+          ),
+          existingLaterAdjustment,
+          laterAdjustmentTargetPeriod,
+          isAccountingPeriodLocked(accountingPeriodLocks, record.accountingPeriod)
+        );
+
+        return <CompactCell primary={nextStep.primary} secondary={nextStep.secondary} />;
+      }
+    },
+    {
       title: '归属月份',
       dataIndex: 'accountingPeriod',
       width: 112
@@ -501,18 +1328,6 @@ export function FinanceAccountingVouchersPage() {
       title: '业务对象',
       dataIndex: 'counterparty',
       width: 150
-    },
-    {
-      title: '借方',
-      key: 'debitSubject',
-      width: 190,
-      render: (_, record) => getVoucherSubjects(record, '借方')
-    },
-    {
-      title: '贷方',
-      key: 'creditSubject',
-      width: 190,
-      render: (_, record) => getVoucherSubjects(record, '贷方')
     },
     {
       title: '金额',
@@ -524,14 +1339,14 @@ export function FinanceAccountingVouchersPage() {
 
   return (
     <ManagementPageScaffold
+      feedback={contextHolder}
       layout="table-workbench"
       metrics={
-        <MetricGrid columns={6}>
+        <MetricGrid columns={5} density="compact">
           <MetricCard icon={<ClockCircleOutlined />} label="待生成" value={metrics.pendingGenerationCount} />
           <MetricCard icon={<WarningOutlined />} label="需处理" value={metrics.issueCount} />
-          <MetricCard icon={<FileTextOutlined />} label="待制单" value={metrics.readyToPrepareCount} />
-          <MetricCard icon={<ProfileOutlined />} label="已制单" value={metrics.preparedCount} />
-          <MetricCard icon={<CheckCircleOutlined />} label="已入账" value={metrics.postedCount} />
+          <MetricCard icon={<FileTextOutlined />} label="待记账" value={metrics.readyToBookCount} />
+          <MetricCard icon={<CheckCircleOutlined />} label="已记账" value={metrics.bookedCount} />
           <MetricCard icon={<RollbackOutlined />} label="已冲销" value={metrics.reversedCount} />
         </MetricGrid>
       }
@@ -545,17 +1360,6 @@ export function FinanceAccountingVouchersPage() {
               value={filters.accountingPeriodTime}
               onChange={(accountingPeriodTime) => setFilters((current) => ({ ...current, accountingPeriodTime }))}
             />
-            <FilterField label="凭证业务">
-              <Select
-                data-testid="finance-accounting-voucher-business-filter"
-                options={(['全部', '权责凭证', '资金凭证', '税费凭证', '调整凭证'] satisfies Array<'全部' | AccountingVoucherBusinessType>).map((businessType) => ({
-                  label: businessType,
-                  value: businessType
-                }))}
-                value={filters.businessType}
-                onChange={(businessType) => setFilters((current) => ({ ...current, businessType }))}
-              />
-            </FilterField>
             <FilterField label="凭证状态">
               <Select
                 data-testid="finance-accounting-voucher-status-filter"
@@ -569,7 +1373,7 @@ export function FinanceAccountingVouchersPage() {
             </FilterField>
             <KeywordFilter
               data-testid="finance-accounting-voucher-keyword-input"
-              placeholder="凭证号 / 来源单号 / 科目 / 对象"
+              placeholder="来源单号 / 凭证号 / 对象 / 科目"
               value={filters.keyword}
               width="wide"
               onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}
@@ -581,7 +1385,7 @@ export function FinanceAccountingVouchersPage() {
     >
       <ManagementTable<AccountingVoucherRecord>
         columns={columns}
-        count={{ value: filteredRows.length, unit: '张凭证' }}
+        count={{ value: filteredRows.length, unit: '条事项' }}
         dataSource={filteredRows}
         rowKey="id"
         rowTestIdPrefix="finance-accounting-voucher-table-row"
@@ -590,14 +1394,38 @@ export function FinanceAccountingVouchersPage() {
       />
 
       <AccountingVoucherDetailDrawer
-        canPrepare={canPrepareActiveRecord}
-        canPost={canPostActiveRecord}
+        canBook={canBookActiveRecord}
+        canCreateLaterAdjustment={canCreateLaterAdjustmentActiveRecord}
         canReverse={canReverseActiveRecord}
+        existingLaterAdjustment={activeExistingLaterAdjustment}
+        periodLockNotice={activePeriodLockNotice}
         record={activeRecord}
-        onPrepare={(record) => prepareAccountingVoucher(record)}
-        onPost={(record) => postAccountingVoucher(record)}
-        onReverse={(record) => reverseAccountingVoucher(record, '前端演示冲销')}
+        onBook={handleBookVoucher}
+        onCreateLaterAdjustment={openLaterAdjustmentDrawer}
+        onReverse={openReversalDrawer}
         onClose={() => setActiveVoucherId(undefined)}
+      />
+
+      <AccountingVoucherReversalDrawer
+        canSubmit={canSubmitReversal}
+        form={reversalForm}
+        voucherNo={reversalVoucherNo}
+        record={reversalRecord}
+        validationIssues={reversalValidationIssues}
+        onClose={() => setReversalVoucherId(undefined)}
+        onSubmit={submitReversal}
+        onUpdate={updateReversalForm}
+      />
+
+      <AccountingVoucherLaterAdjustmentDrawer
+        canSubmit={canSubmitLaterAdjustment}
+        existingRows={accountingVoucherLaterPeriodAdjustmentRows}
+        form={laterAdjustmentForm}
+        record={laterAdjustmentRecord}
+        validationIssues={laterAdjustmentValidationIssues}
+        onClose={() => setLaterAdjustmentVoucherId(undefined)}
+        onSubmit={submitLaterAdjustment}
+        onUpdate={updateLaterAdjustmentForm}
       />
     </ManagementPageScaffold>
   );

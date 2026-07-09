@@ -8,7 +8,7 @@ import {
   WalletOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Button, Select, message } from 'antd';
+import { Alert, Button, Select, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
@@ -25,6 +25,7 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { createTabbedManagementTableItem, TabbedManagementTable } from '../../components/TabbedManagementTable';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
+import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import {
   applyDeclarationPreparationSourceState,
   declarationPreparationStatusTone,
@@ -52,6 +53,10 @@ import {
   isInvoiceEffective,
   isSameMoneyAmount
 } from './financeInvoiceModel';
+import {
+  buildFinanceInvoiceImportBatch,
+  buildFinanceInvoiceRecordsFromImportBatch
+} from './financeInvoiceImportModel';
 import { financeToday, formatMoney } from './financeUtils';
 
 type InvoicePeriodFilter = '全部' | string;
@@ -543,9 +548,11 @@ function DrawerTitle({ row }: { row: InvoiceLedgerRow }) {
 export function FinanceInvoicesPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const {
+    addInvoiceRecords,
     clearInvoiceMatches,
     declarationPreparationRows,
     financeRows,
+    getAccountingPeriodGuard,
     invoiceRows: invoiceRecordRows,
     updateInvoiceRecord
   } = useFinanceManagement();
@@ -554,16 +561,17 @@ export function FinanceInvoicesPage() {
   const [activeRowId, setActiveRowId] = useState<string | undefined>();
   const [activeDeclarationRowId, setActiveDeclarationRowId] = useState<string | undefined>();
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
+  const [invoiceImportBatches, setInvoiceImportBatches] = useState<FinanceInvoiceImportBatch[]>(financeInvoiceImportBatches);
   const [importForm, setImportForm] = useState<InvoiceImportForm>(defaultImportForm);
 
-  const invoiceRows = useMemo(() => buildInvoiceLedgerRows(invoiceRecordRows, financeInvoiceImportBatches), [invoiceRecordRows]);
+  const invoiceRows = useMemo(() => buildInvoiceLedgerRows(invoiceRecordRows, invoiceImportBatches), [invoiceImportBatches, invoiceRecordRows]);
   const displayDeclarationPreparationRows = useMemo(
     () => applyDeclarationPreparationSourceState(declarationPreparationRows, invoiceRecordRows, financeRows),
     [declarationPreparationRows, financeRows, invoiceRecordRows]
   );
   const declarationRows = useMemo(
-    () => buildInvoiceDeclarationPeriodRows(invoiceRecordRows, financeInvoiceImportBatches, invoiceRows, displayDeclarationPreparationRows),
-    [displayDeclarationPreparationRows, invoiceRecordRows, invoiceRows]
+    () => buildInvoiceDeclarationPeriodRows(invoiceRecordRows, invoiceImportBatches, invoiceRows, displayDeclarationPreparationRows),
+    [displayDeclarationPreparationRows, invoiceImportBatches, invoiceRecordRows, invoiceRows]
   );
   const monthlyRows = useMemo(() => invoiceRows.filter((row) => matchesFilters(row, filters)), [filters, invoiceRows]);
   const filteredDeclarationRows = useMemo(
@@ -578,12 +586,42 @@ export function FinanceInvoicesPage() {
   const monthlyPeriodOptions = useMemo(() => ['全部', ...Array.from(new Set(invoiceRows.map((row) => row.accountingPeriod)))], [invoiceRows]);
   const declarationPeriodOptions = useMemo(() => ['全部', ...declarationRows.map((row) => row.declarationPeriod)], [declarationRows]);
   const periodOptions = activeView === 'monthly' ? monthlyPeriodOptions : declarationPeriodOptions;
+  const monthlyFilterPeriodGuard =
+    activeView === 'monthly' && filters.period !== '全部'
+      ? getAccountingPeriodGuard(filters.period, '导入税务发票数据')
+      : undefined;
+  const selectedPeriodReadbackNotice =
+    monthlyFilterPeriodGuard && !monthlyFilterPeriodGuard.allowed
+      ? getClosedAccountingPeriodReadbackNotice(filters.period, '当前发票台账')
+      : undefined;
+  const openImportPeriodOptions = monthlyPeriodOptions.filter(
+    (period) => period !== '全部' && getAccountingPeriodGuard(period, '导入税务发票数据').allowed
+  );
+  const fallbackImportPeriod = openImportPeriodOptions.includes(currentPeriod)
+    ? currentPeriod
+    : openImportPeriodOptions[0] ?? currentPeriod;
   const currentRows = invoiceRows.filter((row) => row.accountingPeriod === currentPeriod);
   const currentOutputRow = currentRows.find((row) => row.direction === '销项');
   const currentInputRow = currentRows.find((row) => row.direction === '进项');
   const currentDeclarationRow = declarationRows.find((row) => row.declarationPeriod === currentDeclarationPeriod);
   const importedPeriodCount = new Set(invoiceRows.map((row) => row.accountingPeriod)).size;
   const pendingInvoiceCount = invoiceRows.reduce((total, row) => total + getPendingCount(row), 0);
+  const importPeriodGuard = getAccountingPeriodGuard(importForm.period, '导入税务发票数据');
+  const importPeriodReadbackNotice = !importPeriodGuard.allowed
+    ? getClosedAccountingPeriodReadbackNotice(importForm.period, '当前导入月份')
+    : undefined;
+
+  function getNextImportForm(): InvoiceImportForm {
+    const filterPeriodAvailable =
+      activeView === 'monthly' &&
+      filters.period !== '全部' &&
+      openImportPeriodOptions.includes(filters.period);
+
+    return {
+      ...defaultImportForm,
+      period: filterPeriodAvailable ? filters.period : fallbackImportPeriod
+    };
+  }
 
   function handleImportFileSelect(file: UploadFile) {
     setImportForm((current) => ({
@@ -599,14 +637,36 @@ export function FinanceInvoicesPage() {
   }
 
   function handleSubmitImport() {
+    if (!importPeriodGuard.allowed) {
+      void messageApi.warning(importPeriodGuard.reason);
+      return;
+    }
+
     if (!importForm.file) {
       void messageApi.warning('请选择税务下载文件');
       return;
     }
 
+    const importedAt = `${financeToday} 10:00`;
+    const sequence = invoiceImportBatches.length + 1;
+    const importBatch = buildFinanceInvoiceImportBatch({
+      direction: importForm.direction,
+      fileName: importForm.file.name,
+      importedAt,
+      period: importForm.period,
+      sequence
+    });
+    const importedInvoices = buildFinanceInvoiceRecordsFromImportBatch(importBatch, sequence);
+
+    if (!addInvoiceRecords(importedInvoices)) {
+      void messageApi.warning(importPeriodGuard.reason ?? '当前会计期间已锁定，不能导入税务发票数据');
+      return;
+    }
+
+    setInvoiceImportBatches((currentRows) => [importBatch, ...currentRows]);
     setImportDrawerOpen(false);
-    setImportForm(defaultImportForm);
-    void messageApi.success('发票数据已进入导入记录');
+    setImportForm(getNextImportForm());
+    void messageApi.success(`已导入 ${importBatch.invoiceCount} 份发票，待进入发票匹配`);
   }
 
   function handleRevokeInvoiceMatch(invoiceId: string) {
@@ -617,7 +677,11 @@ export function FinanceInvoicesPage() {
       return;
     }
 
-    clearInvoiceMatches(invoiceId);
+    if (!clearInvoiceMatches(invoiceId)) {
+      void messageApi.warning('当前会计期间已锁定，不能撤销发票匹配');
+      return;
+    }
+
     void messageApi.success('已撤销匹配，发票已进入待关联');
   }
 
@@ -629,10 +693,22 @@ export function FinanceInvoicesPage() {
       return;
     }
 
-    updateInvoiceRecord(invoiceId, (invoice) => ({
+    const originalInvoice = invoiceRecordRows.find((invoice) => invoice.id === targetInvoice.originalInvoiceId);
+    const originalPeriodGuard = getAccountingPeriodGuard(originalInvoice?.accountingPeriod, '撤销红冲原票关联');
+
+    if (!originalPeriodGuard.allowed) {
+      void messageApi.warning(originalPeriodGuard.reason);
+      return;
+    }
+
+    if (!updateInvoiceRecord(invoiceId, (invoice) => ({
       ...invoice,
       originalInvoiceId: undefined
-    }));
+    }))) {
+      void messageApi.warning('当前会计期间已锁定，不能撤销原票关联');
+      return;
+    }
+
     void messageApi.success('已撤销原票关联，红冲发票已进入发票匹配');
   }
 
@@ -859,9 +935,14 @@ export function FinanceInvoicesPage() {
       width: 120,
       render: (_, record) => {
         const canRevoke = record.invoice.invoiceStatus === '正常' && record.matchStatus === '已匹配' && record.relations.length > 0;
+        const periodGuard = getAccountingPeriodGuard(record.invoice.accountingPeriod, '撤销发票匹配');
 
         if (!canRevoke) {
           return <CellText tone="subtle">-</CellText>;
+        }
+
+        if (!periodGuard.allowed) {
+          return <CellText tone="subtle">只读回看</CellText>;
         }
 
         return (
@@ -932,8 +1013,19 @@ export function FinanceInvoicesPage() {
       title: '操作',
       key: 'action',
       width: 118,
-      render: (_, record) =>
-        record.status === '已关联原票' ? (
+      render: (_, record) => {
+        if (record.status !== '已关联原票') {
+          return <CellText tone="subtle">-</CellText>;
+        }
+
+        const periodGuard = getAccountingPeriodGuard(record.redInvoice.accountingPeriod, '撤销红冲原票关联');
+        const originalPeriodGuard = getAccountingPeriodGuard(record.originalInvoice?.accountingPeriod, '撤销红冲原票关联');
+
+        if (!periodGuard.allowed || !originalPeriodGuard.allowed) {
+          return <CellText tone="subtle">只读回看</CellText>;
+        }
+
+        return (
           <Button
             icon={<RollbackOutlined />}
             size="small"
@@ -944,9 +1036,8 @@ export function FinanceInvoicesPage() {
           >
             撤销关联
           </Button>
-        ) : (
-          <CellText tone="subtle">-</CellText>
-        )
+        );
+      }
     }
   ];
 
@@ -1007,11 +1098,12 @@ export function FinanceInvoicesPage() {
       )
     : [];
   const importPrimaryAction = {
+    disabled: Boolean(monthlyFilterPeriodGuard && !monthlyFilterPeriodGuard.allowed) || openImportPeriodOptions.length === 0,
     icon: <CloudUploadOutlined />,
     label: '导入税务发票数据',
     testId: 'finance-invoice-import-button',
     onClick: () => {
-      setImportForm(defaultImportForm);
+      setImportForm(getNextImportForm());
       setImportDrawerOpen(true);
     }
   };
@@ -1075,6 +1167,9 @@ export function FinanceInvoicesPage() {
       }
       pageId="finance-invoices"
     >
+      {selectedPeriodReadbackNotice ? (
+        <Alert className="finance-period-readback-alert" message={selectedPeriodReadbackNotice} showIcon type="info" />
+      ) : null}
       <TabbedManagementTable
         activeKey={activeView}
         tabs={[
@@ -1393,12 +1488,12 @@ export function FinanceInvoicesPage() {
           label: '取消',
           onClick: () => {
             setImportDrawerOpen(false);
-            setImportForm(defaultImportForm);
+            setImportForm(getNextImportForm());
           }
         }}
         open={importDrawerOpen}
         primaryAction={{
-          disabled: !importForm.file,
+          disabled: Boolean(importPeriodReadbackNotice) || !importForm.file,
           label: '导入',
           testId: 'finance-invoice-import-submit-button',
           onClick: handleSubmitImport
@@ -1407,10 +1502,13 @@ export function FinanceInvoicesPage() {
         width={760}
         onClose={() => {
           setImportDrawerOpen(false);
-          setImportForm(defaultImportForm);
+          setImportForm(getNextImportForm());
         }}
       >
         <DetailSection icon={<CloudUploadOutlined />} title="导入信息">
+          {importPeriodReadbackNotice ? (
+            <Alert className="finance-period-readback-alert" message={importPeriodReadbackNotice} showIcon type="info" />
+          ) : null}
           <DetailInfoGrid
             columns={2}
             items={[
@@ -1420,7 +1518,15 @@ export function FinanceInvoicesPage() {
                   <Select
                     className="finance-invoice-inline-select"
                     data-testid="finance-invoice-import-period-select"
-                    options={monthlyPeriodOptions.filter((period) => period !== '全部').map((period) => ({ label: period, value: period }))}
+                    options={monthlyPeriodOptions.filter((period) => period !== '全部').map((period) => {
+                      const periodGuard = getAccountingPeriodGuard(period, '导入税务发票数据');
+
+                      return {
+                        disabled: !periodGuard.allowed,
+                        label: period,
+                        value: period
+                      };
+                    })}
                     value={importForm.period}
                     onChange={(period) => setImportForm((current) => ({ ...current, period }))}
                   />

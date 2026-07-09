@@ -5,6 +5,7 @@ import {
 import {
   buildBankStatementImportPrecheck,
   buildBankStatementUniqueKey,
+  getBankStatementAccountingPeriods,
   getBankStatementMissingFieldLabels,
   requiredBankStatementImportFieldLabels,
   type BankStatementRecord
@@ -71,6 +72,18 @@ const tests: UnitTest[] = [
         '交易日期|银行流水号|交易金额|摘要',
         'missing-field validation should expose the broken contract fields'
       );
+    }
+  },
+  {
+    name: 'derives stable accounting-period set from bank statement dates',
+    run: () => {
+      const periods = getBankStatementAccountingPeriods([
+        createBankRow({ id: 'june-1', statementDate: '2026-06-15' }),
+        createBankRow({ id: 'may-1', statementDate: '2026-05-31' }),
+        createBankRow({ id: 'june-2', statementDate: '2026-06-01' })
+      ]);
+
+      assertEqual(periods.join('|'), '2026-05|2026-06', 'bank import periods should be unique, sorted, and month scoped');
     }
   },
   {

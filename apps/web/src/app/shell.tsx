@@ -4,6 +4,7 @@ import {
   BarChartOutlined,
   BankOutlined,
   BellOutlined,
+  BookOutlined,
   CalendarOutlined,
   CheckCircleOutlined,
   DashboardOutlined,
@@ -12,6 +13,7 @@ import {
   FileTextOutlined,
   HomeOutlined,
   LineChartOutlined,
+  LockOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MessageOutlined,
@@ -208,6 +210,18 @@ const pageMeta: Record<string, { module: string; title: string }> = {
     module: '财务管理',
     title: '会计凭证'
   },
+  '/finance/general-ledger': {
+    module: '财务管理',
+    title: '总账'
+  },
+  '/finance/period-close': {
+    module: '财务管理',
+    title: '期间结账'
+  },
+  '/finance/financial-statements': {
+    module: '财务管理',
+    title: '财务报表'
+  },
   '/system/roles': {
     module: '系统管理',
     title: '业务角色'
@@ -219,6 +233,10 @@ const pageMeta: Record<string, { module: string; title: string }> = {
   '/system/work-calendar': {
     module: '系统管理',
     title: '工作日历'
+  },
+  '/system/ledger-initialization': {
+    module: '系统管理',
+    title: '账套初始化'
   },
   '/system/finance-categories': {
     module: '系统管理',
@@ -309,6 +327,10 @@ function getSelectedKeys(pathname: string) {
 
   if (pathname.startsWith('/system/work-calendar')) {
     return ['system-work-calendar'];
+  }
+
+  if (pathname.startsWith('/system/ledger-initialization')) {
+    return ['system-ledger-initialization'];
   }
 
   if (pathname.startsWith('/system/finance-categories')) {
@@ -425,6 +447,18 @@ function getSelectedKeys(pathname: string) {
 
   if (pathname.startsWith('/finance/accounting-vouchers')) {
     return ['finance-accounting-vouchers'];
+  }
+
+  if (pathname.startsWith('/finance/general-ledger')) {
+    return ['finance-general-ledger'];
+  }
+
+  if (pathname.startsWith('/finance/period-close')) {
+    return ['finance-period-close'];
+  }
+
+  if (pathname.startsWith('/finance/financial-statements')) {
+    return ['finance-financial-statements'];
   }
 
   if (pathname.startsWith('/system/social-insurance-config')) {
@@ -701,6 +735,21 @@ export function AppShell() {
             key: 'finance-accounting-vouchers',
             icon: <FileTextOutlined />,
             label: '会计凭证'
+          },
+          {
+            key: 'finance-general-ledger',
+            icon: <BookOutlined />,
+            label: '总账'
+          },
+          {
+            key: 'finance-period-close',
+            icon: <LockOutlined />,
+            label: '期间结账'
+          },
+          {
+            key: 'finance-financial-statements',
+            icon: <FileProtectOutlined />,
+            label: '财务报表'
           }
         ]
       },
@@ -750,6 +799,11 @@ export function AppShell() {
             key: 'system-work-calendar',
             icon: <CalendarOutlined />,
             label: '工作日历'
+          },
+          {
+            key: 'system-ledger-initialization',
+            icon: <ProfileOutlined />,
+            label: '账套初始化'
           },
           {
             key: 'system-finance-categories',
@@ -968,6 +1022,18 @@ export function AppShell() {
               navigate('/finance/accounting-vouchers');
             }
 
+            if (key === 'finance-general-ledger') {
+              navigate('/finance/general-ledger');
+            }
+
+            if (key === 'finance-period-close') {
+              navigate('/finance/period-close');
+            }
+
+            if (key === 'finance-financial-statements') {
+              navigate('/finance/financial-statements');
+            }
+
             if (key === 'system-roles') {
               navigate('/system/roles');
             }
@@ -978,6 +1044,10 @@ export function AppShell() {
 
             if (key === 'system-work-calendar') {
               navigate('/system/work-calendar');
+            }
+
+            if (key === 'system-ledger-initialization') {
+              navigate('/system/ledger-initialization');
             }
 
             if (key === 'system-finance-categories') {

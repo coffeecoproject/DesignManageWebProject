@@ -670,6 +670,7 @@ export function buildFinanceTransactionFromMyWorkCollection(
     publicAccountSnapshot: publicAccountRef.publicAccountSnapshot,
     reconciliationStatus: '未对账',
     registeredBy: '李明',
+    relatedReceivableNo: record.relatedReceivableNo,
     reviewDueAt: getDefaultFinanceReviewDueAt(record.occurredAt),
     sourceNo: record.code,
     sourceTitle: record.title,

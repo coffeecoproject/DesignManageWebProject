@@ -14,9 +14,9 @@ type SalaryManagementStateValue = {
   salaryAdjustments: SalaryAdjustmentRecord[];
   salaryDetailMonths: string[];
   salaryMonthlyWorkflows: SalaryMonthlyWorkflowRecord[];
-  confirmSalaryMonthlyReport: (memberId: string, month: string, note?: string) => void;
+  confirmSalaryMonthlyReport: (memberId: string, month: string, note?: string) => boolean;
   saveSalaryAdjustment: (record: SalaryAdjustmentRecord) => boolean;
-  settleSalaryMonthlyReport: (memberId: string, month: string, note?: string) => void;
+  settleSalaryMonthlyReport: (memberId: string, month: string, note?: string) => boolean;
 };
 
 export const salaryToday = '2026-06-18';
@@ -121,12 +121,12 @@ export function SalaryManagementProvider({ children }: { children: ReactNode }) 
     () => ({
       attendanceMonthlySalarySettlements,
       confirmSalaryMonthlyReport(memberId, month, note = '薪酬明细已确认') {
+        if (isSalaryMonthlySettled(salaryMonthlyWorkflows, memberId, month)) {
+          return false;
+        }
+
         setSalaryDetailMonths((months) => (months.includes(month) ? months : [month, ...months]));
         setSalaryMonthlyWorkflows((workflows) => {
-          if (isSalaryMonthlySettled(workflows, memberId, month)) {
-            return workflows;
-          }
-
           return upsertWorkflow(workflows, memberId, month, (workflow) => ({
             id: workflow?.id ?? buildSalaryMonthlyWorkflowId(month, memberId),
             memberId,
@@ -141,6 +141,8 @@ export function SalaryManagementProvider({ children }: { children: ReactNode }) 
             updatedAt: `${salaryToday} 10:30`
           }));
         });
+
+        return true;
       },
       personalIncomeTaxCumulativeSnapshots: initialPersonalIncomeTaxCumulativeSnapshots,
       salaryAdjustments,
@@ -175,13 +177,13 @@ export function SalaryManagementProvider({ children }: { children: ReactNode }) 
         return true;
       },
       settleSalaryMonthlyReport(memberId, month, note = '薪酬明细已结算') {
-        setSalaryDetailMonths((months) => (months.includes(month) ? months : [month, ...months]));
-        setSalaryMonthlyWorkflows((workflows) => {
-          if (isSalaryMonthlySettled(workflows, memberId, month)) {
-            return workflows;
-          }
+        if (isSalaryMonthlySettled(salaryMonthlyWorkflows, memberId, month)) {
+          return false;
+        }
 
-          return upsertWorkflow(workflows, memberId, month, (workflow) => ({
+        setSalaryDetailMonths((months) => (months.includes(month) ? months : [month, ...months]));
+        setSalaryMonthlyWorkflows((workflows) =>
+          upsertWorkflow(workflows, memberId, month, (workflow) => ({
             id: workflow?.id ?? buildSalaryMonthlyWorkflowId(month, memberId),
             memberId,
             month,
@@ -193,8 +195,10 @@ export function SalaryManagementProvider({ children }: { children: ReactNode }) 
             settledAt: `${salaryToday} 11:00`,
             settledBy: '周倩',
             updatedAt: `${salaryToday} 11:00`
-          }));
-        });
+          }))
+        );
+
+        return true;
       }
     }),
     [attendanceMonthlySalarySettlements, salaryAdjustments, salaryDetailMonths, salaryMonthlyWorkflows]

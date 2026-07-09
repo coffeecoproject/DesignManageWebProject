@@ -8,7 +8,7 @@ import {
   SwapOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Select, message } from 'antd';
+import { Alert, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
@@ -207,7 +207,7 @@ function matchesFilters(
 
 export function FinanceTransactionsPage() {
   const [messageApi, contextHolder] = message.useMessage();
-  const { addFinanceTransaction, financeRows: records, invoiceRows } = useFinanceManagement();
+  const { addFinanceTransaction, financeRows: records, getAccountingPeriodGuard, invoiceRows } = useFinanceManagement();
   const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const [activeTab, setActiveTab] = useState<FinanceTransactionListTabKey>('收入');
   const [filters, setFilters] = useState<FinanceTransactionFilters>(defaultFilters);
@@ -306,6 +306,13 @@ export function FinanceTransactionsPage() {
     activeRecord && activeRecordInvoiceAssociation
       ? invoiceDeclarationStatusByTransactionNo.get(activeRecord.transactionNo) ??
         getFinanceTransactionInvoiceDeclarationStatus(activeRecord, activeRecordInvoiceAssociation)
+      : undefined;
+  const activeRecordAdjustmentGuard = activeRecord
+    ? getAccountingPeriodGuard(activeRecord.accountingPeriod, '发起冲正补差')
+    : undefined;
+  const activeRecordPeriodReadbackNotice =
+    activeRecordAdjustmentGuard && !activeRecordAdjustmentGuard.allowed
+      ? `${activeRecordAdjustmentGuard.reason} 原流水仅用于回看，不在已结账期间发起冲正补差。`
       : undefined;
   const activeRows = rows.filter((record) => record.status !== '已作废');
   const receiptTotal = activeRows
@@ -557,7 +564,7 @@ export function FinanceTransactionsPage() {
         }}
         open={Boolean(activeRecord)}
         secondaryAction={
-          activeRecord?.status === '已入账'
+          activeRecord?.status === '已入账' && !activeRecordPeriodReadbackNotice
             ? {
                 icon: <SwapOutlined />,
                 label: '冲正补差',
@@ -603,6 +610,14 @@ export function FinanceTransactionsPage() {
                 ].filter(Boolean) as DetailSummaryCardItem[]
               }
             />
+            {activeRecordPeriodReadbackNotice ? (
+              <Alert
+                className="finance-period-readback-alert"
+                message={activeRecordPeriodReadbackNotice}
+                showIcon
+                type="info"
+              />
+            ) : null}
             <DetailTabs
               defaultActiveKey="flow"
               tabTestIdPrefix="finance-transaction-detail-tab"
@@ -741,7 +756,18 @@ export function FinanceTransactionsPage() {
         originRecord={activeRecord}
         onClose={() => setAdjustmentDrawerOpen(false)}
         onSubmit={(record) => {
-          addFinanceTransaction(record);
+          const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '生成冲正补差流水');
+
+          if (!periodGuard.allowed) {
+            void messageApi.warning(periodGuard.reason);
+            return;
+          }
+
+          if (!addFinanceTransaction(record)) {
+            void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能生成冲正补差流水');
+            return;
+          }
+
           setAdjustmentDrawerOpen(false);
           void messageApi.success('已生成待复核调整流水');
         }}

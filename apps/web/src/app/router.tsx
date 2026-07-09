@@ -172,6 +172,11 @@ const FinanceAccountLedgerPage = lazy(() =>
     default: module.FinanceAccountLedgerPage
   }))
 );
+const FinanceLedgerInitializationPage = lazy(() =>
+  import('../features/finance/FinanceLedgerInitializationPage').then((module) => ({
+    default: module.FinanceLedgerInitializationPage
+  }))
+);
 const FinanceAccountingSubjectsPage = lazy(() =>
   import('../features/finance/FinanceAccountingSubjectsPage').then((module) => ({
     default: module.FinanceAccountingSubjectsPage
@@ -180,6 +185,21 @@ const FinanceAccountingSubjectsPage = lazy(() =>
 const FinanceAccountingVouchersPage = lazy(() =>
   import('../features/finance/FinanceAccountingVouchersPage').then((module) => ({
     default: module.FinanceAccountingVouchersPage
+  }))
+);
+const FinanceGeneralLedgerPage = lazy(() =>
+  import('../features/finance/FinanceGeneralLedgerPage').then((module) => ({
+    default: module.FinanceGeneralLedgerPage
+  }))
+);
+const FinancePeriodClosePage = lazy(() =>
+  import('../features/finance/FinancePeriodClosePage').then((module) => ({
+    default: module.FinancePeriodClosePage
+  }))
+);
+const FinanceFinancialStatementsPage = lazy(() =>
+  import('../features/finance/FinanceFinancialStatementsPage').then((module) => ({
+    default: module.FinanceFinancialStatementsPage
   }))
 );
 const FinanceBankReconciliationPage = lazy(() =>
@@ -461,6 +481,22 @@ export const router = createBrowserRouter([
       {
         path: 'finance/accounting-vouchers',
         element: withPageSuspense(<FinanceAccountingVouchersPage />)
+      },
+      {
+        path: 'finance/general-ledger',
+        element: withPageSuspense(<FinanceGeneralLedgerPage />)
+      },
+      {
+        path: 'finance/period-close',
+        element: withPageSuspense(<FinancePeriodClosePage />)
+      },
+      {
+        path: 'finance/financial-statements',
+        element: withPageSuspense(<FinanceFinancialStatementsPage />)
+      },
+      {
+        path: 'system/ledger-initialization',
+        element: withPageSuspense(<FinanceLedgerInitializationPage />)
       },
       {
         path: 'tax',

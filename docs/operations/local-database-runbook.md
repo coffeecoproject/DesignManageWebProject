@@ -32,6 +32,9 @@ Run commands from anywhere inside the repository. Scripts resolve the repository
 | Check health | `scripts/local/db-status.sh` |
 | Open psql | `scripts/local/db-psql.sh` |
 | Run one SQL command | `scripts/local/db-psql.sh -c 'SELECT current_database(), current_user;'` |
+| Run period-close PostgreSQL migration dry-run | `corepack pnpm db:period-close:dry-run` |
+| Run period-close PostgreSQL isolated apply drill | `corepack pnpm db:period-close:apply-drill` |
+| Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` |
 | Show logs | `scripts/local/db-logs.sh` |
 | Stop Postgres without deleting data | `scripts/local/db-down.sh` |
 
@@ -52,6 +55,10 @@ postgres://startupmanage_app:startupmanage_local_dev_only@postgres:5432/startupm
 ## 5. Destructive Boundary
 
 Do not remove the Docker volume without explicit user approval.
+
+The period-close isolated apply and concurrency drills may create and drop only
+schemas named `period_close_drill_*`. They must not drop tables, truncate rows,
+delete rows, drop the `public` schema, or remove Docker volumes.
 
 Commands such as these are destructive because they can delete local database data:
 
@@ -85,5 +92,15 @@ If host tools cannot connect:
 ## 7. Evidence Boundary
 
 This runbook and the scripts prove only that local dependency commands exist.
+The period-close dry-run command executes generated DDL and schema assertions
+inside a local PostgreSQL transaction and rolls back. The period-close isolated
+apply drill commits generated DDL and fixture writes only inside a temporary
+`period_close_drill_*` schema, verifies the local write path, and then drops
+that isolated schema. The period-close row-lock concurrency drill runs two local
+psql sessions against the same isolated schema to prove `FOR UPDATE` lock
+conflict behavior, then verifies close update and closed-period source-guard
+fixture behavior before cleanup. None of these commands are formal project
+schema migration apply, real repository integration, application DB transaction
+manager evidence, formal rollback/forward-fix, or production readiness evidence.
 
 Readiness claims still require command output evidence in `docs/evidence/local-environment-evidence.md` or a later evidence record.

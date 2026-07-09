@@ -803,7 +803,11 @@ export function isFinanceReceivablePayableSettlementForRecord(
 
   return (
     transaction.direction === expectedDirection &&
-    (record.linkedTransactionNos.includes(transaction.transactionNo) || transaction.sourceNo === record.documentNo)
+    (
+      record.linkedTransactionNos.includes(transaction.transactionNo) ||
+      transaction.sourceNo === record.documentNo ||
+      transaction.relatedReceivableNo === record.documentNo
+    )
   );
 }
 
@@ -812,6 +816,17 @@ export function getFinanceReceivablePayableLinkedTransactionRows(
   financeRows: FinanceTransactionRecord[] = []
 ) {
   return financeRows.filter((transaction) => isFinanceReceivablePayableSettlementForRecord(record, transaction));
+}
+
+export function getFinanceReceivablePayableSettlementTargets(
+  records: FinanceReceivablePayableRecord[],
+  transaction: FinanceTransactionRecord | undefined
+) {
+  if (!transaction) {
+    return [];
+  }
+
+  return records.filter((record) => isFinanceReceivablePayableSettlementForRecord(record, transaction));
 }
 
 function getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(

@@ -15,6 +15,19 @@ docker-compose.yml
 .env.local.example
 .gitignore
 apps/
+  api/
+    package.json
+    tsconfig.json
+    src/
+      finance/
+        periodCloseContract.ts
+        periodCloseContract.test.ts
+        periodCloseRoutes.ts
+        periodCloseRoutes.test.ts
+        periodCloseSourceMutationGuard.ts
+        periodCloseSourceMutationGuard.test.ts
+        periodCloseSourceMutationRoutes.ts
+        periodCloseSourceMutationRoutes.test.ts
   web/
     index.html
     package.json
@@ -46,6 +59,7 @@ docs/
 
 | Boundary | Status | Notes |
 | --- | --- | --- |
+| `apps/api` | contract_skeleton | Local TypeScript API/domain contract skeleton. It currently contains executable finance period-close contract rules, a framework-agnostic route adapter for backend-owned `close-checks`, `close`, and exceptional `reopen`, a framework-agnostic source mutation guard adapter, and a local source-mutation route adapter catalog for closed-period direct API-style rejection. It is not yet a listening HTTP backend, database-backed service, migration, auth boundary, real source API service integration, or production API. |
 | `apps/web` | implemented_baseline | Vite React admin frontend baseline. |
 | `apps/web/src/app` | implemented_baseline | Root app, router, and custom Ant Design admin shell. |
 | `apps/web/src/components` | implemented_baseline | Shared workbench/detail primitives: `ManagementTable`, `ManagementPageScaffold`, `MetricGrid`/`MetricCard`, `FilterControls`, `DetailTabs`, `DetailSection`/`DetailInfoGrid`/`DetailDrawerTitle`/`StatusTag`, `RelatedFileTable`, `FileSlot`/`FileSlotGrid`/`FileRequirementPanel`, and `FileUploadDropzone`. These components own repeated structure and interaction styling; feature pages pass structured data/callbacks instead of composing component internals. |
@@ -58,7 +72,7 @@ docs/
 | `apps/web/src/features/system` | implemented_baseline | Static system-configuration pages for read-only business roles, task configuration, work calendars, finance categories, public-account configuration, social-insurance/housing-fund configuration, and tax policy; shared frontend-session providers expose configuration rows to feature pages without backend persistence. |
 | `scripts/local` | implemented_baseline | Local Docker Postgres helper scripts. |
 | `docs` | implemented_baseline | Governance, requirements, route, UI, test, and evidence docs. |
-| `services/api` | not_created | Backend/API pending business and architecture decisions. |
+| `services/api` | not_created | Separate deployed backend/API service pending business and architecture decisions. Current `apps/api` is only a local contract/domain skeleton. |
 | `packages/*` | not_created | Shared packages pending need. |
 | `infra/*` | not_created | Remote infrastructure pending explicit production/dev environment decision. |
 

@@ -73,7 +73,7 @@ export function getDefaultAccountingSubjectCodeForPrimary(primary?: Pick<Finance
   }
 
   if (primary.direction === '收入') {
-    return primary.reportAggregation === '其他' ? '6051' : '1122';
+    return primary.reportAggregation === '其他' ? '5051' : '1122';
   }
 
   if (primary.reportAggregation === '人员支出') {
@@ -88,7 +88,7 @@ export function getDefaultAccountingSubjectCodeForPrimary(primary?: Pick<Finance
     return '2221';
   }
 
-  return '6602';
+  return '5602';
 }
 
 function getNextSequence(rows: Array<{ code: string }>, prefix: string) {

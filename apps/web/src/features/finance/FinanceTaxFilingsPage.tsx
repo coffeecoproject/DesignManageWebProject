@@ -10,7 +10,7 @@ import {
   WalletOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Select, message } from 'antd';
+import { Alert, Select, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, ReadOnlyField, StatusTag } from '../../components/Detail';
@@ -80,6 +80,7 @@ import {
 } from './financeTaxMatterModel';
 import {
   financeToday,
+  getAccountingPeriodFromBusinessPeriod,
   formatMoney
 } from './financeUtils';
 
@@ -755,6 +756,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     addFinanceTransaction,
     declarationPreparationRows,
     financeRows,
+    getAccountingPeriodGuard,
     invoiceRows,
     taxMatterRows,
     updateDeclarationPreparationRecord,
@@ -840,11 +842,20 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const activeDeclarationPreparation = activeRecord
     ? findDeclarationPreparationForTaxMatter(activeRecord, displayDeclarationPreparationRows)
     : undefined;
+  const activeAccountingPeriod = activeRecord ? getAccountingPeriodFromBusinessPeriod(activeRecord.period) : undefined;
+  const activePeriodGuard = activeRecord
+    ? getAccountingPeriodGuard(activeAccountingPeriod, isSocialInsuranceModule ? '调整缴费事项' : '调整税务办理事项')
+    : undefined;
+  const activeReadbackNotice =
+    activePeriodGuard && !activePeriodGuard.allowed
+      ? `${activePeriodGuard.reason} 当前${isSocialInsuranceModule ? '缴费事项' : '税务办理事项'}仅用于回看。`
+      : undefined;
   const canHandleActiveRecord =
     Boolean(activeRecord && activeOfficialEntry) &&
     activeRecord?.processStatus !== '数据待确认' &&
-    activeRecord?.processStatus !== '已完成';
-  const canUploadActiveRecord = Boolean(activeRecord) && activeRecord?.processStatus === '待上传回执';
+    activeRecord?.processStatus !== '已完成' &&
+    !activeReadbackNotice;
+  const canUploadActiveRecord = Boolean(activeRecord) && activeRecord?.processStatus === '待上传回执' && !activeReadbackNotice;
   const periodOptions: Array<FilterOptionValue | string> = ['全部', ...uniqueOptions(displayTaxMatterRows, (record) => record.period)];
   const matterTypeOptions: Array<FilterOptionValue | FinanceTaxMatterType> = ['全部', ...uniqueOptions(displayTaxMatterRows, (record) => record.matterType)];
   const processStatusOptions: Array<FilterOptionValue | FinanceTaxMatterProcessStatus> = ['全部', ...uniqueOptions(displayTaxMatterRows, (record) => record.processStatus)];
@@ -870,6 +881,16 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   }
 
   function openReceiptMatter(record: FinanceTaxMatterRecord) {
+    const periodGuard = getAccountingPeriodGuard(
+      getAccountingPeriodFromBusinessPeriod(record.period),
+      isSocialInsuranceModule ? '上传缴费凭证' : '上传税务办理回执'
+    );
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     setEditorState({ recordId: record.id });
   }
 
@@ -878,6 +899,16 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   }
 
   function saveTaxMatter(record: FinanceTaxMatterRecord) {
+    const taxMatterGuard = getAccountingPeriodGuard(
+      getAccountingPeriodFromBusinessPeriod(record.period),
+      isSocialInsuranceModule ? '上传缴费凭证' : '上传税务办理回执'
+    );
+
+    if (!taxMatterGuard.allowed) {
+      void messageApi.warning(taxMatterGuard.reason);
+      return;
+    }
+
     const paymentTransaction = buildTaxMatterPaymentTransaction({
       financePrimaryCategories,
       financeRows,
@@ -888,10 +919,24 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     const nextRecord = attachTaxMatterPaymentTransaction(record, paymentTransaction);
 
     if (paymentTransaction) {
-      addFinanceTransaction(paymentTransaction);
+      const periodGuard = getAccountingPeriodGuard(paymentTransaction.accountingPeriod, '生成税费缴款流水');
+
+      if (!periodGuard.allowed) {
+        void messageApi.warning(periodGuard.reason);
+        return;
+      }
+
+      if (!addFinanceTransaction(paymentTransaction)) {
+        void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能生成缴款流水');
+        return;
+      }
     }
 
-    updateTaxMatterRecord(nextRecord.id, () => nextRecord);
+    if (!updateTaxMatterRecord(nextRecord.id, () => nextRecord)) {
+      void messageApi.warning('当前事项不可保存');
+      return;
+    }
+
     setActiveRecordId(nextRecord.id);
     setActiveScope(nextRecord.processStatus === '已完成' ? 'completed' : 'pending');
     setEditorState(undefined);
@@ -916,8 +961,15 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
 
   function openOfficialHandling(record: FinanceTaxMatterRecord) {
     const officialEntry = taxMatterOfficialHandlingEntries[record.matterType];
+    const periodGuard = getAccountingPeriodGuard(
+      getAccountingPeriodFromBusinessPeriod(record.period),
+      isSocialInsuranceModule ? '进入缴费办理' : '进入税务办理'
+    );
 
-    window.open(officialEntry.url, '_blank', 'noopener,noreferrer');
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
 
     const nextRecord: FinanceTaxMatterRecord = {
       ...record,
@@ -936,12 +988,16 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       ]
     };
 
-    updateTaxMatterRecord(record.id, () => nextRecord);
+    if (!updateTaxMatterRecord(record.id, () => nextRecord)) {
+      void messageApi.warning('当前事项不可进入办理');
+      return;
+    }
+
     if (isDeclarationPreparationBackedTaxMatter(record)) {
       const preparation = findDeclarationPreparationForTaxMatter(record, displayDeclarationPreparationRows);
 
       if (preparation && preparation.status === '可申报') {
-        updateDeclarationPreparationRecord(preparation.id, (currentPreparation) => ({
+        if (!updateDeclarationPreparationRecord(preparation.id, (currentPreparation) => ({
           ...currentPreparation,
           status: '已进入税务办理',
           operationRecords: [
@@ -956,9 +1012,14 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
             ...currentPreparation.operationRecords
           ],
           updatedAt: financeToday
-        }));
+        }))) {
+          void messageApi.warning('关联申报准备不可更新');
+          return;
+        }
       }
     }
+
+    window.open(officialEntry.url, '_blank', 'noopener,noreferrer');
     setActiveRecordId(record.id);
     void messageApi.success('已打开缴办链接');
   }
@@ -988,14 +1049,19 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     employeeRecord: SocialInsuranceEmployeeRecord,
     handlingStatus: SocialInsuranceHandlingStatus
   ) {
+    const periodGuard = getAccountingPeriodGuard(getAccountingPeriodFromBusinessPeriod(record.period), '调整缴费明细');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     if (isSocialInsuranceEmployeeLocked(employeeRecord)) {
       void messageApi.warning('薪酬明细已结算，当前缴费明细已锁定');
       return;
     }
 
-    updateSocialInsuranceRecordStatus(employeeRecord.id, handlingStatus);
-
-    updateTaxMatterRecord(record.id, (currentRecord) => ({
+    if (!updateTaxMatterRecord(record.id, (currentRecord) => ({
       ...currentRecord,
       dataStatus: '待复核',
       paidAmount: handlingStatus === '待确认' ? 0 : currentRecord.paidAmount,
@@ -1013,7 +1079,16 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         },
         ...currentRecord.operationRecords
       ]
-    }));
+    }))) {
+      void messageApi.warning('当前缴费明细不可调整');
+      return;
+    }
+
+    if (!updateSocialInsuranceRecordStatus(employeeRecord.id, handlingStatus)) {
+      void messageApi.warning('当前缴费明细不可调整');
+      return;
+    }
+
     setActiveScope('pending');
     void messageApi.success(handlingStatus === '待确认' ? '已退回缴费明细' : '已更新缴费明细');
   }
@@ -1201,6 +1276,14 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       >
         {activeRecord ? (
           <>
+            {activeReadbackNotice ? (
+              <Alert
+                className="finance-period-readback-alert"
+                message={activeReadbackNotice}
+                showIcon
+                type="info"
+              />
+            ) : null}
             <DetailSummaryCards
               columns={4}
               items={[
@@ -1287,7 +1370,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
                         <SocialInsuranceContributionDetailPanel
                           isRecordLocked={isSocialInsuranceEmployeeLocked}
                           payableAmount={activeRecord.payableAmount}
-                          readOnly={activeRecord.processStatus === '已完成'}
+                          readOnly={activeRecord.processStatus === '已完成' || Boolean(activeReadbackNotice)}
                           records={activeSocialInsuranceEmployeeRows}
                           summary={activeSocialInsuranceSummary}
                           onStatusChange={(employeeRecord, handlingStatus) =>

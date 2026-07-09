@@ -230,8 +230,8 @@ Mapping from finance category to accounting subject.
 
 Rules:
 
-- Voucher candidates cannot silently fall back to `6602 管理费用` or any other
-  default subject when mapping is missing.
+- Voucher candidates cannot silently fall back to a default administrative
+  expense subject or any other default subject when mapping is missing.
 - Mapping changes are effective by date. Existing confirmed source facts keep
   their old subject snapshot.
 - Mapping is finance configuration. Business documents, employee self-service
@@ -420,7 +420,7 @@ Candidate responses should include:
 ### Stage 3: Backend Mutation Mode
 
 - tax policy activation, source tax fact confirmation, finance-owned category
-  mapping changes, and voucher prepare/post/reverse all go through backend APIs.
+  mapping changes, and voucher prepare/book/reverse all go through backend APIs.
 - Accounting-subject mutation remains system/admin maintenance only and is not a
   business-side API surface.
 - Frontend removes session-only lifecycle overlays.

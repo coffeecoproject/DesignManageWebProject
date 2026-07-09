@@ -1,23 +1,46 @@
 import { financeTransactionRecords, type FinanceTransactionRecord } from './financeData';
-import { financeInvoiceRecords } from './financeInvoiceData';
+import { buildSeedFinanceBankReconciliationLinks } from './financeBankReconciliationModel';
+import { financeInvoiceRecords, type FinanceInvoiceRecord } from './financeInvoiceData';
 import { financeReceivablePayableRecords, type FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import { financeTaxMatterRecords, type FinanceTaxMatterRecord } from './financeTaxFilingData';
+import type { LedgerOpeningAdjustmentVoucherRecord } from './financeLedgerInitializationModel';
 import {
+  applyAccountingPeriodCloseLock,
   applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
   buildAccountingVoucherMetrics,
   buildAccountingVouchers,
-  canPrepareAccountingVoucher,
-  canPostAccountingVoucher,
+  buildAccountingVoucherFromLaterPeriodAdjustment,
+  canBookAccountingVoucher,
+  canCreateLaterPeriodAccountingVoucherAdjustment,
   canReverseAccountingVoucher,
+  canSubmitLaterPeriodAccountingVoucherAdjustment,
+  canSubmitAccountingVoucherReversal,
+  createAccountingVoucherLifecycleRecord,
+  createLaterPeriodAccountingVoucherAdjustmentRecord,
+  createReversalAccountingVoucherSnapshot,
+  createReversedAccountingVoucherSnapshot,
   defaultAccountingVoucherFilters,
-  getNextAccountingVoucherFormalNo,
+  getAccountingVoucherDeepLinkTargetId,
+  getDefaultLaterPeriodAdjustmentAccountingPeriod,
+  getAvailableLaterPeriodAdjustmentAccountingPeriod,
+  getAccountingVoucherDefaultReversalDate,
+  getAccountingVoucherFiltersFromQueryString,
+  getAccountingPeriodClosedReason,
+  getAccountingVoucherPeriodLockNotice,
+  getClosedAccountingPeriodReadbackNotice,
+  getNextAccountingVoucherNo,
   getAccountingVoucherCreditTotal,
   getAccountingVoucherDebitTotal,
   getAccountingVoucherIssueSummary,
+  guardAccountingPeriodOpen,
   isAccountingVoucherBalanced,
+  isAccountingPeriodLocked,
   matchesAccountingVoucherFilters,
+  validateLaterPeriodAccountingVoucherAdjustment,
+  validateAccountingVoucherReversal,
   type AccountingPeriodLockRecord,
+  type AccountingVoucherLaterPeriodAdjustmentRecord,
   type AccountingVoucherIssueCode,
   type AccountingVoucherLifecycleRecord,
   type AccountingVoucherLine,
@@ -49,6 +72,26 @@ function getVoucherBySourceNo(rows: AccountingVoucherRecord[], sourceNo: string)
   }
 
   return voucher;
+}
+
+function buildAccountingVouchersForTest(
+  receivablePayableRows: FinanceReceivablePayableRecord[],
+  financeRows: FinanceTransactionRecord[],
+  invoiceRows: FinanceInvoiceRecord[] = [],
+  taxMatterRows: FinanceTaxMatterRecord[] = [],
+  bankReconciliationRows = buildSeedFinanceBankReconciliationLinks(financeRows),
+  openingAdjustmentRows: LedgerOpeningAdjustmentVoucherRecord[] = [],
+  laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = []
+) {
+  return buildAccountingVouchers(
+    receivablePayableRows,
+    financeRows,
+    invoiceRows,
+    taxMatterRows,
+    bankReconciliationRows,
+    openingAdjustmentRows,
+    laterPeriodAdjustmentRows
+  );
 }
 
 function getTaxMatterByNo(matterNo: string) {
@@ -87,6 +130,53 @@ function getLineBySubjectCode(record: AccountingVoucherRecord, subjectCode: stri
   return line;
 }
 
+function createBookedLifecycleRow(
+  record: AccountingVoucherRecord,
+  voucherNo = '记-202606-001',
+  bookedAt = '2026-06-27 17:10'
+): AccountingVoucherLifecycleRecord {
+  return createAccountingVoucherLifecycleRecord(record, voucherNo, '李明', bookedAt);
+}
+
+function createReversedLifecycleRows(record: AccountingVoucherRecord) {
+  const booked = createBookedLifecycleRow(record, '记-202606-001');
+  const reversedAt = '2026-06-27 17:20';
+  const reversalSnapshot = createReversalAccountingVoucherSnapshot({
+    actor: '李明',
+    voucherNo: '记-202606-002',
+    originalRecord: booked.snapshot,
+    reason: '测试冲销',
+    reversedAt
+  });
+  const reversedSnapshot = createReversedAccountingVoucherSnapshot({
+    record: booked.snapshot,
+    reversedAt,
+    reversedBy: '李明',
+    reversedByVoucherId: reversalSnapshot.id,
+    reversalReason: '测试冲销'
+  });
+
+  return [
+    {
+      accountingPeriod: reversalSnapshot.accountingPeriod,
+      bookedAt: reversalSnapshot.bookedAt ?? reversedAt,
+      bookedBy: reversalSnapshot.bookedBy ?? '李明',
+      voucherNo: reversalSnapshot.voucherNo,
+      snapshot: reversalSnapshot,
+      status: '已记账',
+      voucherId: reversalSnapshot.id
+    },
+    {
+      ...booked,
+      reversedAt,
+      reversedBy: '李明',
+      reversalReason: '测试冲销',
+      snapshot: reversedSnapshot,
+      status: '已冲销'
+    }
+  ] satisfies AccountingVoucherLifecycleRecord[];
+}
+
 function createAdjustmentTransaction(overrides: Partial<FinanceTransactionRecord> = {}): FinanceTransactionRecord {
   const origin = financeTransactionRecords.find((record) => record.transactionNo === 'FIN-202606-0004') ?? financeTransactionRecords[0]!;
 
@@ -117,6 +207,26 @@ function createAdjustmentTransaction(overrides: Partial<FinanceTransactionRecord
     status: '已入账',
     transactionNo: 'FIN-ADJ-202606-0001',
     voucherStatus: '已上传',
+    ...overrides
+  };
+}
+
+function createOpeningAdjustmentVoucher(
+  overrides: Partial<LedgerOpeningAdjustmentVoucherRecord> = {}
+): LedgerOpeningAdjustmentVoucherRecord {
+  return {
+    accountingPeriod: '2026-06',
+    amount: 1_200,
+    balanceSide: '借方',
+    createdAt: '2026-06-30 17:30',
+    createdBy: '李明',
+    evidenceName: '期初银行对账差异说明-202606',
+    id: 'ledger-opening-adjustment-test',
+    reason: '期初银行余额核对差异',
+    status: '待记账',
+    subjectCode: '1002',
+    subjectName: '银行存款',
+    voucherNo: 'INIT-ADJ-202606-0001',
     ...overrides
   };
 }
@@ -196,9 +306,37 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
 
 const tests: UnitTest[] = [
   {
+    name: 'derives accounting voucher filters and target drawer from deep-link query',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const targetVoucher = vouchers.find((record) => record.status === '待记账' && record.accountingPeriod === '2026-06');
+
+      if (!targetVoucher) {
+        throw new Error('expected ready-to-prepare voucher');
+      }
+
+      const query = `period=${targetVoucher.accountingPeriod}&status=${targetVoucher.status}&sourceNo=${targetVoucher.sourceNo}`;
+      const filters = getAccountingVoucherFiltersFromQueryString(query);
+
+      assertEqual(filters.accountingPeriodTime.mode, 'month', 'deep link should switch date filter to month mode');
+      if (filters.accountingPeriodTime.mode !== 'month') {
+        throw new Error('expected month filter');
+      }
+
+      assertEqual(filters.accountingPeriodTime.month, targetVoucher.accountingPeriod, 'deep link should use target accounting period');
+      assertEqual(filters.status, targetVoucher.status, 'deep link should use target voucher status');
+      assertEqual(filters.keyword, targetVoucher.sourceNo, 'deep link should search by source number');
+      assertEqual(
+        getAccountingVoucherDeepLinkTargetId(vouchers, query),
+        targetVoucher.id,
+        'deep link should locate the exact voucher row for drawer opening'
+      );
+    }
+  },
+  {
     name: 'builds balanced statusized vouchers from business confirmations, reviewed cash flows, and invoice facts',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const metrics = buildAccountingVoucherMetrics(vouchers);
       const reviewedNonAdjustmentRows = financeTransactionRecords.filter(
         (record) => record.status === '已入账' && record.sourceType !== '流水冲正' && record.sourceType !== '流水补差'
@@ -208,16 +346,15 @@ const tests: UnitTest[] = [
       assertEqual(vouchers.every(isAccountingVoucherBalanced), true, 'every derived voucher row should balance');
       assertEqual(metrics.totalCount, vouchers.length, 'metrics should count all voucher rows');
       assertEqual(metrics.balancedCount, vouchers.length, 'metrics should count every derived voucher row as balanced');
-      assertEqual(metrics.readyToPrepareCount > 0, true, 'complete rows should be ready to prepare');
+      assertEqual(metrics.readyToBookCount > 0, true, 'complete rows should be ready to book');
       assertEqual(metrics.issueCount > 0, true, 'invoice-incomplete rows should create issue vouchers');
       assertEqual(metrics.pendingGenerationCount > 0, true, 'bank-unreconciled rows should wait for generation');
       assertEqual(
-        metrics.readyToPrepareCount + metrics.issueCount + metrics.pendingGenerationCount,
+        metrics.readyToBookCount + metrics.issueCount + metrics.pendingGenerationCount,
         vouchers.length,
         'current frontend rows should be ready, waiting, or require handling'
       );
-      assertEqual(metrics.preparedCount, 0, 'frontend derived rows are not formal prepared vouchers');
-      assertEqual(metrics.postedCount, 0, 'frontend derived rows are not posted vouchers');
+      assertEqual(metrics.bookedCount, 0, 'frontend derived rows are not booked vouchers');
       assertEqual(metrics.reversedCount, 0, 'frontend derived rows are not reversed vouchers');
       assertEqual(
         vouchers.filter((record) => record.businessType === '权责凭证').length,
@@ -245,7 +382,7 @@ const tests: UnitTest[] = [
         documentNo: 'AR-PENDING-001',
         id: 'ar-pending-001'
       };
-      const vouchers = buildAccountingVouchers([pendingRecord, ...financeReceivablePayableRecords], financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest([pendingRecord, ...financeReceivablePayableRecords], financeTransactionRecords, financeInvoiceRecords);
 
       assertEqual(
         vouchers.some((record) => record.sourceNo === pendingRecord.documentNo),
@@ -257,33 +394,54 @@ const tests: UnitTest[] = [
   {
     name: 'creates issued receivable entries with receivable debit, revenue credit, and tax credit',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const voucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
       const taxLine = getLineBySubjectCode(voucher, '2221.01');
 
       assertEqual(voucher.sourceType, '业务确认', 'receivable/payable source should be business confirmation');
       assertEqual(voucher.businessType, '权责凭证', 'receivable/payable confirmation should create accrual voucher');
       assertEqual(voucher.kind, '转账凭证', 'business confirmation should use transfer voucher');
-      assertEqual(voucher.status, '待制单', 'fully invoiced receivable should be ready to prepare');
+      assertEqual(voucher.status, '待记账', 'fully invoiced receivable should be ready to prepare');
       assertEqual(voucher.invoiceRefs.length, 1, 'fully invoiced receivable should retain invoice reference');
       assertEqual(getLineSubjectCode(voucher, '借方'), '1122', 'receivable confirmation debit should post to accounts receivable');
-      assertEqual(getLineSubjectCode(voucher, '贷方'), '6001', 'contract receivable confirmation credit should post to main business revenue');
+      assertEqual(getLineSubjectCode(voucher, '贷方'), '5001', 'contract receivable confirmation credit should post to main business revenue');
       assertEqual(taxLine.amount, 673.27, 'issued receivable should split output tax from invoice tax amount');
       assertEqual(getAccountingVoucherDebitTotal(voucher), 68000, 'receivable confirmation debit amount should match source amount');
       assertEqual(getAccountingVoucherCreditTotal(voucher), 68000, 'receivable confirmation credit amount should match source amount');
     }
   },
   {
+    name: 'does not duplicate confirmation wording for project stage receivable summary',
+    run: () => {
+      const projectStageRecord = {
+        ...financeReceivablePayableRecords[0]!,
+        documentNo: 'AR-PROJECT-STAGE-SUMMARY',
+        id: 'rp-project-stage-summary',
+        sourceTitle: '光谷商业空间方案阶段',
+        sourceType: '项目阶段确认' as const
+      };
+      const vouchers = buildAccountingVouchersForTest(
+        [projectStageRecord, ...financeReceivablePayableRecords],
+        financeTransactionRecords,
+        financeInvoiceRecords
+      );
+      const voucher = getVoucherBySourceNo(vouchers, projectStageRecord.documentNo);
+
+      assertEqual(voucher.summary, '项目阶段确认：光谷商业空间方案阶段', 'project stage summary should not append confirmation twice');
+      assertEqual(voucher.summary.includes('确认确认'), false, 'project stage summary should not contain duplicated confirmation wording');
+    }
+  },
+  {
     name: 'creates payable confirmation entries with expense debit and liability credit',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const salaryVoucher = getVoucherBySourceNo(vouchers, 'AP-202606-002');
       const outsourceVoucher = getVoucherBySourceNo(vouchers, 'AP-202606-003');
       const reimbursementVoucher = getVoucherBySourceNo(vouchers, 'AP-202605-018');
 
-      assertEqual(getLineSubjectCode(salaryVoucher, '借方'), '6602.01', 'salary payable confirmation should debit payroll expense detail subject');
+      assertEqual(getLineSubjectCode(salaryVoucher, '借方'), '5602.01', 'salary payable confirmation should debit payroll expense detail subject');
       assertEqual(getLineSubjectCode(salaryVoucher, '贷方'), '2211.01', 'salary payable confirmation should credit salary payable detail subject');
-      assertEqual(getLineSubjectCode(outsourceVoucher, '借方'), '6401', 'outsourcing payable confirmation should debit main business cost');
+      assertEqual(getLineSubjectCode(outsourceVoucher, '借方'), '5401', 'outsourcing payable confirmation should debit main business cost');
       assertEqual(getLineSubjectCode(outsourceVoucher, '贷方'), '2202', 'outsourcing payable confirmation should credit accounts payable');
       assertEqual(outsourceVoucher.invoiceRefs.length, 1, 'matched input invoice should be retained as cost basis');
       assertEqual(
@@ -297,15 +455,20 @@ const tests: UnitTest[] = [
   {
     name: 'creates cash settlement entries only after transaction review and bank reconciliation',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const cashReceiptVoucher = getVoucherBySourceNo(vouchers, 'FIN-202606-0001');
       const salaryPaymentVoucher = getVoucherBySourceNo(vouchers, 'FIN-202606-0003');
       const pendingReviewVoucher = vouchers.find((record) => record.sourceNo === 'FIN-202606-0004');
 
       assertEqual(cashReceiptVoucher.sourceType, '收付款', 'cash-flow source should be cash settlement');
       assertEqual(cashReceiptVoucher.businessType, '资金凭证', 'ordinary reviewed transaction should create cash voucher');
-      assertEqual(cashReceiptVoucher.status, '待制单', 'reviewed and bank-reconciled transaction should be ready to prepare');
+      assertEqual(cashReceiptVoucher.status, '待记账', 'reviewed and bank-reconciled transaction should be ready to prepare');
       assertEqual(cashReceiptVoucher.kind, '收款凭证', 'income cash-flow should use receipt voucher');
+      assertEqual(
+        cashReceiptVoucher.sourceRefs.some((sourceRef) => sourceRef.module === '银行对账' && sourceRef.role === '银行依据'),
+        true,
+        'cash voucher should include bank reconciliation source evidence'
+      );
       assertEqual(getLineSubjectCode(cashReceiptVoucher, '借方'), '1002', 'cash receipt should debit bank deposit');
       assertEqual(getLineSubjectCode(cashReceiptVoucher, '贷方'), '1122', 'cash receipt should credit accounts receivable');
       assertEqual(salaryPaymentVoucher.status, '待生成', 'reviewed but unreconciled salary payment should wait for bank reconciliation');
@@ -318,6 +481,21 @@ const tests: UnitTest[] = [
       assertEqual(getLineSubjectCode(salaryPaymentVoucher, '借方'), '2211.01', 'salary payment should debit salary payable detail subject');
       assertEqual(getLineSubjectCode(salaryPaymentVoucher, '贷方'), '1002', 'salary payment should credit bank deposit');
       assertEqual(pendingReviewVoucher, undefined, 'pending-review cash-flow should not create accounting voucher');
+    }
+  },
+  {
+    name: 'requires explicit bank reconciliation source after reviewed transaction is reconciled',
+    run: () => {
+      const reconciledTransaction = financeTransactionRecords.find((record) => record.transactionNo === 'FIN-202606-0001')!;
+      const vouchers = buildAccountingVouchers([], [reconciledTransaction], [], [], []);
+      const voucher = getVoucherBySourceNo(vouchers, reconciledTransaction.transactionNo);
+
+      assertEqual(voucher.status, '需处理', 'reconciled cash voucher without bank source should require handling');
+      assertIncludes(
+        voucher.issueReasons,
+        'bank_reconciliation_source_missing' satisfies AccountingVoucherIssueCode,
+        'reconciled cash voucher should keep bank source evidence as a hard prerequisite'
+      );
     }
   },
   {
@@ -337,7 +515,7 @@ const tests: UnitTest[] = [
         reconciledAt: undefined,
         transactionNo: 'FIN-ADJ-202606-0003'
       });
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, [
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, [
         reviewedAdjustment,
         pendingAdjustment,
         unreconciledAdjustment,
@@ -348,8 +526,8 @@ const tests: UnitTest[] = [
       const unreconciledVoucher = getVoucherBySourceNo(vouchers, unreconciledAdjustment.transactionNo);
 
       assertEqual(adjustmentVoucher.businessType, '调整凭证', 'reviewed adjustment should create adjustment voucher');
-      assertEqual(adjustmentVoucher.summary.includes('补差入账'), true, 'adjustment voucher summary should preserve adjustment mode');
-      assertEqual(adjustmentVoucher.status, '待制单', 'reviewed and bank-reconciled adjustment with evidence should be ready to prepare');
+      assertEqual(adjustmentVoucher.summary.includes('补差确认'), true, 'adjustment voucher summary should preserve adjustment mode without cash-ledger booking wording');
+      assertEqual(adjustmentVoucher.status, '待记账', 'reviewed and bank-reconciled adjustment with evidence should be ready to prepare');
       assertEqual(unreconciledVoucher.status, '待生成', 'reviewed adjustment should wait until bank reconciliation is complete');
       assertIncludes(
         unreconciledVoucher.issueReasons,
@@ -357,6 +535,37 @@ const tests: UnitTest[] = [
         'unreconciled adjustment should expose bank reconciliation prerequisite'
       );
       assertEqual(pendingVoucher, undefined, 'pending adjustment should not create accounting voucher');
+    }
+  },
+  {
+    name: 'creates opening-adjustment voucher candidates and ledger entries after booking',
+    run: () => {
+      const openingAdjustment = createOpeningAdjustmentVoucher({ createdAt: '2026-07-01 09:30' });
+      const vouchers = buildAccountingVouchersForTest([], [], [], [], [], [openingAdjustment]);
+      const voucher = getVoucherBySourceNo(vouchers, openingAdjustment.voucherNo);
+
+      assertEqual(voucher.accountingPeriod, '2026-06', 'opening adjustment should use its accounting period instead of creation month');
+      assertEqual(voucher.businessType, '调整凭证', 'opening adjustment should create adjustment voucher candidate');
+      assertEqual(voucher.sourceModule, '账套初始化', 'opening adjustment should keep account-set initialization as source module');
+      assertEqual(voucher.sourceType, '期初调整', 'opening adjustment should keep opening-adjustment source type');
+      assertEqual(voucher.status, '待记账', 'complete opening adjustment should be ready to prepare');
+      assertEqual(voucher.kind, '转账凭证', 'opening adjustment should be a transfer voucher');
+      assertEqual(getLineSubjectCode(voucher, '借方'), '1002', 'debit-side opening adjustment should debit target subject');
+      assertEqual(getLineSubjectCode(voucher, '贷方'), '3104', 'opening adjustment should credit retained-profit carry subject');
+
+      const bookedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(voucher, '记-202606-009')]);
+      const ledgerEntries = buildAccountingLedgerEntries(bookedRows);
+
+      assertEqual(
+        ledgerEntries.some((entry) => entry.subjectCode === '1002' && entry.debitAmount === 1_200),
+        true,
+        'booked opening adjustment should debit target subject in general-ledger entries'
+      );
+      assertEqual(
+        ledgerEntries.some((entry) => entry.subjectCode === '3104' && entry.creditAmount === 1_200),
+        true,
+        'booked opening adjustment should credit carry subject in general-ledger entries'
+      );
     }
   },
   {
@@ -368,7 +577,7 @@ const tests: UnitTest[] = [
         reconciliationStatus: '对账异常' as const,
         transactionNo: 'FIN-BANK-ABNORMAL-001'
       };
-      const vouchers = buildAccountingVouchers([], [abnormalTransaction]);
+      const vouchers = buildAccountingVouchersForTest([], [abnormalTransaction]);
       const voucher = getVoucherBySourceNo(vouchers, abnormalTransaction.transactionNo);
 
       assertEqual(voucher.status, '需处理', 'abnormal bank reconciliation should require handling');
@@ -382,15 +591,17 @@ const tests: UnitTest[] = [
   {
     name: 'creates tax accrual vouchers from completed tax matters without duplicating payment cash facts',
     run: () => {
-      const vouchers = buildAccountingVouchers([], financeTransactionRecords, [], financeTaxMatterRecords);
+      const vouchers = buildAccountingVouchersForTest([], financeTransactionRecords, [], financeTaxMatterRecords);
       const vatVoucher = getVoucherBySourceNo(vouchers, 'TAX-2026Q1-VAT');
       const citVoucher = getVoucherBySourceNo(vouchers, 'TAX-2026Q1-CIT');
       const vatCashVoucher = getVoucherBySourceNo(vouchers, 'FIN-202604-0009');
 
       assertEqual(vatVoucher.businessType, '税费凭证', 'completed tax matter should create tax voucher');
       assertEqual(vatVoucher.sourceType, '税费事项', 'tax voucher should retain tax matter source type');
-      assertEqual(vatVoucher.status, '待制单', 'completed tax matter with receipts should be ready to prepare');
-      assertEqual(getLineSubjectCode(vatVoucher, '借方'), '6403', 'VAT surcharge tax matter should debit taxes and surcharges');
+      assertEqual(vatVoucher.accountingPeriod, '2026-03', 'Q1 tax accrual voucher should belong to the tax period end month');
+      assertEqual(vatVoucher.voucherDate, '2026-04-12', 'tax voucher should still display the declaration or confirmation date');
+      assertEqual(vatVoucher.status, '待记账', 'completed tax matter with receipts should be ready to prepare');
+      assertEqual(getLineSubjectCode(vatVoucher, '借方'), '5403', 'VAT surcharge tax matter should debit taxes and surcharges');
       assertEqual(getLineSubjectCode(vatVoucher, '贷方'), '2221.01', 'VAT tax matter should credit VAT payable detail subject');
       assertEqual(
         vatVoucher.sourceRefs.some((sourceRef) => sourceRef.recordNo === 'FIN-202604-0009' && sourceRef.role === '缴款依据'),
@@ -398,9 +609,11 @@ const tests: UnitTest[] = [
         'tax voucher should retain linked payment cash-flow as payment basis'
       );
       assertEqual(citVoucher.businessType, '税费凭证', 'enterprise income tax should create tax voucher');
-      assertEqual(getLineSubjectCode(citVoucher, '借方'), '6801', 'enterprise income tax should debit income tax expense');
+      assertEqual(citVoucher.accountingPeriod, '2026-03', 'Q1 income-tax accrual voucher should belong to the tax period end month');
+      assertEqual(getLineSubjectCode(citVoucher, '借方'), '5801', 'enterprise income tax should debit income tax expense');
       assertEqual(vatCashVoucher.businessType, '资金凭证', 'linked tax payment cash-flow should remain cash voucher');
-      assertEqual(vatCashVoucher.status, '待制单', 'reviewed and reconciled tax payment cash-flow should remain ready to prepare');
+      assertEqual(vatCashVoucher.accountingPeriod, '2026-04', 'linked tax payment cash-flow should stay in the actual payment month');
+      assertEqual(vatCashVoucher.status, '待记账', 'reviewed and reconciled tax payment cash-flow should remain ready to prepare');
     }
   },
   {
@@ -413,7 +626,7 @@ const tests: UnitTest[] = [
         matterNo: 'TAX-PENDING-VOUCHER',
         processStatus: '待上传回执'
       });
-      const vouchers = buildAccountingVouchers([], [], [], [pendingTaxMatter]);
+      const vouchers = buildAccountingVouchersForTest([], [], [], [pendingTaxMatter]);
       const voucher = getVoucherBySourceNo(vouchers, pendingTaxMatter.matterNo);
 
       assertEqual(voucher.status, '待生成', 'unfinished tax matter should wait for completion');
@@ -432,7 +645,7 @@ const tests: UnitTest[] = [
         id: 'tax-matter-missing-receipt-voucher',
         matterNo: 'TAX-MISSING-RECEIPT'
       });
-      const vouchers = buildAccountingVouchers([], [], [], [missingReceiptTaxMatter]);
+      const vouchers = buildAccountingVouchersForTest([], [], [], [missingReceiptTaxMatter]);
       const voucher = getVoucherBySourceNo(vouchers, missingReceiptTaxMatter.matterNo);
 
       assertEqual(voucher.status, '需处理', 'completed tax matter missing required receipt should require handling');
@@ -454,7 +667,7 @@ const tests: UnitTest[] = [
         payableAmount: 0,
         paymentStatus: '无需缴纳'
       });
-      const vouchers = buildAccountingVouchers([], [], [], [zeroDeclarationTaxMatter]);
+      const vouchers = buildAccountingVouchersForTest([], [], [], [zeroDeclarationTaxMatter]);
 
       assertEqual(
         vouchers.some((record) => record.sourceNo === zeroDeclarationTaxMatter.matterNo),
@@ -464,84 +677,78 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'applies preparation and posting lifecycle and derives ledger entries from posted vouchers only',
+    name: 'applies booking lifecycle and derives ledger entries from booked vouchers',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords, financeTaxMatterRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords, financeTaxMatterRecords);
       const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
-      const preparedLifecycleRows: AccountingVoucherLifecycleRecord[] = [
-        {
-          accountingPeriod: readyVoucher.accountingPeriod,
-          formalVoucherNo: getNextAccountingVoucherFormalNo([], readyVoucher.accountingPeriod),
-          preparedAt: '2026-06-27 17:00',
-          preparedBy: '李明',
-          status: '已制单',
-          voucherId: readyVoucher.id
-        }
+      const bookedLifecycleRows: AccountingVoucherLifecycleRecord[] = [
+        createBookedLifecycleRow(readyVoucher, getNextAccountingVoucherNo([], readyVoucher.accountingPeriod))
       ];
-      const preparedRows = applyAccountingVoucherLifecycle(vouchers, preparedLifecycleRows);
-      const preparedVoucher = getVoucherBySourceNo(preparedRows, readyVoucher.sourceNo);
-      const postedLifecycleRows: AccountingVoucherLifecycleRecord[] = [
-        {
-          ...preparedLifecycleRows[0]!,
-          postedAt: '2026-06-27 17:10',
-          postedBy: '李明',
-          status: '已入账',
-        }
-      ];
-      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, postedLifecycleRows);
-      const postedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, bookedLifecycleRows);
+      const bookedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
       const ledgerEntries = buildAccountingLedgerEntries(lifecycleAppliedRows);
 
-      assertEqual(canPrepareAccountingVoucher(readyVoucher), true, 'ready voucher should be preparable');
-      assertEqual(preparedVoucher.status, '已制单', 'preparation lifecycle should create a formal unposted voucher');
-      assertEqual(preparedVoucher.voucherNo, '记-202606-001', 'prepared voucher should use formal voucher number');
-      assertEqual(canPostAccountingVoucher(preparedVoucher), true, 'prepared voucher should be postable');
-      assertEqual(buildAccountingLedgerEntries(preparedRows).length, 0, 'prepared but unposted voucher should not write ledger entries');
-      assertEqual(postedVoucher.status, '已入账', 'posting lifecycle row should mark voucher as posted');
-      assertEqual(postedVoucher.voucherNo, '记-202606-001', 'posted voucher should use formal voucher number');
-      assertEqual(canPostAccountingVoucher(postedVoucher), false, 'posted voucher should not be postable again');
-      assertEqual(canReverseAccountingVoucher(postedVoucher), true, 'posted voucher should be reversible while period is open');
+      assertEqual(canBookAccountingVoucher(readyVoucher), true, 'ready voucher should be bookable');
+      assertEqual(bookedVoucher.status, '已记账', 'booking lifecycle row should mark voucher as booked');
+      assertEqual(bookedVoucher.voucherNo, '记-202606-001', 'booked voucher should keep the session voucher number');
+      assertEqual(bookedVoucher.bookedBy, '李明', 'booked voucher should retain bookkeeper');
+      assertEqual(bookedVoucher.bookedAt, '2026-06-27 17:10', 'booked voucher should retain booking time');
+      assertEqual(canBookAccountingVoucher(bookedVoucher), false, 'booked voucher should not be bookable again');
+      assertEqual(canReverseAccountingVoucher(bookedVoucher), true, 'booked voucher should be reversible while period is open');
       assertEqual(
-        ledgerEntries.filter((entry) => entry.voucherId === postedVoucher.id).length,
-        postedVoucher.lines.length,
-        'ledger should contain one entry per posted voucher line'
+        ledgerEntries.filter((entry) => entry.voucherId === bookedVoucher.id).length,
+        bookedVoucher.lines.length,
+        'ledger should contain one entry per booked voucher line'
       );
       assertEqual(
-        ledgerEntries.some((entry) => entry.formalVoucherNo === postedVoucher.voucherNo && entry.subjectCode === '1122'),
+        ledgerEntries.some((entry) => entry.voucherNo === bookedVoucher.voucherNo && entry.subjectCode === '1122'),
         true,
-        'ledger entries should retain formal voucher number and subject code'
+        'ledger entries should retain the session voucher number and subject code'
       );
     }
   },
   {
-    name: 'blocks preparation, posting and reversal when accounting period is closed',
+    name: 'freezes session voucher snapshot after booking even when generated source changes',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
-      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [
-        {
-          accountingPeriod: readyVoucher.accountingPeriod,
-          formalVoucherNo: '记-202606-001',
-          preparedAt: '2026-06-27 17:00',
-          preparedBy: '李明',
-          postedAt: '2026-06-27 17:00',
-          postedBy: '李明',
-          status: '已入账',
-          voucherId: readyVoucher.id
-        }
-      ]);
-      const preparedRows = applyAccountingVoucherLifecycle(vouchers, [
-        {
-          accountingPeriod: readyVoucher.accountingPeriod,
-          formalVoucherNo: '记-202606-001',
-          preparedAt: '2026-06-27 17:00',
-          preparedBy: '李明',
-          status: '已制单',
-          voucherId: readyVoucher.id
-        }
-      ]);
-      const preparedVoucher = getVoucherBySourceNo(preparedRows, readyVoucher.sourceNo);
-      const postedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const bookedLifecycleRows = [createBookedLifecycleRow(readyVoucher)];
+      const changedGeneratedRows = vouchers.map((record) =>
+        record.id === readyVoucher.id
+          ? {
+              ...record,
+              amount: 1,
+              sourceTitle: '来源已变化',
+              summary: '来源已变化',
+              lines: record.lines.map((line) => ({ ...line, amount: 1, summary: '来源已变化' }))
+            }
+          : record
+      );
+      const rowsAfterSourceChange = applyAccountingVoucherLifecycle(changedGeneratedRows, bookedLifecycleRows);
+      const frozenVoucher = getVoucherBySourceNo(rowsAfterSourceChange, readyVoucher.sourceNo);
+      const rowsAfterSourceRemoval = applyAccountingVoucherLifecycle(
+        vouchers.filter((record) => record.id !== readyVoucher.id),
+        bookedLifecycleRows
+      );
+
+      assertEqual(frozenVoucher.amount, readyVoucher.amount, 'session voucher snapshot should keep booked amount');
+      assertEqual(frozenVoucher.sourceTitle, readyVoucher.sourceTitle, 'session voucher snapshot should keep booked source title');
+      assertEqual(
+        rowsAfterSourceRemoval.some((record) => record.id === readyVoucher.id && record.status === '已记账'),
+        true,
+        'session voucher snapshot should remain visible even if the source candidate disappears'
+      );
+    }
+  },
+  {
+    name: 'blocks booking and reversal when accounting period is closed',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(readyVoucher)]);
+      const bookedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const reversedRows = applyAccountingVoucherLifecycle(vouchers, createReversedLifecycleRows(readyVoucher));
+      const reversedVoucher = reversedRows.find((record) => record.sourceNo === readyVoucher.sourceNo && record.status === '已冲销');
       const lockedPeriods: AccountingPeriodLockRecord[] = [
         {
           accountingPeriod: readyVoucher.accountingPeriod,
@@ -552,56 +759,500 @@ const tests: UnitTest[] = [
         }
       ];
 
-      assertEqual(canPrepareAccountingVoucher(readyVoucher, lockedPeriods), false, 'closed period should block preparation');
-      assertEqual(canPostAccountingVoucher(preparedVoucher, lockedPeriods), false, 'closed period should block posting');
-      assertEqual(canReverseAccountingVoucher(postedVoucher, lockedPeriods), false, 'closed period should block reversal');
+      if (!reversedVoucher) {
+        throw new Error('expected reversed voucher');
+      }
+
+      assertEqual(canBookAccountingVoucher(readyVoucher, lockedPeriods), false, 'closed period should block booking');
+      assertEqual(canReverseAccountingVoucher(bookedVoucher, lockedPeriods), false, 'closed period should block reversal');
+      assertEqual(isAccountingPeriodLocked(lockedPeriods, readyVoucher.accountingPeriod), true, 'closed lock should mark period locked');
+      assertEqual(
+        guardAccountingPeriodOpen(lockedPeriods, readyVoucher.accountingPeriod, '记账').reason,
+        getAccountingPeriodClosedReason(readyVoucher.accountingPeriod, '记账'),
+        'period guard should expose a user-facing closed-period reason'
+      );
+      assertEqual(
+        guardAccountingPeriodOpen(lockedPeriods, '2026-07', '记账').allowed,
+        true,
+        'other open periods should remain mutable'
+      );
+      assertEqual(
+        getAccountingVoucherPeriodLockNotice(readyVoucher, lockedPeriods),
+        getAccountingPeriodClosedReason(readyVoucher.accountingPeriod, '记账'),
+        'ready voucher should explain why booking is blocked by period close'
+      );
+      assertEqual(
+        getAccountingVoucherPeriodLockNotice(bookedVoucher, lockedPeriods),
+        `${bookedVoucher.accountingPeriod} 已结账，不能在原期间冲销；如需修正，请创建后续调整事项。`,
+        'booked voucher should explain that historical reversal is replaced by later-period adjustment'
+      );
+      assertEqual(
+        getAccountingVoucherPeriodLockNotice(reversedVoucher, lockedPeriods),
+        getClosedAccountingPeriodReadbackNotice(reversedVoucher.accountingPeriod, '当前凭证'),
+        'closed-period reversed voucher should be readback-only'
+      );
+      assertEqual(
+        getAccountingVoucherPeriodLockNotice(readyVoucher, []),
+        undefined,
+        'open period should not show a period-lock notice'
+      );
     }
   },
   {
-    name: 'marks reversed lifecycle rows without producing ledger entries',
+    name: 'keeps frontend period close lock idempotent and preserves the first close record',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
-      const generatedVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
-      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [
+      const firstLock: AccountingPeriodLockRecord = {
+        accountingPeriod: '2026-06',
+        closeCheckSnapshot: [
+          {
+            code: 'general_ledger_trial_balance',
+            detail: '首次结账试算平衡。',
+            sourceSummary: '总账 / 2026-06',
+            status: '通过',
+            title: '总账试算'
+          }
+        ],
+        closeSummarySnapshot: {
+          blockedCheckCount: 0,
+          bookedVoucherCount: 3,
+          creditTotal: 1000,
+          debitTotal: 1000,
+          readyToBookVoucherCount: 0,
+          generatedVoucherCount: 3,
+          issueVoucherCount: 0,
+          pendingVoucherCount: 0,
+          pendingReviewCashFlowCount: 0,
+          socialInsurancePendingCount: 0,
+          taxHandlingPendingCount: 0,
+          trialBalanceDifference: 0,
+          trialBalanceStatus: '平衡',
+          unbookedVoucherCount: 0,
+          unreconciledCashFlowCount: 0,
+          voucherCount: 3
+        },
+        lockedAt: '2026-06-30 18:00',
+        lockedBy: '李明',
+        reason: '6 月月结',
+        status: '已结账'
+      };
+      const duplicateLock: AccountingPeriodLockRecord = {
+        accountingPeriod: '2026-06',
+        closeCheckSnapshot: [
+          {
+            code: 'general_ledger_trial_balance',
+            detail: '重复结账试算结果。',
+            sourceSummary: '总账 / 重复',
+            status: '需处理',
+            title: '总账试算'
+          }
+        ],
+        closeSummarySnapshot: {
+          blockedCheckCount: 1,
+          bookedVoucherCount: 9,
+          creditTotal: 2000,
+          debitTotal: 1990,
+          readyToBookVoucherCount: 0,
+          generatedVoucherCount: 9,
+          issueVoucherCount: 1,
+          pendingVoucherCount: 0,
+          pendingReviewCashFlowCount: 0,
+          socialInsurancePendingCount: 0,
+          taxHandlingPendingCount: 0,
+          trialBalanceDifference: 10,
+          trialBalanceStatus: '不平衡',
+          unbookedVoucherCount: 0,
+          unreconciledCashFlowCount: 0,
+          voucherCount: 9
+        },
+        lockedAt: '2026-07-01 09:00',
+        lockedBy: '王会计',
+        reason: '重复确认',
+        status: '已结账'
+      };
+      const reopenedLock: AccountingPeriodLockRecord = {
+        accountingPeriod: '2026-05',
+        lockedAt: '2026-05-31 18:00',
+        lockedBy: '李明',
+        reason: '已撤回',
+        status: '已反结账'
+      };
+      const closedAfterReopen: AccountingPeriodLockRecord = {
+        accountingPeriod: '2026-05',
+        lockedAt: '2026-06-01 10:00',
+        lockedBy: '王会计',
+        reason: '重新结账',
+        status: '已结账'
+      };
+
+      const rowsAfterFirstClose = applyAccountingPeriodCloseLock([], firstLock);
+      const rowsAfterDuplicateClose = applyAccountingPeriodCloseLock(rowsAfterFirstClose, duplicateLock);
+      const rowsAfterReclose = applyAccountingPeriodCloseLock([reopenedLock, ...rowsAfterDuplicateClose], closedAfterReopen);
+
+      assertEqual(rowsAfterFirstClose.length, 1, 'first close should write one frontend lock');
+      assertEqual(rowsAfterDuplicateClose.length, 1, 'duplicate close should not append another lock');
+      assertEqual(rowsAfterDuplicateClose[0]?.lockedAt, '2026-06-30 18:00', 'duplicate close should preserve first close time');
+      assertEqual(rowsAfterDuplicateClose[0]?.lockedBy, '李明', 'duplicate close should preserve first close actor');
+      assertEqual(rowsAfterDuplicateClose[0]?.reason, '6 月月结', 'duplicate close should preserve first close reason');
+      assertEqual(
+        rowsAfterDuplicateClose[0]?.closeCheckSnapshot?.[0]?.detail,
+        '首次结账试算平衡。',
+        'duplicate close should preserve first close-check snapshot'
+      );
+      assertEqual(
+        rowsAfterDuplicateClose[0]?.closeSummarySnapshot?.bookedVoucherCount,
+        3,
+        'duplicate close should preserve first close-summary snapshot'
+      );
+      assertEqual(rowsAfterReclose[0]?.accountingPeriod, '2026-05', 'reclosed period should be written at the front');
+      assertEqual(rowsAfterReclose[0]?.status, '已结账', 'reclose after reopened state should write a closed lock');
+      assertEqual(rowsAfterReclose[0]?.reason, '重新结账', 'reclose should replace a reopened status for the same period');
+    }
+  },
+  {
+    name: 'requires reversal date, same accounting period, and reason before reversal submission',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(readyVoucher)]);
+      const bookedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const validInput = {
+        reason: '合同确认金额重复，按原凭证冲销后重新记账',
+        reversedAt: getAccountingVoucherDefaultReversalDate(bookedVoucher)
+      };
+      const missingReasonInput = {
+        ...validInput,
+        reason: ' '
+      };
+      const crossPeriodInput = {
+        ...validInput,
+        reversedAt: '2026-07-01'
+      };
+
+      assertEqual(validateAccountingVoucherReversal(bookedVoucher, validInput).length, 0, 'valid reversal input should pass validation');
+      assertEqual(canSubmitAccountingVoucherReversal(bookedVoucher, validInput), true, 'valid reversal input should be submittable');
+      assertIncludes(
+        validateAccountingVoucherReversal(bookedVoucher, missingReasonInput),
+        '冲销原因必填',
+        'reversal reason should be required'
+      );
+      assertIncludes(
+        validateAccountingVoucherReversal(bookedVoucher, crossPeriodInput),
+        '冲销日期必须落在原凭证归属月份',
+        'reversal date should stay in the original voucher accounting period'
+      );
+      assertEqual(canSubmitAccountingVoucherReversal(bookedVoucher, missingReasonInput), false, 'blank reason should block reversal');
+      assertEqual(canSubmitAccountingVoucherReversal(bookedVoucher, crossPeriodInput), false, 'cross-period date should block reversal');
+    }
+  },
+  {
+    name: 'creates later-period adjustment candidates for booked vouchers in closed periods',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(readyVoucher)]);
+      const bookedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const lockedPeriods: AccountingPeriodLockRecord[] = [
         {
-          accountingPeriod: generatedVoucher.accountingPeriod,
-          formalVoucherNo: '记-202606-001',
-          preparedAt: '2026-06-27 17:00',
-          preparedBy: '李明',
-          postedAt: '2026-06-27 17:00',
-          postedBy: '李明',
-          reversedAt: '2026-06-27 17:20',
-          reversedBy: '李明',
-          reversalReason: '测试冲销',
-          status: '已冲销',
-          voucherId: generatedVoucher.id
+          accountingPeriod: bookedVoucher.accountingPeriod,
+          lockedAt: '2026-06-30 18:00',
+          lockedBy: '李明',
+          reason: '月结',
+          status: '已结账'
         }
+      ];
+      const input = {
+        accountingPeriod: getDefaultLaterPeriodAdjustmentAccountingPeriod(bookedVoucher),
+        adjustedAt: '2026-07-01',
+        reason: '历史期间收入确认口径需要在后续期间调整'
+      };
+
+      assertEqual(canReverseAccountingVoucher(bookedVoucher, lockedPeriods), false, 'closed period should keep same-period reversal blocked');
+      assertEqual(
+        canCreateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, lockedPeriods),
+        true,
+        'closed booked voucher should allow later-period adjustment entry'
+      );
+      assertEqual(
+        validateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, input, lockedPeriods).length,
+        0,
+        'valid later-period adjustment input should pass'
+      );
+      assertEqual(
+        canSubmitLaterPeriodAccountingVoucherAdjustment(bookedVoucher, input, lockedPeriods),
+        true,
+        'valid later-period adjustment input should be submittable'
+      );
+
+      const sourceRecord = createLaterPeriodAccountingVoucherAdjustmentRecord({
+        actor: '李明',
+        existingRows: [],
+        input,
+        originalRecord: bookedVoucher
+      });
+      const previewVoucher = buildAccountingVoucherFromLaterPeriodAdjustment(sourceRecord, 0)!;
+      const generatedRows = buildAccountingVouchersForTest([], [], [], [], [], [], [sourceRecord]);
+      const generatedVoucher = getVoucherBySourceNo(generatedRows, sourceRecord.adjustmentNo);
+      const targetVoucherNo = getNextAccountingVoucherNo([], generatedVoucher.accountingPeriod);
+      const bookedRows = applyAccountingVoucherLifecycle(generatedRows, [
+        createBookedLifecycleRow(generatedVoucher, targetVoucherNo)
       ]);
+      const bookedAdjustmentVoucher = getVoucherBySourceNo(bookedRows, sourceRecord.adjustmentNo);
+      const adjustmentLedgerEntries = buildAccountingLedgerEntries(bookedRows);
+
+      assertEqual(sourceRecord.candidateStatus, '待记账', 'later-period adjustment source should start as pending booking');
+      assertEqual(previewVoucher.accountingPeriod, '2026-07', 'preview adjustment voucher should use target adjustment period');
+      assertEqual(generatedVoucher.accountingPeriod, '2026-07', 'generated adjustment voucher should use target adjustment period');
+      assertEqual(generatedVoucher.sourceType, '后续调整', 'generated adjustment voucher should retain later-adjustment source type');
+      assertEqual(generatedVoucher.businessType, '调整凭证', 'later-period correction should create adjustment voucher candidate');
+      assertEqual(generatedVoucher.status, '待记账', 'later-period adjustment should still require session booking');
+      assertEqual(
+        generatedVoucher.sourceRefs.some((sourceRef) => sourceRef.role === '调整依据' && sourceRef.recordNo === bookedVoucher.voucherNo),
+        true,
+        'later-period adjustment should reference original booked voucher as adjustment basis'
+      );
+      assertEqual(
+        generatedVoucher.lines[0]?.side,
+        bookedVoucher.lines[0]?.side === '借方' ? '贷方' : '借方',
+        'later-period adjustment should create opposite entries from original voucher'
+      );
+      assertEqual(
+        buildAccountingLedgerEntries(generatedRows).length,
+        0,
+        'pending later-period adjustment candidate should not write ledger entries'
+      );
+      assertEqual(bookedAdjustmentVoucher.status, '已记账', 'booked later-period adjustment should become a posted voucher');
+      assertEqual(
+        adjustmentLedgerEntries.every((entry) => entry.accountingPeriod === '2026-07'),
+        true,
+        'posted later-period adjustment should write ledger entries only in target period'
+      );
+      assertEqual(
+        adjustmentLedgerEntries.some((entry) => entry.accountingPeriod === bookedVoucher.accountingPeriod),
+        false,
+        'posted later-period adjustment should not mutate historical-period ledger entries'
+      );
+      assertEqual(bookedVoucher.status, '已记账', 'original booked voucher should remain booked after later-period adjustment creation');
+    }
+  },
+  {
+    name: 'blocks later-period adjustment when original period is open or target period is invalid',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(readyVoucher)]);
+      const bookedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const closedOriginalPeriod: AccountingPeriodLockRecord[] = [
+        {
+          accountingPeriod: bookedVoucher.accountingPeriod,
+          lockedAt: '2026-06-30 18:00',
+          lockedBy: '李明',
+          reason: '月结',
+          status: '已结账'
+        }
+      ];
+      const closedOriginalAndTargetPeriods: AccountingPeriodLockRecord[] = [
+        ...closedOriginalPeriod,
+        {
+          accountingPeriod: '2026-07',
+          lockedAt: '2026-07-31 18:00',
+          lockedBy: '李明',
+          reason: '月结',
+          status: '已结账'
+        }
+      ];
+      const baseInput = {
+        accountingPeriod: '2026-07',
+        adjustedAt: '2026-07-01',
+        reason: '历史期间错误改由后续期间调整'
+      };
+
+      assertEqual(
+        canCreateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, []),
+        false,
+        'open original period should not use later-period adjustment'
+      );
+      assertEqual(
+        canCreateLaterPeriodAccountingVoucherAdjustment(readyVoucher, closedOriginalPeriod),
+        false,
+        'unbooked voucher should not expose later-period adjustment entry'
+      );
+      assertIncludes(
+        validateLaterPeriodAccountingVoucherAdjustment(readyVoucher, baseInput, closedOriginalPeriod),
+        '仅已记账且非冲销凭证可以创建后续调整事项',
+        'unbooked voucher should be rejected as later-period adjustment source'
+      );
+      assertIncludes(
+        validateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, baseInput, []),
+        '原凭证期间尚未结账，请使用冲销处理',
+        'open original period should guide users back to reversal'
+      );
+      assertIncludes(
+        validateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, {
+          ...baseInput,
+          accountingPeriod: bookedVoucher.accountingPeriod,
+          adjustedAt: `${bookedVoucher.accountingPeriod}-15`
+        }, closedOriginalPeriod),
+        '调整期间必须晚于原凭证归属月份',
+        'target period should be later than original period'
+      );
+      assertIncludes(
+        validateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, baseInput, closedOriginalAndTargetPeriods),
+        '调整期间已结账，不能创建后续调整事项',
+        'closed target period should block later-period adjustment'
+      );
+      assertEqual(
+        canSubmitLaterPeriodAccountingVoucherAdjustment(bookedVoucher, baseInput, closedOriginalAndTargetPeriods),
+        false,
+        'closed target period should not be submittable'
+      );
+    }
+  },
+  {
+    name: 'blocks duplicate later-period adjustment for the same original voucher and target period',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(readyVoucher)]);
+      const bookedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, readyVoucher.sourceNo);
+      const lockedPeriods: AccountingPeriodLockRecord[] = [
+        {
+          accountingPeriod: bookedVoucher.accountingPeriod,
+          lockedAt: '2026-06-30 18:00',
+          lockedBy: '李明',
+          reason: '月结',
+          status: '已结账'
+        }
+      ];
+      const input = {
+        accountingPeriod: '2026-07',
+        adjustedAt: '2026-07-01',
+        reason: '历史期间收入确认口径需要在后续期间调整'
+      };
+      const existingAdjustment = createLaterPeriodAccountingVoucherAdjustmentRecord({
+        actor: '李明',
+        existingRows: [],
+        input,
+        originalRecord: bookedVoucher
+      });
+      const duplicateIssues = validateLaterPeriodAccountingVoucherAdjustment(
+        bookedVoucher,
+        input,
+        lockedPeriods,
+        [existingAdjustment]
+      );
+
+      assertIncludes(
+        duplicateIssues,
+        `该原凭证在 ${input.accountingPeriod} 已有后续调整事项 ${existingAdjustment.adjustmentNo}`,
+        'duplicate later-period adjustment should explain the existing adjustment number'
+      );
+      assertEqual(
+        canSubmitLaterPeriodAccountingVoucherAdjustment(bookedVoucher, input, lockedPeriods, [existingAdjustment]),
+        false,
+        'duplicate later-period adjustment should not be submittable'
+      );
+      assertEqual(
+        canCreateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, lockedPeriods, input.accountingPeriod, [existingAdjustment]),
+        false,
+        'duplicate later-period adjustment should not expose a create entry'
+      );
+      assertEqual(
+        canCreateLaterPeriodAccountingVoucherAdjustment(bookedVoucher, lockedPeriods, '2026-08', [existingAdjustment]),
+        true,
+        'a later adjustment for another open target period should still expose a create entry'
+      );
+      assertEqual(
+        getAvailableLaterPeriodAdjustmentAccountingPeriod(bookedVoucher, lockedPeriods, [existingAdjustment]),
+        '2026-08',
+        'entry defaults should skip an occupied target period and use the next open period'
+      );
+      assertEqual(
+        canSubmitLaterPeriodAccountingVoucherAdjustment(bookedVoucher, {
+          ...input,
+          accountingPeriod: '2026-08',
+          adjustedAt: '2026-08-01'
+        }, lockedPeriods, [existingAdjustment]),
+        true,
+        'a later adjustment for another open target period should remain submittable'
+      );
+      assertEqual(
+        getAvailableLaterPeriodAdjustmentAccountingPeriod(
+          bookedVoucher,
+          lockedPeriods,
+          Array.from({ length: 12 }, (_, index) => {
+            const accountingPeriod = `${2026 + Math.floor((6 + index) / 12)}-${String(((6 + index) % 12) + 1).padStart(2, '0')}`;
+
+            return createLaterPeriodAccountingVoucherAdjustmentRecord({
+              actor: '李明',
+              existingRows: [],
+              input: {
+                accountingPeriod,
+                adjustedAt: `${accountingPeriod}-01`,
+                reason: '历史期间收入确认口径需要在后续期间调整'
+              },
+              originalRecord: bookedVoucher
+            });
+          })
+        ),
+        undefined,
+        'entry defaults should stop when no open target period is available in the lookahead window'
+      );
+    }
+  },
+  {
+    name: 'keeps reversed original ledger entries and creates an offsetting reversal voucher',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const generatedVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const lifecycleAppliedRows = applyAccountingVoucherLifecycle(vouchers, createReversedLifecycleRows(generatedVoucher));
       const reversedVoucher = getVoucherBySourceNo(lifecycleAppliedRows, generatedVoucher.sourceNo);
+      const reversalVoucher = lifecycleAppliedRows.find((record) => record.reversalOfVoucherId === generatedVoucher.id);
+      const ledgerEntries = buildAccountingLedgerEntries(lifecycleAppliedRows);
 
       assertEqual(reversedVoucher.status, '已冲销', 'reversed lifecycle should mark voucher as reversed');
+      assertEqual(reversalVoucher?.businessType, '冲销凭证', 'reversal should create a separate reversal voucher');
+      assertEqual(reversalVoucher?.status, '已记账', 'reversal voucher should be booked immediately in the frontend-session lifecycle');
+      assertEqual(canReverseAccountingVoucher(reversalVoucher!), false, 'reversal voucher should not be reversible again');
       assertEqual(
-        buildAccountingLedgerEntries(lifecycleAppliedRows).some((entry) => entry.voucherId === reversedVoucher.id),
+        canCreateLaterPeriodAccountingVoucherAdjustment(reversalVoucher!, [
+          {
+            accountingPeriod: reversalVoucher!.accountingPeriod,
+            lockedAt: '2026-06-30 18:00',
+            lockedBy: '李明',
+            reason: '月结',
+            status: '已结账'
+          }
+        ]),
         false,
-        'reversed voucher should not produce active ledger entries in the frontend mock'
+        'reversal voucher should not expose later-period adjustment entry'
+      );
+      assertEqual(
+        ledgerEntries.filter((entry) => entry.voucherId === reversedVoucher.id).length,
+        reversedVoucher.lines.length,
+        'reversed original should retain its historical ledger entries'
+      );
+      assertEqual(
+        ledgerEntries.filter((entry) => entry.voucherId === reversalVoucher?.id).length,
+        reversalVoucher?.lines.length ?? 0,
+        'reversal voucher should create offsetting ledger entries'
       );
     }
   },
   {
     name: 'allows accrual preparation with source tax basis while invoice evidence remains pending',
     run: () => {
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const partialInvoiceVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-002');
       const missingInvoiceVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-003');
       const partialTaxLine = getLineBySubjectCode(partialInvoiceVoucher, '2221.01');
       const missingInvoiceTaxLine = getLineBySubjectCode(missingInvoiceVoucher, '2221.01');
 
-      assertEqual(partialInvoiceVoucher.status, '待制单', 'partially invoiced receivable should be ready when source tax basis is complete');
+      assertEqual(partialInvoiceVoucher.status, '待记账', 'partially invoiced receivable should be ready when source tax basis is complete');
       assertEqual(partialInvoiceVoucher.issueReasons.length, 0, 'partial invoice evidence should remain a reminder instead of blocking preparation');
       assertEqual(partialInvoiceVoucher.taxBasis?.basisSource, '来源单据', 'partial invoice should fall back to source tax basis');
       assertEqual(partialInvoiceVoucher.taxBasis?.evidenceStatus, '发票部分匹配', 'partial invoice should stay visible as evidence status');
       assertEqual(partialTaxLine.amount, 178.22, 'partial invoice receivable should split full source tax amount');
-      assertEqual(missingInvoiceVoucher.status, '待制单', 'receivable without invoice should be ready when source tax basis is complete');
+      assertEqual(missingInvoiceVoucher.status, '待记账', 'receivable without invoice should be ready when source tax basis is complete');
       assertEqual(missingInvoiceVoucher.issueReasons.length, 0, 'missing invoice evidence should remain visible without blocking preparation');
       assertEqual(missingInvoiceVoucher.invoiceRefs.length, 0, 'missing invoice receivable should not invent invoice references');
       assertEqual(missingInvoiceVoucher.taxBasis?.evidenceStatus, '发票待补', 'missing invoice should stay visible as evidence status');
@@ -609,22 +1260,22 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'shows confirmed receivable as pending accrual voucher when tax basis is unavailable',
+    name: 'keeps confirmed receivable upstream when tax basis is unavailable',
     run: () => {
       const missingTaxBasisRecord = createReceivableWithPendingTaxBasis();
-      const vouchers = buildAccountingVouchers([missingTaxBasisRecord], [], []);
-      const voucher = getVoucherBySourceNo(vouchers, missingTaxBasisRecord.documentNo);
+      const vouchers = buildAccountingVouchersForTest([missingTaxBasisRecord], [], []);
 
-      assertEqual(voucher.businessType, '权责凭证', 'confirmed receivable should remain visible in accrual voucher workbench');
-      assertEqual(voucher.status, '待生成', 'receivable without tax basis should wait for accrual prerequisites');
-      assertIncludes(voucher.issueReasons, 'tax_basis_pending' satisfies AccountingVoucherIssueCode, 'missing tax basis should be exposed as prerequisite');
-      assertEqual(voucher.taxBasis?.basisSource, '待确认', 'pending tax basis should stay visible for business review');
+      assertEqual(
+        vouchers.some((record) => record.sourceNo === missingTaxBasisRecord.documentNo),
+        false,
+        'receivable without tax basis should stay out of the accounting voucher workbench'
+      );
     }
   },
   {
     name: 'creates issue row for red invoice without original blue invoice',
     run: () => {
-      const vouchers = buildAccountingVouchers([], [], financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest([], [], financeInvoiceRecords);
       const redInvoiceVoucher = getVoucherBySourceNo(vouchers, '254420000000610004');
 
       assertEqual(redInvoiceVoucher.businessType, '调整凭证', 'unresolved red invoice should be treated as adjustment handling row');
@@ -637,7 +1288,7 @@ const tests: UnitTest[] = [
     name: 'marks reviewed cash voucher as issue when original evidence is missing',
     run: () => {
       const missingEvidenceTransaction = createMissingEvidenceTransaction();
-      const vouchers = buildAccountingVouchers([], [missingEvidenceTransaction]);
+      const vouchers = buildAccountingVouchersForTest([], [missingEvidenceTransaction]);
       const voucher = getVoucherBySourceNo(vouchers, missingEvidenceTransaction.transactionNo);
       const metrics = buildAccountingVoucherMetrics(vouchers);
 
@@ -645,27 +1296,27 @@ const tests: UnitTest[] = [
       assertIncludes(voucher.issueReasons, 'missing_original_evidence' satisfies AccountingVoucherIssueCode, 'missing evidence should be exposed as issue reason');
       assertEqual(getAccountingVoucherIssueSummary(voucher), '缺少原始凭证', 'issue summary should use business copy');
       assertEqual(metrics.issueCount, 1, 'metrics should count issue voucher');
-      assertEqual(metrics.readyToPrepareCount, 0, 'issue voucher should not be counted as ready to prepare');
+      assertEqual(metrics.readyToBookCount, 0, 'issue voucher should not be counted as ready to book');
     }
   },
   {
-    name: 'shows confirmed receivable-payable rows with missing accounting subject as pending accrual vouchers',
+    name: 'keeps confirmed receivable-payable rows upstream when accounting subject is missing',
     run: () => {
       const missingSubjectRecord = createMissingSubjectPayable();
-      const vouchers = buildAccountingVouchers([missingSubjectRecord], []);
-      const voucher = getVoucherBySourceNo(vouchers, missingSubjectRecord.documentNo);
+      const vouchers = buildAccountingVouchersForTest([missingSubjectRecord], []);
 
-      assertEqual(voucher.businessType, '权责凭证', 'confirmed payable should remain visible in accrual voucher workbench');
-      assertEqual(voucher.status, '待生成', 'payable without accounting subject should wait for accrual prerequisites');
-      assertIncludes(voucher.issueReasons, 'missing_accounting_subject' satisfies AccountingVoucherIssueCode, 'missing accounting subject should be exposed as prerequisite');
-      assertEqual(getAccountingVoucherIssueSummary(voucher), '缺少会计科目', 'issue summary should use business copy');
+      assertEqual(
+        vouchers.some((record) => record.sourceNo === missingSubjectRecord.documentNo),
+        false,
+        'payable without subject mapping should stay out of the accounting voucher workbench'
+      );
     }
   },
   {
     name: 'filters vouchers by business type, status, date scope, and keyword',
     run: () => {
       const missingEvidenceTransaction = createMissingEvidenceTransaction();
-      const vouchers = buildAccountingVouchers(financeReceivablePayableRecords, [missingEvidenceTransaction, ...financeTransactionRecords], financeInvoiceRecords);
+      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, [missingEvidenceTransaction, ...financeTransactionRecords], financeInvoiceRecords);
       const currentMonthBusinessRows = vouchers.filter((record) =>
         matchesAccountingVoucherFilters(record, {
           ...defaultAccountingVoucherFilters,

@@ -135,14 +135,93 @@ Contract document: `docs/data/finance-bank-reconciliation-contract.md`.
 Contract version: `finance-bank-reconciliation-contract-v1-draft`.
 
 This contract hard-cuts bank reconciliation from a single system-flow match to a
-relationship model. One bank statement can link to one primary reviewed
-cash-flow row plus adjustment rows. Amount differences are handled through
+relationship model. One bank statement can link to one `主流水` reviewed cash-flow
+row plus `补差流水 / 冲正流水` detail rows. Amount differences are handled through
 reviewed system adjustment rows; original reviewed cash-flow amounts are not
 mutated by bank reconciliation.
 
-Backend integration must replace the frontend mock `matchedTransactionIds`
-array with an auditable relationship table while keeping a read-model array for
-simple page rendering if needed.
+Backend integration must persist an auditable relationship header plus
+relationship detail rows. The frontend bank-statement `matchedTransactionIds`
+array is only a lightweight candidate/read-model helper for page rendering; the
+confirmed frontend session state uses `bankReconciliationRows.linkedTransactions`
+to mirror the backend header/detail model.
+
+## Finance Funds Voucher Phase 1 Backend Contract
+
+Owner: `财务管理 / 收支流水 / 流水复核 / 银行对账 / 会计凭证`.
+
+Related frontend modules: `收支流水`, `流水复核`, `银行对账`, `会计凭证`.
+
+Contract document:
+`docs/data/finance-funds-voucher-phase1-backend-contract.md`.
+
+Contract version: `finance-funds-voucher-phase1-backend-contract-v1-draft`.
+
+This contract defines the first backend step for the funds-voucher line:
+persisted system cash-flow rows, cash-flow evidence files, cash-flow review
+events, imported bank statements, bank reconciliation relationship header/detail
+rows, and read-only `资金凭证 / 调整凭证` candidate derivation.
+
+Phase 1 does not create formal accounting vouchers, voucher numbers, general
+ledger entries, or period-close state. The accounting-voucher page can consume
+the read-only candidate API to show whether reviewed cash-flow rows are
+`待生成`, `需处理`, or `待记账`; it must not treat candidate rows as official
+accounting documents.
+
+## Finance General Ledger Frontend Contract
+
+Owner: `系统管理 / 账套初始化`, `财务管理 / 会计凭证 / 总账`.
+
+Related frontend modules: `账套初始化`, `会计凭证`, `会计科目`, `应收应付`, `收支流水`,
+`流水复核`, `银行对账`, `税务办理`.
+
+Contract document: `docs/data/finance-accounting-voucher-ledger-contract.md`.
+
+Contract version: `finance-general-ledger-frontend-contract-v1-draft`.
+
+`总账` is a read-only result surface. It consumes ledger entries only after an
+accounting voucher reaches `已记账`. Candidate rows, prepared-but-unbooked
+vouchers, cash-flow review rows, bank statement rows, and invoice rows do not
+directly affect subject balances. Original vouchers marked `已冲销` keep their
+historical booked entries; the linked booked `冲销凭证` contributes opposite
+entries that offset the original.
+
+The current frontend model returns a period response with visible subject rows,
+period-level metrics, period status, trial-balance status, and opening-balance
+source. Subject/category/keyword filters can reduce visible table rows, but
+they must not change period-level debit, credit, or trial-balance totals.
+The model keeps signed balances for calculation and additionally resolves the
+actual debit/credit balance side plus absolute display amount for opening,
+ending, and running balances. UI should not display opposite-side balances as
+negative amounts.
+
+The main subject-balance page is scoped to one accounting month through
+`当月 / 按月份`. Cross-period subject ledgers, annual balances, and financial
+statements should be handled by later ledger-detail or statement surfaces rather
+than overloading the main subject-balance table.
+
+Opening balances are currently supplied by the frontend `系统管理 / 账套初始化`
+workbench model for display only. The workbench exposes the initialization state machine
+`未开始 / 基础设置完成 / 科目已确认 / 期初已录入 / 试算平衡 / 试算不平 / 已启用`,
+workflow steps, operation records, enabled chart-of-accounts confirmation,
+opening-balance rows, manual/import/system entry sources, import-batch preview,
+trial-balance validation, and the enabled lock state. `/finance/general-ledger`
+must consume opening balances only from an enabled, balanced, locked account-set
+context in the current frontend prototype. Import preview application updates or
+adds matching imported rows into the full opening-balance draft and must not drop
+manual-entry or system-carried rows. Backend integration must provide account-set
+profile records, persisted initialization workflow state, controlled opening-balance
+rows from import/manual-entry/prior closed-period balances, import batch and
+validation records, operator/time snapshots, trial-balance validation, enablement
+lock state, and accounting-period status from `accounting_periods`.
+
+Post-enablement opening adjustments are not opening-balance rewrites. The current
+frontend session treats them as `账套初始化` source records for
+`/finance/accounting-vouchers`; they become `调整凭证` candidates, enter the same
+`记账` lifecycle as other vouchers, and affect `/finance/general-ledger`
+only after booking. Until backend exposes an explicit contra-subject field or
+mapping decision, the frontend prototype uses `3104 利润分配` as the opposite
+entry for opening-adjustment vouchers.
 
 ## Finance Accounting Voucher Status Contract
 
@@ -186,8 +265,9 @@ general-ledger record. Rows are derived from immutable frontend facts:
 
 - confirmed and frontloaded-ready `应收应付` rows plus matched `发票台账`
   facts create `权责凭证` candidate rows;
-- reviewed and bank-reconciled `收支流水` rows create `资金凭证` candidate
-  rows; reviewed but unreconciled cash-flow rows stay as `待生成`;
+- reviewed `收支流水` rows with a structured `银行对账` source link create
+  `资金凭证` candidate rows; reviewed but unreconciled cash-flow rows stay as
+  `待生成`;
 - reviewed and bank-reconciled `流水冲正` and `流水补差` rows create `调整凭证`
   candidate rows; reviewed but unreconciled adjustment rows stay as `待生成`.
 - unresolved red invoices in `发票台账` create `调整凭证` handling rows when the
@@ -196,13 +276,17 @@ general-ledger record. Rows are derived from immutable frontend facts:
   rows. Tax matters that are confirmed but not completed stay as `待生成`; completed
   tax matters missing required declaration/payment receipts stay as `需处理`.
 
-Voucher status is hard-cut to `待生成`, `需处理`, `待制单`, `已制单`, `已入账`, and
-`已冲销`. The current frontend generator emits `待制单` when the source facts can
+Voucher status is hard-cut to `待生成`, `需处理`, `待记账`, `已记账`, and
+`已冲销`. The current frontend generator emits `待记账` when the source facts can
 produce balanced entries, and `需处理` when a non-accrual blocking issue is found. A
-frontend-session lifecycle overlay can mark a candidate row as `已制单`,
-`已入账`, or `已冲销` for prototype verification. Backend readiness still
+frontend-session lifecycle overlay freezes a voucher snapshot when `待记账` rows are
+booked as `已记账`, and simulates reversal only after a user-confirmed
+reversal date and reason by marking the original snapshot `已冲销` while adding
+a linked booked `冲销凭证` snapshot with opposite entries. Before `已记账`, the page must use the source document number as the
+primary visible identity and treat generated candidate identifiers as internal
+derivation keys rather than formal voucher numbers. Backend readiness still
 requires tax/accounting source facts, persisted vouchers, formal voucher
-numbers, posting events, period locks, and general-ledger entries as defined in
+numbers, booking events, period locks, and general-ledger entries as defined in
 `docs/data/finance-tax-accounting-backend-contract.md` and
 `docs/data/finance-accounting-voucher-ledger-contract.md`.
 
@@ -247,11 +331,24 @@ users to inspect internal mock-data fields.
 Bank reconciliation is a prerequisite for frontend cash-voucher preparation in
 this phase. A reviewed public-account cash-flow row with
 `reconciliationStatus = 未对账` is rendered as `待生成` with
-`bank_reconciliation_pending`; it is not counted as `待制单`. A row with
+`bank_reconciliation_pending`; it is not counted as `待记账`. A row with
 `reconciliationStatus = 对账异常` is rendered as `需处理` with
 `bank_amount_mismatch`. Once bank reconciliation confirms the system cash-flow
 row, `reconciliationStatus = 已对账` allows the cash voucher to become
-`待制单` if all other source facts are complete.
+`待记账` only when the shared finance state also contains a concrete
+`bankReconciliationRows` relationship whose `linkedTransactions` contains that
+system cash-flow row. That relationship is exposed in voucher `sourceRefs` as
+`银行对账 / 银行依据`; if the row says `已对账` but the relationship detail is
+missing, the voucher is `需处理` with
+`bank_reconciliation_source_missing`.
+
+Employee reimbursement and employee collection stay upstream-owned. When
+`我的工作 / 费用报销审核` approves a reimbursement, it creates a source-generated
+`应付` confirmation item; it does not create a payment cash-flow row. When
+`我的工作 / 费用与代收` submits a collection after transfer to a company account, it
+creates a `待复核` cash-flow row with `relatedReceivableNo`. After `流水复核`
+posts that row, `应收应付` settlement progress is written back through the
+related receivable number.
 
 Tax matters are consumed as tax-accrual facts, not as payment facts. A confirmed
 tax matter with `processStatus != 已完成` is rendered as `待生成` with
@@ -270,13 +367,19 @@ Adjustment cash-flow rows must carry structured `adjustmentContext`:
 | `reason` | yes | Business reason for the adjustment. |
 | `bankSerialNo` | no | Bank statement serial number when the adjustment is caused by bank reconciliation. |
 
-Backend integration must persist vouchers separately before supporting posting,
+Backend integration must persist vouchers separately before supporting booking,
 period close, reversal, formal voucher numbers, and audit-grade accounting
 evidence. Until then, frontend vouchers remain recalculable generation rows, but
-they no longer use a generic `草稿` status. The frontend `postAccountingVoucher`
-mock currently simulates generation plus posting in one action and assigns a
+they no longer use a generic `草稿` status. The frontend `bookAccountingVoucher`
+mock currently simulates generation plus booking in one action and assigns a
 mock formal voucher number. The backend contract separates candidate listing,
-voucher generation, posting, reversal, period close, and general-ledger reads.
+voucher generation, booking, reversal, period close, and general-ledger reads.
+Voucher lifecycle actor/time fields are server-owned in backend integration:
+prepared, booked, and reversed operator snapshots must resolve from the
+authenticated account, and timestamps must use trusted server time. Frontend
+clients must not submit or override those fields. The active voucher lifecycle
+does not introduce a separate approval/review status; source readiness and issue
+reasons remain the blocking model before preparation.
 
 Backend integration must add a repository boundary before replacing the current
 mock generator. Page components should consume backend candidate/persisted
@@ -284,6 +387,6 @@ voucher responses through a dedicated accounting-voucher repository, while
 `buildAccountingVouchers` remains a mock-data fallback only. The expanded API
 and data boundary is defined in
 `docs/data/finance-accounting-voucher-ledger-contract.md`, including candidate
-detail, batch generation/posting, source snapshots, invoice refs, idempotency
+detail, batch generation/booking, source snapshots, invoice refs, idempotency
 keys, accounting-period close checks, general-ledger entries, subject ledger,
 and subject balances.

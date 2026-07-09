@@ -132,6 +132,12 @@ export function getStatementPeriod(date: string) {
   return date.slice(0, 7);
 }
 
+export function getBankStatementAccountingPeriods(records: Array<Pick<BankStatementRecord, 'statementDate'>>) {
+  return Array.from(new Set(records.map((record) => getStatementPeriod(record.statementDate)).filter(Boolean))).sort((first, second) =>
+    first.localeCompare(second)
+  );
+}
+
 export function getStatementDateRangeLabel(records: BankStatementRecord[]) {
   const dates = records.map((record) => record.statementDate).sort((first, second) => first.localeCompare(second));
 
@@ -279,9 +285,7 @@ export function buildBankStatementImportPrecheck(input: {
     importableRows.push(record);
   });
 
-  const coveredPeriods = Array.from(new Set(input.previewRows.map((record) => getStatementPeriod(record.statementDate)))).sort((first, second) =>
-    first.localeCompare(second)
-  );
+  const coveredPeriods = getBankStatementAccountingPeriods(input.previewRows);
   const uncoveredPeriodCounts = getUncoveredPeriodCounts(input.requiredPeriodCounts, new Set(coveredPeriods));
   const blockedRowIds = new Set(blockedRows.map((record) => record.id));
   const duplicateRowIds = new Set(duplicateRows.map((record) => record.id));

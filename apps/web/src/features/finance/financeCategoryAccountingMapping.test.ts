@@ -48,9 +48,9 @@ const tests: UnitTest[] = [
     name: 'keeps key finance categories mapped to default posting subjects',
     run: () => {
       assertEqual(getFinanceCategorySnapshot('客户回款').accountingSubject.code, '1122', 'customer payment should default to accounts receivable');
-      assertEqual(getFinanceCategorySnapshot('其他收入').accountingSubject.code, '6051', 'other income should default to other business income');
+      assertEqual(getFinanceCategorySnapshot('其他收入').accountingSubject.code, '5051', 'other income should default to other business income');
       assertEqual(getFinanceCategorySnapshot('工资发放').accountingSubject.code, '2211.01', 'salary payment should default to salary payable detail subject');
-      assertEqual(getFinanceCategorySnapshot('办公费用').accountingSubject.code, '6602.03', 'office expense should default to office expense detail subject');
+      assertEqual(getFinanceCategorySnapshot('办公费用').accountingSubject.code, '5602.03', 'office expense should default to office expense detail subject');
       assertEqual(getFinanceCategorySnapshot('税费缴纳').accountingSubject.code, '2221', 'tax payment should default to tax payable');
     }
   },

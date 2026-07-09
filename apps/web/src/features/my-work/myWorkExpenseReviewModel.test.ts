@@ -1,6 +1,7 @@
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import {
   approveExpenseReviewRecord,
+  buildReceivablePayableFromExpenseReview,
   buildMyWorkExpenseReviewMetrics,
   buildMyWorkExpenseReviewQueue,
   getExpenseReviewCategoryLabel,
@@ -96,7 +97,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'approves and returns reimbursement records without finance actions',
+    name: 'approves and returns reimbursement records without direct payment actions',
     run() {
       const record = createReviewRecord();
       const approved = approveExpenseReviewRecord(record, { reviewerName: '审核人' });
@@ -108,6 +109,28 @@ const tests: UnitTest[] = [
       assertEqual(returned.operationRecords[0]?.summary, '请补充发票', 'returned reason should be retained');
       assert(!approved.operationRecords.some((operation) => operation.action.includes('付款')), 'review should not create payment operation');
       assert(!approved.operationRecords.some((operation) => operation.action.includes('生成应付')), 'review should not expose payable generation operation');
+    }
+  },
+  {
+    name: 'builds payable confirmation after reimbursement approval',
+    run() {
+      const record = createReviewRecord({
+        amount: 486.5,
+        category: '差旅交通',
+        code: 'EC-202606-088',
+        occurredAt: '2026-06-15',
+        submitterName: '测试员工',
+        title: '现场交通费'
+      });
+      const payable = buildReceivablePayableFromExpenseReview(record, []);
+
+      assertEqual(payable.direction, '应付', 'approved reimbursement should create payable confirmation');
+      assertEqual(payable.confirmationStatus, '已确认', 'payable should be confirmed after approval');
+      assertEqual(payable.settlementStatus, '未结清', 'payable should wait for payment registration');
+      assertEqual(payable.sourceNo, record.code, 'payable should trace to reimbursement record');
+      assertEqual(payable.counterparty, record.submitterName, 'payable counterparty should be submitter');
+      assertEqual(payable.category, record.category, 'payable should keep expense category');
+      assertEqual(payable.operationRecords[0]?.action, '生成应付', 'payable generation should be recorded on payable item');
     }
   },
   {

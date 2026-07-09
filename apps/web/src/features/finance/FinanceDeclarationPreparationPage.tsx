@@ -8,7 +8,7 @@ import {
   WalletOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Button, Select, message } from 'antd';
+import { Alert, Button, Select, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
@@ -31,6 +31,7 @@ import {
   canConfirmDeclarationPreparationItem,
   declarationPreparationItemStatusTone,
   declarationPreparationStatusTone,
+  getDeclarationPreparationAccountingPeriod,
   getDeclarationPreparationSubsequentInvoiceCandidates,
   getDeclarationPreparationUnbilledIncomeCandidates,
   getDeclarationPreparationProgress,
@@ -310,6 +311,7 @@ export function FinanceDeclarationPreparationPage() {
   const {
     declarationPreparationRows,
     financeRows,
+    getAccountingPeriodGuard,
     invoiceRows,
     updateDeclarationPreparationRecord,
     updateFinanceTransactionsByNo
@@ -357,17 +359,44 @@ export function FinanceDeclarationPreparationPage() {
     (total, record) => total + getDeclarationPreparationProgress(record).pendingCount,
     0
   );
+  const activeRecordAccountingPeriod = activeRecord
+    ? getDeclarationPreparationAccountingPeriod(activeRecord.period)
+    : undefined;
+  const activeRecordPeriodGuard = activeRecord
+    ? getAccountingPeriodGuard(activeRecordAccountingPeriod, '调整申报准备')
+    : undefined;
+  const activeRecordReadbackNotice =
+    activeRecordPeriodGuard && !activeRecordPeriodGuard.allowed
+      ? `${activeRecordPeriodGuard.reason} 当前申报准备仅用于回看，不再调整申报口径。`
+      : undefined;
+  const unbilledDrawerAccountingPeriod = unbilledDrawerRecord
+    ? getDeclarationPreparationAccountingPeriod(unbilledDrawerRecord.period)
+    : undefined;
+  const unbilledDrawerPeriodGuard = unbilledDrawerRecord
+    ? getAccountingPeriodGuard(unbilledDrawerAccountingPeriod, '调整未开票收入申报口径')
+    : undefined;
+  const unbilledDrawerReadbackNotice =
+    unbilledDrawerPeriodGuard && !unbilledDrawerPeriodGuard.allowed
+      ? `${unbilledDrawerPeriodGuard.reason} 当前未开票收入确认仅用于回看。`
+      : undefined;
 
   function updatePreparation(recordId: string, updater: (record: FinanceDeclarationPreparationRecord) => FinanceDeclarationPreparationRecord) {
-    updateDeclarationPreparationRecord(recordId, updater);
+    return updateDeclarationPreparationRecord(recordId, updater);
   }
 
   function handleProcessItem(record: FinanceDeclarationPreparationRecord, item: FinanceDeclarationPreparationItem) {
+    const periodGuard = getAccountingPeriodGuard(getDeclarationPreparationAccountingPeriod(record.period), '确认申报准备项');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     if (item.type === '前期未开票后续开票') {
       const candidates = getDeclarationPreparationSubsequentInvoiceCandidates(record, invoiceRows, financeRows);
       const transactionNos = Array.from(new Set(candidates.map((candidate) => candidate.record.transactionNo)));
 
-      updateFinanceTransactionsByNo(transactionNos, (financeRecord) => ({
+      const transactionsUpdated = updateFinanceTransactionsByNo(transactionNos, (financeRecord) => ({
         ...financeRecord,
         invoiceDeclarationStatus: '后续开票已处理',
         operationRecords: [
@@ -383,9 +412,14 @@ export function FinanceDeclarationPreparationPage() {
         ],
         updatedAt: `${financeToday} 14:25`
       }));
+
+      if (!transactionsUpdated) {
+        void messageApi.warning('当前会计期间已锁定，不能确认后续开票');
+        return;
+      }
     }
 
-    updatePreparation(record.id, (currentRecord) => ({
+    if (!updatePreparation(record.id, (currentRecord) => ({
       ...currentRecord,
       items: record.items.map((currentItem) =>
         currentItem.id === item.id ? buildConfirmedDeclarationPreparationItem(currentItem) : currentItem
@@ -402,7 +436,11 @@ export function FinanceDeclarationPreparationPage() {
         ...currentRecord.operationRecords
       ],
       updatedAt: financeToday
-    }));
+    }))) {
+      void messageApi.warning('当前申报准备项不可调整');
+      return;
+    }
+
     void messageApi.success('已确认准备项');
   }
 
@@ -413,6 +451,16 @@ export function FinanceDeclarationPreparationPage() {
 
   function handleConfirmUnbilledIncome() {
     if (!unbilledDrawerRecord) {
+      return;
+    }
+
+    const periodGuard = getAccountingPeriodGuard(
+      getDeclarationPreparationAccountingPeriod(unbilledDrawerRecord.period),
+      '确认未开票收入申报口径'
+    );
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
       return;
     }
 
@@ -431,36 +479,7 @@ export function FinanceDeclarationPreparationPage() {
     const nextDeferredTransactionNoSet = new Set(nextDeferredTransactionNos);
     const affectedTransactionNos = Array.from(new Set([...previousTransactionNos, ...previousDeferredTransactionNos, ...selectedTransactionNos]));
 
-    updatePreparation(unbilledDrawerRecord.id, (currentRecord) => ({
-      ...currentRecord,
-      items: unbilledDrawerRecord.items.map((currentItem) =>
-        currentItem.type === '未开票收入确认'
-          ? {
-              ...buildConfirmedDeclarationPreparationItem({
-                ...currentItem,
-                amount: selectedUnbilledAmount
-              }),
-              result: `${selectedUnbilledRows.length} 条未开票收入已计入本期`
-            }
-          : currentItem
-      ),
-      operationRecords: [
-        {
-          action: '确认未开票收入',
-          actor: '李明',
-          id: `declaration-prep-op-unbilled-${Date.now()}`,
-          object: currentRecord.preparationNo,
-          summary: `${selectedUnbilledRows.length} 条流水计入 ${currentRecord.period} 未开票收入，金额 ${formatMoney(selectedUnbilledAmount)}`,
-          time: `${financeToday} 14:30`
-        },
-        ...currentRecord.operationRecords
-      ],
-      deferredUnbilledIncomeTransactionNos: nextDeferredTransactionNos,
-      unbilledIncomeTransactionNos: selectedTransactionNos,
-      updatedAt: financeToday
-    }));
-
-    updateFinanceTransactionsByNo(affectedTransactionNos, (record) => {
+    const transactionsUpdated = updateFinanceTransactionsByNo(affectedTransactionNos, (record) => {
       const isSelected = selectedTransactionNoSet.has(record.transactionNo);
       const isDeferred = nextDeferredTransactionNoSet.has(record.transactionNo);
       const belongsToCurrentPreparation = record.invoiceDeclarationPreparationNo === unbilledDrawerRecord.preparationNo;
@@ -493,6 +512,43 @@ export function FinanceDeclarationPreparationPage() {
       };
     });
 
+    if (!transactionsUpdated) {
+      void messageApi.warning('当前会计期间已锁定，不能确认未开票收入申报口径');
+      return;
+    }
+
+    if (!updatePreparation(unbilledDrawerRecord.id, (currentRecord) => ({
+      ...currentRecord,
+      items: unbilledDrawerRecord.items.map((currentItem) =>
+        currentItem.type === '未开票收入确认'
+          ? {
+              ...buildConfirmedDeclarationPreparationItem({
+                ...currentItem,
+                amount: selectedUnbilledAmount
+              }),
+              result: `${selectedUnbilledRows.length} 条未开票收入已计入本期`
+            }
+          : currentItem
+      ),
+      operationRecords: [
+        {
+          action: '确认未开票收入',
+          actor: '李明',
+          id: `declaration-prep-op-unbilled-${Date.now()}`,
+          object: currentRecord.preparationNo,
+          summary: `${selectedUnbilledRows.length} 条流水计入 ${currentRecord.period} 未开票收入，金额 ${formatMoney(selectedUnbilledAmount)}`,
+          time: `${financeToday} 14:30`
+        },
+        ...currentRecord.operationRecords
+      ],
+      deferredUnbilledIncomeTransactionNos: nextDeferredTransactionNos,
+      unbilledIncomeTransactionNos: selectedTransactionNos,
+      updatedAt: financeToday
+    }))) {
+      void messageApi.warning('当前未开票收入申报口径不可调整');
+      return;
+    }
+
     setUnbilledDrawerRecordId(undefined);
     setSelectedUnbilledTransactionNos([]);
     void messageApi.success('未开票收入已确认');
@@ -500,6 +556,16 @@ export function FinanceDeclarationPreparationPage() {
 
   function handleDeferUnbilledIncome() {
     if (!unbilledDrawerRecord) {
+      return;
+    }
+
+    const periodGuard = getAccountingPeriodGuard(
+      getDeclarationPreparationAccountingPeriod(unbilledDrawerRecord.period),
+      '确认未开票收入申报口径'
+    );
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
       return;
     }
 
@@ -522,7 +588,36 @@ export function FinanceDeclarationPreparationPage() {
     const nextIncludedRows = unbilledIncomeCandidates.filter((candidate) => includedTransactionNoSet.has(candidate.record.transactionNo));
     const nextIncludedAmount = nextIncludedRows.reduce((total, candidate) => total + candidate.netAmount, 0);
 
-    updatePreparation(unbilledDrawerRecord.id, (currentRecord) => ({
+    const transactionsUpdated = updateFinanceTransactionsByNo(affectedTransactionNos, (record) => {
+      const isIncluded = includedTransactionNoSet.has(record.transactionNo);
+      const isDeferred = deferredTransactionNoSet.has(record.transactionNo);
+
+      return {
+        ...record,
+        invoiceDeclarationPeriod: isIncluded || isDeferred ? unbilledDrawerRecord.period : undefined,
+        invoiceDeclarationPreparationNo: isIncluded || isDeferred ? unbilledDrawerRecord.preparationNo : undefined,
+        invoiceDeclarationStatus: isIncluded ? '未开票已申报' : isDeferred ? '本期暂不计入' : undefined,
+        operationRecords: [
+          ...record.operationRecords,
+          {
+            action: isIncluded ? '确认未开票申报' : isDeferred ? '确认本期暂不计入' : '取消未开票申报',
+            actor: '李明',
+            id: `fin-op-unbilled-defer-${record.transactionNo}-${Date.now()}`,
+            object: record.transactionNo,
+            summary: isDeferred ? `${record.transactionNo} 本期暂不计入未开票收入` : `${record.transactionNo} 更新未开票收入申报口径`,
+            time: `${financeToday} 14:35`
+          }
+        ],
+        updatedAt: `${financeToday} 14:35`
+      };
+    });
+
+    if (!transactionsUpdated) {
+      void messageApi.warning('当前会计期间已锁定，不能确认未开票收入申报口径');
+      return;
+    }
+
+    if (!updatePreparation(unbilledDrawerRecord.id, (currentRecord) => ({
       ...currentRecord,
       deferredUnbilledIncomeTransactionNos: nextDeferredTransactionNos,
       items: unbilledDrawerRecord.items.map((currentItem) =>
@@ -549,31 +644,10 @@ export function FinanceDeclarationPreparationPage() {
       ],
       unbilledIncomeTransactionNos: nextIncludedTransactionNos,
       updatedAt: financeToday
-    }));
-
-    updateFinanceTransactionsByNo(affectedTransactionNos, (record) => {
-      const isIncluded = includedTransactionNoSet.has(record.transactionNo);
-      const isDeferred = deferredTransactionNoSet.has(record.transactionNo);
-
-      return {
-        ...record,
-        invoiceDeclarationPeriod: isIncluded || isDeferred ? unbilledDrawerRecord.period : undefined,
-        invoiceDeclarationPreparationNo: isIncluded || isDeferred ? unbilledDrawerRecord.preparationNo : undefined,
-        invoiceDeclarationStatus: isIncluded ? '未开票已申报' : isDeferred ? '本期暂不计入' : undefined,
-        operationRecords: [
-          ...record.operationRecords,
-          {
-            action: isIncluded ? '确认未开票申报' : isDeferred ? '确认本期暂不计入' : '取消未开票申报',
-            actor: '李明',
-            id: `fin-op-unbilled-defer-${record.transactionNo}-${Date.now()}`,
-            object: record.transactionNo,
-            summary: isDeferred ? `${record.transactionNo} 本期暂不计入未开票收入` : `${record.transactionNo} 更新未开票收入申报口径`,
-            time: `${financeToday} 14:35`
-          }
-        ],
-        updatedAt: `${financeToday} 14:35`
-      };
-    });
+    }))) {
+      void messageApi.warning('当前未开票收入申报口径不可调整');
+      return;
+    }
 
     setUnbilledDrawerRecordId(undefined);
     setSelectedUnbilledTransactionNos([]);
@@ -581,12 +655,19 @@ export function FinanceDeclarationPreparationPage() {
   }
 
   function handleConfirmPreparation(record: FinanceDeclarationPreparationRecord) {
+    const periodGuard = getAccountingPeriodGuard(getDeclarationPreparationAccountingPeriod(record.period), '确认申报准备结果');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     if (!isDeclarationPreparationReady(record)) {
       void messageApi.warning('仍有准备项未确认');
       return;
     }
 
-    updatePreparation(record.id, (currentRecord) => ({
+    if (!updatePreparation(record.id, (currentRecord) => ({
       ...currentRecord,
       confirmedSourceSnapshotKey: record.sourceSnapshotKey,
       confirmedCitSummary: record.taxType === '企业所得税' ? record.citSummary : currentRecord.confirmedCitSummary,
@@ -607,7 +688,11 @@ export function FinanceDeclarationPreparationPage() {
         ...currentRecord.operationRecords
       ],
       updatedAt: financeToday
-    }));
+    }))) {
+      void messageApi.warning('当前申报准备结果不可确认');
+      return;
+    }
+
     void messageApi.success('准备结果已确认');
   }
 
@@ -729,7 +814,9 @@ export function FinanceDeclarationPreparationPage() {
     {
       key: 'action',
       render: (_, item) =>
-        activeRecord && item.type === '未开票收入确认' && canConfirmDeclarationPreparationItem(activeRecord, item) ? (
+        activeRecordReadbackNotice && item.status === '待确认' ? (
+          <StatusTag tone="gray" value="只读回看" variant="compact" />
+        ) : activeRecord && item.type === '未开票收入确认' && canConfirmDeclarationPreparationItem(activeRecord, item) ? (
           <Button
             size="small"
             type="link"
@@ -801,7 +888,12 @@ export function FinanceDeclarationPreparationPage() {
   ];
 
   const activeProgress = activeRecord ? getDeclarationPreparationProgress(activeRecord) : undefined;
-  const canConfirmActiveRecord = Boolean(activeRecord && activeRecord.status === '准备中' && isDeclarationPreparationReady(activeRecord));
+  const canConfirmActiveRecord = Boolean(
+    activeRecord &&
+    activeRecord.status === '准备中' &&
+    isDeclarationPreparationReady(activeRecord) &&
+    !activeRecordReadbackNotice
+  );
 
   return (
     <ManagementPageScaffold
@@ -918,6 +1010,14 @@ export function FinanceDeclarationPreparationPage() {
                 }
               ]}
             />
+            {activeRecordReadbackNotice ? (
+              <Alert
+                className="finance-period-readback-alert"
+                message={activeRecordReadbackNotice}
+                showIcon
+                type="info"
+              />
+            ) : null}
 
             <DetailTabs
               items={[
@@ -1000,14 +1100,14 @@ export function FinanceDeclarationPreparationPage() {
         }}
         open={Boolean(unbilledDrawerRecord)}
         primaryAction={{
-          disabled: selectedUnbilledRows.length === 0,
+          disabled: selectedUnbilledRows.length === 0 || Boolean(unbilledDrawerReadbackNotice),
           icon: <CheckSquareOutlined />,
           label: '计入本期申报',
           testId: 'finance-declaration-preparation-unbilled-confirm-button',
           onClick: handleConfirmUnbilledIncome
         }}
         secondaryAction={{
-          disabled: selectedUnbilledRows.length === 0,
+          disabled: selectedUnbilledRows.length === 0 || Boolean(unbilledDrawerReadbackNotice),
           label: '本期暂不计入',
           testId: 'finance-declaration-preparation-unbilled-defer-button',
           onClick: handleDeferUnbilledIncome
@@ -1030,6 +1130,14 @@ export function FinanceDeclarationPreparationPage() {
       >
         {unbilledDrawerRecord ? (
           <div className="detail-tab-stack">
+            {unbilledDrawerReadbackNotice ? (
+              <Alert
+                className="finance-period-readback-alert"
+                message={unbilledDrawerReadbackNotice}
+                showIcon
+                type="info"
+              />
+            ) : null}
             <DetailSummaryCards
               columns={3}
               items={[

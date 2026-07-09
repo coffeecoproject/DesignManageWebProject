@@ -18,6 +18,7 @@ import { type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { CellText } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
 import { FinanceVoucherUploadPanel, type FinanceVoucherUploadFile } from './FinanceVoucherUploadPanel';
+import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import {
   type FinancePaymentMethod,
   type FinanceTransactionRecord
@@ -62,6 +63,7 @@ export function FinanceReviewPage() {
   const {
     addTransactionVoucherFile,
     financeRows: records,
+    getAccountingPeriodGuard,
     removeTransactionVoucherFile,
     returnFinanceTransaction,
     reviewFinanceTransaction,
@@ -76,6 +78,11 @@ export function FinanceReviewPage() {
   const activeReviewDueAt = activeRecord ? getFinanceTransactionReviewDueAt(activeRecord) : undefined;
   const activeDirectionLabels = activeRecord ? getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod) : undefined;
   const activeCategorySnapshot = activeRecord ? getFinanceRecordCategorySnapshot(activeRecord) : undefined;
+  const activePeriodGuard = activeRecord ? getAccountingPeriodGuard(activeRecord.accountingPeriod, '处理流水复核') : undefined;
+  const activePeriodLocked = activePeriodGuard ? !activePeriodGuard.allowed : false;
+  const activePeriodReadbackNotice = activeRecord && activePeriodLocked
+    ? getClosedAccountingPeriodReadbackNotice(activeRecord.accountingPeriod, '当前流水复核事项')
+    : undefined;
 
   function buildVoucherFile(file: FinanceVoucherUploadFile, record: FinanceTransactionRecord): RelatedFileRecord | undefined {
     const maxFileSize = 10 * 1024 * 1024;
@@ -104,13 +111,24 @@ export function FinanceReviewPage() {
       return;
     }
 
+    const periodGuard = getAccountingPeriodGuard(activeRecord.accountingPeriod, '补充流水凭证');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     const nextFile = buildVoucherFile(file, activeRecord);
 
     if (!nextFile) {
       return;
     }
 
-    addTransactionVoucherFile(activeRecord.id, nextFile);
+    if (!addTransactionVoucherFile(activeRecord.id, nextFile)) {
+      void messageApi.warning('当前流水不可补充凭证');
+      return;
+    }
+
     void messageApi.success('凭证已补充');
   }
 
@@ -123,29 +141,62 @@ export function FinanceReviewPage() {
   }
 
   function handleReview(record: FinanceTransactionRecord) {
+    const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '复核流水入账');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     if (record.voucherStatus !== '已上传') {
       void messageApi.warning('请先补充凭证，再复核入账');
       return;
     }
 
+    if (!reviewFinanceTransaction(record.id)) {
+      void messageApi.warning('当前流水不可复核入账');
+      return;
+    }
+
     const nextActiveRecordId = getNextActiveRecordId(queueRows, record.id);
-    reviewFinanceTransaction(record.id);
     setActiveRecordId(nextActiveRecordId);
     void messageApi.success('流水已复核入账');
   }
 
   function handleReturn(record: FinanceTransactionRecord) {
+    const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '退回流水复核');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     const nextActiveRecordId = getNextActiveRecordId(queueRows, record.id);
 
-    returnFinanceTransaction(record.id);
+    if (!returnFinanceTransaction(record.id)) {
+      void messageApi.warning('当前流水不可退回修改');
+      return;
+    }
+
     setActiveRecordId(nextActiveRecordId);
     void messageApi.success('流水已退回，需登记侧重新提交后再复核');
   }
 
   function handleVoid(record: FinanceTransactionRecord) {
+    const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '作废流水');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     const nextActiveRecordId = getNextActiveRecordId(queueRows, record.id);
 
-    voidFinanceTransaction(record.id);
+    if (!voidFinanceTransaction(record.id)) {
+      void messageApi.warning('当前流水不可作废');
+      return;
+    }
+
     setActiveRecordId(nextActiveRecordId);
     void messageApi.success('流水已作废');
   }
@@ -233,8 +284,11 @@ export function FinanceReviewPage() {
                   ))}
                 </div>
 
-                {activeRecord.status === '待复核' && activeRecord.voucherStatus !== '已上传' ? (
+                {activeRecord.status === '待复核' && activeRecord.voucherStatus !== '已上传' && !activePeriodLocked ? (
                   <Alert className="finance-review-alert" message="该流水缺少凭证，补充凭证后才能复核入账。" showIcon type="warning" />
+                ) : null}
+                {activePeriodReadbackNotice ? (
+                  <Alert className="finance-period-readback-alert" message={activePeriodReadbackNotice} showIcon type="info" />
                 ) : null}
 
                 <DetailSection icon={<AuditOutlined />} title="复核信息">
@@ -278,11 +332,23 @@ export function FinanceReviewPage() {
                 <DetailSection icon={<FileProtectOutlined />} title={activeDirectionLabels?.voucherSection ?? '凭证'}>
                   <FinanceVoucherUploadPanel
                     emptyText={activeDirectionLabels?.voucherEmpty}
+                    disabled={activePeriodLocked}
                     files={activeRecord.files}
                     title={activeDirectionLabels?.uploadVoucher}
                     onDownload={handleDownloadFile}
                     onPreview={handlePreviewFile}
-                    onRemove={(file) => removeTransactionVoucherFile(activeRecord.id, file.id)}
+                    onRemove={(file) => {
+                      const periodGuard = getAccountingPeriodGuard(activeRecord.accountingPeriod, '移除流水凭证');
+
+                      if (!periodGuard.allowed) {
+                        void messageApi.warning(periodGuard.reason);
+                        return;
+                      }
+
+                      if (!removeTransactionVoucherFile(activeRecord.id, file.id)) {
+                        void messageApi.warning('当前流水不可移除凭证');
+                      }
+                    }}
                     onSelect={handleVoucherFileSelect}
                   />
                 </DetailSection>
@@ -291,14 +357,14 @@ export function FinanceReviewPage() {
               </div>
 
               <div className="task-submit-panel-footer">
-                <Button icon={<CloseCircleOutlined />} onClick={() => handleVoid(activeRecord)}>
+                <Button disabled={activePeriodLocked} icon={<CloseCircleOutlined />} onClick={() => handleVoid(activeRecord)}>
                   作废
                 </Button>
-                <Button icon={<RollbackOutlined />} onClick={() => handleReturn(activeRecord)}>
+                <Button disabled={activePeriodLocked} icon={<RollbackOutlined />} onClick={() => handleReturn(activeRecord)}>
                   退回修改
                 </Button>
                 <Button
-                  disabled={activeRecord.voucherStatus !== '已上传'}
+                  disabled={activePeriodLocked || activeRecord.voucherStatus !== '已上传'}
                   icon={<CheckCircleOutlined />}
                   type="primary"
                   onClick={() => handleReview(activeRecord)}

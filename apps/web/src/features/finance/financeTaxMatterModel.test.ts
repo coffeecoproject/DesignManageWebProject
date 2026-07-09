@@ -8,6 +8,7 @@ import {
   financeDeclarationPreparationRecords,
   getDeclarationPreparationProgress
 } from './financeDeclarationPreparationData';
+import { getAccountingPeriodFromBusinessPeriod } from './financeUtils';
 import { getActiveFinanceTaxPolicyProfile } from './financeTaxPolicyModel';
 import {
   applyPayrollIitSummaryToTaxMatter,
@@ -232,6 +233,15 @@ const tests: UnitTest[] = [
       assertEqual(q2VatPreparation.vatSummary.quarterlyExemptionThreshold, vatPolicy.quarterlyExemptionThreshold, 'VAT preparation should use configured quarterly threshold');
       assertEqual(q2VatPreparation.vatSummary.isBelowQuarterlyExemptionThreshold, true, 'empty Q2 VAT fixture should be below configured threshold');
       assertEqual(q2VatPreparation.items.some((item) => item.sourceModule === '税务口径'), false, 'VAT items should not duplicate tax policy as a manual source row');
+    }
+  },
+  {
+    name: 'maps business periods to accounting close periods',
+    run: () => {
+      assertEqual(getAccountingPeriodFromBusinessPeriod('2026-06'), '2026-06', 'monthly business period should keep its month');
+      assertEqual(getAccountingPeriodFromBusinessPeriod('2026-Q2'), '2026-06', 'Q2 business period should close in quarter-end month');
+      assertEqual(getAccountingPeriodFromBusinessPeriod('2026'), '2026-12', 'annual business period should close in December');
+      assertEqual(getAccountingPeriodFromBusinessPeriod(undefined), undefined, 'missing business period should remain unresolved');
     }
   },
   {

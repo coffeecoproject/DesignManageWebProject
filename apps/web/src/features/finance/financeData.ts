@@ -126,6 +126,7 @@ export type FinanceTransactionRecord = {
   sourceType: FinanceSourceType;
   sourceNo: string;
   sourceTitle: string;
+  relatedReceivableNo?: string;
   voucherStatus: FinanceVoucherStatus;
   reconciliationStatus: FinanceReconciliationStatus;
   status: FinanceTransactionStatus;
@@ -279,7 +280,7 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     includeInReport: true,
     name: '其他收入',
     note: '非客户项目类收入，需在备注中说明来源。',
-    defaultAccountingSubjectCode: '6051',
+    defaultAccountingSubjectCode: '5051',
     paymentMethods: ['对公账户收款'],
     primaryId: 'finance-primary-other-income',
     reportAggregation: '其他',
@@ -369,7 +370,7 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     includeInReport: true,
     name: '办公费用',
     note: '日常办公消耗、系统服务等运营费用。',
-    defaultAccountingSubjectCode: '6602.03',
+    defaultAccountingSubjectCode: '5602.03',
     paymentMethods: ['对公账户付款'],
     primaryId: 'finance-primary-operating-expense',
     reportAggregation: '运营费用',
@@ -387,7 +388,7 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     includeInReport: true,
     name: '差旅交通',
     note: '交通、差旅和现场执行产生的费用。',
-    defaultAccountingSubjectCode: '6602.04',
+    defaultAccountingSubjectCode: '5602.04',
     paymentMethods: ['对公账户付款'],
     primaryId: 'finance-primary-operating-expense',
     reportAggregation: '运营费用',
@@ -423,7 +424,7 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     includeInReport: true,
     name: '其他支出',
     note: '无法归入既有类目的支出。',
-    defaultAccountingSubjectCode: '6602',
+    defaultAccountingSubjectCode: '5602',
     paymentMethods: ['对公账户付款'],
     primaryId: 'finance-primary-other-expense',
     reportAggregation: '其他',
@@ -471,26 +472,26 @@ export const financeAccountingSubjectRoleLabels: Record<FinanceAccountingSubject
 
 export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAccountingSubjectRoleMappings> = {
   差旅交通: {
-    accrualExpense: '6602.04',
+    accrualExpense: '5602.04',
     accrualPayable: '2241',
     cashCredit: '1002',
     cashDebit: '2241'
   },
   办公费用: {
-    accrualExpense: '6602.03',
+    accrualExpense: '5602.03',
     accrualPayable: '2241',
     cashCredit: '1002',
     cashDebit: '2241'
   },
   绩效发放: {
-    accrualExpense: '6602.01',
+    accrualExpense: '5602.01',
     accrualPayable: '2211.02',
     cashCredit: '1002',
     cashDebit: '2211.02'
   },
   客户回款: {
     accrualReceivable: '1122',
-    accrualRevenue: '6001',
+    accrualRevenue: '5001',
     cashCredit: '1122',
     cashDebit: '1002',
     outputVatPayable: '2221.01'
@@ -501,20 +502,20 @@ export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAcc
   },
   客户现金收款: {
     accrualReceivable: '1122',
-    accrualRevenue: '6001',
+    accrualRevenue: '5001',
     cashCredit: '1122',
     cashDebit: '1002',
     outputVatPayable: '2221.01'
   },
   其他收入: {
     accrualReceivable: '1122',
-    accrualRevenue: '6051',
-    cashCredit: '6051',
+    accrualRevenue: '5051',
+    cashCredit: '5051',
     cashDebit: '1002',
     outputVatPayable: '2221.01'
   },
   其他支出: {
-    accrualExpense: '6602',
+    accrualExpense: '5602',
     accrualPayable: '2241',
     cashCredit: '1002',
     cashDebit: '2241'
@@ -524,19 +525,19 @@ export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAcc
     cashDebit: '2221.99'
   },
   外协付款: {
-    accrualExpense: '6401',
+    accrualExpense: '5401',
     accrualPayable: '2202',
     cashCredit: '1002',
     cashDebit: '2202'
   },
   工资发放: {
-    accrualExpense: '6602.01',
+    accrualExpense: '5602.01',
     accrualPayable: '2211.01',
     cashCredit: '1002',
     cashDebit: '2211.01'
   },
   材料采购: {
-    accrualExpense: '6401',
+    accrualExpense: '5401',
     accrualPayable: '2202',
     cashCredit: '1002',
     cashDebit: '2202'
@@ -1250,6 +1251,250 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
         object: 'FIN-202606-0014',
         action: '复核入账',
         summary: '核对银行回单后入账'
+      }
+    ]
+  },
+  {
+    id: 'fin-flow-019',
+    transactionNo: 'FIN-202606-0015',
+    occurredAt: '2026-06-20',
+    accountingPeriod: '2026-06',
+    direction: '收入',
+    category: '客户回款',
+    counterparty: '青禾咖啡',
+    counterpartyType: '客户',
+    amount: 24000,
+    currency: 'CNY',
+    paymentMethod: '对公账户收款',
+    ...cmbPublicAccountRef,
+    sourceType: '合同应收',
+    sourceNo: 'CON-2026-020',
+    sourceTitle: '青禾咖啡门店设计尾款',
+    voucherStatus: '已上传',
+    reconciliationStatus: '已对账',
+    status: '已入账',
+    registeredBy: '李明',
+    reviewedBy: '财务复核',
+    reviewedAt: '2026-06-20 15:10',
+    reconciledAt: '2026-06-21',
+    note: '合同尾款已到账并完成银行对账。',
+    updatedAt: '2026-06-21 09:30',
+    files: [
+      {
+        id: 'fin-file-019',
+        name: '青禾咖啡_尾款银行回单.pdf',
+        status: '已上传',
+        type: '银行回单',
+        updatedAt: '2026-06-20'
+      }
+    ],
+    operationRecords: [
+      {
+        id: 'fin-op-035',
+        time: '2026-06-20 14:50',
+        actor: '李明',
+        object: 'FIN-202606-0015',
+        action: '登记流水',
+        summary: '登记客户回款 24,000 元'
+      },
+      {
+        id: 'fin-op-036',
+        time: '2026-06-20 15:10',
+        actor: '财务复核',
+        object: 'FIN-202606-0015',
+        action: '复核入账',
+        summary: '核对银行回单后入账'
+      },
+      {
+        id: 'fin-op-037',
+        time: '2026-06-21 09:30',
+        actor: '财务复核',
+        object: 'FIN-202606-0015',
+        action: '银行对账',
+        summary: '与银行流水完成勾稽'
+      }
+    ]
+  },
+  {
+    id: 'fin-flow-020',
+    transactionNo: 'FIN-202606-0016',
+    occurredAt: '2026-06-21',
+    accountingPeriod: '2026-06',
+    direction: '支出',
+    category: '材料采购',
+    counterparty: '武汉源木物料',
+    counterpartyType: '供应商',
+    amount: 5200,
+    currency: 'CNY',
+    paymentMethod: '对公账户付款',
+    ...ccbPaymentPublicAccountRef,
+    sourceType: '报销单',
+    sourceNo: 'MAT-202606-004',
+    sourceTitle: '门店打样材料采购',
+    voucherStatus: '已上传',
+    reconciliationStatus: '已对账',
+    status: '已入账',
+    registeredBy: '李明',
+    reviewedBy: '财务复核',
+    reviewedAt: '2026-06-21 16:20',
+    reconciledAt: '2026-06-22',
+    note: '项目材料采购付款，已取得采购凭证。',
+    updatedAt: '2026-06-22 09:15',
+    files: [
+      {
+        id: 'fin-file-020',
+        name: '门店打样材料_付款回单.pdf',
+        status: '已上传',
+        type: '付款回单',
+        updatedAt: '2026-06-21'
+      }
+    ],
+    operationRecords: [
+      {
+        id: 'fin-op-038',
+        time: '2026-06-21 15:55',
+        actor: '李明',
+        object: 'FIN-202606-0016',
+        action: '登记流水',
+        summary: '登记材料采购付款 5,200 元'
+      },
+      {
+        id: 'fin-op-039',
+        time: '2026-06-21 16:20',
+        actor: '财务复核',
+        object: 'FIN-202606-0016',
+        action: '复核入账',
+        summary: '核对付款回单和采购凭证后入账'
+      },
+      {
+        id: 'fin-op-040',
+        time: '2026-06-22 09:15',
+        actor: '财务复核',
+        object: 'FIN-202606-0016',
+        action: '银行对账',
+        summary: '与银行流水完成勾稽'
+      }
+    ]
+  },
+  {
+    id: 'fin-flow-021',
+    transactionNo: 'FIN-202606-0017',
+    occurredAt: '2026-06-22',
+    accountingPeriod: '2026-06',
+    direction: '支出',
+    category: '办公费用',
+    counterparty: '云协同科技',
+    counterpartyType: '供应商',
+    amount: 1480,
+    currency: 'CNY',
+    paymentMethod: '对公账户付款',
+    ...ccbPaymentPublicAccountRef,
+    sourceType: '报销单',
+    sourceNo: 'EXP-202606-009',
+    sourceTitle: '协同工具年度服务费',
+    voucherStatus: '已上传',
+    reconciliationStatus: '已对账',
+    status: '已入账',
+    registeredBy: '李明',
+    reviewedBy: '财务复核',
+    reviewedAt: '2026-06-22 17:10',
+    reconciledAt: '2026-06-23',
+    note: '办公软件服务费，已上传电子发票和付款回单。',
+    updatedAt: '2026-06-23 09:40',
+    files: [
+      {
+        id: 'fin-file-021',
+        name: '云协同科技_服务费付款回单.pdf',
+        status: '已上传',
+        type: '付款回单',
+        updatedAt: '2026-06-22'
+      }
+    ],
+    operationRecords: [
+      {
+        id: 'fin-op-041',
+        time: '2026-06-22 16:45',
+        actor: '李明',
+        object: 'FIN-202606-0017',
+        action: '登记流水',
+        summary: '登记办公费用付款 1,480 元'
+      },
+      {
+        id: 'fin-op-042',
+        time: '2026-06-22 17:10',
+        actor: '财务复核',
+        object: 'FIN-202606-0017',
+        action: '复核入账',
+        summary: '核对电子发票和付款回单后入账'
+      },
+      {
+        id: 'fin-op-043',
+        time: '2026-06-23 09:40',
+        actor: '财务复核',
+        object: 'FIN-202606-0017',
+        action: '银行对账',
+        summary: '与银行流水完成勾稽'
+      }
+    ]
+  },
+  {
+    id: 'fin-flow-022',
+    transactionNo: 'FIN-202606-0018',
+    occurredAt: '2026-06-23',
+    accountingPeriod: '2026-06',
+    direction: '支出',
+    category: '差旅交通',
+    counterparty: '刘宇',
+    counterpartyType: '员工',
+    amount: 960,
+    currency: 'CNY',
+    paymentMethod: '对公账户付款',
+    ...icbcPaymentPublicAccountRef,
+    sourceType: '报销单',
+    sourceNo: 'EXP-202606-010',
+    sourceTitle: '长沙项目现场交通报销',
+    voucherStatus: '已上传',
+    reconciliationStatus: '已对账',
+    status: '已入账',
+    registeredBy: '李明',
+    reviewedBy: '财务复核',
+    reviewedAt: '2026-06-23 15:35',
+    reconciledAt: '2026-06-24',
+    note: '员工项目现场交通报销，已完成付款和对账。',
+    updatedAt: '2026-06-24 09:25',
+    files: [
+      {
+        id: 'fin-file-022',
+        name: '刘宇_长沙项目交通报销付款回单.pdf',
+        status: '已上传',
+        type: '付款回单',
+        updatedAt: '2026-06-23'
+      }
+    ],
+    operationRecords: [
+      {
+        id: 'fin-op-044',
+        time: '2026-06-23 15:10',
+        actor: '李明',
+        object: 'FIN-202606-0018',
+        action: '登记流水',
+        summary: '登记差旅交通付款 960 元'
+      },
+      {
+        id: 'fin-op-045',
+        time: '2026-06-23 15:35',
+        actor: '财务复核',
+        object: 'FIN-202606-0018',
+        action: '复核入账',
+        summary: '核对报销单和付款回单后入账'
+      },
+      {
+        id: 'fin-op-046',
+        time: '2026-06-24 09:25',
+        actor: '财务复核',
+        object: 'FIN-202606-0018',
+        action: '银行对账',
+        summary: '与银行流水完成勾稽'
       }
     ]
   },

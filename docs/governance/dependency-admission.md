@@ -2,9 +2,11 @@
 
 ## 1. Status
 
-Status: `frontend_baseline_admitted`.
+Status: `frontend_and_api_contract_skeleton_admitted`.
 
-Local Docker database dependency and frontend baseline dependencies have been admitted for local development.
+Local Docker database dependency, frontend baseline dependencies, and the local
+API contract-skeleton TypeScript tooling reuse have been admitted for local
+development.
 
 Security boundary:
 
@@ -25,6 +27,7 @@ Security boundary:
 | `vite` | `8.0.16` | Frontend dev server and production build | Codex/user | MIT | Build tooling only; local dev server bound to `127.0.0.1` | Next.js deferred because backend/rendering model is not confirmed | admitted for frontend baseline | `apps/web/vite.config.ts` |
 | `@vitejs/plugin-react` | `6.0.2` | React support for Vite | Codex/user | MIT | Build tooling only | N/A | admitted for frontend baseline | `apps/web/vite.config.ts` |
 | `typescript` | `6.0.3` | Static type checking | Codex/user | Apache-2.0 | Tooling only | JavaScript-only rejected due governance baseline | admitted for frontend baseline | `apps/web/tsconfig.json` |
+| `typescript` reused by `@startupmanage/api` | `6.0.3` | Local API contract-domain type checking and test compilation | Codex/user | Apache-2.0 | Reuses the already admitted TypeScript toolchain; no new external library introduced | Plain JavaScript contract tests rejected because period-close API/domain contracts need typed DTO invariants | admitted for local API contract skeleton | `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/src/finance/periodCloseContract.ts`, `corepack pnpm test:api` |
 | `eslint`, `@eslint/js`, `typescript-eslint`, `globals` | `10.4.1`, `10.0.1`, `8.60.1`, `17.6.0` | Linting | Codex/user | MIT | Tooling only | Formatter/linter suite pending later | admitted for frontend baseline | `apps/web/eslint.config.js`, `corepack pnpm lint` |
 | `@types/react`, `@types/react-dom` | `18.3.31`, `18.3.7` | React TypeScript types | Codex/user | MIT | Tooling only | N/A | admitted for frontend baseline | `apps/web/package.json` |
 

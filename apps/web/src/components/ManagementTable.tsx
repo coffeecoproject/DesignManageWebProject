@@ -232,8 +232,23 @@ export function ManagementTable<T extends object>({
         pagination={managementTablePagination}
         onRow={(record) => {
           const rowKeyValue = getRecordKey(record, rowKey);
+          const rowProps = createRowProps(rowTestIdPrefix ? `${rowTestIdPrefix}-${rowKeyValue}` : undefined, rowKeyValue);
 
-          return createRowProps(rowTestIdPrefix ? `${rowTestIdPrefix}-${rowKeyValue}` : undefined, rowKeyValue);
+          if (!onRowClick) {
+            return rowProps;
+          }
+
+          return {
+            ...rowProps,
+            onClick: (event) => {
+              if (shouldIgnoreDelegatedRowClick(event)) {
+                return;
+              }
+
+              event.stopPropagation();
+              onRowClick(record);
+            }
+          };
         }}
         rowClassName={onRowClick ? 'management-table-row-clickable' : undefined}
         rowKey={rowKey}

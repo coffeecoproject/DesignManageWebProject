@@ -92,7 +92,9 @@ function getPeriodLabel(value: BusinessOverviewDateScope) {
     return value.month;
   }
 
-  return `${value.range.startDate} 至 ${value.range.endDate}`;
+  const range = getDateScopeRange(value, financeBusinessOverviewDefaultMonth);
+
+  return range ? `${range.startDate} 至 ${range.endDate}` : '全部期间';
 }
 
 function getStatusPanelTitle(basis: FinanceBusinessOverviewBasis, value: BusinessOverviewDateScope) {

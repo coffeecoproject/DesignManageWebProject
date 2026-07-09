@@ -133,6 +133,26 @@ export function getOriginalInvoiceForRedInvoice(redInvoice: FinanceInvoiceRecord
   return redInvoice.originalInvoiceId ? invoices.find((invoice) => invoice.id === redInvoice.originalInvoiceId) : undefined;
 }
 
+export function getRedInvoiceOriginalAssociationAffectedInvoices(
+  currentInvoice: FinanceInvoiceRecord,
+  nextInvoice: FinanceInvoiceRecord,
+  invoices: FinanceInvoiceRecord[]
+) {
+  if (currentInvoice.invoiceStatus !== '红冲' && nextInvoice.invoiceStatus !== '红冲') {
+    return [];
+  }
+
+  const originalInvoiceIds = new Set(
+    [currentInvoice.originalInvoiceId, nextInvoice.originalInvoiceId].filter((invoiceId): invoiceId is string => Boolean(invoiceId))
+  );
+
+  if (!originalInvoiceIds.size) {
+    return [];
+  }
+
+  return invoices.filter((invoice) => originalInvoiceIds.has(invoice.id));
+}
+
 export function isTransactionInvoiceAssociationRequired(record: FinanceTransactionRecord) {
   if (record.status === '已作废' || record.direction === '内部转入') {
     return false;

@@ -9,6 +9,7 @@ export type FinanceVoucherUploadFile = {
 
 type FinanceVoucherUploadPanelProps = {
   description?: string;
+  disabled?: boolean;
   emptyText?: string;
   files: RelatedFileRecord[];
   onDownload?: (file: RelatedFileRecord) => void;
@@ -20,6 +21,7 @@ type FinanceVoucherUploadPanelProps = {
 
 export function FinanceVoucherUploadPanel({
   description = '支持上传 PDF/JPG/PNG，单个不超过 10MB。',
+  disabled,
   emptyText = '暂无凭证文件',
   files,
   onDownload,
@@ -35,6 +37,7 @@ export function FinanceVoucherUploadPanel({
       <FileSlot
         accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/png,image/jpeg"
         description={description}
+        disabled={disabled}
         emptyText={emptyText}
         files={[]}
         showFileList={false}
@@ -48,7 +51,7 @@ export function FinanceVoucherUploadPanel({
         <RelatedFileTable
           records={files}
           scrollX={620}
-          onDelete={onRemove}
+          onDelete={disabled ? undefined : onRemove}
           onDownload={onDownload}
           onPreview={onPreview}
         />

@@ -30,6 +30,7 @@ import {
   defaultAccountingSubjectFilters,
   matchesAccountingSubjectFilters,
   type AccountingAuxiliaryScope,
+  type AccountingCashFlowActivity,
   type AccountingSubjectFilters,
   type AccountingSubjectRecord,
   type AccountingSubjectStatus,
@@ -45,6 +46,26 @@ const accountingSubjectSourceTone = {
   内置规范: 'blue',
   企业明细: 'purple'
 } as const;
+
+const cashFlowActivityTone: Record<AccountingCashFlowActivity, 'blue' | 'green' | 'purple'> = {
+  经营活动: 'green',
+  投资活动: 'blue',
+  筹资活动: 'purple'
+};
+
+function getCashFlowMappingText(record: AccountingSubjectRecord) {
+  if (!record.cashFlowItem || !record.cashFlowActivity) {
+    return {
+      activity: '不参与',
+      item: '不参与现金流量表'
+    };
+  }
+
+  return {
+    activity: record.cashFlowActivity,
+    item: record.cashFlowItem
+  };
+}
 
 function getAuxiliaryScopeTone(scope: AccountingAuxiliaryScope) {
   if (scope === '客户') return 'green';
@@ -65,6 +86,7 @@ function AccountingSubjectDetailDrawer({
   if (!record) {
     return null;
   }
+  const cashFlowMapping = getCashFlowMappingText(record);
 
   return (
     <DetailDrawerShell
@@ -88,7 +110,8 @@ function AccountingSubjectDetailDrawer({
           { icon: <ProfileOutlined />, key: 'code', label: '科目编码', value: record.code },
           { icon: <PartitionOutlined />, key: 'type', label: '科目类别', value: record.type },
           { icon: <FileTextOutlined />, key: 'direction', label: '余额方向', value: record.balanceDirection },
-          { icon: <FileProtectOutlined />, key: 'statement', label: '报表归属', value: record.statementTarget }
+          { icon: <FileProtectOutlined />, key: 'statement', label: '报表归属', value: record.statementTarget },
+          { icon: <FileTextOutlined />, key: 'cashFlow', label: '现金流量', value: cashFlowMapping.activity }
         ]}
       />
 
@@ -103,6 +126,11 @@ function AccountingSubjectDetailDrawer({
             { label: '科目来源', value: <StatusTag toneMap={accountingSubjectSourceTone} value={record.source} /> },
             { label: '报表归属', value: <StatusTag toneMap={accountingStatementTargetTone} value={record.statementTarget} /> },
             { label: '报表项目', value: record.reportItem },
+            {
+              label: '现金流量活动',
+              value: record.cashFlowActivity ? <StatusTag toneMap={cashFlowActivityTone} value={record.cashFlowActivity} /> : '不参与'
+            },
+            { label: '现金流量项目', value: cashFlowMapping.item },
             { label: '状态', value: <StatusTag toneMap={accountingSubjectStatusTone} value={record.status} /> }
           ]}
         />
@@ -181,6 +209,16 @@ export function FinanceAccountingSubjectsPage() {
       render: (_, record) => <CompactCell primary={record.statementTarget} secondary={record.reportItem} />
     },
     {
+      title: '现金流量',
+      key: 'cashFlow',
+      width: 230,
+      render: (_, record) => {
+        const cashFlowMapping = getCashFlowMappingText(record);
+
+        return <CompactCell primary={cashFlowMapping.activity} secondary={cashFlowMapping.item} />;
+      }
+    },
+    {
       title: '辅助核算',
       dataIndex: 'auxiliaryScopes',
       width: 190,
@@ -211,11 +249,12 @@ export function FinanceAccountingSubjectsPage() {
     <ManagementPageScaffold
       layout="table-workbench"
       metrics={
-        <MetricGrid columns={4}>
+        <MetricGrid columns={5}>
           <MetricCard icon={<ProfileOutlined />} label="可记账科目" value={metrics.enabledCount} />
           <MetricCard icon={<PartitionOutlined />} label="内置规范" value={metrics.standardCount} />
           <MetricCard icon={<FileProtectOutlined />} label="资产负债表" value={metrics.balanceSheetCount} />
           <MetricCard icon={<FileTextOutlined />} label="利润表" value={metrics.profitStatementCount} />
+          <MetricCard icon={<FileTextOutlined />} label="现金流映射" value={metrics.cashFlowMappedCount} />
         </MetricGrid>
       }
       filters={
@@ -247,7 +286,7 @@ export function FinanceAccountingSubjectsPage() {
             </FilterField>
             <KeywordFilter
               data-testid="finance-accounting-subject-keyword-input"
-              placeholder="编码 / 名称 / 报表项目 / 关联业务"
+              placeholder="编码 / 名称 / 报表项目 / 现金流量 / 关联业务"
               value={filters.keyword}
               width="wide"
               onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}

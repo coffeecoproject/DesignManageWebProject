@@ -126,6 +126,7 @@ export function FinanceReceivablesPayablesPage() {
   const {
     addFinanceTransaction,
     financeRows,
+    getAccountingPeriodGuard,
     invoiceRows,
     receivablePayableRows,
     updateReceivablePayableRecord
@@ -223,11 +224,15 @@ export function FinanceReceivablesPayablesPage() {
   const registerableAmount = activeRecord
     ? getFinanceReceivablePayableRegisterableAmount(activeRecord, linkedTransactionRows)
     : 0;
+  const activeRecordPeriodGuard = activeRecord
+    ? getAccountingPeriodGuard(activeRecord.accountingPeriod, activeRecord.direction === '应收' ? '处理应收事项' : '处理应付事项')
+    : undefined;
+  const activeRecordLockedReason = activeRecordPeriodGuard?.allowed === false ? activeRecordPeriodGuard.reason : undefined;
   const activeRecordEditable = activeRecord
-    ? canEditFinanceReceivablePayableRecord(activeRecord, linkedTransactionRows)
+    ? canEditFinanceReceivablePayableRecord(activeRecord, linkedTransactionRows) && !activeRecordLockedReason
     : false;
   const activeRecordCanRegisterSettlement = activeRecord
-    ? canRegisterFinanceReceivablePayableSettlement(activeRecord, linkedTransactionRows)
+    ? canRegisterFinanceReceivablePayableSettlement(activeRecord, linkedTransactionRows) && !activeRecordLockedReason
     : false;
   const settlementFormValid =
     Boolean(activeRecord) &&
@@ -268,6 +273,12 @@ export function FinanceReceivablesPayablesPage() {
 
   function handleOpenEditDrawer(record: FinanceReceivablePayableRecord) {
     const recordLinkedTransactionRows = getFinanceReceivablePayableLinkedTransactionRows(record, financeRows);
+    const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '调整应收应付事项');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
 
     if (!canEditFinanceReceivablePayableRecord(record, recordLinkedTransactionRows)) {
       void messageApi.warning('已有收付进度，不能直接调整原事项');
@@ -283,9 +294,26 @@ export function FinanceReceivablesPayablesPage() {
       return;
     }
 
-    const nextRecord = updateFinanceReceivablePayableRecordFromForm(formDrawer.record, formDrawer.form);
+    const periodGuard = getAccountingPeriodGuard(formDrawer.record.accountingPeriod, '调整应收应付事项');
 
-    updateReceivablePayableRecord(nextRecord.id, () => nextRecord);
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
+    const nextRecord = updateFinanceReceivablePayableRecordFromForm(formDrawer.record, formDrawer.form);
+    const nextPeriodGuard = getAccountingPeriodGuard(nextRecord.accountingPeriod, '调整应收应付事项');
+
+    if (!nextPeriodGuard.allowed) {
+      void messageApi.warning(nextPeriodGuard.reason);
+      return;
+    }
+
+    if (!updateReceivablePayableRecord(nextRecord.id, () => nextRecord)) {
+      void messageApi.warning('当前事项不可调整');
+      return;
+    }
+
     formDrawer.close();
     void messageApi.success('已保存事项调整');
   }
@@ -331,6 +359,11 @@ export function FinanceReceivablesPayablesPage() {
   }
 
   function handleSettlementFileSelect(file: FinanceVoucherUploadFile) {
+    if (activeRecordLockedReason) {
+      void messageApi.warning(activeRecordLockedReason);
+      return;
+    }
+
     const nextFile = buildSettlementVoucherFile(file);
 
     if (!nextFile) {
@@ -344,6 +377,11 @@ export function FinanceReceivablesPayablesPage() {
   }
 
   function handleSettlementFileRemove(file: RelatedFileRecord) {
+    if (activeRecordLockedReason) {
+      void messageApi.warning(activeRecordLockedReason);
+      return;
+    }
+
     setSettlementForm((current) => ({
       ...current,
       files: current.files.filter((currentFile) => currentFile.id !== file.id)
@@ -352,6 +390,11 @@ export function FinanceReceivablesPayablesPage() {
 
   function handleRegisterSettlement() {
     if (!activeRecord) {
+      return;
+    }
+
+    if (activeRecordLockedReason) {
+      void messageApi.warning(activeRecordLockedReason);
       return;
     }
 
@@ -368,11 +411,30 @@ export function FinanceReceivablesPayablesPage() {
     }
 
     const nextTransaction = buildFinanceReceivablePayableSettlementTransaction(activeRecord, settlementForm, financeRows, publicAccountRef);
-
-    addFinanceTransaction(nextTransaction);
-    updateReceivablePayableRecord(activeRecord.id, (record) =>
-      linkFinanceReceivablePayableSettlementTransaction(record, nextTransaction)
+    const transactionPeriodGuard = getAccountingPeriodGuard(
+      nextTransaction.accountingPeriod,
+      activeRecord.direction === '应收' ? '登记收款流水' : '登记付款流水'
     );
+
+    if (!transactionPeriodGuard.allowed) {
+      void messageApi.warning(transactionPeriodGuard.reason);
+      return;
+    }
+
+    if (!addFinanceTransaction(nextTransaction)) {
+      void messageApi.warning(transactionPeriodGuard.reason ?? '当前会计期间已锁定，不能登记流水');
+      return;
+    }
+
+    if (
+      !updateReceivablePayableRecord(activeRecord.id, (record) =>
+        linkFinanceReceivablePayableSettlementTransaction(record, nextTransaction)
+      )
+    ) {
+      void messageApi.warning('流水已登记，但事项进度未完成关联，请重新打开事项核对');
+      return;
+    }
+
     setSettlementForm({
       ...createFinanceReceivablePayableSettlementForm(activeRecord, getDefaultPublicAccountId(activeRecord)),
       amount: 0
@@ -456,6 +518,7 @@ export function FinanceReceivablesPayablesPage() {
         registerableAmount={registerableAmount}
         record={activeRecord}
         recordEditable={activeRecordEditable}
+        recordLockedReason={activeRecordLockedReason}
         settlementForm={settlementForm}
         settlementSubmitDisabled={!settlementFormValid}
         onDownloadFile={handleDownloadFile}

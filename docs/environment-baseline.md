@@ -107,7 +107,9 @@ Rotation / incident owner: PENDING_CONFIRMATION
 
 ## Test Environment
 
-Test command: `corepack pnpm test:web`
+Frontend test command: `corepack pnpm test:web`
+
+Local API contract test command: `corepack pnpm test:api`
 
 Typecheck command: `corepack pnpm typecheck`
 
@@ -139,7 +141,7 @@ CI test command: PENDING_CONFIRMATION
 
 CI system: PENDING_CONFIRMATION
 
-Required checks: local confirmed commands are `lint`, `typecheck`, `test:web`, `build:web`, and relevant workflow/document checks.
+Required checks: local confirmed commands are `lint`, `typecheck`, `test:web`, `build:web`, and relevant workflow/document checks. For `apps/api` local contract changes, also run `test:api`.
 
 Build command: `corepack pnpm build:web`
 

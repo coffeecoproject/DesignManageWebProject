@@ -84,6 +84,46 @@ export function getAccountingPeriod(occurredAt: string) {
   return occurredAt.slice(0, 7);
 }
 
+function getQuarterEndMonth(quarter: string) {
+  switch (quarter) {
+    case '1':
+      return '03';
+    case '2':
+      return '06';
+    case '3':
+      return '09';
+    case '4':
+      return '12';
+    default:
+      return undefined;
+  }
+}
+
+export function getAccountingPeriodFromBusinessPeriod(period: string | undefined) {
+  if (!period) {
+    return undefined;
+  }
+
+  if (/^\d{4}-\d{2}$/.test(period)) {
+    return period;
+  }
+
+  const quarterMatch = period.match(/^(\d{4})-Q([1-4])$/);
+
+  if (quarterMatch) {
+    const [, year, quarter] = quarterMatch;
+    const endMonth = getQuarterEndMonth(quarter);
+
+    return endMonth ? `${year}-${endMonth}` : undefined;
+  }
+
+  if (/^\d{4}$/.test(period)) {
+    return `${period}-12`;
+  }
+
+  return undefined;
+}
+
 function formatDate(date: Date) {
   const year = date.getUTCFullYear();
   const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');

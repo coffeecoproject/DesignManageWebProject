@@ -4,7 +4,7 @@ import {
   EditOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Input, InputNumber, Select } from 'antd';
+import { Alert, Input, InputNumber, Select } from 'antd';
 import dayjs from 'dayjs';
 import { useMemo } from 'react';
 import { MonthPickerControl } from '../../components/DateFilterFields';
@@ -33,6 +33,7 @@ type SalaryAdjustmentCreateDrawerProps = {
   form: SalaryAdjustmentFormValue;
   getReportsForMonth: (month: string) => SalaryMonthlyReport[];
   open: boolean;
+  periodReadbackNotice?: string;
   onCancel: () => void;
   onChange: <K extends keyof SalaryAdjustmentFormValue>(field: K, value: SalaryAdjustmentFormValue[K]) => void;
   onMonthChange: (month: string) => void;
@@ -43,6 +44,7 @@ export function SalaryAdjustmentCreateDrawer({
   form,
   getReportsForMonth,
   open,
+  periodReadbackNotice,
   onCancel,
   onChange,
   onMonthChange,
@@ -52,7 +54,7 @@ export function SalaryAdjustmentCreateDrawer({
   const selectedReport = getSalaryAdjustmentSelectedReport(reports, form);
   const adjustmentDirection = getSalaryAdjustmentDirectionLabel(form.type);
   const memberOptions = getSalaryAdjustmentMemberOptions(reports);
-  const saveDisabled = !isSalaryAdjustmentFormValid(form, selectedReport);
+  const saveDisabled = Boolean(periodReadbackNotice) || !isSalaryAdjustmentFormValid(form, selectedReport);
 
   function handleMonthChange(month: string) {
     onMonthChange(month || salaryDetailDefaultMonth);
@@ -88,6 +90,9 @@ export function SalaryAdjustmentCreateDrawer({
       width={680}
       onClose={onCancel}
     >
+      {periodReadbackNotice ? (
+        <Alert className="finance-period-readback-alert" message={periodReadbackNotice} showIcon type="info" />
+      ) : null}
       <DetailSection icon={<CalculatorOutlined />} title="调整对象">
         <DrawerFormGrid>
           <DrawerFormField label="薪酬月份" required>

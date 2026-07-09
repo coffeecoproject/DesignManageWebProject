@@ -4,8 +4,10 @@ Status: `backend_contract_draft`.
 
 This document defines the backend-facing contract for bank-statement import,
 cash-flow review, and bank reconciliation before API/database implementation.
-It is not a production database migration, authorization policy, bank API
-integration, or accounting-voucher implementation.
+It is one input to the funds-voucher phase 1 backend contract in
+`docs/data/finance-funds-voucher-phase1-backend-contract.md`. It is not a
+production database migration, authorization policy, bank API integration, or
+accounting-voucher implementation.
 
 ## 1. Scope
 
@@ -36,7 +38,7 @@ Out of scope:
 | Real bank movement | Bank statement import | Imported from bank statement file or future bank API. |
 | System cash-flow row | `finance_transaction` | Created by upstream business or bank-side supplement, then reviewed in `流水复核`. |
 | Voucher completeness | `finance_transaction` review flow | Voucher is required before review can post a cash-flow row. |
-| Bank reconciliation relationship | `finance_bank_reconciliation_link` | Links one bank statement row to one or more reviewed system cash-flow rows. |
+| Bank reconciliation relationship | `finance_bank_reconciliation_links` + `finance_bank_reconciliation_link_transactions` | One relationship header links a bank statement row to one or more reviewed system cash-flow detail rows. |
 | Reconciled state | Bank reconciliation confirmation | Confirmation writes reconciliation state to the bank row and all active linked reviewed system rows. |
 | Amount correction | Adjustment system cash-flow row | Original reviewed cash-flow amount is not mutated; a supplement/reversal/difference row is created and reviewed. |
 
@@ -54,7 +56,7 @@ Imported bank statement row.
 | `public_account_snapshot` | yes | Account holder, bank name, tail number, and display name snapshot from import time. |
 | `imported_account_name` | yes | Raw account name from the bank file; evidence only, not the account identity. |
 | `statement_date` | yes | Actual bank transaction date. |
-| `direction` | yes | `收入` or `支出` from bank perspective. |
+| `direction` | yes | `入账` or `出账` from bank perspective. |
 | `amount` | yes | Positive amount from the bank statement. |
 | `counterparty_name` | yes | Bank statement counterparty. |
 | `summary` | yes | Bank statement summary or memo. |
@@ -118,38 +120,71 @@ Rules:
 - Original reviewed row amounts must not be edited for bank amount differences.
 - A cash-flow row can only have one active confirmed bank statement relation.
 
-### 3.3 `finance_bank_reconciliation_link`
+### 3.3 `finance_bank_reconciliation_links`
 
-Relationship table between bank statement rows and system cash-flow rows.
+Relationship header between one imported bank statement row and the group of
+system cash-flow rows confirmed against it.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `id` | yes | Internal id. |
 | `bank_statement_id` | yes | Related bank statement row. |
-| `finance_transaction_id` | yes | Related system cash-flow row. |
-| `role` | yes | `primary` or `adjustment`. |
+| `bank_statement_no` | yes | Bank serial/display number snapshot. |
+| `bank_statement_date` | yes | Bank transaction date snapshot. |
+| `batch_no` | yes | Import batch number snapshot. |
+| `public_account_id` | yes | Company public account. |
+| `public_account_snapshot` | yes | Account display snapshot used at confirmation time. |
+| `direction` | yes | `入账` or `出账` from bank perspective. |
+| `amount` | yes | Positive bank statement amount. |
 | `relation_source` | yes | `auto_match`, `manual_confirm`, `bank_generated_flow`, or `amount_adjustment`. |
 | `status` | yes | `active` or `removed`. |
-| `created_at` | yes | Relation creation time. |
-| `created_by` | yes | Operator or system actor snapshot. |
+| `confirmed_at` | yes | Reconciliation confirmation time. |
+| `confirmed_by` | yes | Operator account id/name snapshot. |
 | `removed_at` | no | Relation removal time. |
 | `removed_by` | no | Operator snapshot for removal. |
-| `note` | no | Compact operation note. |
+| `remove_reason` | no | Required when status becomes `removed`. |
+| `version` | yes | Optimistic concurrency. |
 
-Relationship rules:
+Header rules:
 
-- One bank statement can have multiple active links.
-- The first active `primary` link is the display anchor for the bank row.
-- Additional `adjustment` links represent reviewed correction rows for the same
-  bank statement.
+- One bank statement row can have only one active reconciliation header.
+- The header keeps bank-side snapshots so later bank import/account config edits
+  do not rewrite confirmed reconciliation history.
+- If a relationship is wrong, reverse/remove the header with a reason and create
+  a new header. Do not silently mutate the confirmed relationship in place.
+
+### 3.4 `finance_bank_reconciliation_link_transactions`
+
+Relationship detail rows between a reconciliation header and reviewed system
+cash-flow rows.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Internal id. |
+| `bank_reconciliation_link_id` | yes | Related relationship header. |
+| `finance_transaction_id` | yes | Related system cash-flow row. |
+| `finance_transaction_no` | yes | Display number snapshot. |
+| `role` | yes | `主流水`, `补差流水`, or `冲正流水`. |
+| `amount` | yes | Linked system row amount snapshot. |
+| `direction` | yes | System row direction snapshot. |
+| `source_type` | yes | System row source type snapshot. |
+| `created_at` | yes | Detail creation time. |
+| `created_by` | yes | Operator or system actor snapshot. |
+
+Detail rules:
+
+- One bank statement can have multiple linked system rows through the same
+  active relationship header.
+- Exactly one active detail row should normally be `主流水`.
+- `补差流水` and `冲正流水` represent reviewed correction rows for the same bank
+  statement.
 - The sum of signed amounts of all active linked `已入账` system rows must equal
   the signed bank amount before reconciliation can be confirmed.
-- If any active linked adjustment row is still `待复核`, the bank row is blocked
-  as `暂不可对账`.
-- Removed links are retained for audit and cannot be physically deleted in
-  production.
+- If any linked correction row is still `待复核`, the bank row is blocked as
+  `暂不可对账`.
+- A system cash-flow row can only appear in one active relationship detail.
 
-### 3.4 `finance_reconciliation_event`
+### 3.5 `finance_reconciliation_event`
 
 Domain event table for reconciliation lifecycle.
 
@@ -159,14 +194,14 @@ Domain event table for reconciliation lifecycle.
 | `event_type` | yes | `imported`, `matched`, `system_flow_created`, `adjustment_created`, `review_posted`, `confirmed`, `reversed`, `returned`, or `voided`. |
 | `bank_statement_id` | no | Related bank row when applicable. |
 | `finance_transaction_id` | no | Related system row when applicable. |
-| `reconciliation_link_id` | no | Related link row when applicable. |
+| `reconciliation_link_id` | no | Related relationship header when applicable. |
 | `before_state` | no | Compact JSON state before change. |
 | `after_state` | no | Compact JSON state after change. |
 | `reason` | no | Required for return, void, and reversal. |
 | `created_at` | yes | Event time. |
 | `created_by` | yes | Actor id/name snapshot. |
 
-### 3.5 `audit_event`
+### 3.6 `audit_event`
 
 The general audit stream must record all mutating operations in this contract.
 
@@ -228,7 +263,7 @@ UI may group these into compact visible states such as `待处理`, `待确认`,
 3. Bank row becomes `金额不一致`.
 4. Operator creates a `流水补差` system cash-flow row from bank reconciliation.
 5. The adjustment row enters `流水复核` as `待复核` and is linked to the same bank
-   row with role `adjustment`.
+   row with detail role `补差流水`.
 6. While the adjustment row is `待复核`, the bank row becomes `暂不可对账`.
 7. After review posts the adjustment row as `已入账`, the system recomputes:
 
@@ -271,7 +306,7 @@ type BankStatementImportPreviewResponse = {
   rows: Array<{
     bankStatementNo: string;
     statementDate: string;
-    direction: '收入' | '支出';
+    direction: '入账' | '出账';
     amount: number;
     counterpartyName: string;
     summary: string;
@@ -326,7 +361,7 @@ type BankReconciliationItem = {
   bankStatementId: string;
   bankStatementNo: string;
   statementDate: string;
-  direction: '收入' | '支出';
+  direction: '入账' | '出账';
   amount: number;
   counterpartyName: string;
   matchStatus:
@@ -353,7 +388,7 @@ type BankReconciliationDetail = {
   linkedTransactions: Array<{
     id: string;
     transactionNo: string;
-    role: 'primary' | 'adjustment';
+    role: '主流水' | '补差流水' | '冲正流水';
     direction: '收入' | '支出';
     amount: number;
     occurredDate: string;
@@ -458,17 +493,19 @@ Rules:
 
 ## 8. Frontend Integration Boundary
 
-Current frontend prototype uses `matchedTransactionIds: string[]` on bank
-statement records:
+Current frontend prototype keeps `matchedTransactionIds: string[]` only on bank
+statement records as a lightweight candidate/read-model helper:
 
 - Empty array means no matched system row.
 - First id is the primary display system row.
-- Additional ids represent adjustment rows for the same bank statement.
-- Confirmation updates the bank row plus all active linked reviewed system rows.
+- Additional ids represent candidate adjustment rows for the same bank statement.
 
-Backend implementation should replace this frontend-only array with the
-relationship table described above. API responses may still expose
-`matchedFinanceTransactionIds` as a read model for simple rendering.
+Confirmed reconciliation state is represented by `bankReconciliationRows`,
+which mirrors the backend structure: one relationship header plus
+`linkedTransactions` detail rows with `主流水 / 补差流水 / 冲正流水` roles.
+API responses may still expose `matchedFinanceTransactionIds` for simple list
+rendering, but persisted confirmation must use the relationship header/detail
+tables described above.
 
 ## 9. Evidence And Readiness
 

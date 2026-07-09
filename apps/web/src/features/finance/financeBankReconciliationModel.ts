@@ -38,6 +38,33 @@ export type BankReconciliationResolution = {
   reviewedAdjustmentRecords: FinanceTransactionRecord[];
 };
 
+export type FinanceBankReconciliationLinkedTransactionRole = '主流水' | '补差流水' | '冲正流水';
+
+export type FinanceBankReconciliationLinkedTransactionRecord = {
+  amount: number;
+  direction: Exclude<FinanceTransactionDirection, '内部转入'>;
+  financeTransactionId: string;
+  financeTransactionNo: string;
+  role: FinanceBankReconciliationLinkedTransactionRole;
+  sourceType: FinanceTransactionRecord['sourceType'];
+};
+
+export type FinanceBankReconciliationLinkRecord = {
+  amount: number;
+  bankSerialNo: string;
+  bankStatementDate: string;
+  bankStatementId: string;
+  batchNo: string;
+  confirmedAt: string;
+  confirmedBy: string;
+  direction: BankStatementDirection;
+  id: string;
+  linkedTransactions: FinanceBankReconciliationLinkedTransactionRecord[];
+  publicAccountId: string;
+  publicAccountSnapshot: BankStatementRecord['publicAccountSnapshot'];
+  status: '已对账';
+};
+
 const moneyTolerance = 0.005;
 
 function getTransactionDirection(direction: BankStatementDirection): Exclude<FinanceTransactionDirection, '内部转入'> {
@@ -69,6 +96,101 @@ function sumPublicAccountSignedAmount(records: FinanceTransactionRecord[]) {
 
 function isMoneySettled(amount: number) {
   return Math.abs(amount) < moneyTolerance;
+}
+
+function getSeedBankSerialNo(record: FinanceTransactionRecord) {
+  const operationText = record.operationRecords.map((operation) => operation.summary).join(' ');
+  const matched = operationText.match(/银行流水\s+([^，；\s]+)/);
+
+  return matched?.[1] ?? `BANK-${record.transactionNo}`;
+}
+
+function getLinkedTransactionRole(
+  record: FinanceTransactionRecord,
+  index: number
+): FinanceBankReconciliationLinkedTransactionRole {
+  if (record.sourceType === '流水补差') {
+    return '补差流水';
+  }
+
+  if (record.sourceType === '流水冲正') {
+    return '冲正流水';
+  }
+
+  return index === 0 ? '主流水' : '补差流水';
+}
+
+function buildLinkedTransactionRecord(
+  record: FinanceTransactionRecord,
+  index: number
+): FinanceBankReconciliationLinkedTransactionRecord {
+  return {
+    amount: record.amount,
+    direction: record.direction === '支出' ? '支出' : '收入',
+    financeTransactionId: record.id,
+    financeTransactionNo: record.transactionNo,
+    role: getLinkedTransactionRole(record, index),
+    sourceType: record.sourceType
+  };
+}
+
+export function buildFinanceBankReconciliationLinkRecord(
+  bankRecord: BankStatementRecord,
+  transactions: FinanceTransactionRecord[],
+  confirmedAt = `${financeToday} 16:30`,
+  confirmedBy = '李明'
+): FinanceBankReconciliationLinkRecord {
+  return {
+    amount: bankRecord.amount,
+    bankSerialNo: bankRecord.bankSerialNo,
+    bankStatementDate: bankRecord.statementDate,
+    bankStatementId: bankRecord.id,
+    batchNo: bankRecord.batchNo,
+    confirmedAt,
+    confirmedBy,
+    direction: bankRecord.direction,
+    id: `bank-link-${bankRecord.id}-${transactions.map((record) => record.id).join('-')}`,
+    linkedTransactions: transactions.map((record, index) => buildLinkedTransactionRecord(record, index)),
+    publicAccountId: bankRecord.publicAccountId,
+    publicAccountSnapshot: bankRecord.publicAccountSnapshot,
+    status: '已对账'
+  };
+}
+
+export function buildSeedFinanceBankReconciliationLinks(
+  records: FinanceTransactionRecord[]
+): FinanceBankReconciliationLinkRecord[] {
+  return records
+    .filter((record) => record.status === '已入账' && record.reconciliationStatus === '已对账')
+    .map((record) => ({
+      amount: record.amount,
+      bankSerialNo: getSeedBankSerialNo(record),
+      bankStatementDate: record.reconciledAt ?? record.occurredAt,
+      bankStatementId: `bank-seed-${record.id}`,
+      batchNo: `BANK-SEED-${record.accountingPeriod.replace('-', '')}`,
+      confirmedAt: `${record.reconciledAt ?? record.occurredAt} 16:30`,
+      confirmedBy: '财务复核',
+      direction: record.direction === '收入' ? '入账' : '出账',
+      id: `bank-link-seed-${record.id}`,
+      linkedTransactions: [buildLinkedTransactionRecord(record, 0)],
+      publicAccountId: record.publicAccountId,
+      publicAccountSnapshot: record.publicAccountSnapshot,
+      status: '已对账'
+    }));
+}
+
+export function getBankReconciliationLinksForTransaction(
+  record: FinanceTransactionRecord,
+  links: FinanceBankReconciliationLinkRecord[]
+) {
+  return links.filter(
+    (link) =>
+      link.linkedTransactions.some(
+        (linkedTransaction) =>
+          linkedTransaction.financeTransactionId === record.id ||
+          linkedTransaction.financeTransactionNo === record.transactionNo
+      )
+  );
 }
 
 export function getBankReconciliationResolution(

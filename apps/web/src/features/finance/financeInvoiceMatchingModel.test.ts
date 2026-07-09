@@ -3,6 +3,8 @@ import type { FinanceInvoiceRecord } from './financeInvoiceData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import {
   getFinanceReceivablePayableInvoiceDirection,
+  getFinanceReceivablePayableInvoiceTodoWorkflow,
+  getInvoiceMatchedReceivablePayableTargets,
   getInvoiceReceivablePayableMatchLabel,
   isFinanceReceivablePayableInvoiceMatchApplicable
 } from './financeInvoiceMatchingModel';
@@ -156,6 +158,89 @@ const tests: UnitTest[] = [
         getInvoiceReceivablePayableMatchLabel(julyInvoice, juneReceivable),
         '对象一致',
         'cross-period invoice should still match by counterparty'
+      );
+    }
+  },
+  {
+    name: 'resolves matched business targets for cross-period invoice guard',
+    run: () => {
+      const juneReceivable = createReceivablePayableRecord({ accountingPeriod: '2026-06' });
+      const julyInvoice = createInvoiceRecord({
+        accountingPeriod: '2026-07',
+        matchedBusinessRefs: [
+          {
+            amount: 12800,
+            id: 'invoice-match-guard',
+            recordId: juneReceivable.id,
+            recordNo: juneReceivable.documentNo,
+            sourceModule: '应收应付',
+            sourceNo: juneReceivable.sourceNo,
+            sourceTitle: juneReceivable.sourceTitle
+          }
+        ]
+      });
+      const unrelatedReceivable = createReceivablePayableRecord({
+        documentNo: 'AR-TEST-UNRELATED',
+        id: 'rp-test-unrelated',
+        sourceNo: 'CON-TEST-UNRELATED'
+      });
+      const targets = getInvoiceMatchedReceivablePayableTargets(julyInvoice, [juneReceivable, unrelatedReceivable]);
+
+      assertEqual(targets.length, 1, 'invoice revoke guard should resolve matched business source rows');
+      assertEqual(targets[0]?.accountingPeriod, '2026-06', 'matched target should keep business accounting period');
+    }
+  },
+  {
+    name: 'separates invoice evidence todos from missing tax basis todos',
+    run: () => {
+      const receivable = createReceivablePayableRecord();
+      const partiallyMatchedInvoice = createInvoiceRecord({
+        matchedBusinessRefs: [
+          {
+            amount: 6400,
+            id: 'invoice-match-partial',
+            recordId: receivable.id,
+            recordNo: receivable.documentNo,
+            sourceModule: '应收应付',
+            sourceNo: receivable.sourceNo,
+            sourceTitle: receivable.sourceTitle
+          }
+        ],
+        taxAmount: 63.37,
+        taxExcludedAmount: 6336.63,
+        taxIncludedAmount: 6400,
+        totalAmount: 6400
+      });
+      const missingTaxBasis = createReceivablePayableRecord({
+        id: 'rp-test-missing-tax',
+        taxBasis: {
+          basisSource: '待确认',
+          taxAmount: 0,
+          taxExcludedAmount: 0,
+          taxIncludedAmount: 0,
+          taxRate: '-'
+        }
+      });
+
+      assertEqual(
+        getFinanceReceivablePayableInvoiceTodoWorkflow(receivable, []).status,
+        '发票待补',
+        'source tax basis without invoice should be an invoice evidence todo'
+      );
+      assertEqual(
+        getFinanceReceivablePayableInvoiceTodoWorkflow(receivable, []).type,
+        '发票证据待补',
+        'source tax basis without invoice should not be labeled as missing tax basis'
+      );
+      assertEqual(
+        getFinanceReceivablePayableInvoiceTodoWorkflow(receivable, [partiallyMatchedInvoice]).status,
+        '发票部分匹配',
+        'partial invoice association should stay visible as partial invoice evidence'
+      );
+      assertEqual(
+        getFinanceReceivablePayableInvoiceTodoWorkflow(missingTaxBasis, []).status,
+        '税额依据待确认',
+        'missing source tax basis should remain a tax basis todo'
       );
     }
   },

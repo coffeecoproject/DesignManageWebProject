@@ -1,5 +1,5 @@
 import { WalletOutlined } from '@ant-design/icons';
-import { Button, DatePicker, Input, InputNumber, Select } from 'antd';
+import { Alert, Button, DatePicker, Input, InputNumber, Select } from 'antd';
 import dayjs from 'dayjs';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailInfoGrid, DetailSection } from '../../components/Detail';
@@ -30,6 +30,8 @@ type FinanceReceivablesPayablesSettlementPanelProps = {
   linkedTransactionRows: FinanceTransactionRecord[];
   maxAmount: number;
   record: FinanceReceivablePayableRecord;
+  lockedReason?: string;
+  lockedNotice?: string;
   submitDisabled: boolean;
   onDownloadFile: (file: RelatedFileRecord) => void;
   onPreviewFile: (file: RelatedFileRecord) => void;
@@ -52,6 +54,8 @@ export function FinanceReceivablesPayablesSettlementPanel({
   linkedTransactionRows,
   maxAmount,
   record,
+  lockedReason,
+  lockedNotice,
   submitDisabled,
   onDownloadFile,
   onPreviewFile,
@@ -69,9 +73,12 @@ export function FinanceReceivablesPayablesSettlementPanel({
   const confirmed = isFinanceReceivablePayableConfirmed(record);
   const voided = isFinanceReceivablePayableVoided(record);
   const canRegister = canRegisterFinanceReceivablePayableSettlement(record, linkedTransactionRows);
+  const canRegisterNow = canRegister && !lockedReason;
   const settled = record.settlementStatus === '已结清';
   const statusLabel = canRegister
-    ? '可继续登记'
+    ? lockedReason
+      ? '只读回看'
+      : '可继续登记'
     : voided
       ? '事项已作废'
       : !confirmed
@@ -85,18 +92,22 @@ export function FinanceReceivablesPayablesSettlementPanel({
   return (
     <DetailSection
       extra={
-        canRegister ? (
+        canRegisterNow ? (
           <Button disabled={submitDisabled} type="primary" onClick={onSubmit}>
             {actionLabel}
           </Button>
         ) : (
-          <TagChip label={statusLabel} tone={pendingAmount > 0 ? 'blue' : 'gray'} />
+          <TagChip label={statusLabel} tone={lockedReason || pendingAmount > 0 ? 'blue' : 'gray'} />
         )
       }
       icon={<WalletOutlined />}
       title={progressLabel}
     >
       <div className="finance-rp-settlement-stack">
+        {lockedNotice ? (
+          <Alert className="finance-period-readback-alert" message={lockedNotice} showIcon type="info" />
+        ) : null}
+
         <DetailInfoGrid
           columns={4}
           items={[
@@ -115,7 +126,7 @@ export function FinanceReceivablesPayablesSettlementPanel({
           scrollX={800}
         />
 
-        {canRegister ? (
+        {canRegisterNow ? (
           <DrawerFormGrid>
             <DrawerFormField label={record.direction === '应收' ? '收款日期' : '付款日期'} required>
               <DatePicker
@@ -152,7 +163,7 @@ export function FinanceReceivablesPayablesSettlementPanel({
           </DrawerFormGrid>
         ) : null}
 
-        {canRegister ? (
+        {canRegisterNow ? (
           <FinanceVoucherUploadPanel
             description="登记收付款必须上传凭证，支持 PDF/JPG/PNG，单个不超过 10MB。"
             files={form.files}

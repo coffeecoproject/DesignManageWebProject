@@ -21,10 +21,12 @@ import { ManagementPageScaffold } from '../../components/ManagementPageScaffold'
 import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
+import { useFinanceManagement } from '../finance/FinanceManagementState';
 import {
   createSalaryAdjustmentForm,
   createSalaryAdjustmentFormFromRecord,
   defaultSalaryMonthlyFilters,
+  getSalaryMonthlyAccountingPeriod,
   salaryDetailDefaultMonth,
   setSalaryAdjustmentFormMonth,
   type SalaryAdjustmentFormValue,
@@ -91,6 +93,7 @@ function getSalaryReportMonths({
 
 export function SalaryMonthlyPage() {
   const [messageApi, contextHolder] = message.useMessage();
+  const { getAccountingPeriodGuard } = useFinanceManagement();
   const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
   const [filters, setFilters] = useState<SalaryMonthlyFilters>(defaultSalaryMonthlyFilters);
   const [activeReportId, setActiveReportId] = useState<string>();
@@ -120,6 +123,12 @@ export function SalaryMonthlyPage() {
     [getSalaryMonthlyReports, reportMonths]
   );
   const activeReport = reports.find((report) => report.id === activeReportId);
+  const activeReportPeriodGuard = activeReport
+    ? getAccountingPeriodGuard(getSalaryMonthlyAccountingPeriod(activeReport.month), '处理薪酬明细')
+    : undefined;
+  const adjustmentPeriodGuard = adjustmentDrawer.open
+    ? getAccountingPeriodGuard(getSalaryMonthlyAccountingPeriod(adjustmentDrawer.form.month), '保存薪酬调整')
+    : undefined;
   const filteredReports = useMemo(
     () =>
       reports.filter((report) => {
@@ -163,19 +172,54 @@ export function SalaryMonthlyPage() {
     adjustmentDrawer.setForm((currentForm) => setSalaryAdjustmentFormMonth(currentForm, month));
   }
 
+  function guardSalaryMonthlyMutation(month: string, actionLabel: string) {
+    const periodGuard = getAccountingPeriodGuard(getSalaryMonthlyAccountingPeriod(month), actionLabel);
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return false;
+    }
+
+    return true;
+  }
+
   function handleConfirm(report: SalaryMonthlyReport) {
-    salaryState.confirmSalaryMonthlyReport(report.member.id, report.month);
+    if (!guardSalaryMonthlyMutation(report.month, '确认薪酬明细')) {
+      return;
+    }
+
+    const confirmed = salaryState.confirmSalaryMonthlyReport(report.member.id, report.month);
+
+    if (!confirmed) {
+      void messageApi.warning('工资已结算，不能再确认');
+      return;
+    }
+
     setActiveReportId(report.id);
     void messageApi.success('薪酬明细已确认');
   }
 
   function handleSettle(report: SalaryMonthlyReport) {
-    salaryState.settleSalaryMonthlyReport(report.member.id, report.month);
+    if (!guardSalaryMonthlyMutation(report.month, '结算薪酬明细')) {
+      return;
+    }
+
+    const settled = salaryState.settleSalaryMonthlyReport(report.member.id, report.month);
+
+    if (!settled) {
+      void messageApi.warning('薪酬明细已结算，不能重复结算');
+      return;
+    }
+
     setActiveReportId(report.id);
     void messageApi.success('薪酬明细已结算，相关考勤月报已锁定');
   }
 
   function handleSaveAdjustment(record: SalaryAdjustmentRecord) {
+    if (!guardSalaryMonthlyMutation(record.month, '保存薪酬调整')) {
+      return;
+    }
+
     const saved = salaryState.saveSalaryAdjustment(record);
 
     if (!saved) {
@@ -256,6 +300,7 @@ export function SalaryMonthlyPage() {
 
       <SalaryMonthlyDetailDrawer
         open={Boolean(activeReport)}
+        periodReadbackNotice={activeReportPeriodGuard?.allowed === false ? activeReportPeriodGuard.reason : undefined}
         report={activeReport}
         onClose={() => setActiveReportId(undefined)}
         onConfirm={handleConfirm}
@@ -266,6 +311,7 @@ export function SalaryMonthlyPage() {
         form={adjustmentDrawer.form}
         getReportsForMonth={getSalaryMonthlyReports}
         open={adjustmentDrawer.open}
+        periodReadbackNotice={adjustmentPeriodGuard?.allowed === false ? adjustmentPeriodGuard.reason : undefined}
         onCancel={adjustmentDrawer.cancel}
         onChange={adjustmentDrawer.updateForm}
         onMonthChange={handleChangeAdjustmentMonth}

@@ -6,6 +6,7 @@ import {
   FileTextOutlined,
   WalletOutlined
 } from '@ant-design/icons';
+import { Alert } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
@@ -49,6 +50,7 @@ type SalaryPerformanceRecord = SalaryMonthlyReport['performanceRecords'][number]
 type SalaryMonthlyDetailDrawerProps = {
   open: boolean;
   report?: SalaryMonthlyReport;
+  periodReadbackNotice?: string;
   onClose: () => void;
   onConfirm: (report: SalaryMonthlyReport) => void;
   onSettle: (report: SalaryMonthlyReport) => void;
@@ -57,6 +59,7 @@ type SalaryMonthlyDetailDrawerProps = {
 export function SalaryMonthlyDetailDrawer({
   open,
   report,
+  periodReadbackNotice,
   onClose,
   onConfirm,
   onSettle
@@ -250,12 +253,14 @@ export function SalaryMonthlyDetailDrawer({
   const primaryAction =
     report.canConfirm
       ? {
+          disabled: Boolean(periodReadbackNotice),
           icon: <CheckCircleOutlined />,
           label: '确认薪酬',
           onClick: () => onConfirm(report)
         }
       : report.canSettle
         ? {
+            disabled: Boolean(periodReadbackNotice),
             icon: <WalletOutlined />,
             label: '标记已结算',
             onClick: () => onSettle(report)
@@ -279,6 +284,9 @@ export function SalaryMonthlyDetailDrawer({
       width={980}
       onClose={onClose}
     >
+      {periodReadbackNotice ? (
+        <Alert className="finance-period-readback-alert" message={periodReadbackNotice} showIcon type="info" />
+      ) : null}
       <DetailSummaryCards
         columns={4}
         items={[

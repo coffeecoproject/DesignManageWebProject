@@ -6,7 +6,7 @@ import {
   ReloadOutlined,
   WarningOutlined
 } from '@ant-design/icons';
-import { Button, Empty, Input, message, Space } from 'antd';
+import { Alert, Button, Empty, Input, message, Space } from 'antd';
 import { useMemo, useState } from 'react';
 import { DetailInfoGrid, DetailSection, StatusTag, type StatusTagTone } from '../../components/Detail';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
@@ -15,9 +15,11 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { CellText } from '../../components/TableCell';
-import { formatMoney } from '../finance/financeUtils';
+import { useFinanceManagement } from '../finance/FinanceManagementState';
+import { formatMoney, getAccountingPeriod } from '../finance/financeUtils';
 import {
   approveExpenseReviewRecord,
+  buildReceivablePayableFromExpenseReview,
   buildMyWorkExpenseReviewMetrics,
   buildMyWorkExpenseReviewQueue,
   getExpenseReviewCategoryLabel,
@@ -47,6 +49,7 @@ function getNextActiveRecordId(queue: MyWorkExpenseReviewRecord[], currentRecord
 }
 
 export function MyExpenseReviewPage() {
+  const { addSourceGeneratedReceivablePayableRecord, getAccountingPeriodGuard, receivablePayableRows } = useFinanceManagement();
   const [messageApi, contextHolder] = message.useMessage();
   const [records, setRecords] = useState<MyWorkExpenseReviewRecord[]>(() => myWorkExpenseReviewSeedRecords);
   const [activeRecordId, setActiveRecordId] = useState<string>();
@@ -55,6 +58,13 @@ export function MyExpenseReviewPage() {
   const queueRows = useMemo(() => buildMyWorkExpenseReviewQueue(records), [records]);
   const activeRecord = queueRows.find((record) => record.id === activeRecordId) ?? queueRows[0];
   const metrics = useMemo(() => buildMyWorkExpenseReviewMetrics(records), [records]);
+  const activeRecordPeriodGuard = activeRecord
+    ? getAccountingPeriodGuard(getAccountingPeriod(activeRecord.occurredAt), '处理费用报销审核')
+    : undefined;
+  const activeRecordReadbackNotice =
+    activeRecordPeriodGuard && !activeRecordPeriodGuard.allowed
+      ? `${activeRecordPeriodGuard.reason} 当前报销审核仅用于回看。`
+      : undefined;
 
   function selectRecord(record: MyWorkExpenseReviewRecord) {
     setActiveRecordId(record.id);
@@ -63,7 +73,19 @@ export function MyExpenseReviewPage() {
 
   function handleApprove(record: MyWorkExpenseReviewRecord) {
     const nextRecord = approveExpenseReviewRecord(record, { reviewerName: '李明' });
+    const payableRecord = buildReceivablePayableFromExpenseReview(record, receivablePayableRows);
     const nextActiveRecordId = getNextActiveRecordId(queueRows, record.id);
+    const periodGuard = getAccountingPeriodGuard(payableRecord.accountingPeriod, '通过报销并生成应付事项');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
+    if (!addSourceGeneratedReceivablePayableRecord(payableRecord)) {
+      void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能生成应付事项');
+      return;
+    }
 
     setRecords((currentRecords) => currentRecords.map((currentRecord) => (currentRecord.id === record.id ? nextRecord : currentRecord)));
     setActiveRecordId(nextActiveRecordId);
@@ -72,6 +94,13 @@ export function MyExpenseReviewPage() {
   }
 
   function handleReturn(record: MyWorkExpenseReviewRecord) {
+    const periodGuard = getAccountingPeriodGuard(getAccountingPeriod(record.occurredAt), '退回费用报销审核');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     const normalizedReason = returnReason.trim();
 
     if (!normalizedReason) {
@@ -167,6 +196,10 @@ export function MyExpenseReviewPage() {
               </div>
 
               <div className="task-submit-panel-body">
+                {activeRecordReadbackNotice ? (
+                  <Alert className="finance-period-readback-alert" message={activeRecordReadbackNotice} showIcon type="info" />
+                ) : null}
+
                 <div className="task-submit-summary-strip">
                   {[
                     { label: '提交人', value: activeRecord.submitterName },
@@ -217,10 +250,10 @@ export function MyExpenseReviewPage() {
               </div>
 
               <div className="task-submit-panel-footer">
-                <Button icon={<ReloadOutlined />} onClick={() => handleReturn(activeRecord)}>
+                <Button disabled={Boolean(activeRecordReadbackNotice)} icon={<ReloadOutlined />} onClick={() => handleReturn(activeRecord)}>
                   退回修改
                 </Button>
-                <Button icon={<CheckCircleOutlined />} type="primary" onClick={() => handleApprove(activeRecord)}>
+                <Button disabled={Boolean(activeRecordReadbackNotice)} icon={<CheckCircleOutlined />} type="primary" onClick={() => handleApprove(activeRecord)}>
                   通过
                 </Button>
               </div>

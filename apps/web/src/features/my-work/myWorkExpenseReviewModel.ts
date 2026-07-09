@@ -1,6 +1,9 @@
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
-import { financeToday, formatMoney } from '../finance/financeUtils';
+import { getFinanceCategorySnapshot } from '../finance/financeData';
+import type { FinanceReceivablePayableRecord } from '../finance/financeReceivablesPayablesData';
+import { getDefaultReceivablePayableTaxBasis } from '../finance/financeTaxBasisModel';
+import { financeToday, formatMoney, getAccountingPeriod } from '../finance/financeUtils';
 import {
   getMyWorkExpensePrimaryCategoryId,
   getMyWorkExpensePrimaryCategoryName,
@@ -163,6 +166,74 @@ export function approveExpenseReviewRecord(record: MyWorkExpenseReviewRecord, de
       ...record.operationRecords
     ],
     reviewStatus: '已通过',
+    updatedAt: `${financeToday} 09:00`
+  };
+}
+
+function buildNextExpensePayableDocumentNo(records: FinanceReceivablePayableRecord[], accountingPeriod: string) {
+  const periodCode = accountingPeriod.replace('-', '');
+  const prefix = `AP-${periodCode}-`;
+  const maxSequence = records.reduce((max, record) => {
+    if (!record.documentNo.startsWith(prefix)) {
+      return max;
+    }
+
+    const sequence = Number(record.documentNo.slice(prefix.length));
+    return Number.isFinite(sequence) ? Math.max(max, sequence) : max;
+  }, 0);
+
+  return `${prefix}${String(maxSequence + 1).padStart(3, '0')}`;
+}
+
+export function buildReceivablePayableFromExpenseReview(
+  record: MyWorkExpenseReviewRecord,
+  existingRows: FinanceReceivablePayableRecord[]
+): FinanceReceivablePayableRecord {
+  const accountingPeriod = getAccountingPeriod(record.occurredAt);
+  const categorySnapshot = getFinanceCategorySnapshot(record.category);
+  const documentNo = buildNextExpensePayableDocumentNo(existingRows, accountingPeriod);
+  const sourceTitle = `${record.submitterName} ${record.title}`;
+  const taxSource = {
+    amount: record.amount,
+    direction: '应付' as const,
+    sourceType: '员工报销'
+  };
+
+  return {
+    accountingPeriod,
+    amount: record.amount,
+    category: record.category,
+    categorySnapshot,
+    confirmDate: financeToday,
+    confirmationStatus: '已确认',
+    counterparty: record.submitterName,
+    counterpartyType: '员工',
+    direction: '应付',
+    documentNo,
+    dueDate: financeToday,
+    files: record.files.map((file) => ({ ...file, status: '已上传', updatedAt: financeToday })),
+    id: `ap-expense-${record.id}`,
+    linkedTransactionNos: [],
+    note: record.note,
+    operationRecords: [
+      {
+        action: '生成应付',
+        actor: '系统',
+        id: `rp-op-expense-${record.id}`,
+        object: documentNo,
+        summary: `费用报销审核通过后生成应付 ${formatMoney(record.amount)}`,
+        time: `${financeToday} 09:00`
+      },
+      ...record.operationRecords
+    ],
+    owner: '李明',
+    reportAggregation: categorySnapshot.reportAggregation,
+    settledAmount: 0,
+    settlementStatus: '未结清',
+    sourceNo: record.code,
+    sourceTitle,
+    sourceType: '员工报销',
+    taxBasis: getDefaultReceivablePayableTaxBasis(taxSource),
     updatedAt: `${financeToday} 09:00`
   };
 }

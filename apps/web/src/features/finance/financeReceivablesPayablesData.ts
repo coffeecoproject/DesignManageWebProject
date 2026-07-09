@@ -391,6 +391,202 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
   },
   {
     accountingPeriod: '2026-06',
+    amount: 24000,
+    category: '客户回款',
+    confirmDate: '2026-06-18',
+    confirmationStatus: '已确认',
+    counterparty: '青禾咖啡',
+    counterpartyType: '客户',
+    direction: '应收',
+    documentNo: 'AR-202606-004',
+    dueDate: '2026-06-25',
+    files: [
+      {
+        id: 'rp-file-008',
+        name: '青禾咖啡_设计尾款确认单.pdf',
+        status: '已上传',
+        type: '确认单',
+        updatedAt: '2026-06-18'
+      }
+    ],
+    id: 'ar-202606-004',
+    linkedTransactionNos: ['FIN-202606-0015'],
+    note: '客户尾款已到账并完成银行对账。',
+    operationRecords: [
+      {
+        id: 'rp-op-012',
+        time: '2026-06-18 10:30',
+        actor: '系统',
+        object: 'AR-202606-004',
+        action: '生成应收',
+        summary: '根据项目尾款确认生成应收 24,000 元'
+      },
+      {
+        id: 'rp-op-013',
+        time: '2026-06-21 09:30',
+        actor: '财务复核',
+        object: 'AR-202606-004',
+        action: '结清应收',
+        summary: '关联 FIN-202606-0015 后结清'
+      }
+    ],
+    owner: '李明',
+    settledAmount: 24000,
+    settlementStatus: '已结清',
+    sourceNo: 'CON-2026-020',
+    sourceTitle: '青禾咖啡门店设计尾款',
+    sourceType: '合同应收',
+    updatedAt: '2026-06-21 09:30'
+  },
+  {
+    accountingPeriod: '2026-06',
+    amount: 5200,
+    category: '材料采购',
+    confirmDate: '2026-06-21',
+    confirmationStatus: '已确认',
+    counterparty: '武汉源木物料',
+    counterpartyType: '供应商',
+    direction: '应付',
+    documentNo: 'AP-202606-004',
+    dueDate: '2026-06-25',
+    files: [
+      {
+        id: 'rp-file-009',
+        name: '武汉源木物料_材料采购单.pdf',
+        status: '已上传',
+        type: '采购凭证',
+        updatedAt: '2026-06-21'
+      }
+    ],
+    id: 'ap-202606-004',
+    linkedTransactionNos: ['FIN-202606-0016'],
+    note: '项目材料采购已完成付款和银行对账。',
+    operationRecords: [
+      {
+        id: 'rp-op-014',
+        time: '2026-06-21 14:30',
+        actor: '系统',
+        object: 'AP-202606-004',
+        action: '生成应付',
+        summary: '根据材料采购确认生成应付 5,200 元'
+      },
+      {
+        id: 'rp-op-015',
+        time: '2026-06-22 09:15',
+        actor: '财务复核',
+        object: 'AP-202606-004',
+        action: '结清应付',
+        summary: '关联 FIN-202606-0016 后结清'
+      }
+    ],
+    owner: '李明',
+    settledAmount: 5200,
+    settlementStatus: '已结清',
+    sourceNo: 'MAT-202606-004',
+    sourceTitle: '门店打样材料采购',
+    sourceType: '材料采购',
+    updatedAt: '2026-06-22 09:15'
+  },
+  {
+    accountingPeriod: '2026-06',
+    amount: 1480,
+    category: '办公费用',
+    confirmDate: '2026-06-22',
+    confirmationStatus: '已确认',
+    counterparty: '云协同科技',
+    counterpartyType: '供应商',
+    direction: '应付',
+    documentNo: 'AP-202606-005',
+    dueDate: '2026-06-24',
+    files: [
+      {
+        id: 'rp-file-010',
+        name: '云协同科技_服务费电子发票.pdf',
+        status: '已上传',
+        type: '电子发票',
+        updatedAt: '2026-06-22'
+      }
+    ],
+    id: 'ap-202606-005',
+    linkedTransactionNos: ['FIN-202606-0017'],
+    note: '办公软件服务费已完成付款和银行对账。',
+    operationRecords: [
+      {
+        id: 'rp-op-016',
+        time: '2026-06-22 11:20',
+        actor: '系统',
+        object: 'AP-202606-005',
+        action: '生成应付',
+        summary: '根据运营费用确认生成应付 1,480 元'
+      },
+      {
+        id: 'rp-op-017',
+        time: '2026-06-23 09:40',
+        actor: '财务复核',
+        object: 'AP-202606-005',
+        action: '结清应付',
+        summary: '关联 FIN-202606-0017 后结清'
+      }
+    ],
+    owner: '李明',
+    settledAmount: 1480,
+    settlementStatus: '已结清',
+    sourceNo: 'EXP-202606-009',
+    sourceTitle: '协同工具年度服务费',
+    sourceType: '运营费用',
+    updatedAt: '2026-06-23 09:40'
+  },
+  {
+    accountingPeriod: '2026-06',
+    amount: 960,
+    category: '差旅交通',
+    confirmDate: '2026-06-23',
+    confirmationStatus: '已确认',
+    counterparty: '刘宇',
+    counterpartyType: '员工',
+    direction: '应付',
+    documentNo: 'AP-202606-006',
+    dueDate: '2026-06-25',
+    files: [
+      {
+        id: 'rp-file-011',
+        name: '刘宇_长沙项目交通报销单.pdf',
+        status: '已上传',
+        type: '报销单',
+        updatedAt: '2026-06-23'
+      }
+    ],
+    id: 'ap-202606-006',
+    linkedTransactionNos: ['FIN-202606-0018'],
+    note: '项目现场交通费用已完成付款和银行对账。',
+    operationRecords: [
+      {
+        id: 'rp-op-018',
+        time: '2026-06-23 10:45',
+        actor: '系统',
+        object: 'AP-202606-006',
+        action: '生成应付',
+        summary: '根据员工报销确认生成应付 960 元'
+      },
+      {
+        id: 'rp-op-019',
+        time: '2026-06-24 09:25',
+        actor: '财务复核',
+        object: 'AP-202606-006',
+        action: '结清应付',
+        summary: '关联 FIN-202606-0018 后结清'
+      }
+    ],
+    owner: '李明',
+    settledAmount: 960,
+    settlementStatus: '已结清',
+    sourceNo: 'EXP-202606-010',
+    sourceTitle: '长沙项目现场交通报销',
+    sourceType: '员工报销',
+    updatedAt: '2026-06-24 09:25'
+  },
+  {
+    accountingPeriod: '2026-06',
     amount: 486.5,
     category: '差旅交通',
     confirmDate: '2026-05-30',

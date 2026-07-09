@@ -15,8 +15,8 @@ import {
 
 type FinanceSocialInsuranceStateValue = {
   socialInsuranceRecords: SocialInsuranceEmployeeRecord[];
-  saveSocialInsuranceContributionBase: (recordId: string, contributionBase: number) => void;
-  updateSocialInsuranceRecordStatus: (recordId: string, handlingStatus: SocialInsuranceHandlingStatus) => void;
+  saveSocialInsuranceContributionBase: (recordId: string, contributionBase: number) => boolean;
+  updateSocialInsuranceRecordStatus: (recordId: string, handlingStatus: SocialInsuranceHandlingStatus) => boolean;
 };
 
 const FinanceSocialInsuranceContext = createContext<FinanceSocialInsuranceStateValue | undefined>(undefined);
@@ -51,6 +51,10 @@ export function FinanceSocialInsuranceProvider({ children }: { children: ReactNo
     () => ({
       socialInsuranceRecords: visibleSocialInsuranceRecords,
       saveSocialInsuranceContributionBase(recordId, contributionBase) {
+        if (!socialInsuranceRecords.some((currentRecord) => currentRecord.id === recordId)) {
+          return false;
+        }
+
         setSocialInsuranceRecords((currentRecords) =>
           buildSocialInsuranceRecordsWithCarryovers(
             currentRecords.map((currentRecord) => {
@@ -80,8 +84,14 @@ export function FinanceSocialInsuranceProvider({ children }: { children: ReactNo
             })
           )
         );
+
+        return true;
       },
       updateSocialInsuranceRecordStatus(recordId, handlingStatus) {
+        if (!socialInsuranceRecords.some((currentRecord) => currentRecord.id === recordId)) {
+          return false;
+        }
+
         setSocialInsuranceRecords((currentRecords) =>
           buildSocialInsuranceRecordsWithCarryovers(
             currentRecords.map((currentRecord) => {
@@ -114,6 +124,8 @@ export function FinanceSocialInsuranceProvider({ children }: { children: ReactNo
             })
           )
         );
+
+        return true;
       }
     }),
     [activePolicy, socialInsuranceRecords, visibleSocialInsuranceRecords]

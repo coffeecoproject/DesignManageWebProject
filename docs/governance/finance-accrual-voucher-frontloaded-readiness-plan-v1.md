@@ -23,7 +23,7 @@ Target principle:
 ```text
 Incomplete source fact -> stays in the source module
 Complete accrual fact -> enters accounting vouchers as 待制单
-待制单 -> 制单 -> 已制单 -> 入账 -> 已入账 -> 冲销 -> 已冲销
+待制单 -> 制单 -> 已制单 -> 记账 -> 已记账 -> 冲销 -> 已冲销
 ```
 
 The immediate scope is the `权责凭证` line derived from `应收应付`. Cash vouchers,
@@ -147,9 +147,9 @@ It should answer:
 
 - showing prepared accrual facts as `待制单`;
 - freezing a formal voucher through `制单`;
-- posting the voucher to the ledger through `入账`;
-- preserving immutability after posting;
-- reversing or adjusting posted vouchers.
+- booking the voucher to the ledger through `记账`;
+- preserving immutability after booking;
+- reversing or adjusting booked vouchers.
 
 It should not own:
 
@@ -176,7 +176,7 @@ with:
 ```text
 待制单
 已制单
-已入账
+已记账
 已冲销
 ```
 
@@ -185,9 +185,9 @@ Meaning:
 | Status | Meaning | Ledger impact |
 | --- | --- | --- |
 | `待制单` | Source fact is complete and can be prepared as a formal voucher | No |
-| `已制单` | Formal voucher is persisted and has a voucher number, but is not posted | No |
-| `已入账` | Voucher lines are posted to ledger | Yes |
-| `已冲销` | Posted voucher has been reversed by a linked reversal voucher | Reversed |
+| `已制单` | Formal voucher is persisted and has a voucher number, but is not booked | No |
+| `已记账` | Voucher lines are booked to ledger | Yes |
+| `已冲销` | Booked voucher has been reversed by a linked reversal voucher | Reversed |
 
 ### 4.2 Upstream readiness statuses
 
@@ -389,7 +389,9 @@ Target:
 Recommended wording:
 
 - `发票待关联业务`
-- `业务待关联发票`
+- `发票证据待补`
+- `发票部分匹配`
+- `税额依据待确认`
 - `红票待关联原票`
 
 These remain invoice workbench tasks, not accounting voucher tasks.
@@ -412,7 +414,7 @@ For `权责凭证` only:
   facts, or filter with a dedicated readiness check.
 - Rename the old complete-candidate display to `待制单` for accrual rows.
 - Remove `需处理` metrics, table values, and issue section for accrual rows.
-- Keep formal statuses: `已制单`, `已入账`, `已冲销`.
+- Keep formal statuses: `已制单`, `已记账`, `已冲销`.
 - Keep defensive internal checks, but do not expose them as ordinary accrual
   workflow states.
 
@@ -458,7 +460,7 @@ ACCRUAL_SOURCE_CHANGED
 ACCOUNTING_SUBJECT_MAPPING_MISSING
 ORIGINAL_EVIDENCE_MISSING
 TAX_BASIS_PENDING
-ACCOUNTING_PERIOD_CLOSED
+CLOSED_ACCOUNTING_PERIOD
 ```
 
 ## 8. Frontend Test Impact
@@ -487,8 +489,8 @@ Update or add tests:
 - accrual rows from complete confirmed source facts display `待制单`;
 - accrual rows with missing evidence/tax/mapping are absent from voucher page;
 - `制单` creates `已制单`;
-- `入账` creates ledger entries;
-- period lock blocks `制单`, `入账`, and `冲销`;
+- `记账` creates ledger entries;
+- period lock blocks `制单`, `记账`, and `冲销`;
 - defensive generation failure is tested as model/API failure, not visible
   workflow status.
 
@@ -547,7 +549,7 @@ Incomplete source facts remain in 应收应付 / 发票匹配 / 财务类目配�
 
 - Map ready accrual candidates to `待制单`.
 - Remove accrual `需处理` display.
-- Keep `制单 / 入账 / 冲销`.
+- Keep `制单 / 记账 / 冲销`.
 - Ensure the drawer shows read-only source basis, tax basis, invoice evidence,
   and lines.
 
@@ -569,7 +571,7 @@ Implementation is complete when:
 - Unknown category no longer silently maps to `6602 管理费用` in accounting
   paths.
 - `制单` creates `已制单` and does not create ledger entries.
-- `入账` creates ledger entries.
+- `记账` creates ledger entries.
 - Existing cash/tax/adjustment voucher behavior is not changed unless explicitly
   included in the implementation scope.
 - Unit tests cover readiness and voucher lifecycle.

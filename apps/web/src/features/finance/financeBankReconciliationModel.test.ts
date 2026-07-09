@@ -1,5 +1,6 @@
 import type { BankStatementRecord } from './financeBankImportContract';
 import {
+  buildFinanceBankReconciliationLinkRecord,
   buildFinanceTransactionFromBankStatement,
   createBankReconciliationFlowForm,
   getBankReconciliationCategoryOptions,
@@ -124,6 +125,48 @@ const tests: UnitTest[] = [
       assertEqual(transaction.paymentMethod, '对公账户付款', 'expense bank row should generate public-account payment');
       assertEqual(transaction.counterpartyType, '外协', 'outsource category should map counterparty type');
       assertEqual(transaction.reviewDueAt, '2026-06-16', 'generated cash flow should carry review SLA');
+    }
+  },
+  {
+    name: 'builds reconciliation link with transaction line roles',
+    run: () => {
+      const origin = createFinanceRecord({
+        amount: 3200,
+        category: '外协付款',
+        counterparty: '示例兼职 B',
+        counterpartyType: '外协',
+        direction: '支出',
+        id: 'finance-bank-link-origin',
+        paymentMethod: '对公账户付款',
+        sourceNo: 'OUT-202606-0008',
+        sourceTitle: '空间设计外协任务结算',
+        sourceType: '外协结算',
+        transactionNo: 'FIN-202606-0004'
+      });
+      const adjustment = createFinanceRecord({
+        amount: 200,
+        counterparty: '示例兼职 B',
+        direction: '收入',
+        id: 'finance-bank-link-adjustment',
+        paymentMethod: '对公账户收款',
+        sourceNo: origin.transactionNo,
+        sourceTitle: '补差处理 / FIN-202606-0004 / CMB202606120002',
+        sourceType: '流水补差',
+        transactionNo: 'FIN-ADJ-202606-0001'
+      });
+      const bankRow = createBankRow({
+        amount: 3000,
+        bankSerialNo: 'CMB202606120002',
+        direction: '出账',
+        matchedTransactionIds: [origin.id, adjustment.id]
+      });
+      const link = buildFinanceBankReconciliationLinkRecord(bankRow, [origin, adjustment]);
+
+      assertEqual(link.linkedTransactions.length, 2, 'reconciliation link should retain transaction detail rows');
+      assertEqual(link.linkedTransactions[0]?.role, '主流水', 'first origin row should be the primary cash-flow line');
+      assertEqual(link.linkedTransactions[0]?.direction, '支出', 'link detail should keep system cash-flow direction snapshot');
+      assertEqual(link.linkedTransactions[1]?.role, '补差流水', 'amount adjustment row should be marked as adjustment line');
+      assertEqual(link.linkedTransactions[1]?.financeTransactionNo, adjustment.transactionNo, 'link detail should keep transaction number snapshot');
     }
   },
   {

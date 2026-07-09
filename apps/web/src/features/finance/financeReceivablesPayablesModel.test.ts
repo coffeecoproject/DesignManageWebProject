@@ -17,6 +17,7 @@ import {
   getFinanceReceivablePayablePayrollDueDate,
   getFinanceReceivablePayableRegisterableAmount,
   getFinanceReceivablePayableReviewProgressStatus,
+  getFinanceReceivablePayableSettlementTargets,
   getFinanceReceivablePayableSourceLabel,
   getFinanceReceivablePayableSettlementStatusOptionsByTab,
   isFinanceReceivablePayableAccrualReady,
@@ -470,6 +471,46 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'uses settlement occurrence month as cash-flow accounting period',
+    run: () => {
+      const record = createReceivablePayableRecord({
+        accountingPeriod: '2026-05',
+        amount: 1000,
+        confirmDate: '2026-05-20',
+        dueDate: '2026-05-31'
+      });
+      const publicAccountRef = getFinanceSeedPublicAccountRef('招商银行基本户');
+
+      if (!publicAccountRef) {
+        throw new Error('missing seed public account ref');
+      }
+
+      const transaction = buildFinanceReceivablePayableSettlementTransaction(
+        record,
+        {
+          amount: 1000,
+          files: [
+            {
+              id: 'settlement-file-cross-period-001',
+              name: '6月收款回单.pdf',
+              status: '已选择',
+              type: '收款凭证',
+              updatedAt: '2026-06-15'
+            }
+          ],
+          note: '',
+          occurredAt: '2026-06-15',
+          publicAccountId: publicAccountRef.publicAccountId
+        },
+        [],
+        publicAccountRef
+      );
+
+      assertEqual(transaction.accountingPeriod, '2026-06', 'settlement cash-flow period should follow occurrence date');
+      assertEqual(record.accountingPeriod, '2026-05', 'source receivable/payable period should stay unchanged');
+    }
+  },
+  {
     name: 'keeps receivable-payable registerable amount tied to active settlement rows only',
     run: () => {
       const record = createReceivablePayableRecord({ amount: 1000, settledAmount: 0 });
@@ -517,6 +558,35 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'resolves settlement targets for cross-period cash-flow review guard',
+    run: () => {
+      const maySourceRecord = createReceivablePayableRecord({
+        accountingPeriod: '2026-05',
+        documentNo: 'AR-202605-001',
+        id: 'rp-may-source',
+        linkedTransactionNos: ['FIN-202606-0030']
+      });
+      const unrelatedRecord = createReceivablePayableRecord({
+        documentNo: 'AR-202606-999',
+        id: 'rp-unrelated',
+        linkedTransactionNos: []
+      });
+      const juneTransaction = {
+        amount: 1000,
+        accountingPeriod: '2026-06',
+        direction: '收入',
+        relatedReceivableNo: maySourceRecord.documentNo,
+        sourceNo: 'EC-202606-088',
+        status: '待复核',
+        transactionNo: 'FIN-202606-0030'
+      } as FinanceTransactionRecord;
+      const targets = getFinanceReceivablePayableSettlementTargets([maySourceRecord, unrelatedRecord], juneTransaction);
+
+      assertEqual(targets.length, 1, 'cash-flow review guard should resolve linked source confirmation rows');
+      assertEqual(targets[0]?.accountingPeriod, '2026-05', 'matched target should keep source accounting period');
+    }
+  },
+  {
     name: 'writes reviewed settlement cash-flow back to receivable-payable progress',
     run: () => {
       const record = createReceivablePayableRecord({
@@ -544,6 +614,8 @@ const tests: UnitTest[] = [
         {
           ...pendingTransaction,
           amount: 600,
+          relatedReceivableNo: record.documentNo,
+          sourceNo: 'EC-202606-088',
           transactionNo: 'FIN-202606-0022'
         } as FinanceTransactionRecord
       );
@@ -554,6 +626,7 @@ const tests: UnitTest[] = [
       assertEqual(partiallySettledRecord.operationRecords[0]?.action, '确认收款入账', 'review writeback should record operation');
       assertEqual(completedRows[0]?.settledAmount, 1000, 'second reviewed settlement should cap settled amount at confirmation amount');
       assertEqual(completedRows[0]?.settlementStatus, '已结清', 'fully reviewed settlement should mark ledger settled');
+      assertEqual(completedRows[0]?.linkedTransactionNos.includes('FIN-202606-0022'), true, 'collection-linked cash-flow should be linked by related receivable number');
       assertEqual(ignoredRows[0]?.settledAmount, 0, 'returned cash-flow should not write back settlement progress');
     }
   }

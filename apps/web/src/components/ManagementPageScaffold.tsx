@@ -6,6 +6,9 @@ type ManagementPageId =
   | 'finance-account-ledger'
   | 'finance-accounting-subjects'
   | 'finance-accounting-vouchers'
+  | 'finance-financial-statements'
+  | 'finance-general-ledger'
+  | 'finance-period-close'
   | 'finance-invoice-matching'
   | 'finance-invoices'
   | 'finance-receivables-payables'
@@ -20,6 +23,7 @@ type ManagementPageId =
   | 'performance-dashboard'
   | 'performance-monthly'
   | 'system-public-accounts'
+  | 'system-ledger-initialization'
   | 'system-tax-policy'
   | 'tasks-dashboard'
   | 'task-workflow';

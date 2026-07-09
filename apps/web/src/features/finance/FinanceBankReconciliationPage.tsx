@@ -11,7 +11,7 @@ import {
   SwapOutlined,
   WarningOutlined
 } from '@ant-design/icons';
-import { Button, Empty, Input, Select, Space, Upload, message } from 'antd';
+import { Alert, Button, Empty, Input, Select, Space, Upload, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
@@ -33,12 +33,14 @@ import {
 } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from './FinanceManagementState';
 import { FinanceTransactionAdjustmentDrawer } from './FinanceTransactionAdjustmentDrawer';
+import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import { getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
 import {
   buildBankStatementImportPrecheck,
   buildPeriodCounts,
   formatPeriodCountList,
   formatPeriodList,
+  getBankStatementAccountingPeriods,
   getStatementBatchPeriodCode,
   getStatementDateRangeLabel,
   getStatementPeriod,
@@ -755,7 +757,7 @@ function buildBatchNo(batchCount: number, records: BankStatementRecord[]) {
 }
 
 export function FinanceBankReconciliationPage() {
-  const { addFinanceTransaction, confirmBankReconciliation, financeRows } = useFinanceManagement();
+  const { addFinanceTransaction, confirmBankReconciliation, financeRows, getAccountingPeriodGuard } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, contextHolder] = message.useMessage();
   const [bankStatements, setBankStatements] = useState<BankStatementRecord[]>(bankStatementSeeds);
@@ -841,6 +843,10 @@ export function FinanceBankReconciliationPage() {
     return queueRows[0];
   }, [activeRecordId, bankResolutionById, bankStatements, queueRows]);
   const activeSystemRecord = getPrimaryMatchedSystemRecord(activeRecord, systemRowsById);
+  const activeSystemPeriodGuard = activeSystemRecord
+    ? getAccountingPeriodGuard(activeSystemRecord.accountingPeriod, '确认银行对账')
+    : undefined;
+  const activeSystemPeriodLocked = activeSystemPeriodGuard ? !activeSystemPeriodGuard.allowed : false;
   const activeResolution = activeRecord ? bankResolutionById.get(activeRecord.id) : undefined;
   const activeEffectiveStatus = activeResolution?.effectiveStatus ?? activeRecord?.matchStatus;
   const activeDisplayDifference = activeResolution?.relatedAdjustmentRecords.length
@@ -848,6 +854,25 @@ export function FinanceBankReconciliationPage() {
     : (activeRecord ? getAmountDifference(activeRecord, activeSystemRecord) : undefined);
   const activeMatchAction = activeRecord ? getMatchAction(activeRecord, activeSystemRecord, activeResolution) : undefined;
   const activeQuickActionMode = activeRecord ? getQuickActionMode(activeRecord, activeSystemRecord, activeResolution) : undefined;
+  const activeQuickActionPeriod = activeRecord && activeQuickActionMode
+    ? activeQuickActionMode === 'create-system-flow'
+      ? getStatementPeriod(activeRecord.statementDate)
+      : activeSystemRecord?.accountingPeriod ?? getStatementPeriod(activeRecord.statementDate)
+    : undefined;
+  const activeQuickActionLabel = activeQuickActionMode === 'create-system-flow'
+    ? '补登记系统流水'
+    : activeQuickActionMode === 'import-bank-statement'
+      ? '补充银行流水'
+      : '处理银行对账';
+  const activeQuickActionPeriodGuard = activeQuickActionPeriod
+    ? getAccountingPeriodGuard(activeQuickActionPeriod, activeQuickActionLabel)
+    : undefined;
+  const activeQuickActionPeriodLocked = activeQuickActionPeriodGuard ? !activeQuickActionPeriodGuard.allowed : false;
+  const activePeriodReadbackNotice = activeSystemRecord && activeSystemPeriodLocked
+    ? getClosedAccountingPeriodReadbackNotice(activeSystemRecord.accountingPeriod, '当前银行对账事项')
+    : activeQuickActionPeriod && activeQuickActionPeriodLocked
+      ? getClosedAccountingPeriodReadbackNotice(activeQuickActionPeriod, '当前银行对账事项')
+      : undefined;
   const activeHasPendingAdjustment = Boolean(activeResolution?.pendingAdjustmentRecords.length);
   const activeShowConfirmAction = activeEffectiveStatus === '待确认';
   const activeShowAmountMismatchAction = Boolean(
@@ -904,6 +929,9 @@ export function FinanceBankReconciliationPage() {
   const importablePreviewRows = bankImportPrecheck.importableRows;
   const importPrecheckItems = bankImportPrecheck.items;
   const importHasBlockingPrecheck = bankImportPrecheck.hasBlockingIssue;
+  const importPeriodGuard = getBankStatementAccountingPeriods(importablePreviewRows)
+    .map((accountingPeriod) => getAccountingPeriodGuard(accountingPeriod, '导入银行流水'))
+    .find((periodGuard) => !periodGuard.allowed);
 
   function handleConfirmImport() {
     if (!selectedImportFileName) {
@@ -917,6 +945,11 @@ export function FinanceBankReconciliationPage() {
 
     if (importHasBlockingPrecheck) {
       void messageApi.warning('导入预检未通过，请先修正文件');
+      return;
+    }
+
+    if (importPeriodGuard) {
+      void messageApi.warning(importPeriodGuard.reason);
       return;
     }
 
@@ -973,10 +1006,19 @@ export function FinanceBankReconciliationPage() {
       ? [activeSystemRecord, ...activeResolution.reviewedAdjustmentRecords]
       : [activeSystemRecord];
     const confirmedTransactionNos = recordsToConfirm.map((record) => record.transactionNo).join('、');
+    const lockedRecord = recordsToConfirm.find((record) => !getAccountingPeriodGuard(record.accountingPeriod, '确认银行对账').allowed);
 
-    recordsToConfirm.forEach((record) => {
-      confirmBankReconciliation(record.id, activeRecord.bankSerialNo);
-    });
+    if (lockedRecord) {
+      const periodGuard = getAccountingPeriodGuard(lockedRecord.accountingPeriod, '确认银行对账');
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
+    if (!confirmBankReconciliation(activeRecord, recordsToConfirm)) {
+      void messageApi.warning('当前会计期间已锁定，不能确认银行对账');
+      return;
+    }
+
     setBankStatements((current) =>
       current.map((record) =>
         record.id === activeRecord.id
@@ -1031,13 +1073,25 @@ export function FinanceBankReconciliationPage() {
       return;
     }
 
+    const periodGuard = getAccountingPeriodGuard(getStatementPeriod(quickActionRecord.statementDate), '补登记系统流水');
+
+    if (!periodGuard.allowed) {
+      void messageApi.warning(periodGuard.reason);
+      return;
+    }
+
     if (!quickFlowForm.category || !quickFlowForm.sourceTitle.trim()) {
       void messageApi.warning('请先补全类目和事项说明');
       return;
     }
 
     const transaction = buildFinanceTransactionFromBankStatement(quickActionRecord, quickFlowForm, financeRows);
-    addFinanceTransaction(transaction);
+
+    if (!addFinanceTransaction(transaction)) {
+      void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能补登记系统流水');
+      return;
+    }
+
     setBankStatements((current) =>
       current.map((record) =>
         record.id === quickActionRecord.id
@@ -1057,6 +1111,15 @@ export function FinanceBankReconciliationPage() {
   }
 
   function handleOpenImportFromQuickAction() {
+    if (quickActionRecord) {
+      const periodGuard = getAccountingPeriodGuard(getStatementPeriod(quickActionRecord.statementDate), '补充银行流水');
+
+      if (!periodGuard.allowed) {
+        void messageApi.warning(periodGuard.reason);
+        return;
+      }
+    }
+
     closeQuickAction();
     setImportDrawerOpen(true);
   }
@@ -1294,6 +1357,10 @@ export function FinanceBankReconciliationPage() {
                   ))}
                 </div>
 
+                {activePeriodReadbackNotice ? (
+                  <Alert className="finance-period-readback-alert" message={activePeriodReadbackNotice} showIcon type="info" />
+                ) : null}
+
                 <DetailSection icon={<LinkOutlined />} title="对账判断">
                   <DetailInfoGrid
                     columns={3}
@@ -1313,6 +1380,9 @@ export function FinanceBankReconciliationPage() {
                         )
                       },
                       { label: '确认条件', value: activeConfirmEligibility.canConfirm ? '可确认' : (activeConfirmEligibility.reason ?? '待处理') },
+                      ...(activeSystemPeriodLocked && activeSystemPeriodGuard?.reason
+                        ? [{ label: '期间限制', value: activeSystemPeriodGuard.reason, wide: true }]
+                        : []),
                       { label: '说明', value: activeResolution?.effectiveReason ?? activeRecord.matchReason, wide: true }
                     ]}
                   />
@@ -1370,6 +1440,7 @@ export function FinanceBankReconciliationPage() {
                   {activeRecord && activeQuickActionMode ? (
                     <Button
                       data-testid="bank-reconciliation-quick-action-button"
+                      disabled={activeQuickActionPeriodLocked}
                       icon={<FormOutlined />}
                       onClick={() => openQuickAction(activeRecord, activeQuickActionMode)}
                     >
@@ -1379,7 +1450,7 @@ export function FinanceBankReconciliationPage() {
                   {activeShowConfirmAction ? (
                     <Button
                       data-testid="bank-reconciliation-confirm-button"
-                      disabled={!activeConfirmEligibility.canConfirm}
+                      disabled={activeSystemPeriodLocked || !activeConfirmEligibility.canConfirm}
                       icon={<CheckCircleOutlined />}
                       type="primary"
                       onClick={handleConfirmActiveReconciliation}
@@ -1390,6 +1461,7 @@ export function FinanceBankReconciliationPage() {
                   {activeShowAmountMismatchAction && activeRecord ? (
                     <Button
                       data-testid="bank-reconciliation-adjustment-button"
+                      disabled={activeSystemPeriodLocked}
                       icon={<SwapOutlined />}
                       type="primary"
                       onClick={() => setAdjustmentRecordId(activeRecord.id)}
@@ -1510,7 +1582,7 @@ export function FinanceBankReconciliationPage() {
         className="finance-transaction-drawer"
         open={importDrawerOpen}
         primaryAction={{
-          disabled: !selectedImportFileName || !selectedImportPublicAccountRef || importHasBlockingPrecheck || importablePreviewRows.length === 0,
+          disabled: !selectedImportFileName || !selectedImportPublicAccountRef || importHasBlockingPrecheck || Boolean(importPeriodGuard) || importablePreviewRows.length === 0,
           label: '导入可入池流水',
           onClick: handleConfirmImport
         }}
@@ -1518,6 +1590,10 @@ export function FinanceBankReconciliationPage() {
         width={960}
         onClose={() => setImportDrawerOpen(false)}
       >
+        {importPeriodGuard ? (
+          <Alert className="finance-period-readback-alert" message={importPeriodGuard.reason} showIcon type="info" />
+        ) : null}
+
         <DetailSection icon={<FileExcelOutlined />} title="导入信息">
           <DetailInfoGrid
             columns={3}
@@ -1618,7 +1694,18 @@ export function FinanceBankReconciliationPage() {
         originRecord={adjustmentSystemRecord}
         onClose={() => setAdjustmentRecordId(undefined)}
         onSubmit={(record) => {
-          addFinanceTransaction(record);
+          const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '生成对账调整流水');
+
+          if (!periodGuard.allowed) {
+            void messageApi.warning(periodGuard.reason);
+            return;
+          }
+
+          if (!addFinanceTransaction(record)) {
+            void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能生成对账调整流水');
+            return;
+          }
+
           setBankStatements((current) =>
             current.map((bankRecord) =>
               bankRecord.id === adjustmentRecordId

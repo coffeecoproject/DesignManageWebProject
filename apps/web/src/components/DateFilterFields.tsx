@@ -9,11 +9,23 @@ export type DateRangeFilterValue = {
 };
 
 export type DatePeriodMode = 'month' | 'quarter' | 'year' | 'custom';
-export type DateScopeFilterMode = 'all' | 'currentMonth' | 'month' | 'range';
+export type DateScopeFilterMode =
+  | 'all'
+  | 'currentMonth'
+  | 'month'
+  | 'currentQuarter'
+  | 'quarter'
+  | 'currentYear'
+  | 'year'
+  | 'range';
 export type DateScopeFilterValue =
   | { mode: 'all' }
   | { mode: 'currentMonth' }
   | { mode: 'month'; month: string }
+  | { mode: 'currentQuarter' }
+  | { mode: 'quarter'; quarter: string }
+  | { mode: 'currentYear' }
+  | { mode: 'year'; year: string }
   | { mode: 'range'; range: DateRangeFilterValue };
 
 export const defaultDatePeriodModeOptions: Array<{ label: string; value: DatePeriodMode }> = [
@@ -38,6 +50,21 @@ function getDefaultMonth(defaultMonth?: string) {
   return defaultMonth ?? dayjs().format('YYYY-MM');
 }
 
+function getQuarterFromMonth(month: string) {
+  const [year, monthText] = month.split('-');
+  const quarter = Math.ceil(Number(monthText) / 3);
+
+  return `${year}-Q${quarter}`;
+}
+
+function getDefaultQuarter(defaultMonth?: string) {
+  return getQuarterFromMonth(getDefaultMonth(defaultMonth));
+}
+
+function getDefaultYear(defaultMonth?: string) {
+  return getDefaultMonth(defaultMonth).slice(0, 4);
+}
+
 function getDefaultRange(defaultRange?: DateRangeFilterValue) {
   return (
     defaultRange ?? {
@@ -54,6 +81,31 @@ export function getDateScopeMonthRange(month: string): DateRangeFilterValue {
   };
 }
 
+export function getDateScopeQuarterRange(quarter: string): DateRangeFilterValue {
+  const match = quarter.match(/^(\d{4})-Q([1-4])$/);
+
+  if (!match) {
+    return getDateScopeMonthRange(getDefaultMonth());
+  }
+
+  const [, year, quarterText] = match;
+  const quarterNumber = Number(quarterText);
+  const startMonth = String((quarterNumber - 1) * 3 + 1).padStart(2, '0');
+  const endMonth = String(quarterNumber * 3).padStart(2, '0');
+
+  return {
+    endDate: dayjs(`${year}-${endMonth}-01`).endOf('month').format('YYYY-MM-DD'),
+    startDate: `${year}-${startMonth}-01`
+  };
+}
+
+export function getDateScopeYearRange(year: string): DateRangeFilterValue {
+  return {
+    endDate: `${year}-12-31`,
+    startDate: `${year}-01-01`
+  };
+}
+
 export function getDateScopeRange(value: DateScopeFilterValue, defaultMonth?: string) {
   if (value.mode === 'all') {
     return undefined;
@@ -65,6 +117,22 @@ export function getDateScopeRange(value: DateScopeFilterValue, defaultMonth?: st
 
   if (value.mode === 'month') {
     return getDateScopeMonthRange(value.month);
+  }
+
+  if (value.mode === 'currentQuarter') {
+    return getDateScopeQuarterRange(getDefaultQuarter(defaultMonth));
+  }
+
+  if (value.mode === 'quarter') {
+    return getDateScopeQuarterRange(value.quarter);
+  }
+
+  if (value.mode === 'currentYear') {
+    return getDateScopeYearRange(getDefaultYear(defaultMonth));
+  }
+
+  if (value.mode === 'year') {
+    return getDateScopeYearRange(value.year);
   }
 
   return value.range;
@@ -130,6 +198,84 @@ export function MonthPickerControl({
   );
 }
 
+function getQuarterPickerValue(quarter: string) {
+  const match = quarter.match(/^(\d{4})-Q([1-4])$/);
+
+  if (!match) {
+    return undefined;
+  }
+
+  const [, year, quarterText] = match;
+  const startMonth = (Number(quarterText) - 1) * 3 + 1;
+
+  return dayjs(`${year}-${String(startMonth).padStart(2, '0')}-01`);
+}
+
+function formatQuarterPickerValue(value: Dayjs) {
+  const quarter = Math.floor(value.month() / 3) + 1;
+
+  return `${value.year()}-Q${quarter}`;
+}
+
+export function QuarterPickerControl({
+  allowClear = true,
+  placeholder = '选择季度',
+  testId,
+  value,
+  width = 118,
+  onChange
+}: {
+  allowClear?: boolean;
+  placeholder?: string;
+  testId?: string;
+  value?: string;
+  width?: number;
+  onChange: (quarter: string) => void;
+}) {
+  return (
+    <DatePicker
+      allowClear={allowClear}
+      data-testid={testId}
+      format="YYYY-[Q]Q"
+      inputReadOnly
+      picker="quarter"
+      placeholder={placeholder}
+      style={{ width }}
+      value={value ? getQuarterPickerValue(value) : undefined}
+      onChange={(date) => onChange(date ? formatQuarterPickerValue(date) : '')}
+    />
+  );
+}
+
+export function YearPickerControl({
+  allowClear = true,
+  placeholder = '选择年份',
+  testId,
+  value,
+  width = 118,
+  onChange
+}: {
+  allowClear?: boolean;
+  placeholder?: string;
+  testId?: string;
+  value?: string;
+  width?: number;
+  onChange: (year: string) => void;
+}) {
+  return (
+    <DatePicker
+      allowClear={allowClear}
+      data-testid={testId}
+      inputReadOnly
+      picker="year"
+      placeholder={placeholder}
+      style={{ width }}
+      value={value ? dayjs(value) : undefined}
+      onChange={(date) => onChange(date ? date.format('YYYY') : '')}
+    />
+  );
+}
+
 export function DateRangeFilterField({
   allowClear = true,
   label = '日期范围',
@@ -169,10 +315,12 @@ export function DateScopeFilter({
   label = '生效时间',
   modeOptions = defaultDateScopeModeOptions,
   monthLabel = '月份',
+  quarterLabel = '季度',
   rangeLabel = '时间段',
   rangeWidth = 240,
   testIdPrefix,
   value,
+  yearLabel = '年份',
   onChange
 }: {
   defaultMonth?: string;
@@ -180,10 +328,12 @@ export function DateScopeFilter({
   label?: string;
   modeOptions?: Array<{ label: string; value: DateScopeFilterMode }>;
   monthLabel?: string;
+  quarterLabel?: string;
   rangeLabel?: string;
   rangeWidth?: number;
   testIdPrefix?: string;
   value: DateScopeFilterValue;
+  yearLabel?: string;
   onChange: (value: DateScopeFilterValue) => void;
 }) {
   function handleModeChange(mode: DateScopeFilterMode) {
@@ -201,6 +351,32 @@ export function DateScopeFilter({
       onChange({
         mode: 'month',
         month: value.mode === 'month' ? value.month : getDefaultMonth(defaultMonth)
+      });
+      return;
+    }
+
+    if (mode === 'currentQuarter') {
+      onChange({ mode: 'currentQuarter' });
+      return;
+    }
+
+    if (mode === 'quarter') {
+      onChange({
+        mode: 'quarter',
+        quarter: value.mode === 'quarter' ? value.quarter : getDefaultQuarter(defaultMonth)
+      });
+      return;
+    }
+
+    if (mode === 'currentYear') {
+      onChange({ mode: 'currentYear' });
+      return;
+    }
+
+    if (mode === 'year') {
+      onChange({
+        mode: 'year',
+        year: value.mode === 'year' ? value.year : getDefaultYear(defaultMonth)
       });
       return;
     }
@@ -234,6 +410,34 @@ export function DateScopeFilter({
             }
           }}
         />
+      ) : null}
+      {value.mode === 'quarter' ? (
+        <FilterField label={quarterLabel}>
+          <QuarterPickerControl
+            allowClear={false}
+            testId={testIdPrefix ? `${testIdPrefix}-quarter` : undefined}
+            value={value.quarter}
+            onChange={(quarter) => {
+              if (quarter) {
+                onChange({ mode: 'quarter', quarter });
+              }
+            }}
+          />
+        </FilterField>
+      ) : null}
+      {value.mode === 'year' ? (
+        <FilterField label={yearLabel}>
+          <YearPickerControl
+            allowClear={false}
+            testId={testIdPrefix ? `${testIdPrefix}-year` : undefined}
+            value={value.year}
+            onChange={(year) => {
+              if (year) {
+                onChange({ mode: 'year', year });
+              }
+            }}
+          />
+        </FilterField>
       ) : null}
       {value.mode === 'range' ? (
         <DateRangeFilterField

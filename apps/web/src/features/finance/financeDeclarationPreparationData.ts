@@ -16,7 +16,11 @@ import {
   getFinanceTaxExcludedAmountFromIncludedAmount,
   parseFinanceTaxRate
 } from './financeTaxPolicyModel';
-import { financeToday, getFinanceTransactionInvoiceDeclarationStatus } from './financeUtils';
+import {
+  financeToday,
+  getAccountingPeriodFromBusinessPeriod,
+  getFinanceTransactionInvoiceDeclarationStatus
+} from './financeUtils';
 
 export type FinanceDeclarationPreparationTaxType = '增值税及附加' | '企业所得税' | '印花税';
 export type FinanceDeclarationPreparationStatus = '准备中' | '可申报' | '已进入税务办理';
@@ -684,6 +688,8 @@ function getPreparationMonthPeriods(period: string) {
 export function getDeclarationPreparationMonthPeriods(period: string) {
   return getPreparationMonthPeriods(period);
 }
+
+export const getDeclarationPreparationAccountingPeriod = getAccountingPeriodFromBusinessPeriod;
 
 function getPreparationPeriodInvoices(record: FinanceDeclarationPreparationRecord, invoices: FinanceInvoiceRecord[]) {
   const periodSet = new Set(getPreparationMonthPeriods(record.period));

@@ -34,7 +34,7 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { buildPublicAccountOptions, resolveActivePublicAccountRef, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
-import { financeToday, formatMoney } from '../finance/financeUtils';
+import { financeToday, formatMoney, getAccountingPeriod } from '../finance/financeUtils';
 import {
   buildMyWorkCollectionReceivableOptions,
   buildFinanceTransactionFromMyWorkCollection,
@@ -559,7 +559,7 @@ function MyExpenseCollectionDetailDrawer({
 
 export function MyExpenseCollectionPage() {
   const { customerRows } = useCustomerManagementState();
-  const { addFinanceTransaction, financeRows, receivablePayableRows } = useFinanceManagement();
+  const { addFinanceTransaction, financeRows, getAccountingPeriodGuard, receivablePayableRows } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, messageContextHolder] = message.useMessage();
   const [records, setRecords] = useState<MyWorkExpenseCollectionRecord[]>(() => myWorkExpenseCollectionSeedRecords);
@@ -681,15 +681,48 @@ export function MyExpenseCollectionPage() {
       return buildFinanceTransactionFromMyWorkCollection(record, financeRows, publicAccountRef);
     }
 
+    function guardSubmitAccountingPeriod(record: MyWorkExpenseCollectionRecord) {
+      if (mode !== 'submit') {
+        return true;
+      }
+
+      const periodGuard = getAccountingPeriodGuard(
+        getAccountingPeriod(record.occurredAt),
+        record.kind === '费用报销' ? '提交费用报销' : '提交代收登记'
+      );
+
+      if (!periodGuard.allowed) {
+        void messageApi.warning(periodGuard.reason);
+        return false;
+      }
+
+      return true;
+    }
+
     if (formDrawer.isEditMode && formDrawer.record) {
       const nextRecord = resubmitMyWorkExpenseCollectionRecordFromForm(formDrawer.record, formDrawer.form, mode);
+
+      if (!guardSubmitAccountingPeriod(nextRecord)) {
+        return;
+      }
+
       const financeTransaction = buildFinanceTransactionForSubmit(nextRecord);
       const recordToPersist = financeTransaction
         ? linkMyWorkCollectionFinanceTransaction(nextRecord, financeTransaction.transactionNo)
         : nextRecord;
 
       if (financeTransaction) {
-        addFinanceTransaction(financeTransaction);
+        const periodGuard = getAccountingPeriodGuard(financeTransaction.accountingPeriod, '提交代收登记');
+
+        if (!periodGuard.allowed) {
+          void messageApi.warning(periodGuard.reason);
+          return;
+        }
+
+        if (!addFinanceTransaction(financeTransaction)) {
+          void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能提交代收登记');
+          return;
+        }
       }
 
       setRecords((currentRecords) => currentRecords.map((record) => (record.id === recordToPersist.id ? recordToPersist : record)));
@@ -699,13 +732,28 @@ export function MyExpenseCollectionPage() {
     }
 
     const nextRecord = createMyWorkExpenseCollectionRecordFromForm(formDrawer.form, allRecords.length + 1, mode);
+
+    if (!guardSubmitAccountingPeriod(nextRecord)) {
+      return;
+    }
+
     const financeTransaction = buildFinanceTransactionForSubmit(nextRecord);
     const recordToPersist = financeTransaction
       ? linkMyWorkCollectionFinanceTransaction(nextRecord, financeTransaction.transactionNo)
       : nextRecord;
 
     if (financeTransaction) {
-      addFinanceTransaction(financeTransaction);
+      const periodGuard = getAccountingPeriodGuard(financeTransaction.accountingPeriod, '提交代收登记');
+
+      if (!periodGuard.allowed) {
+        void messageApi.warning(periodGuard.reason);
+        return;
+      }
+
+      if (!addFinanceTransaction(financeTransaction)) {
+        void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能提交代收登记');
+        return;
+      }
     }
 
     setRecords((currentRecords) => [recordToPersist, ...currentRecords]);

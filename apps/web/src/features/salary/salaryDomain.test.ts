@@ -14,6 +14,7 @@ import {
   type SalaryPersonalIncomeTaxCumulativeSnapshot,
   type SalaryMonthlyWorkflowRecord
 } from './salaryDomain';
+import { getSalaryMonthlyAccountingPeriod } from './salaryMonthlyDisplayModel';
 import {
   buildSalaryOverview,
   getSalaryOverviewReportMonths
@@ -314,6 +315,16 @@ function createWorkflow(overrides: Partial<SalaryMonthlyWorkflowRecord> = {}): S
 }
 
 const tests: UnitTest[] = [
+  {
+    name: 'uses salary month as the accounting period guard source',
+    run: () => {
+      assertEqual(
+        getSalaryMonthlyAccountingPeriod('2026-06'),
+        '2026-06',
+        'salary monthly source writes should be guarded by payroll result month'
+      );
+    }
+  },
   {
     name: 'parses salary text and derives signed adjustment amounts from type',
     run: () => {

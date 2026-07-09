@@ -91,12 +91,28 @@ export const taxMatterSourceStatusTone = {
 
 export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   {
-    dataStatus: '待复核',
+    dataStatus: '已确认',
+    declarationDate: '2026-06-15',
     declarationDueDate: '2026-07-15',
-    declarationStatus: '待申报',
-    files: [],
+    declarationStatus: '已申报',
+    files: [
+      {
+        id: 'tax-file-001',
+        name: '2026-06_个人所得税申报回执.pdf',
+        status: '已上传',
+        type: '申报回执',
+        updatedAt: '2026-06-15'
+      },
+      {
+        id: 'tax-file-002',
+        name: '2026-06_个人所得税缴款回单.pdf',
+        status: '已上传',
+        type: '缴款回单',
+        updatedAt: '2026-06-15'
+      }
+    ],
     id: 'tax-matter-001',
-    linkedTransactionNos: [],
+    linkedTransactionNos: ['FIN-202606-0007'],
     matterNo: 'TAX-202606-IIT',
     matterType: '个人所得税',
     operationRecords: [
@@ -107,35 +123,43 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         object: 'TAX-202606-IIT',
         action: '来源同步',
         summary: '同步薪酬明细数据，形成 2026-06 个人所得税事项'
+      },
+      {
+        id: 'tax-op-002',
+        time: '2026-06-15 11:45',
+        actor: '财务复核',
+        object: 'TAX-202606-IIT',
+        action: '完成缴办',
+        summary: '完成个税申报并关联缴款流水 FIN-202606-0007'
       }
     ],
     owner: '李明',
-    paidAmount: 0,
-    participantSummary: '待确认',
-    payableAmount: 0,
+    paidAmount: 3280.52,
+    participantSummary: '1 人',
+    payableAmount: 3280.52,
     paymentDueDate: '2026-07-15',
-    paymentStatus: '未开始',
+    paymentStatus: '已缴纳',
     period: '2026-06',
     periodType: '月度',
-    processStatus: '数据待确认',
+    processStatus: '已完成',
     sourceItems: [
       {
         id: 'tax-source-001',
         name: '薪酬明细',
         sourceModule: '薪酬明细',
-        status: '待复核',
-        updatedAt: '2026-06-18'
+        status: '已确认',
+        updatedAt: '2026-06-15'
       },
       {
         id: 'tax-source-002',
         name: '工资薪金个税表',
         sourceModule: '自然人电子税务局',
-        status: '待准备',
-        updatedAt: '2026-06-18'
+        status: '已确认',
+        updatedAt: '2026-06-15'
       }
     ],
     title: '2026-06 个人所得税',
-    updatedAt: '2026-06-18'
+    updatedAt: '2026-06-15'
   },
   {
     dataStatus: '待复核',
