@@ -1369,7 +1369,7 @@ export function FinanceBankReconciliationPage() {
                         label: '处理状态',
                         value: <StatusTag toneMap={displayMatchStatusTone} value={getDisplayMatchStatus(activeEffectiveStatus ?? activeRecord.matchStatus)} />
                       },
-                      { label: '处理建议', value: activeMatchAction?.actionLabel },
+                      { label: '处理方式', value: activeMatchAction?.actionLabel },
                       { label: '日期关系', value: getDateRelationLabel(activeRecord, activeSystemRecord) },
                       {
                         label: '差额',
@@ -1388,11 +1388,11 @@ export function FinanceBankReconciliationPage() {
                   />
                 </DetailSection>
 
-                <DetailSection icon={<FileSearchOutlined />} title="候选系统流水">
+                <DetailSection icon={<FileSearchOutlined />} title="可匹配系统流水">
                   <CompactDetailTable<SystemCandidateRow>
                     columns={candidateColumns}
                     dataSource={activeSystemCandidates}
-                    emptyText="暂无候选系统流水"
+                    emptyText="暂无可匹配系统流水"
                     rowKey={(candidate) => candidate.record.id}
                     scrollX={680}
                   />

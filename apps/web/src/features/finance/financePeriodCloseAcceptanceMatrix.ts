@@ -108,7 +108,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     title: '记账入总账'
   },
   {
-    currentEvidence: '薪酬社保、税务办理、会计凭证和后续调整候选已由各自来源模块进入期间结账检查',
+    currentEvidence: '薪酬社保、税务办理、会计凭证和后续调整事项已由各自来源模块进入期间结账检查',
     currentEvidenceLevel: 'frontend_session',
     formalBackendGap: '缺后端来源状态汇总服务、来源到候选凭证的统一事实快照和跨模块闭期一致性校验',
     id: 'source-prerequisites-complete',

@@ -498,7 +498,7 @@ function getLaterAdjustmentSummary({
   }
 
   if (targetPeriodRows.length > 0) {
-    return `本期承接 ${targetPeriodRows.length} 项后续调整候选，未记账会继续阻断结账。`;
+    return `本期承接 ${targetPeriodRows.length} 项后续调整事项，未记账会继续阻断结账。`;
   }
 
   return '本期暂无后续调整事项。';

@@ -220,7 +220,7 @@ function buildSmallLowProfitPolicyBasis(summary: Pick<
     return summary.industryRestrictionResult === '待确认' ? '小型微利资格待确认' : '普通企业预缴口径';
   }
 
-  return `符合小型微利企业候选口径，按 ${(summary.effectiveTaxRate * 100).toFixed(0)}% 有效预缴率预估`;
+  return `按小型微利企业口径预估，当前有效预缴率 ${(summary.effectiveTaxRate * 100).toFixed(0)}%`;
 }
 
 function getCorporateIncomeTaxItemSourceStatus(
@@ -387,7 +387,7 @@ function createCorporateIncomeTaxItems(
   const completed = status === 'completed';
   const adjustmentResult = `调增 ${formatDeclarationAmount(summary.taxAdjustmentIncreaseAmount)} / 调减 ${formatDeclarationAmount(summary.taxAdjustmentDecreaseAmount)}`;
   const eligibilityResult = summary.smallLowProfitEligible
-    ? '符合小型微利候选口径'
+    ? '按小型微利口径预估'
     : '按普通企业口径';
   const prepaymentResult = `应纳税所得额 ${formatDeclarationAmount(summary.taxableIncomeAmount)}，预计预缴 ${formatDeclarationAmount(summary.estimatedCorporateIncomeTaxAmount)}`;
 

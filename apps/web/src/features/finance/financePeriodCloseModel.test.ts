@@ -448,7 +448,7 @@ const tests: UnitTest[] = [
       assertEqual(originalPeriod.laterAdjustmentSourceCount, 1, 'original period should count later adjustments raised against it');
       assertEqual(targetPeriod.laterAdjustmentTargetCount, 1, 'target period should count later adjustments carried into it');
       assertEqual(
-        targetPeriod.laterAdjustmentSummary.includes('承接 1 项后续调整候选'),
+        targetPeriod.laterAdjustmentSummary.includes('承接 1 项后续调整事项'),
         true,
         'target period should expose later-period adjustment carryover summary'
       );

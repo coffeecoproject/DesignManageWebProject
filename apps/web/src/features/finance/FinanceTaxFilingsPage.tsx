@@ -648,7 +648,7 @@ function getCorporateIncomeTaxEligibilityText(preparation: FinanceDeclarationPre
     return '-';
   }
 
-  return summary.smallLowProfitEligible ? '符合小型微利候选口径' : '按普通企业口径';
+  return summary.smallLowProfitEligible ? '按小型微利口径预估' : '按普通企业口径';
 }
 
 function getDeclarationPreparationResultItems(preparation: FinanceDeclarationPreparationRecord) {

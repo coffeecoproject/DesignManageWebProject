@@ -124,7 +124,7 @@ function getCorporateIncomeTaxEligibilityText(summary: FinanceDeclarationPrepara
     return '-';
   }
 
-  return summary.smallLowProfitEligible ? '符合小型微利候选口径' : '按普通企业口径';
+  return summary.smallLowProfitEligible ? '按小型微利口径预估' : '按普通企业口径';
 }
 
 function getPreparationBasisCell(record: FinanceDeclarationPreparationRecord) {
@@ -1144,7 +1144,7 @@ export function FinanceDeclarationPreparationPage() {
                 {
                   icon: <FileSearchOutlined />,
                   key: 'candidate',
-                  label: '候选流水',
+                  label: '可确认流水',
                   value: `${unbilledIncomeCandidates.length} 条`
                 },
                 {
@@ -1161,7 +1161,7 @@ export function FinanceDeclarationPreparationPage() {
                 }
               ]}
             />
-            <DetailSection icon={<FileSearchOutlined />} title="候选流水">
+            <DetailSection icon={<FileSearchOutlined />} title="可确认流水">
               <CompactDetailTable<FinanceDeclarationUnbilledIncomeCandidate>
                 columns={unbilledIncomeColumns}
                 dataSource={unbilledIncomeCandidates}
