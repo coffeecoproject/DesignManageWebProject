@@ -493,12 +493,11 @@ Required covered source areas:
 | Source area | Mutations that require guard |
 | --- | --- |
 | `应收应付` | 新增、调整、作废、收付款登记、税额事实确认或重建 |
-| `发票台账` | 发票导入、重导入、作废、红票原票关系影响发票事实的写入 |
-| `发票匹配` | 匹配、取消匹配、红票处理、后续开票确认 |
+| `发票台账` | 发票导入、共享业务关联、红票原票关系影响发票事实的写入 |
 | `收支流水` | 复核、退回、作废、补充凭证、冲正、补差 |
 | `银行对账` | 确认、撤销、补登记系统流水、金额调整、异常处理 |
 | `会计凭证` | 记账、批量记账、冲销 |
-| `申报准备 / 税务办理` | 申报准备项确认、未开票收入申报口径、前期未开票后续开票确认、申报准备结果确认、税务申报、缴款、回执变更、税费缴款流水生成 |
+| `申报准备 / 税务办理` | 申报准备项确认、申报准备结果确认、税务申报、缴款、回执变更、税费缴款流水生成 |
 | `社保公积金` | 确认、缴费、回单变更 |
 | `薪酬社保` | 工资、绩效、社保、公积金、个税结果确认 |
 | `账套初始化` | 启用后期初调整记账、撤回启用影响检查 |
@@ -508,12 +507,11 @@ Local route adapter coverage:
 | Source area | Route shape in local skeleton |
 | --- | --- |
 | `应收应付` | `POST /api/finance/receivables-payables`, `PATCH /api/finance/receivables-payables/{id}/adjust`, `POST /api/finance/receivables-payables/{id}/settlements`, `POST /api/finance/receivables-payables/{id}/void`, `POST /api/finance/receivables-payables/{id}/tax-basis` |
-| `发票台账` | `POST /api/finance/invoices/import` |
-| `发票匹配` | `POST /api/finance/invoice-matching/{id}/match`, `POST /api/finance/invoice-matching/{id}/unmatch`, `PATCH /api/finance/invoice-matching/{id}/reassign-period`, `POST /api/finance/invoice-matching/{id}/red-original`, `POST /api/finance/invoice-matching/{id}/subsequent-invoice` |
+| `发票台账` | `POST /api/finance/invoices/import`, `PATCH /api/finance/invoices/{id}/associations`, `POST /api/finance/invoices/{id}/red-original`, `PATCH /api/finance/receivables-payables/{id}/invoice-associations` |
 | `收支流水` | `POST /api/finance/cash-flows/{id}/review`, `POST /api/finance/cash-flows/{id}/return`, `POST /api/finance/cash-flows/{id}/void`, `POST /api/finance/cash-flows/{id}/voucher-files`, `POST /api/finance/cash-flows/{id}/adjustments` |
 | `银行对账` | `POST /api/finance/bank-reconciliation/{id}/confirm`, `POST /api/finance/bank-reconciliation/{id}/revoke`, `POST /api/finance/bank-reconciliation/{id}/system-flow`, `POST /api/finance/bank-reconciliation/{id}/adjustments`, `POST /api/finance/bank-reconciliation/{id}/resolve-exception` |
 | `会计凭证` | `POST /api/finance/accounting-vouchers/prepare`, `POST /api/finance/accounting-vouchers/batch-prepare`, `POST /api/finance/accounting-vouchers/{id}/book`, `POST /api/finance/accounting-vouchers/batch-book`, `POST /api/finance/accounting-vouchers/{id}/reverse` |
-| `申报准备 / 税务办理` | `POST /api/finance/declaration-preparation/{id}/confirm-item`, `POST /api/finance/declaration-preparation/{id}/unbilled-income`, `POST /api/finance/declaration-preparation/{id}/defer-unbilled-income`, `POST /api/finance/declaration-preparation/{id}/subsequent-invoice`, `POST /api/finance/declaration-preparation/{id}/confirm`, `POST /api/finance/tax-handling/{id}/declaration`, `POST /api/finance/tax-handling/{id}/payment`, `POST /api/finance/tax-handling/{id}/receipts` |
+| `申报准备 / 税务办理` | `POST /api/finance/declaration-preparation/{id}/confirm-item`, `POST /api/finance/declaration-preparation/{id}/confirm`, `POST /api/finance/tax-handling/{id}/declaration`, `POST /api/finance/tax-handling/{id}/payment`, `POST /api/finance/tax-handling/{id}/receipts` |
 | `社保公积金` | `POST /api/finance/social-insurance/{id}/confirm-detail`, `POST /api/finance/social-insurance/{id}/confirm-payment`, `POST /api/finance/social-insurance/{id}/receipts` |
 | `薪酬社保` | `POST /api/finance/payroll-results/{id}/confirm`, `POST /api/finance/payroll-results/{id}/settle`, `POST /api/finance/payroll-results/{id}/adjustments` |
 | `账套初始化` | `POST /api/finance/ledger-initialization/{id}/opening-adjustment`, `POST /api/finance/ledger-initialization/{id}/withdraw-enable` |

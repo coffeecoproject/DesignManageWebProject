@@ -22,12 +22,12 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { CellText } from '../../components/TableCell';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
+import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
 import { useTaskConfigState } from '../system/TaskConfigState';
 import {
   buildAcceptanceFeedbackDraft,
   buildAcceptanceScoringDraft,
-  buildTaskPerformanceScoringRecord,
   formatScore,
   getAcceptanceBlockers,
   getCompletedDimensionScores,
@@ -63,6 +63,7 @@ import {
   normalizeCompletedTaskFileDrafts
 } from './taskFileModel';
 import { appendTaskOperation } from './taskOperationModel';
+import { prepareTaskAcceptanceCommit } from './taskAcceptanceWorkflow';
 
 const submitTaskStatusTone = {
   待提交: 'blue',
@@ -106,17 +107,19 @@ function useTaskContext() {
   const { brandRows, getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
   const { performanceRuleRows } = usePerformanceRuleState();
   const { taskConfigRows } = useTaskConfigState();
-  const { clientFeedbackRows, createClientFeedback, saveStoreTask, saveTaskPerformanceScoring, storeTaskRows } = useTaskManagementState();
+  const { peopleRows } = usePeopleOrganizationState();
+  const { clientFeedbackRows, commitTaskAcceptance, createClientFeedback, saveStoreTask, storeTaskRows } = useTaskManagementState();
 
   return {
     brandRows,
     clientFeedbackRows,
+    commitTaskAcceptance,
     createClientFeedback,
     getBrandById,
     getCustomerById,
     performanceRuleRows,
+    peopleRows,
     saveStoreTask,
-    saveTaskPerformanceScoring,
     storeRows,
     storeTaskRows,
     taskConfigRows
@@ -389,12 +392,13 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
   const {
     brandRows,
     clientFeedbackRows,
+    commitTaskAcceptance,
     createClientFeedback,
     getBrandById,
     getCustomerById,
     performanceRuleRows,
+    peopleRows,
     saveStoreTask,
-    saveTaskPerformanceScoring,
     storeRows,
     storeTaskRows,
     taskConfigRows
@@ -455,8 +459,10 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
     setScoringDraft(buildAcceptanceScoringDraft(selectedTask, brandRows, performanceRuleRows));
   }, [brandRows, getCustomerById, performanceRuleRows, selectedTask]);
 
-  function finishAcceptanceAction(currentTask: StoreTaskRecord, nextTask: StoreTaskRecord, successMessage: string) {
-    saveStoreTask(nextTask);
+  function finishAcceptanceAction(currentTask: StoreTaskRecord, nextTask: StoreTaskRecord, successMessage: string, persistTask = true) {
+    if (persistTask) {
+      saveStoreTask(nextTask);
+    }
     setActiveTaskId(acceptanceRows.find((row) => row.id !== currentTask.id)?.id);
     setReworkTaskId(undefined);
     setReworkReason('');
@@ -477,28 +483,22 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
   }
 
   function handleAccept(record: StoreTaskRecord) {
-    const blockers = getAcceptanceBlockers(record, scoringDraft);
+    const result = prepareTaskAcceptanceCommit({
+      acceptedAt: taskManagementNow,
+      performanceRuleRows,
+      person: peopleRows.find((person) => person.id === record.executorId),
+      scoringDraft,
+      task: record
+    });
 
-    if (!scoringDraft || blockers.length > 0) {
-      setActiveAcceptanceTab(blockers.some((item) => ['绩效计分项', '归属月份', '质量评分'].includes(item)) ? 'scoring' : 'overview');
-      void messageApi.warning(`请先完成：${blockers.join('、')}`);
+    if (!result.success) {
+      setActiveAcceptanceTab(result.targetTab);
+      void messageApi.warning(result.message);
       return;
     }
 
-    const scoringRecord = buildTaskPerformanceScoringRecord(record, scoringDraft, performanceRuleRows);
-    const nextRecord = appendTaskOperation(
-      {
-        ...record,
-        acceptedAt: taskManagementNow,
-        acceptorName: record.acceptorName,
-        status: '已完成'
-      },
-      '验收通过',
-      `交付验收通过；绩效评分 ${formatScore(scoringRecord.qualityScore)}`
-    );
-
-    saveTaskPerformanceScoring(scoringRecord);
-    finishAcceptanceAction(record, nextRecord, '任务已验收完成');
+    commitTaskAcceptance(result.commitInput);
+    finishAcceptanceAction(record, result.nextTask, '任务已验收完成', false);
   }
 
   function startRework(record: StoreTaskRecord) {

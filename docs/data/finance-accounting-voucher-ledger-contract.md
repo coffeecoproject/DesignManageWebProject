@@ -53,10 +53,10 @@ candidate rows server-side.
 | Source fact | Upstream owner | Candidate type | Minimum source status | Blocking facts |
 | --- | --- | --- | --- | --- |
 | Receivable/payable confirmation | `应收应付` | `权责凭证` | confirmation status `已确认` and not voided | missing source document, missing original evidence, missing accounting subject, tax basis pending, invoice/tax amount mismatch |
-| Output invoice / input invoice | `发票台账` and `发票匹配` | supports `权责凭证` or `调整凭证` | invoice status complete enough for accounting treatment and linked to a receivable/payable or business confirmation fact | missing original blue invoice for red invoice, missing tax amount, unmatched issued invoice, unmatched business confirmation |
+| Output invoice / input invoice | `发票台账` shared association | supports `权责凭证` or `调整凭证` | invoice status complete enough for accounting treatment and linked to a receivable/payable or business confirmation fact | missing original blue invoice for red invoice, missing tax amount, unmatched issued invoice, unmatched business confirmation |
 | System cash-flow row | `收支流水` and `流水复核` | `资金凭证` or `调整凭证` | cash-flow status `已入账` after review | missing voucher file, unreconciled bank statement, missing bank reconciliation source link, bank amount mismatch |
 | Bank statement reconciliation | `银行对账` | supports `资金凭证` | reconciliation status `已对账` with a persisted relationship to one or more system cash-flow rows | unmatched bank row, missing relationship row, unresolved difference, duplicate or disputed import |
-| Tax matter | `税务办理` | `税费凭证` | tax matter confirmed and completed when payable amount exists | missing declaration receipt, missing payment receipt, external handling incomplete |
+| Tax matter | `税务办理` | `税费凭证` | filing data confirmed; official filing result, filing date, and filing receipt recorded; social-insurance matters use confirmed contribution schedules | filing result pending, missing filing date or filing receipt, contribution source pending |
 | Accounting adjustment | controlled accounting workflow | `调整凭证` | reviewed adjustment source exists | missing reason, missing original voucher/source, closed period |
 | Reversal request | `会计凭证` | `冲销凭证` | original voucher status `已记账` | original period closed, already reversed, missing reason |
 | Later-period voucher adjustment | `会计凭证` | `调整凭证` | original voucher status `已记账`, original period closed, target period open and later than original period | missing reason, target period closed, target period not later than original period, original voucher already reversed |
@@ -317,7 +317,7 @@ Required indexes:
 | `source_module` | text | yes | e.g. `应收应付`, `收支流水`, `发票台账`, `税务办理`, `银行对账` |
 | `source_id` | text | yes | upstream record id |
 | `source_no` | text | yes | upstream display no |
-| `role` | enum | yes | `主来源`, `发票依据`, `申报依据`, `缴款依据`, `银行依据`, `冲销依据`, `调整依据` |
+| `role` | enum | yes | `主来源`, `发票依据`, `申报依据`, `资金结算依据`, `银行依据`, `冲销依据`, `调整依据` |
 | `source_version` | integer | no | source version at generation time |
 | `source_hash` | text | yes | hash of source facts used when the voucher was prepared |
 | `source_tax_fact_id` | uuid | no | receivable/payable tax fact used by accrual candidates |

@@ -43,12 +43,14 @@ const requiredFlowStepIds = [
   'tax-handling-complete',
   'social-insurance-complete',
   'close-checks-passed',
+  'prior-period-closed',
   'period-close-confirmed',
   'closed-period-mutation-blocked',
   'closed-period-report-readback'
 ];
 
 const requiredCheckCodes = [
+  'month_end_matters',
   'voucher_preparation',
   'voucher_booking',
   'general_ledger_trial_balance',
@@ -62,7 +64,7 @@ const tests: UnitTest[] = [
   {
     name: 'keeps the industrial period-close acceptance flow ordered and complete',
     run: () => {
-      assertEqual(financePeriodCloseAcceptanceFlowSteps.length, 15, 'acceptance flow should keep the 15-step main workflow');
+      assertEqual(financePeriodCloseAcceptanceFlowSteps.length, 16, 'acceptance flow should keep the 16-step main workflow');
       assertSetEqual(
         financePeriodCloseAcceptanceFlowSteps.map((step) => step.id),
         requiredFlowStepIds,
@@ -127,6 +129,10 @@ const tests: UnitTest[] = [
         financePeriodCloseExceptionAcceptanceMatrix.some((scenario) => scenario.id === 'reopen-is-exceptional'),
         'exception matrix should keep reopen/reverse-close as an exceptional path'
       );
+      assert(
+        financePeriodCloseExceptionAcceptanceMatrix.some((scenario) => scenario.id === 'prior-period-unclosed-blocks-close'),
+        'exception matrix should keep prior-period close as a prerequisite for later periods'
+      );
     }
   },
   {
@@ -146,7 +152,7 @@ const tests: UnitTest[] = [
   {
     name: 'keeps frontend standards focused on check and lock presentation',
     run: () => {
-      assertEqual(financePeriodCloseFrontendStandards.length, 7, 'frontend standards should track the documented UI acceptance rules');
+      assertEqual(financePeriodCloseFrontendStandards.length, 9, 'frontend standards should track the documented UI acceptance rules');
       assert(
         financePeriodCloseFrontendStandards.some((standard) => standard.id === 'page-is-check-workbench'),
         'frontend standards should keep period close as a check workbench'
@@ -154,6 +160,14 @@ const tests: UnitTest[] = [
       assert(
         financePeriodCloseFrontendStandards.some((standard) => standard.id === 'frontend-disable-is-not-security'),
         'frontend standards should keep the non-security boundary visible'
+      );
+      assert(
+        financePeriodCloseFrontendStandards.some((standard) => standard.id === 'continuous-period-close'),
+        'frontend standards should keep continuous period closing visible'
+      );
+      assert(
+        financePeriodCloseFrontendStandards.some((standard) => standard.id === 'sequence-exception-reopen'),
+        'frontend standards should keep the sequence-exception reopen path visible'
       );
       assert(
         financePeriodCloseFrontendStandards.every((standard) => standard.currentEvidence.length > 0),

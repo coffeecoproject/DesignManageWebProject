@@ -4,6 +4,7 @@ import {
   getSalaryAdjustmentDirection,
   salaryStandardPayrollHours,
   type SalaryAdjustmentRecord,
+  type SalaryAdjustmentTaxTreatment,
   type SalaryAdjustmentType,
   type SalaryMonthlyReport
 } from './salaryDomain';
@@ -41,6 +42,7 @@ export type SalaryAdjustmentFormValue = {
   memberId?: string;
   month: string;
   reason: string;
+  taxTreatment: SalaryAdjustmentTaxTreatment;
   type: SalaryAdjustmentType;
 };
 
@@ -56,7 +58,7 @@ export const salaryMonthlyStatusTone = {
   结算中: 'amber',
   待确认: 'blue',
   已确认: 'blue',
-  已结算: 'green'
+  已发放: 'green'
 } as const;
 
 export const salaryAdjustmentDirectionTone = {
@@ -84,6 +86,7 @@ export const salaryPayslipStatusTone = {
 } as const;
 
 export const salaryAdjustmentTypeOptions: SalaryAdjustmentType[] = ['奖金', '补贴', '补发', '误发追回', '代垫款收回'];
+export const salaryAdjustmentTaxTreatmentOptions: SalaryAdjustmentTaxTreatment[] = ['税前计税', '税前免税', '税后调整'];
 
 export function normalizeDateString(dateString: string | string[]) {
   return Array.isArray(dateString) ? dateString[0] ?? '' : dateString;
@@ -149,7 +152,7 @@ export function getSalaryPayslipStatus(report: SalaryMonthlyReport): SalaryPaysl
     return '预览';
   }
 
-  return report.status === '已结算' ? '已锁定' : '已生成';
+  return report.status === '已发放' ? '已锁定' : '已生成';
 }
 
 export function getSalaryPayslipNo(report: SalaryMonthlyReport) {
@@ -196,10 +199,11 @@ export function getSalaryPayslipLines(report: SalaryMonthlyReport): SalaryPaysli
       note: `${report.baseSalaryText} / 计薪 ${formatHours(report.baseSalaryPayableHours)}`
     },
     {
+      deductionAmount: Math.abs(Math.min(0, report.performancePayAmount)),
       id: 'payslip-performance',
-      incomeAmount: report.performancePayAmount,
-      item: '绩效预发',
-      note: '本月计入'
+      incomeAmount: Math.max(0, report.performancePayAmount),
+      item: '绩效计入',
+      note: `月度预发 ${formatSalaryMoney(report.performancePrepayAmount)} / 季度差额 ${formatSalaryMoney(report.performanceQuarterlyAdjustmentAmount)}`
     },
     {
       deductionAmount: attendanceDeductionAmount,
@@ -246,6 +250,7 @@ export function createSalaryAdjustmentForm(month: string): SalaryAdjustmentFormV
     memberId: undefined,
     month,
     reason: '',
+    taxTreatment: '税前计税',
     type: '补贴'
   };
 }
@@ -256,6 +261,7 @@ export function createSalaryAdjustmentFormFromRecord(record: SalaryAdjustmentRec
     memberId: record.memberId,
     month: record.month,
     reason: record.reason,
+    taxTreatment: record.taxTreatment,
     type: record.type
   };
 }
@@ -322,6 +328,7 @@ export function buildSalaryAdjustmentRecord({
     reason: form.reason.trim(),
     source: '薪酬调整',
     status: '已生效',
+    taxTreatment: form.taxTreatment,
     type: form.type,
     updatedAt: createdAt
   };

@@ -53,7 +53,6 @@ export const financeReportAggregationOptions: FinanceReportAggregation[] = [
 export const financeCounterpartyScopeOptions: FinanceCounterpartyScope[] = ['客户', '员工', '合作人员', '供应商', '内部'];
 export const financeSourceTypeOptions: FinanceSourceType[] = [
   '合同应收',
-  '月度绩效',
   '薪酬发放',
   '外协结算',
   '报销单',

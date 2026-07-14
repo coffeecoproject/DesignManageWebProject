@@ -3,58 +3,96 @@ import { useMemo } from 'react';
 import { StatusTag, type StatusTagTone } from '../../components/Detail';
 import { SummaryTablePanel } from '../../components/SummaryTablePanel';
 import { CompactCell } from '../../components/TableCell';
-import type { PayrollIitTaxMatterEmployeeRow, PayrollIitTaxMatterSummary } from './financeTaxMatterModel';
+import type {
+  PayrollIitDeclarationEmployeeRow,
+  PayrollIitDeclarationSummary
+} from './financePayrollIitDeclarationModel';
 import { formatMoney } from './financeUtils';
 
-const payrollIitSalaryStatusTone = {
-  结算中: 'amber',
-  待确认: 'blue',
-  已确认: 'green',
-  已结算: 'green'
-} as const satisfies Record<PayrollIitTaxMatterEmployeeRow['salaryStatus'], StatusTagTone>;
+const payrollIitPaymentStatusTone = {
+  已核验: 'green',
+  待核验: 'amber'
+} as const satisfies Record<PayrollIitDeclarationEmployeeRow['paymentStatus'], StatusTagTone>;
 
 type PayrollIitEmployeeDetailPanelProps = {
+  amountLabel?: string;
   payableAmount: number;
-  records: PayrollIitTaxMatterEmployeeRow[];
-  summary?: PayrollIitTaxMatterSummary;
+  records: PayrollIitDeclarationEmployeeRow[];
+  summary?: PayrollIitDeclarationSummary;
+  summaryTitle?: string;
 };
 
-export function PayrollIitEmployeeDetailPanel({ payableAmount, records, summary }: PayrollIitEmployeeDetailPanelProps) {
-  const columns = useMemo<TableColumnsType<PayrollIitTaxMatterEmployeeRow>>(
+export function PayrollIitEmployeeDetailPanel({
+  amountLabel = '预计个税',
+  payableAmount,
+  records,
+  summary,
+  summaryTitle = '申报汇总'
+}: PayrollIitEmployeeDetailPanelProps) {
+  const columns = useMemo<TableColumnsType<PayrollIitDeclarationEmployeeRow>>(
     () => [
       {
         className: 'summary-table-left-cell',
         dataIndex: 'employeeName',
         render: (_employeeName: string, record) => (
-          <CompactCell primary={record.employeeName} secondary={`${record.employeeNo} / ${record.position}`} />
+          <CompactCell primary={record.employeeName} secondary={`${record.employeeNo} / ${record.identityNoMasked}`} />
         ),
-        title: '员工',
+        title: '自然人',
         width: 168
       },
       {
-        dataIndex: 'salaryStatus',
-        render: (status: PayrollIitTaxMatterEmployeeRow['salaryStatus']) => (
-          <StatusTag toneMap={payrollIitSalaryStatusTone} value={status} />
+        dataIndex: 'paymentStatus',
+        render: (status: PayrollIitDeclarationEmployeeRow['paymentStatus']) => (
+          <StatusTag toneMap={payrollIitPaymentStatusTone} value={status} />
         ),
-        title: '薪酬状态',
+        title: '付款核验',
         width: 104
       },
       {
-        dataIndex: 'grossSalary',
-        render: (grossSalary: number) => formatMoney(grossSalary),
-        title: '应发工资',
-        width: 116
+        key: 'paymentPeriod',
+        render: (_, record) => <CompactCell primary={record.paidAt.slice(0, 10)} secondary={`${record.incomeType} / ${record.sourceBatchNo}`} />,
+        title: '实际发放',
+        width: 132
       },
       {
-        dataIndex: 'socialInsuranceDeductionAmount',
+        dataIndex: 'currentIncomeAmount',
         render: (amount: number) => formatMoney(amount),
-        title: '社保公积金',
+        title: '当期收入',
+        width: 130
+      },
+      {
+        key: 'currentDeductions',
+        render: (_, record) => formatMoney(
+          record.currentBasicDeductionAmount
+          + record.currentSpecialDeductionAmount
+          + record.currentAdditionalDeductionAmount
+          + record.currentOtherDeductionAmount
+        ),
+        title: '当期扣除',
         width: 124
       },
       {
-        dataIndex: 'currentTaxableIncomeAmount',
+        dataIndex: 'cumulativeAdditionalDeductionAmount',
         render: (amount: number) => formatMoney(amount),
-        title: '计税收入',
+        title: '累计专项附加',
+        width: 150
+      },
+      {
+        dataIndex: 'cumulativeTaxableIncomeAmount',
+        render: (amount: number) => formatMoney(amount),
+        title: '计税所得额',
+        width: 154
+      },
+      {
+        key: 'rate',
+        render: (_, record) => <CompactCell primary={`${(record.taxRate * 100).toFixed(0)}%`} secondary={`速算扣除 ${formatMoney(record.quickDeductionAmount)}`} />,
+        title: '税率',
+        width: 128
+      },
+      {
+        dataIndex: 'priorWithheldTaxAmount',
+        render: (amount: number) => formatMoney(amount),
+        title: '前期已扣',
         width: 116
       },
       {
@@ -70,20 +108,19 @@ export function PayrollIitEmployeeDetailPanel({ payableAmount, records, summary 
   );
 
   return (
-    <SummaryTablePanel<PayrollIitTaxMatterEmployeeRow>
+    <SummaryTablePanel<PayrollIitDeclarationEmployeeRow>
       columns={columns}
       dataSource={records}
       rowKey="id"
-      scrollX={760}
+      scrollX={1280}
       summaryItems={[
-        { key: 'records', label: '薪酬记录', value: `${summary?.reportCount ?? records.length} 人` },
-        { key: 'confirmed', label: '已确认', tone: 'income', value: `${summary?.confirmedCount ?? 0} 人` },
-        { key: 'pending', label: '待确认', tone: 'muted', value: `${summary?.pendingCount ?? 0} 人` },
-        { key: 'amount', label: '应缴金额', value: formatMoney(payableAmount) }
+        { key: 'records', label: '付款记录', value: `${summary?.reportCount ?? records.length} 条` },
+        { key: 'confirmed', label: '已计入', tone: 'income', value: `${summary?.confirmedCount ?? 0} 条` },
+        { key: 'amount', label: amountLabel, value: formatMoney(payableAmount) }
       ]}
       summaryLayout="amount-trailing"
       summaryMeta={`${summary?.period ?? '-'} / 个税`}
-      summaryTitle="薪酬概览"
+      summaryTitle={summaryTitle}
     />
   );
 }

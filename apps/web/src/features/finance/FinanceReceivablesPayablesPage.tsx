@@ -23,8 +23,9 @@ import {
 } from './FinanceReceivablesPayablesColumns';
 import { FinanceReceivablesPayablesDetailDrawer } from './FinanceReceivablesPayablesDetailDrawer';
 import { FinanceReceivablesPayablesFormDrawer } from './FinanceReceivablesPayablesFormDrawer';
+import { FinanceInvoiceAssociationDrawer } from './FinanceInvoiceAssociationDrawer';
 import type { FinanceVoucherUploadFile } from './FinanceVoucherUploadPanel';
-import type { FinanceInvoiceRecord } from './financeInvoiceData';
+import type { FinanceInvoiceBusinessAllocation, FinanceInvoiceRecord } from './financeInvoiceData';
 import type {
   FinanceReceivablePayableRecord,
   FinanceReceivablePayableReviewProgressStatus,
@@ -36,6 +37,7 @@ import {
   buildFinanceReceivablePayableMetrics,
   canEditFinanceReceivablePayableRecord,
   canRegisterFinanceReceivablePayableSettlement,
+  hasFinanceReceivablePayableBookedVoucher,
   createFinanceReceivablePayableForm,
   createFinanceReceivablePayableSettlementForm,
   defaultFinanceReceivablePayableFilters,
@@ -50,7 +52,6 @@ import {
   isFinanceReceivablePayableSettlementFormValid,
   isFinanceReceivablePayableFormValid,
   isFinanceReceivablePayableOverdue,
-  linkFinanceReceivablePayableSettlementTransaction,
   matchesFinanceReceivablePayableFilters,
   matchesFinanceReceivablePayableListTab,
   updateFinanceReceivablePayableRecordFromForm,
@@ -107,33 +108,30 @@ function sortFinanceReceivablePayableRows(
 
 function isInvoiceLinkedToReceivablePayable(
   invoice: FinanceInvoiceRecord,
-  record: FinanceReceivablePayableRecord
+  record: FinanceReceivablePayableRecord,
+  allocations: FinanceInvoiceBusinessAllocation[]
 ) {
-  const expectedDirection = record.direction === '应收' ? '销项' : '进项';
-
-  return (
-    invoice.direction === expectedDirection &&
-    invoice.counterparty === record.counterparty &&
-    invoice.matchedBusinessRefs.some((ref) =>
-      ref.recordId === record.id ||
-      ref.recordNo === record.documentNo ||
-      ref.sourceNo === record.sourceNo
-    )
+  return invoice.invoiceStatus !== '作废' && allocations.some(
+    (allocation) => allocation.status === '有效' && allocation.invoiceId === invoice.id &&
+      allocation.targetType === '应收应付' && allocation.targetId === record.id
   );
 }
 
 export function FinanceReceivablesPayablesPage() {
   const {
-    addFinanceTransaction,
+    accountingVoucherLifecycleRows,
+    invoiceBusinessAllocationRows,
     financeRows,
     getAccountingPeriodGuard,
     invoiceRows,
     receivablePayableRows,
+    registerReceivablePayableSettlement,
     updateReceivablePayableRecord
   } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, messageContextHolder] = message.useMessage();
   const [activeRecordId, setActiveRecordId] = useState<string>();
+  const [invoiceAssociationRecordId, setInvoiceAssociationRecordId] = useState<string>();
   const [activeTab, setActiveTab] = useState<FinanceReceivablePayableListTabKey>('open');
   const [filters, setFilters] = useState<FinanceReceivablePayableFilters>(defaultFinanceReceivablePayableFilters);
   const [settlementForm, setSettlementForm] = useState<FinanceReceivablePayableSettlementFormValue>(() =>
@@ -192,6 +190,10 @@ export function FinanceReceivablesPayablesPage() {
     () => receivablePayableRows.find((record) => record.id === activeRecordId),
     [activeRecordId, receivablePayableRows]
   );
+  const invoiceAssociationRecord = useMemo(
+    () => receivablePayableRows.find((record) => record.id === invoiceAssociationRecordId),
+    [invoiceAssociationRecordId, receivablePayableRows]
+  );
   const linkedTransactionRows = useMemo(
     () => activeRecord
       ? getFinanceReceivablePayableLinkedTransactionRows(activeRecord, financeRows)
@@ -200,9 +202,9 @@ export function FinanceReceivablesPayablesPage() {
   );
   const linkedInvoiceRows = useMemo(
     () => activeRecord
-      ? invoiceRows.filter((invoice) => isInvoiceLinkedToReceivablePayable(invoice, activeRecord))
+      ? invoiceRows.filter((invoice) => isInvoiceLinkedToReceivablePayable(invoice, activeRecord, invoiceBusinessAllocationRows))
       : [],
-    [activeRecord, invoiceRows]
+    [activeRecord, invoiceBusinessAllocationRows, invoiceRows]
   );
   const publicAccountOptions = useMemo(
     () =>
@@ -228,16 +230,24 @@ export function FinanceReceivablesPayablesPage() {
     ? getAccountingPeriodGuard(activeRecord.accountingPeriod, activeRecord.direction === '应收' ? '处理应收事项' : '处理应付事项')
     : undefined;
   const activeRecordLockedReason = activeRecordPeriodGuard?.allowed === false ? activeRecordPeriodGuard.reason : undefined;
-  const activeRecordEditable = activeRecord
-    ? canEditFinanceReceivablePayableRecord(activeRecord, linkedTransactionRows) && !activeRecordLockedReason
+  const activeRecordHasBookedVoucher = activeRecord
+    ? hasFinanceReceivablePayableBookedVoucher(activeRecord, accountingVoucherLifecycleRows)
     : false;
+  const activeRecordEditable = activeRecord
+    ? canEditFinanceReceivablePayableRecord(activeRecord, linkedTransactionRows, activeRecordHasBookedVoucher) && !activeRecordLockedReason
+    : false;
+  const activeRecordEditBlockedReason = activeRecordHasBookedVoucher
+    ? '已记账，需通过凭证调整'
+    : activeRecordLockedReason
+      ? '只读回看'
+      : '已有收付进度，事项锁定';
   const activeRecordCanRegisterSettlement = activeRecord
     ? canRegisterFinanceReceivablePayableSettlement(activeRecord, linkedTransactionRows) && !activeRecordLockedReason
     : false;
   const settlementFormValid =
     Boolean(activeRecord) &&
     activeRecordCanRegisterSettlement &&
-    isFinanceReceivablePayableSettlementFormValid(settlementForm, registerableAmount);
+    isFinanceReceivablePayableSettlementFormValid(settlementForm, registerableAmount, activeRecord);
 
   function getSettlementAccountUsage(record: FinanceReceivablePayableRecord) {
     return record.direction === '应收' ? '收款' : '付款';
@@ -257,6 +267,11 @@ export function FinanceReceivablesPayablesPage() {
       ...initialSettlementForm,
       amount: getFinanceReceivablePayableRegisterableAmount(record, recordLinkedTransactionRows)
     });
+  }
+
+  function handleAssociateInvoice(record: FinanceReceivablePayableRecord) {
+    setActiveRecordId(undefined);
+    setInvoiceAssociationRecordId(record.id);
   }
 
   function handleTabChange(nextTab: string) {
@@ -280,8 +295,14 @@ export function FinanceReceivablesPayablesPage() {
       return;
     }
 
-    if (!canEditFinanceReceivablePayableRecord(record, recordLinkedTransactionRows)) {
-      void messageApi.warning('已有收付进度，不能直接调整原事项');
+    const hasBookedVoucher = hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows);
+
+    if (!canEditFinanceReceivablePayableRecord(record, recordLinkedTransactionRows, hasBookedVoucher)) {
+      void messageApi.warning(
+        hasBookedVoucher
+          ? '原事项已生成记账凭证，不能直接调整，请通过会计凭证处理冲销或调整'
+          : '已有收付进度，不能直接调整原事项'
+      );
       return;
     }
 
@@ -421,17 +442,10 @@ export function FinanceReceivablesPayablesPage() {
       return;
     }
 
-    if (!addFinanceTransaction(nextTransaction)) {
-      void messageApi.warning(transactionPeriodGuard.reason ?? '当前会计期间已锁定，不能登记流水');
-      return;
-    }
+    const registrationResult = registerReceivablePayableSettlement(activeRecord.id, nextTransaction);
 
-    if (
-      !updateReceivablePayableRecord(activeRecord.id, (record) =>
-        linkFinanceReceivablePayableSettlementTransaction(record, nextTransaction)
-      )
-    ) {
-      void messageApi.warning('流水已登记，但事项进度未完成关联，请重新打开事项核对');
+    if (!registrationResult.success) {
+      void messageApi.warning(registrationResult.message);
       return;
     }
 
@@ -515,8 +529,11 @@ export function FinanceReceivablesPayablesPage() {
         accountOptions={publicAccountOptions}
         linkedInvoiceRows={linkedInvoiceRows}
         linkedTransactionRows={linkedTransactionRows}
+        invoiceAssociationLockedReason={activeRecordLockedReason ?? (activeRecordHasBookedVoucher ? '已记账，需通过凭证调整' : undefined)}
+        invoiceBusinessAllocationRows={invoiceBusinessAllocationRows}
         registerableAmount={registerableAmount}
         record={activeRecord}
+        recordEditBlockedReason={activeRecordEditBlockedReason}
         recordEditable={activeRecordEditable}
         recordLockedReason={activeRecordLockedReason}
         settlementForm={settlementForm}
@@ -529,6 +546,13 @@ export function FinanceReceivablesPayablesPage() {
         onSubmitSettlement={handleRegisterSettlement}
         onUpdateSettlementForm={updateSettlementForm}
         onClose={() => setActiveRecordId(undefined)}
+        onAssociateInvoice={handleAssociateInvoice}
+      />
+
+      <FinanceInvoiceAssociationDrawer
+        businessRecord={invoiceAssociationRecord}
+        open={Boolean(invoiceAssociationRecord)}
+        onClose={() => setInvoiceAssociationRecordId(undefined)}
       />
 
       <FinanceReceivablesPayablesFormDrawer

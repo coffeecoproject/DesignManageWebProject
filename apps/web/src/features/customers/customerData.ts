@@ -5,6 +5,27 @@ export type CustomerContractStatus = '有效' | '已到期';
 export type CustomerContractType = '年框合同' | '项目合同';
 export type CustomerContractAmountMode = '固定金额' | '无固定金额';
 export type CustomerContractReceiptMethod = '银行转账' | '现金' | '其他';
+export type CustomerContractBusinessNature =
+  | '设计及咨询服务'
+  | '工程施工'
+  | '采购或销售'
+  | '租赁'
+  | '技术服务'
+  | '借款'
+  | '产权转移'
+  | '其他';
+export type CustomerContractAmountTaxMode = '价税分列' | '含税未分列' | '不涉及增值税';
+export type CustomerContractAgreementChangeType = '新增金额' | '减少金额' | '仅变更非金额条款';
+
+export type CustomerContractStampDutyFacts = {
+  agreementChangeAmount?: number;
+  agreementChangeType?: CustomerContractAgreementChangeType;
+  amountTaxMode: CustomerContractAmountTaxMode;
+  businessNature: CustomerContractBusinessNature;
+  parentContractId?: string;
+  signedVersionNo: string;
+  vatAmount?: number;
+};
 
 export type BrandTaskConfigRecord = {
   id: string;
@@ -43,6 +64,7 @@ export type CustomerRecord = {
   id: string;
   code: string;
   name: string;
+  taxpayerIdentificationNo: string;
   industry: string;
   owner: string;
   contacts: CustomerContactRecord[];
@@ -59,6 +81,7 @@ export type CustomerContractRecord = {
   name: string;
   type: CustomerContractType;
   status: CustomerContractStatus;
+  stampDutyFacts: CustomerContractStampDutyFacts;
   signedAt: string;
   expiresAt: string;
   files: CustomerContractFileRecord[];
@@ -107,6 +130,7 @@ export const customerRecords: CustomerRecord[] = [
     id: 'customer-starry',
     code: 'CUS-2026-001',
     name: '湖北星际装饰有限公司',
+    taxpayerIdentificationNo: '91420100MA49STARRY1',
     industry: '连锁商业空间',
     owner: '李明',
     contacts: [
@@ -139,6 +163,7 @@ export const customerRecords: CustomerRecord[] = [
     id: 'customer-nova',
     code: 'CUS-2026-002',
     name: '湖南新岚餐饮管理有限公司',
+    taxpayerIdentificationNo: '91430100MA4PNOVA01',
     industry: '餐饮连锁',
     owner: '王芳',
     contacts: [
@@ -162,6 +187,7 @@ export const customerRecords: CustomerRecord[] = [
     id: 'customer-urban',
     code: 'CUS-2025-009',
     name: '武汉城设商业运营有限公司',
+    taxpayerIdentificationNo: '91420106MA4URBAN09',
     industry: '商业运营',
     owner: '李明',
     contacts: [
@@ -194,6 +220,7 @@ export const customerRecords: CustomerRecord[] = [
     id: 'customer-old',
     code: 'CUS-2024-004',
     name: '长沙旧巷商业管理有限公司',
+    taxpayerIdentificationNo: '91430103MA4OLD0004',
     industry: '零售空间',
     owner: '赵敏',
     contacts: [
@@ -223,6 +250,12 @@ export const customerContractRecords: CustomerContractRecord[] = [
     name: '星际空间年框合同',
     type: '年框合同',
     status: '有效',
+    stampDutyFacts: {
+      amountTaxMode: '价税分列',
+      businessNature: '设计及咨询服务',
+      signedVersionNo: 'V1.0',
+      vatAmount: 0
+    },
     signedAt: '2026-01-15',
     expiresAt: '2026-12-31',
     files: [
@@ -269,12 +302,55 @@ export const customerContractRecords: CustomerContractRecord[] = [
     note: '覆盖星际空间及星际轻装品牌的年度合作。'
   },
   {
+    id: 'contract-starry-supplement-001',
+    code: 'CON-2026-003',
+    customerId: 'customer-starry',
+    name: '星际空间施工范围补充协议',
+    type: '项目合同',
+    status: '有效',
+    stampDutyFacts: {
+      agreementChangeAmount: 15000,
+      agreementChangeType: '新增金额',
+      amountTaxMode: '价税分列',
+      businessNature: '工程施工',
+      parentContractId: 'contract-starry-framework',
+      signedVersionNo: 'V1.1',
+      vatAmount: 436.89
+    },
+    signedAt: '2026-06-12',
+    expiresAt: '2026-12-31',
+    files: [
+      {
+        id: 'contract-starry-supplement-file-001',
+        name: '星际空间施工范围补充协议_已签署.pdf',
+        status: '已上传',
+        type: '补充协议',
+        updatedAt: '2026-06-12'
+      }
+    ],
+    amountMode: '固定金额',
+    amount: 15000,
+    receivedAmount: 0,
+    latestReceiptAt: '-',
+    receiptNote: '补充协议新增金额待后续收款。',
+    receiptRecords: [],
+    owner: '李明',
+    updatedAt: '2026-06-12',
+    note: '仅对补充协议新增金额形成独立税源。'
+  },
+  {
     id: 'contract-nova-start',
     code: 'CON-2026-002',
     customerId: 'customer-nova',
     name: '新岚茶集首店项目合同',
     type: '项目合同',
     status: '有效',
+    stampDutyFacts: {
+      amountTaxMode: '价税分列',
+      businessNature: '工程施工',
+      signedVersionNo: 'V1.0',
+      vatAmount: 1689.32
+    },
     signedAt: '2026-06-10',
     expiresAt: '2026-09-30',
     files: [
@@ -312,6 +388,11 @@ export const customerContractRecords: CustomerContractRecord[] = [
     name: '城设集市年度合作合同',
     type: '年框合同',
     status: '有效',
+    stampDutyFacts: {
+      amountTaxMode: '含税未分列',
+      businessNature: '技术服务',
+      signedVersionNo: 'V1.0'
+    },
     signedAt: '2025-09-20',
     expiresAt: '2026-09-19',
     files: [
@@ -357,6 +438,11 @@ export const customerContractRecords: CustomerContractRecord[] = [
     name: '旧巷零售历史合作协议',
     type: '项目合同',
     status: '已到期',
+    stampDutyFacts: {
+      amountTaxMode: '含税未分列',
+      businessNature: '设计及咨询服务',
+      signedVersionNo: 'V1.0'
+    },
     signedAt: '2024-04-10',
     expiresAt: '2025-04-09',
     files: [

@@ -85,6 +85,7 @@ export type TaskCreateFormState = {
     changeAcceptor: (acceptorId: string) => void;
     changeBrand: (brandId: string) => void;
     changeExecutor: (executorId: string) => void;
+    changeLaborGrossAmount: (value: number | null) => void;
     changeMaterial: <K extends keyof Omit<TaskFileDraft, 'id'>>(materialId: string, key: K, value: TaskFileDraft[K]) => void;
     changeNote: (note: string) => void;
     changePlannedDurationHours: (value: number | null) => void;
@@ -169,6 +170,7 @@ export function useTaskCreateFormState({
   const selectableExecutorCandidates = executorCandidates.filter((candidate) => candidate.selectable);
   const hasPartialMaterial = form.materials.some((material) => Boolean(material.name.trim()) !== Boolean(material.url.trim()));
   const hasValidExecutor = Boolean(selectedExecutorCandidate?.selectable);
+  const requiresLaborAgreement = selectedExecutorCandidate?.member.personnelType === '兼职';
   const hasValidAcceptor = Boolean(selectedAcceptorCandidate?.selectable);
   const createValidation = getTaskCreateValidationState({
     availableTaskOptions,
@@ -178,6 +180,7 @@ export function useTaskCreateFormState({
     hasPartialMaterial,
     hasValidAcceptor,
     hasValidExecutor,
+    requiresLaborAgreement,
     selectableExecutorCount: selectableExecutorCandidates.length
   });
 
@@ -340,6 +343,7 @@ export function useTaskCreateFormState({
       changeAcceptor: (acceptorId) => changeField('acceptorId', acceptorId),
       changeBrand,
       changeExecutor,
+      changeLaborGrossAmount: (value) => changeField('laborGrossAmount', value),
       changeMaterial,
       changeNote: (note) => changeField('note', note),
       changePlannedDurationHours,

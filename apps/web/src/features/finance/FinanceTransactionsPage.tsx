@@ -1,7 +1,6 @@
 import {
   AuditOutlined,
   CalculatorOutlined,
-  FileTextOutlined,
   FileProtectOutlined,
   FileSearchOutlined,
   ProfileOutlined,
@@ -11,7 +10,6 @@ import {
 import { Alert, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
-import { CompactDetailTable } from '../../components/CompactDetailTable';
 import {
   DateScopeFilter,
   getDateScopeMonthRange,
@@ -20,7 +18,7 @@ import {
   type DateScopeFilterValue
 } from '../../components/DateFilterFields';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
-import { DetailSummaryCards, type DetailSummaryCardItem } from '../../components/DetailSummaryCards';
+import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DetailDrawerShell } from '../../components/DrawerShell';
 import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
@@ -35,8 +33,8 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import { useFinanceManagement } from './FinanceManagementState';
 import { FinanceTransactionAdjustmentDrawer } from './FinanceTransactionAdjustmentDrawer';
+import { getFinanceTransactionAdjustmentBlocker } from './financeTransactionAdjustmentModel';
 import {
-  type FinanceInvoiceDeclarationStatus,
   type FinancePaymentMethod,
   type FinancePrimaryCategoryConfig,
   type FinanceSecondaryCategoryConfig,
@@ -46,28 +44,19 @@ import {
   type FinanceTransactionStatus
 } from './financeData';
 import {
-  buildTransactionInvoiceAssociation,
-  type FinanceTransactionInvoiceAssociation,
-  type FinanceTransactionMatchedInvoice
-} from './financeInvoiceModel';
-import {
   directionTone,
   formatMoney,
   getAmountTone,
   getFinanceCategoryDisplayName,
   getFinanceDirectionLabels,
   getFinanceRecordCategorySnapshot,
-  getFinanceTransactionInvoiceDeclarationStatus,
   getPublicAccountSignedAmount,
   financeToday,
-  invoiceDeclarationStatusTone,
-  invoiceAssociationStatusTone,
   transactionStatusTone
 } from './financeUtils';
 
 type FinanceTransactionFilters = {
   category: '全部' | FinanceTransactionCategory;
-  invoiceDeclaration: '全部' | FinanceInvoiceDeclarationStatus;
   keyword: string;
   occurredTime: DateScopeFilterValue;
   primaryCategory: '全部' | string;
@@ -81,7 +70,6 @@ const financeTransactionDefaultMonthRange = getDateScopeMonthRange(financeTransa
 
 const defaultFilters: FinanceTransactionFilters = {
   category: '全部',
-  invoiceDeclaration: '全部',
   keyword: '',
   occurredTime: { mode: 'currentMonth' },
   primaryCategory: '全部',
@@ -152,9 +140,7 @@ function DrawerTitle({ record }: { record: FinanceTransactionRecord }) {
 function matchesFilters(
   record: FinanceTransactionRecord,
   filters: FinanceTransactionFilters,
-  occurredDateRange: DateRangeFilterValue | undefined,
-  invoiceAssociation: FinanceTransactionInvoiceAssociation,
-  invoiceDeclarationStatus: FinanceInvoiceDeclarationStatus
+  occurredDateRange: DateRangeFilterValue | undefined
 ) {
   if (
     occurredDateRange &&
@@ -177,10 +163,6 @@ function matchesFilters(
     return false;
   }
 
-  if (filters.invoiceDeclaration !== '全部' && invoiceDeclarationStatus !== filters.invoiceDeclaration) {
-    return false;
-  }
-
   const keyword = filters.keyword.trim().toLowerCase();
 
   if (!keyword) {
@@ -196,8 +178,6 @@ function matchesFilters(
     record.sourceNo,
     record.sourceTitle,
     record.publicAccountSnapshot.displayName,
-    invoiceAssociation.status,
-    invoiceDeclarationStatus,
     record.note
   ]
     .join(' ')
@@ -207,7 +187,11 @@ function matchesFilters(
 
 export function FinanceTransactionsPage() {
   const [messageApi, contextHolder] = message.useMessage();
-  const { addFinanceTransaction, financeRows: records, getAccountingPeriodGuard, invoiceRows } = useFinanceManagement();
+  const {
+    addFinanceTransaction,
+    financeRows: records,
+    getAccountingPeriodGuard
+  } = useFinanceManagement();
   const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const [activeTab, setActiveTab] = useState<FinanceTransactionListTabKey>('收入');
   const [filters, setFilters] = useState<FinanceTransactionFilters>(defaultFilters);
@@ -218,32 +202,6 @@ export function FinanceTransactionsPage() {
     [filters.occurredTime]
   );
 
-  const invoiceAssociationByTransactionNo = useMemo(
-    () =>
-      new Map(
-        records.map((record) => [
-          record.transactionNo,
-          buildTransactionInvoiceAssociation(record, invoiceRows)
-        ])
-      ),
-    [invoiceRows, records]
-  );
-  const invoiceDeclarationStatusByTransactionNo = useMemo(
-    () =>
-      new Map(
-        records.map((record) => {
-          const invoiceAssociation =
-            invoiceAssociationByTransactionNo.get(record.transactionNo) ??
-            buildTransactionInvoiceAssociation(record, invoiceRows);
-
-          return [
-            record.transactionNo,
-            getFinanceTransactionInvoiceDeclarationStatus(record, invoiceAssociation)
-          ];
-        })
-      ),
-    [invoiceAssociationByTransactionNo, invoiceRows, records]
-  );
   const rows = useMemo(
     () =>
       records
@@ -252,17 +210,10 @@ export function FinanceTransactionsPage() {
             return false;
           }
 
-          const invoiceAssociation =
-            invoiceAssociationByTransactionNo.get(record.transactionNo) ??
-            buildTransactionInvoiceAssociation(record, invoiceRows);
-          const invoiceDeclarationStatus =
-            invoiceDeclarationStatusByTransactionNo.get(record.transactionNo) ??
-            getFinanceTransactionInvoiceDeclarationStatus(record, invoiceAssociation);
-
-          return matchesFilters(record, filters, occurredDateRange, invoiceAssociation, invoiceDeclarationStatus);
+          return matchesFilters(record, filters, occurredDateRange);
         })
         .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.transactionNo.localeCompare(left.transactionNo)),
-    [activeTab, filters, invoiceAssociationByTransactionNo, invoiceDeclarationStatusByTransactionNo, invoiceRows, occurredDateRange, records]
+    [activeTab, filters, occurredDateRange, records]
   );
   const tabCounts = useMemo(
     () =>
@@ -272,14 +223,7 @@ export function FinanceTransactionsPage() {
             return counts;
           }
 
-          const invoiceAssociation =
-            invoiceAssociationByTransactionNo.get(record.transactionNo) ??
-            buildTransactionInvoiceAssociation(record, invoiceRows);
-          const invoiceDeclarationStatus =
-            invoiceDeclarationStatusByTransactionNo.get(record.transactionNo) ??
-            getFinanceTransactionInvoiceDeclarationStatus(record, invoiceAssociation);
-
-          if (matchesFilters(record, filters, occurredDateRange, invoiceAssociation, invoiceDeclarationStatus)) {
+          if (matchesFilters(record, filters, occurredDateRange)) {
             counts[record.direction] += 1;
           }
 
@@ -287,7 +231,7 @@ export function FinanceTransactionsPage() {
         },
         { 收入: 0, 支出: 0 }
       ),
-    [filters, invoiceAssociationByTransactionNo, invoiceDeclarationStatusByTransactionNo, invoiceRows, occurredDateRange, records]
+    [filters, occurredDateRange, records]
   );
   const listTabs = useMemo(
     () =>
@@ -299,14 +243,6 @@ export function FinanceTransactionsPage() {
   );
 
   const activeRecord = activeRecordId ? records.find((record) => record.id === activeRecordId) : undefined;
-  const activeRecordInvoiceAssociation = activeRecord
-    ? invoiceAssociationByTransactionNo.get(activeRecord.transactionNo) ?? buildTransactionInvoiceAssociation(activeRecord, invoiceRows)
-    : undefined;
-  const activeRecordInvoiceDeclarationStatus =
-    activeRecord && activeRecordInvoiceAssociation
-      ? invoiceDeclarationStatusByTransactionNo.get(activeRecord.transactionNo) ??
-        getFinanceTransactionInvoiceDeclarationStatus(activeRecord, activeRecordInvoiceAssociation)
-      : undefined;
   const activeRecordAdjustmentGuard = activeRecord
     ? getAccountingPeriodGuard(activeRecord.accountingPeriod, '发起冲正补差')
     : undefined;
@@ -323,52 +259,12 @@ export function FinanceTransactionsPage() {
     .reduce((total, record) => total + record.amount, 0);
   const publicAccountNetTotal = activeRows.reduce((total, record) => total + getPublicAccountSignedAmount(record), 0);
   const pendingRows = activeRows.filter((record) => record.status === '待复核');
-  const pendingInvoiceDeclarationCount = activeRows.filter((record) => {
-    const status =
-      invoiceDeclarationStatusByTransactionNo.get(record.transactionNo) ??
-      '不适用';
-
-    return status === '待关联发票' || status === '部分关联发票' || status === '未开票待确认' || status === '后续开票待处理';
-  }).length;
   const activePrimaryRows = getActivePrimaryRows(financePrimaryCategories);
   const activeSecondaryRows = getActiveSecondaryRows(financePrimaryCategories, financeSecondaryCategories);
   const filterPrimaryOptions = Array.from(new Set([...activePrimaryRows.map((row) => row.name), ...records.map((record) => getFinanceRecordCategorySnapshot(record).primaryName)])).filter(Boolean);
   const filterSecondaryOptions = Array.from(new Set([...activeSecondaryRows.map((row) => row.name), ...records.map((record) => record.category)])).filter(Boolean);
 
   const tableLabels = getTransactionTableLabels(activeTab);
-  const invoiceRelationColumns: TableColumnsType<FinanceTransactionMatchedInvoice> = [
-    {
-      title: '发票号',
-      dataIndex: 'invoiceNo',
-      width: 180,
-      render: (invoiceNo: string, record) => <CompactCell primary={invoiceNo} secondary={record.invoiceDate} />
-    },
-    {
-      title: '方向',
-      dataIndex: 'direction',
-      width: 86,
-      render: (_direction: string, record) => (
-        <CompactCell primary={record.direction} secondary={record.invoiceStatus} />
-      )
-    },
-    {
-      title: '对象',
-      dataIndex: 'counterparty',
-      width: 150
-    },
-    {
-      title: '关联金额',
-      dataIndex: 'amount',
-      width: 132,
-      render: (amount: number) => <CellText tone={amount < 0 ? 'expense' : 'strong'}>{formatMoney(amount)}</CellText>
-    },
-    {
-      title: '发票金额',
-      dataIndex: 'totalAmount',
-      width: 132,
-      render: (amount: number) => <CellText tone={amount < 0 ? 'expense' : 'strong'}>{formatMoney(amount)}</CellText>
-    }
-  ];
   const columns: TableColumnsType<FinanceTransactionRecord> = [
     {
       title: '发生日期',
@@ -423,21 +319,6 @@ export function FinanceTransactionsPage() {
       dataIndex: 'status',
       width: 104,
       render: (status: FinanceTransactionStatus) => <StatusTag toneMap={transactionStatusTone} value={status} />
-    },
-    {
-      title: '发票/申报',
-      key: 'invoiceDeclaration',
-      width: 132,
-      render: (_, record) => {
-        const association =
-          invoiceAssociationByTransactionNo.get(record.transactionNo) ??
-          buildTransactionInvoiceAssociation(record, invoiceRows);
-        const invoiceDeclarationStatus =
-          invoiceDeclarationStatusByTransactionNo.get(record.transactionNo) ??
-          getFinanceTransactionInvoiceDeclarationStatus(record, association);
-
-        return <StatusTag toneMap={invoiceDeclarationStatusTone} value={invoiceDeclarationStatus} />;
-      }
     }
   ];
 
@@ -446,12 +327,11 @@ export function FinanceTransactionsPage() {
       layout="table-workbench"
       feedback={contextHolder}
       metrics={
-        <MetricGrid columns={5}>
+        <MetricGrid columns={4}>
           <MetricCard icon={<WalletOutlined />} label="业务收款" value={formatMoney(receiptTotal)} />
           <MetricCard icon={<WalletOutlined />} label="对公付款" value={formatMoney(paymentTotal)} />
           <MetricCard icon={<CalculatorOutlined />} label="对公账户净流入" value={formatMoney(publicAccountNetTotal)} />
           <MetricCard icon={<FileSearchOutlined />} label="待复核流水" value={pendingRows.length} />
-          <MetricCard icon={<FileTextOutlined />} label="发票/申报待处理" value={pendingInvoiceDeclarationCount} />
         </MetricGrid>
       }
       filters={
@@ -493,30 +373,6 @@ export function FinanceTransactionsPage() {
                   value: status
                 }))}
                 onChange={(status) => setFilters((current) => ({ ...current, status }))}
-              />
-            </FilterField>
-            <FilterField label="发票/申报" controlWidth="wide-select">
-              <Select
-                data-testid="finance-transaction-invoice-declaration-filter"
-                value={filters.invoiceDeclaration}
-                options={(
-                  [
-                    '全部',
-                    '不适用',
-                    '待关联发票',
-                    '部分关联发票',
-                    '已关联发票',
-                    '未开票待确认',
-                    '未开票已申报',
-                    '本期暂不计入',
-                    '后续开票待处理',
-                    '后续开票已处理'
-                  ] satisfies FinanceTransactionFilters['invoiceDeclaration'][]
-                ).map((status) => ({
-                  label: status,
-                  value: status
-                }))}
-                onChange={(invoiceDeclaration) => setFilters((current) => ({ ...current, invoiceDeclaration }))}
               />
             </FilterField>
             <KeywordFilter
@@ -583,32 +439,22 @@ export function FinanceTransactionsPage() {
         {activeRecord ? (
           <>
             <DetailSummaryCards
-              columns={4}
-              items={
-                [
-                  {
-                    icon: <ProfileOutlined />,
-                    key: 'counterparty',
-                    label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).counterparty,
-                    value: activeRecord.counterparty
-                  },
-                  {
-                    icon: <WalletOutlined />,
-                    key: 'amount',
-                    label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).amount,
-                    value: formatMoney(activeRecord.amount)
-                  },
-                  { icon: <AuditOutlined />, key: 'status', label: '流水状态', value: activeRecord.status },
-                  activeRecordInvoiceDeclarationStatus
-                    ? {
-                        icon: <FileTextOutlined />,
-                        key: 'invoice-declaration',
-                        label: '发票/申报',
-                        value: activeRecordInvoiceDeclarationStatus
-                      }
-                    : undefined,
-                ].filter(Boolean) as DetailSummaryCardItem[]
-              }
+              columns={3}
+              items={[
+                {
+                  icon: <ProfileOutlined />,
+                  key: 'counterparty',
+                  label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).counterparty,
+                  value: activeRecord.counterparty
+                },
+                {
+                  icon: <WalletOutlined />,
+                  key: 'amount',
+                  label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).amount,
+                  value: formatMoney(activeRecord.amount)
+                },
+                { icon: <AuditOutlined />, key: 'status', label: '流水状态', value: activeRecord.status }
+              ]}
             />
             {activeRecordPeriodReadbackNotice ? (
               <Alert
@@ -643,6 +489,14 @@ export function FinanceTransactionsPage() {
                               label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).amount,
                               value: <CellText tone={getAmountTone(activeRecord)}>{formatMoney(activeRecord.amount)}</CellText>
                             },
+                            ...(activeRecord.naturalPersonPayment?.incomeType === '劳务报酬'
+                              ? [
+                                  { label: '税前劳务金额', value: formatMoney(activeRecord.naturalPersonPayment.grossIncomeAmount) },
+                                  { label: '代扣个税', value: formatMoney(activeRecord.naturalPersonPayment.withheldTaxAmount) },
+                                  { label: '银行实付金额', value: formatMoney(activeRecord.naturalPersonPayment.netPaymentAmount) },
+                                  { label: '扣缴期间', value: activeRecord.naturalPersonPayment.taxPeriod }
+                                ]
+                              : []),
                             { label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).paymentMethod, value: activeRecord.paymentMethod },
                             ...(isPublicAccountMethod(activeRecord.paymentMethod)
                               ? [{ label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).publicAccount, value: getPublicAccountDisplay(activeRecord) }]
@@ -661,6 +515,15 @@ export function FinanceTransactionsPage() {
                             { label: getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).counterparty, value: activeRecord.counterparty },
                             { label: '来源类型', value: activeRecord.sourceType },
                             { label: '来源单号', value: activeRecord.sourceNo },
+                            ...(activeRecord.naturalPersonPayment?.incomeType === '劳务报酬'
+                              ? [
+                                  { label: '结算批次', value: activeRecord.naturalPersonPayment.sourceBatchNo },
+                                  {
+                                    label: '来源任务',
+                                    value: activeRecord.naturalPersonPayment.sourceRecordNos?.join('、') || '-'
+                                  }
+                                ]
+                              : []),
                             { label: '事项说明', value: activeRecord.sourceTitle, wide: true }
                           ]}
                         />
@@ -678,52 +541,10 @@ export function FinanceTransactionsPage() {
                           columns={3}
                           items={[
                             { label: '登记人', value: activeRecord.registeredBy },
-                            { label: '流水状态', value: <StatusTag toneMap={transactionStatusTone} value={activeRecord.status} /> },
-                            ...(activeRecordInvoiceDeclarationStatus
-                              ? [
-                                  {
-                                    label: '发票/申报状态',
-                                    value: (
-                                      <StatusTag
-                                        toneMap={invoiceDeclarationStatusTone}
-                                        value={activeRecordInvoiceDeclarationStatus}
-                                      />
-                                    )
-                                  },
-                                  { label: '申报期间', value: activeRecord.invoiceDeclarationPeriod },
-                                  { label: '申报准备', value: activeRecord.invoiceDeclarationPreparationNo }
-                                ]
-                              : []),
-                            ...(activeRecordInvoiceAssociation
-                              ? [
-                                  {
-                                    label: '发票关联',
-                                    value: (
-                                      <StatusTag
-                                        toneMap={invoiceAssociationStatusTone}
-                                        value={activeRecordInvoiceAssociation.status}
-                                      />
-                                    )
-                                  },
-                                  { label: '应关联金额', value: formatMoney(activeRecordInvoiceAssociation.requiredAmount) },
-                                  { label: '已关联金额', value: formatMoney(activeRecordInvoiceAssociation.matchedAmount) },
-                                  { label: '待关联金额', value: formatMoney(activeRecordInvoiceAssociation.remainingAmount) },
-                                  { label: '关联发票数', value: `${activeRecordInvoiceAssociation.matchedInvoices.length} 张` }
-                                ]
-                              : [])
+                            { label: '流水状态', value: <StatusTag toneMap={transactionStatusTone} value={activeRecord.status} /> }
                           ]}
                         />
                       </DetailSection>
-                      {activeRecordInvoiceAssociation && activeRecordInvoiceAssociation.status !== '无需关联' ? (
-                        <DetailSection icon={<FileTextOutlined />} title="发票关联">
-                          <CompactDetailTable<FinanceTransactionMatchedInvoice>
-                            columns={invoiceRelationColumns}
-                            dataSource={activeRecordInvoiceAssociation.matchedInvoices}
-                            emptyText="暂无关联发票"
-                            rowKey="id"
-                          />
-                        </DetailSection>
-                      ) : null}
                       <DetailSection icon={<FileProtectOutlined />} title={getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).voucherSection}>
                         <RelatedFileTable
                           records={activeRecord.files}
@@ -757,14 +578,30 @@ export function FinanceTransactionsPage() {
         onClose={() => setAdjustmentDrawerOpen(false)}
         onSubmit={(record) => {
           const periodGuard = getAccountingPeriodGuard(record.accountingPeriod, '生成冲正补差流水');
+          const originRecord = records.find(
+            (candidate) => candidate.transactionNo === record.adjustmentContext?.originTransactionNo
+          );
+          const adjustmentBlocker = record.adjustmentContext
+            ? getFinanceTransactionAdjustmentBlocker(
+                originRecord,
+                record.adjustmentContext.mode,
+                records,
+                record.id
+              )
+            : undefined;
 
           if (!periodGuard.allowed) {
             void messageApi.warning(periodGuard.reason);
             return;
           }
 
+          if (adjustmentBlocker) {
+            void messageApi.warning(adjustmentBlocker);
+            return;
+          }
+
           if (!addFinanceTransaction(record)) {
-            void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能生成冲正补差流水');
+            void messageApi.warning('冲正补差流水未生成，请重新核对原流水状态');
             return;
           }
 

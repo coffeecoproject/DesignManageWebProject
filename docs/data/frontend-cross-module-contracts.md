@@ -69,6 +69,38 @@ Contract version: `payroll-attendance-monthly-v1`.
 
 The contract intentionally excludes UI-only fields such as day-equivalent display values, drawer tab data, related attendance record arrays, confirmation note objects, and work-calendar display names. Pages can still render those fields from local frontend report models, but salary calculation must not depend on them.
 
+## Personal Income Tax Withholding Contract
+
+### Ownership
+
+- `/salary/personal-income-tax` owns resident wage-and-salary withholding profiles by `employeeNo + taxYear`.
+- A profile owns personnel-reporting result, deduction-acquisition result, employment scenario, first-employment month, deduction-item effective periods, source evidence, and update dates. The statutory monthly basic deduction is owned by tax policy, not by the employee profile.
+- Personnel identity facts remain owned by the personnel archive. Consumers may use the employee number and a masked identity number only.
+
+### Salary Consumption
+
+- `/salary/monthly` requires a resident profile with successful personnel reporting and acquired deduction information matching the salary year before a full-time row can enter salary-result validation. An acquired zero-deduction profile is ready; a missing or merely unknown result is not.
+- Taxable salary income is current gross salary after attendance-related wage deductions and before after-tax recovery items.
+- The cumulative withholding snapshot carries cumulative income, basic deduction, social-insurance/housing-fund deductions, special additional deductions, other lawful deductions, cumulative taxable income, rate, quick deduction, cumulative tax, and prior actual withholding.
+- Current withholding equals cumulative tax minus prior actual withholding and cannot be negative. The next snapshot must roll forward actual withholding rather than overwrite it with recomputed cumulative tax.
+- For a confirmed first-employment profile, the first payroll month may apply the cumulative basic deduction from January through that calendar month when no prior cumulative basic deduction exists.
+- Salary confirmation validates the payroll result but does not advance cumulative withholding history. An immutable salary-payment record advances that history only after actual payment is recorded.
+- A payment record keeps both `payrollMonth` and `taxPeriod`: `payrollMonth` owns salary attribution, while `taxPeriod` is derived from the actual payment date and owns withholding declaration attribution.
+
+### Declaration Preparation And Tax Handling
+
+- `/tax/declaration-preparation` automatically creates a monthly personal-income-tax preparation from immutable salary-payment records whose `taxPeriod` matches the declaration period. It exposes masked employee filing facts, current-period totals, cumulative withholding fields, source readiness, and one final `确认申报数据` action.
+- Salary rows that are only calculated or confirmed remain in salary review and are excluded from filing totals until actual payment is recorded.
+- Confirming stores the payment-source snapshot, summary, and employee rows. A later payment-source collection change returns the preparation to `准备中` unless it has already entered external tax handling.
+- `/tax/handling` consumes only a confirmed preparation result and renders a compact handling basis. It does not repeat employee review or directly consume mutable salary rows.
+- Official filing result, filing receipt, payment, correction, and annual comprehensive-income settlement remain owned by the external natural-person tax workflow and future backend integration.
+
+### Validation Boundary
+
+- Housing-loan-interest and housing-rent deductions cannot be active together for the same profile period.
+- Profiles from a different tax year, non-resident profiles, missing profiles, unreported personnel, and deduction information that is pending acquisition or update cannot satisfy salary settlement readiness.
+- The frontend stores deduction aggregates only. Family-member identity details and official declaration payloads are not part of this contract.
+
 ## Performance Execution Contract
 
 Owner: `绩效管理 / 绩效规则` and `绩效管理 / 绩效签署`.
@@ -145,6 +177,30 @@ relationship detail rows. The frontend bank-statement `matchedTransactionIds`
 array is only a lightweight candidate/read-model helper for page rendering; the
 confirmed frontend session state uses `bankReconciliationRows.linkedTransactions`
 to mirror the backend header/detail model.
+
+## Finance VAT And Surcharge Accounting Contract
+
+Owner: `申报准备 / 税务办理 / 会计凭证`.
+
+Contract document: `docs/governance/vat-surcharge-accounting-hardcut-v1.md`.
+
+Contract version: `finance-vat-surcharge-accounting-v1`.
+
+- `FinanceVatTaxSettlementSnapshot` carries the confirmed VAT amount, VAT liability already recognized by source vouchers, the three surcharge components, and the combined payable amount.
+- Tax handling creates only the surcharge accrual entry. It must not accrue VAT again after the source business voucher has recognized `2221.01`.
+- A combined VAT payment transaction carries `FinanceTaxPaymentAllocation[]` for VAT, urban maintenance tax, education surcharge, and local education surcharge.
+- Payment allocations must total the transaction amount. Missing or inconsistent allocations block the cash voucher instead of falling back to a combined tax subject.
+- Multiple payments subtract prior active allocation details. A legacy linked payment without allocations blocks automatic remainder generation.
+- Backend cutover must persist immutable settlement snapshots and payment-allocation rows with stable IDs, decimal precision, audit metadata, period guards, and booking idempotency.
+
+## Tax Declaration Detail Snapshot Contract
+
+Owner: `申报准备 / 税务办理`.
+
+- `税务办理 / 申报明细` is a read-only projection of the preparation result confirmed before the matter entered tax handling.
+- Personal income tax reads the confirmed employee declaration rows; VAT reads the confirmed unbilled taxable-income facts; corporate income tax reads the confirmed accounting-source summary; stamp duty reads the confirmed taxable-document sources.
+- Later upstream changes must not silently rewrite an in-progress or completed tax matter. Corrections require a new preparation/correction flow and a new auditable snapshot.
+- Backend integration must persist the confirmed summary and detail snapshot together with the tax matter, including stable source IDs, period, confirmation time, confirmer, and source snapshot key.
 
 ## Finance Funds Voucher Phase 1 Backend Contract
 
@@ -250,7 +306,7 @@ Tax policy source boundary:
   editing. Finance-category to accounting-subject mapping is finance/system
   configuration with effective-period and audit controls.
 - `financeTaxBasisModel.ts`, `financeDeclarationPreparationData.ts`,
-  `financeInvoiceMatchingModel.ts`, and `system/taxPolicyData.ts` consume this
+  `financeInvoiceAssociationModel.ts`, and `system/taxPolicyData.ts` consume this
   profile instead of keeping their own VAT rate, taxpayer type, input-treatment,
   exemption-threshold, or small-low-profit parameter copies.
 - Imported invoice rows still carry their own invoice tax rate and tax amount as
@@ -275,6 +331,14 @@ general-ledger record. Rows are derived from immutable frontend facts:
 - confirmed `税务办理` rows with a payable amount create `税费凭证` candidate
   rows. Tax matters that are confirmed but not completed stay as `待生成`; completed
   tax matters missing required declaration/payment receipts stay as `需处理`.
+- registered tax payments create `税费缴纳` pending-review payment rows; registered
+  tax refunds create `税费退还` pending-review receipt rows. Both retain the tax
+  matter number and matching bank proof, and neither bypasses `流水复核 / 银行对账`.
+- tax-handling completion records `declarationDate` as the actual filing date.
+  Matters with a payable amount must also record `paymentDate` as the actual
+  payment date; payment cash-flow occurrence and accounting period are derived
+  from `paymentDate`, never from the receipt-upload timestamp. A zero or no-payable
+  filing has no `paymentDate` and requires only the filing receipt.
 
 Voucher status is hard-cut to `待生成`, `需处理`, `待记账`, `已记账`, and
 `已冲销`. The current frontend generator emits `待记账` when the source facts can
@@ -313,7 +377,7 @@ If invoices are partial or not yet issued, the confirmed source tax basis on
 the receivable/payable fact is used, and invoice evidence remains visible as
 `发票部分匹配` or `发票待补` without blocking accrual generation. Only a missing
 source tax basis or matched invoice tax fact keeps the receivable/payable row
-outside the voucher queue until `应收应付` or `发票匹配` supplies the missing fact.
+outside the voucher queue until `应收应付` or the `发票台账` shared association supplies the missing fact.
 Invoice amount exceeding the confirmation amount or unresolved red-invoice
 relation also prevents the accrual row from entering the voucher queue.
 
@@ -344,11 +408,26 @@ missing, the voucher is `需处理` with
 
 Employee reimbursement and employee collection stay upstream-owned. When
 `我的工作 / 费用报销审核` approves a reimbursement, it creates a source-generated
-`应付` confirmation item; it does not create a payment cash-flow row. When
+`应付` confirmation item for the approved business-expense amount; any amount
+classified as taxable salary is transferred once into the employee's salary
+adjustment source, and any employee-borne amount creates neither payable nor
+salary. This is a single existing review action, not a new tax approval flow.
+The review does not create a payment cash-flow row. When
 `我的工作 / 费用与代收` submits a collection after transfer to a company account, it
 creates a `待复核` cash-flow row with `relatedReceivableNo`. After `流水复核`
 posts that row, `应收应付` settlement progress is written back through the
 related receivable number.
+
+Natural-person payments use one cross-module fact contract. Full-time monthly
+and quarterly performance results enter salary and cannot create independent
+performance payables or payments. Resident individual labor settlement stores
+the agreement gross amount, deductible expense, taxable income, withheld IIT,
+bank net payment, stable person id, settlement batch and source task numbers.
+`应收应付` reserves and settles the gross amount, while `收支流水` records the
+bank net amount. The cash voucher debits gross payable and credits bank net plus
+`2221.03` withheld IIT. IIT preparation consumes posted salary and labor facts;
+posted reversals remove the original fact, while an unmatched posted salary or
+labor payment blocks confirmation instead of being silently omitted.
 
 Tax matters are consumed as tax-accrual facts, not as payment facts. A confirmed
 tax matter with `processStatus != 已完成` is rendered as `待生成` with
@@ -390,3 +469,41 @@ and data boundary is defined in
 detail, batch generation/booking, source snapshots, invoice refs, idempotency
 keys, accounting-period close checks, general-ledger entries, subject ledger,
 and subject balances.
+
+### Stamp-duty source and filing preparation
+
+Stamp duty is sourced from signed taxable documents and capital-book increases;
+it is not derived from receivable/payable, invoice, collection, payment, or
+settlement status. Customer contracts expose business nature, tax display mode,
+separately stated VAT, signed version, and supplemental-agreement delta facts.
+Customer master data owns the counterparty taxpayer identification number.
+
+`FinanceStampDutySourceRecord` is the shared source snapshot between contract
+management, declaration preparation, and tax handling. The source identity is
+`sourceId + sourceVersion`; a confirmed multi-tax-item split adds a stable
+`allocationId` for each filing line. The internal `sourceNo` and optional
+document-owned `documentNo` are separate identities. Tax item, taxable basis,
+legal rate, six-tax/two-fee reduction, estimated payable amount, policy version,
+and evidence files are frozen when declaration preparation is confirmed.
+
+Uncertain business facts must not be classified by a default tax item. The
+operator records one auditable `FinanceStampDutySourceResolution`: taxable,
+non-taxable, or decrease offset; taxable and offset conclusions may allocate the
+complete source basis across several legal tax items. The allocation sum must
+equal the source basis. Resolution writes are guarded by the source obligation
+period, not by the operator's action date.
+
+Documents not owned by a current upstream module enter through per-document
+`补录应税凭证`; the UI cannot input a tax rate or payable amount. Open-amount
+documents first enter as `待后续结算` with zero taxable basis. Each later actual
+settlement produces an independent next-filing-period event and never overwrites
+the original execution fact. Capital-book stamp duty reads posted general-ledger
+balances for `3001 实收资本` and `3002 资本公积`, and taxes only the increase over
+the historical maximum basis already taxed. A missing historical basis blocks
+calculation; a page-level fixed current capital balance is not a valid source.
+
+Confirmed stamp-duty preparation is the only source for the stamp-duty tax
+matter. Tax handling cannot edit item, basis, rate, reduction, or payable amount.
+Completed tax handling emits the accrual entry `Dr 5403 / Cr 2221.05`; a reviewed
+and reconciled tax-payment transaction emits `Dr 2221.05 / Cr 1002`. Neither step
+creates a receivable/payable row.

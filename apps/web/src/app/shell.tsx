@@ -162,6 +162,10 @@ const pageMeta: Record<string, { module: string; title: string }> = {
     module: '薪酬社保',
     title: '社保公积金'
   },
+  '/salary/personal-income-tax': {
+    module: '薪酬社保',
+    title: '个税信息'
+  },
   '/finance/business-overview': {
     module: '财务管理',
     title: '经营总览'
@@ -173,10 +177,6 @@ const pageMeta: Record<string, { module: string; title: string }> = {
   '/tax/invoices': {
     module: '税务管理',
     title: '发票台账'
-  },
-  '/tax/invoice-matching': {
-    module: '税务管理',
-    title: '发票匹配'
   },
   '/tax/declaration-preparation': {
     module: '税务管理',
@@ -209,6 +209,14 @@ const pageMeta: Record<string, { module: string; title: string }> = {
   '/finance/accounting-vouchers': {
     module: '财务管理',
     title: '会计凭证'
+  },
+  '/finance/assets-prepayments': {
+    module: '财务管理',
+    title: '资产与待摊'
+  },
+  '/finance/month-end': {
+    module: '财务管理',
+    title: '月末事项'
   },
   '/finance/general-ledger': {
     module: '财务管理',
@@ -401,6 +409,10 @@ function getSelectedKeys(pathname: string) {
     return ['salary-social-insurance'];
   }
 
+  if (pathname.startsWith('/salary/personal-income-tax')) {
+    return ['salary-personal-income-tax'];
+  }
+
   if (pathname.startsWith('/finance/business-overview')) {
     return ['finance-business-overview'];
   }
@@ -411,10 +423,6 @@ function getSelectedKeys(pathname: string) {
 
   if (pathname.startsWith('/tax/invoices')) {
     return ['tax-invoices'];
-  }
-
-  if (pathname.startsWith('/tax/invoice-matching')) {
-    return ['tax-invoice-matching'];
   }
 
   if (pathname.startsWith('/tax/declaration-preparation')) {
@@ -447,6 +455,14 @@ function getSelectedKeys(pathname: string) {
 
   if (pathname.startsWith('/finance/accounting-vouchers')) {
     return ['finance-accounting-vouchers'];
+  }
+
+  if (pathname.startsWith('/finance/assets-prepayments')) {
+    return ['finance-assets-prepayments'];
+  }
+
+  if (pathname.startsWith('/finance/month-end')) {
+    return ['finance-month-end'];
   }
 
   if (pathname.startsWith('/finance/general-ledger')) {
@@ -688,6 +704,11 @@ export function AppShell() {
             key: 'salary-social-insurance',
             icon: <TeamOutlined />,
             label: '社保公积金'
+          },
+          {
+            key: 'salary-personal-income-tax',
+            icon: <PercentageOutlined />,
+            label: '个税信息'
           }
         ]
       },
@@ -737,6 +758,16 @@ export function AppShell() {
             label: '会计凭证'
           },
           {
+            key: 'finance-assets-prepayments',
+            icon: <ProfileOutlined />,
+            label: '资产与待摊'
+          },
+          {
+            key: 'finance-month-end',
+            icon: <CalendarOutlined />,
+            label: '月末事项'
+          },
+          {
             key: 'finance-general-ledger',
             icon: <BookOutlined />,
             label: '总账'
@@ -762,11 +793,6 @@ export function AppShell() {
             key: 'tax-invoices',
             icon: <FileTextOutlined />,
             label: '发票台账'
-          },
-          {
-            key: 'tax-invoice-matching',
-            icon: <FileSearchOutlined />,
-            label: '发票匹配'
           },
           {
             key: 'tax-declaration-preparation',
@@ -974,6 +1000,10 @@ export function AppShell() {
               navigate('/salary/social-insurance');
             }
 
+            if (key === 'salary-personal-income-tax') {
+              navigate('/salary/personal-income-tax');
+            }
+
             if (key === 'finance-business-overview') {
               navigate('/finance/business-overview');
             }
@@ -984,10 +1014,6 @@ export function AppShell() {
 
             if (key === 'tax-invoices') {
               navigate('/tax/invoices');
-            }
-
-            if (key === 'tax-invoice-matching') {
-              navigate('/tax/invoice-matching');
             }
 
             if (key === 'tax-declaration-preparation') {
@@ -1020,6 +1046,14 @@ export function AppShell() {
 
             if (key === 'finance-accounting-vouchers') {
               navigate('/finance/accounting-vouchers');
+            }
+
+            if (key === 'finance-assets-prepayments') {
+              navigate('/finance/assets-prepayments');
+            }
+
+            if (key === 'finance-month-end') {
+              navigate('/finance/month-end');
             }
 
             if (key === 'finance-general-ledger') {

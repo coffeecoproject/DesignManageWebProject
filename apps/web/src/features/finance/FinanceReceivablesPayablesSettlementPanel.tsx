@@ -69,6 +69,8 @@ export function FinanceReceivablesPayablesSettlementPanel({
   const amountLabel = record.direction === '应收' ? '收款金额' : '付款金额';
   const accountLabel = record.direction === '应收' ? '入账账户' : '付款账户';
   const voucherTitle = record.direction === '应收' ? '收款凭证' : '付款凭证';
+  const naturalPersonPayment = record.naturalPersonPayment;
+  const laborPayment = naturalPersonPayment?.incomeType === '劳务报酬' ? naturalPersonPayment : undefined;
   const pendingAmount = getFinanceReceivablePayablePendingSettlementAmount(linkedTransactionRows);
   const confirmed = isFinanceReceivablePayableConfirmed(record);
   const voided = isFinanceReceivablePayableVoided(record);
@@ -111,12 +113,23 @@ export function FinanceReceivablesPayablesSettlementPanel({
         <DetailInfoGrid
           columns={4}
           items={[
-            { label: record.direction === '应收' ? '应收金额' : '应付金额', value: formatMoney(record.amount) },
-            { label: record.direction === '应收' ? '已收金额' : '已付金额', value: formatMoney(record.settledAmount) },
-            { label: '已登记待复核', value: formatMoney(pendingAmount) },
-            { label: record.direction === '应收' ? '剩余可登记收款' : '剩余可登记付款', value: formatMoney(maxAmount) }
+            { label: laborPayment ? '税前应付金额' : record.direction === '应收' ? '应收金额' : '应付金额', value: formatMoney(record.amount) },
+            { label: laborPayment ? '已结算税前金额' : record.direction === '应收' ? '已收金额' : '已付金额', value: formatMoney(record.settledAmount) },
+            { label: laborPayment ? '待复核税前金额' : '已登记待复核', value: formatMoney(pendingAmount) },
+            { label: laborPayment ? '剩余税前金额' : record.direction === '应收' ? '剩余可登记收款' : '剩余可登记付款', value: formatMoney(maxAmount) }
           ]}
         />
+
+        {laborPayment ? (
+          <DetailInfoGrid
+            columns={3}
+            items={[
+              { label: '本次税前金额', value: formatMoney(laborPayment.grossIncomeAmount) },
+              { label: '代扣个税', value: formatMoney(laborPayment.withheldTaxAmount) },
+              { label: '银行实付金额', value: formatMoney(laborPayment.netPaymentAmount) }
+            ]}
+          />
+        ) : null}
 
         <CompactDetailTable<FinanceTransactionRecord>
           columns={financeReceivablePayableLinkedTransactionColumns}
@@ -136,8 +149,9 @@ export function FinanceReceivablesPayablesSettlementPanel({
                 onChange={(_, dateString) => onUpdate('occurredAt', normalizePickerValue(dateString))}
               />
             </DrawerFormField>
-            <DrawerFormField label={amountLabel} required>
+            <DrawerFormField label={laborPayment ? '税前劳务金额' : amountLabel} required>
               <InputNumber
+                disabled={Boolean(laborPayment)}
                 max={maxAmount}
                 min={0}
                 precision={2}

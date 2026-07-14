@@ -141,8 +141,10 @@ function TaxPolicyDrawer({ rule, onClose }: { rule?: TaxPolicyRule; onClose: () 
                     { label: '适用地区', value: rule.region },
                     { label: '适用范围', value: rule.taxpayerScope },
                     { label: '申报周期', value: rule.declarationCycle },
+                    { label: '政策版本', value: rule.policyVersion },
                     { label: '生效区间', value: rule.effectivePeriod },
                     { label: '办理入口', value: rule.officialChannel },
+                    { label: '政策依据', value: rule.policySources.map((source) => source.label).join('；'), wide: true },
                     {
                       label: '使用模块',
                       value: <TagChipList items={rule.usedModules} maxVisible={5} overflowVariant="compact-overflow" variant="compact" wrap />,

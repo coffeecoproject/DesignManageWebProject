@@ -17,6 +17,7 @@ import {
   getFinanceReceivablePayablePayrollDueDate,
   getFinanceReceivablePayableRegisterableAmount,
   getFinanceReceivablePayableReviewProgressStatus,
+  getFinanceReceivablePayableSettlementSnapshot,
   getFinanceReceivablePayableSettlementTargets,
   getFinanceReceivablePayableSourceLabel,
   getFinanceReceivablePayableSettlementStatusOptionsByTab,
@@ -24,13 +25,14 @@ import {
   isFinanceReceivablePayableOverdue,
   isFinanceReceivablePayableFormValid,
   isFinanceReceivablePayableSettlementFormValid,
+  hasFinanceReceivablePayableBookedVoucher,
   linkFinanceReceivablePayableSettlementTransaction,
   matchesFinanceReceivablePayableFilters,
   matchesFinanceReceivablePayableListTab,
   updateFinanceReceivablePayableRecordFromForm,
   type FinanceReceivablePayableFilters
 } from './financeReceivablesPayablesModel';
-import { getActiveFinanceTaxPolicyProfile } from './financeTaxPolicyModel';
+import { getFinanceVatDeclarationOutcome, getFinanceVatOutcomeRate } from './financeTaxPolicyModel';
 
 type UnitTest = {
   name: string;
@@ -81,6 +83,7 @@ function createReceivablePayableRecord(overrides: Partial<FinanceReceivablePayab
     sourceType: '合同应收',
     taxBasis: {
       basisSource: '来源单据',
+      salesCategory: '服务、不动产和无形资产',
       taxAmount: 9.9,
       taxExcludedAmount: 990.1,
       taxIncludedAmount: 1000,
@@ -100,9 +103,32 @@ const defaultFilters: FinanceReceivablePayableFilters = {
 
 const tests: UnitTest[] = [
   {
-    name: 'derives receivable-payable tax basis from shared tax policy',
+    name: 'uses small-scale VAT outcomes instead of a global one-percent default',
     run: () => {
-      const taxPolicy = getActiveFinanceTaxPolicyProfile();
+      const exemptOutcome = getFinanceVatDeclarationOutcome({
+        taxableClassification: '普通应税交易',
+        taxableSalesAmount: 300000
+      });
+      const reducedOutcome = getFinanceVatDeclarationOutcome({
+        taxableClassification: '普通应税交易',
+        taxableSalesAmount: 300001
+      });
+      const propertyOutcome = getFinanceVatDeclarationOutcome({
+        taxableClassification: '不动产或土地交易',
+        taxableSalesAmount: 50000
+      });
+
+      assertEqual(exemptOutcome, '免税', 'sales within the configured filing threshold should be an exemption candidate');
+      assertEqual(getFinanceVatOutcomeRate(exemptOutcome), '0%', 'exemption outcome should not produce VAT');
+      assertEqual(reducedOutcome, '减按1%', 'ordinary taxable sales above threshold should use the reduced-rate candidate');
+      assertEqual(getFinanceVatOutcomeRate(reducedOutcome), '1%', 'reduced outcome should retain the policy rate');
+      assertEqual(propertyOutcome, '按法定征收率', 'property and land transactions must not inherit the ordinary one-percent result');
+      assertEqual(getFinanceVatOutcomeRate(propertyOutcome), '3%', 'property and land candidate should use the legal levy rate');
+    }
+  },
+  {
+    name: 'keeps small-scale tax outcome pending until invoice facts and declaration period are confirmed',
+    run: () => {
       const receivableTaxBasis = getDefaultReceivablePayableTaxBasis({
         amount: 10100,
         direction: '应收',
@@ -119,11 +145,12 @@ const tests: UnitTest[] = [
         sourceType: '薪酬发放'
       });
 
-      assertEqual(receivableTaxBasis.taxRate, taxPolicy.vat.outputInvoice.defaultTaxRate, 'receivable tax basis should use configured output VAT rate');
-      assertEqual(receivableTaxBasis.inputTaxTreatment, taxPolicy.vat.outputInvoice.inputTaxTreatment, 'receivable tax basis should use configured output treatment');
-      assertEqual(receivableTaxBasis.taxAmount, 100, 'receivable tax amount should split from tax-included source amount');
-      assertEqual(reimbursementTaxBasis.taxRate, taxPolicy.vat.inputInvoice.defaultTaxRate, 'reimbursement tax basis should use configured input invoice rate');
-      assertEqual(reimbursementTaxBasis.inputTaxTreatment, taxPolicy.vat.inputInvoice.inputTaxTreatment, 'small-scale input invoices should enter cost by policy');
+      assertEqual(receivableTaxBasis.basisSource, '来源单据', 'receivable should keep an accrual source before declaration preparation');
+      assertEqual(receivableTaxBasis.taxOutcome, '待申报判定', 'receivable should retain a declaration-period tax outcome');
+      assertEqual(receivableTaxBasis.taxRate, '待票面或申报判定', 'receivable should not receive a global default rate');
+      assertEqual(receivableTaxBasis.taxAmount, 0, 'unresolved receivable should not split a speculative tax amount');
+      assertEqual(reimbursementTaxBasis.taxRate, '以票面为准', 'input invoice rate should remain an invoice fact');
+      assertEqual(reimbursementTaxBasis.inputTaxTreatment, '成本入账', 'small-scale input invoices should enter cost by policy');
       assertEqual(salaryTaxBasis.basisSource, '不涉及发票', 'salary payable should remain outside invoice tax basis');
       assertEqual(salaryTaxBasis.taxAmount, 0, 'non-invoice salary payable should not create VAT amount');
     }
@@ -136,6 +163,7 @@ const tests: UnitTest[] = [
         id: 'missing-tax-record',
         taxBasis: {
           basisSource: '待确认',
+          salesCategory: '服务、不动产和无形资产',
           taxAmount: 0,
           taxExcludedAmount: 0,
           taxIncludedAmount: 0,
@@ -270,7 +298,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'derives salary and performance payable due dates from payroll calendar',
+    name: 'derives the unified salary payable due date from payroll calendar',
     run: () => {
       const salaryRecord = createReceivablePayableRecord({
         accountingPeriod: '2026-06',
@@ -279,27 +307,10 @@ const tests: UnitTest[] = [
         dueDate: '2026-06-10',
         sourceType: '薪酬发放'
       });
-      const monthlyPerformanceRecord = createReceivablePayableRecord({
-        accountingPeriod: '2026-06',
-        category: '绩效发放',
-        direction: '应付',
-        dueDate: '2026-06-15',
-        sourceType: '月度绩效'
-      });
-      const quarterlyPerformanceRecord = createReceivablePayableRecord({
-        accountingPeriod: '2026-Q2',
-        category: '绩效发放',
-        confirmDate: '2026-07-08',
-        direction: '应付',
-        dueDate: '2026-07-10',
-        sourceType: '季度绩效'
-      });
 
       assertEqual(getFinanceReceivablePayablePayrollDueDate('2026-06'), '2026-07-15', 'June payroll should be due on next-month fifteenth');
       assertEqual(getFinanceReceivablePayablePayrollDueDate('2026-12'), '2027-01-15', 'December payroll should roll to next year');
       assertEqual(getFinanceReceivablePayableDueDate(salaryRecord), '2026-07-15', 'salary payable should use payroll due date');
-      assertEqual(getFinanceReceivablePayableDueDate(monthlyPerformanceRecord), '2026-07-15', 'monthly performance should be paid with same-month salary');
-      assertEqual(getFinanceReceivablePayableDueDate(quarterlyPerformanceRecord), '2026-08-15', 'quarterly performance should be paid with salary of settlement-date month');
     }
   },
   {
@@ -376,7 +387,7 @@ const tests: UnitTest[] = [
     name: 'keeps receivable-payable source labels tied to upstream source types',
     run: () => {
       assertEqual(getFinanceReceivablePayableSourceLabel('合同应收'), '合同应收', 'contract source label should remain source-owned');
-      assertEqual(getFinanceReceivablePayableSourceLabel('季度绩效'), '季度绩效', 'quarterly performance source label should remain source-owned');
+      assertEqual(getFinanceReceivablePayableSourceLabel('外协结算'), '外协结算', 'labor settlement source label should remain source-owned');
       assertEqual(getFinanceReceivablePayableSourceLabel('员工报销'), '员工报销', 'expense source label should remain source-owned');
       assertEqual(getFinanceReceivablePayableSourceLabel('运营费用'), '运营费用', 'operating expense source label should remain source-owned');
     }
@@ -454,6 +465,16 @@ const tests: UnitTest[] = [
 
       assertEqual(canEditFinanceReceivablePayableRecord(editableRecord, []), true, 'ledger without settlement progress should remain editable');
       assertEqual(canEditFinanceReceivablePayableRecord(record, []), false, 'settled progress should lock ledger adjustment');
+      assertEqual(
+        canEditFinanceReceivablePayableRecord(editableRecord, [], true),
+        false,
+        'a source with a booked voucher should not be directly editable'
+      );
+      assertEqual(
+        hasFinanceReceivablePayableBookedVoucher(editableRecord, [{ status: '已记账', voucherId: `voucher-business-${editableRecord.id}` }]),
+        true,
+        'booked voucher lifecycle should be resolved from the receivable-payable source id'
+      );
       assertEqual(canEditFinanceReceivablePayableRecord(record, [transaction]), false, 'active cash-flow should lock ledger adjustment');
       assertEqual(canRegisterFinanceReceivablePayableSettlement(record, [pendingTransaction]), true, 'partially settled ledger should allow remaining settlement registration');
       assertEqual(transaction.transactionNo, 'FIN-202606-0003', 'settlement transaction should receive finance transaction number');
@@ -587,7 +608,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'writes reviewed settlement cash-flow back to receivable-payable progress',
+    name: 'derives reviewed settlement progress from posted cash-flow instead of mutating a counter',
     run: () => {
       const record = createReceivablePayableRecord({
         amount: 1000,
@@ -607,47 +628,88 @@ const tests: UnitTest[] = [
         status: '退回修改' as const,
         transactionNo: 'FIN-202606-0021'
       } as FinanceTransactionRecord;
-      const partiallySettledRows = applyFinanceReceivablePayableSettlementReview([record], pendingTransaction);
+      const postedTransaction = { ...pendingTransaction, status: '已入账' as const };
+      const partiallySettledRows = applyFinanceReceivablePayableSettlementReview([record], pendingTransaction, [pendingTransaction]);
       const partiallySettledRecord = partiallySettledRows[0]!;
-      const completedRows = applyFinanceReceivablePayableSettlementReview(
-        [partiallySettledRecord],
-        {
-          ...pendingTransaction,
-          amount: 600,
-          relatedReceivableNo: record.documentNo,
-          sourceNo: 'EC-202606-088',
-          transactionNo: 'FIN-202606-0022'
-        } as FinanceTransactionRecord
+      const secondPostedTransaction = {
+        ...postedTransaction,
+        amount: 600,
+        relatedReceivableNo: record.documentNo,
+        sourceNo: 'EC-202606-088',
+        transactionNo: 'FIN-202606-0022'
+      } as FinanceTransactionRecord;
+      const partiallySettledSnapshot = getFinanceReceivablePayableSettlementSnapshot(record, [postedTransaction]);
+      const completedSnapshot = getFinanceReceivablePayableSettlementSnapshot(
+        record,
+        [postedTransaction, secondPostedTransaction]
       );
       const ignoredRows = applyFinanceReceivablePayableSettlementReview([record], returnedTransaction);
 
-      assertEqual(partiallySettledRecord.settledAmount, 400, 'reviewed settlement should increase settled amount');
-      assertEqual(partiallySettledRecord.settlementStatus, '部分结清', 'partial review should mark ledger partially settled');
+      assertEqual(partiallySettledRecord.settledAmount, 0, 'review logging should not mutate the ledger settlement counter');
       assertEqual(partiallySettledRecord.operationRecords[0]?.action, '确认收款入账', 'review writeback should record operation');
-      assertEqual(completedRows[0]?.settledAmount, 1000, 'second reviewed settlement should cap settled amount at confirmation amount');
-      assertEqual(completedRows[0]?.settlementStatus, '已结清', 'fully reviewed settlement should mark ledger settled');
-      assertEqual(completedRows[0]?.linkedTransactionNos.includes('FIN-202606-0022'), true, 'collection-linked cash-flow should be linked by related receivable number');
+      assertEqual(partiallySettledSnapshot.settledAmount, 400, 'posted settlement should derive a partial settled amount');
+      assertEqual(partiallySettledSnapshot.settlementStatus, '部分结清', 'posted settlement should derive a partial settlement status');
+      assertEqual(completedSnapshot.settledAmount, 1000, 'multiple posted settlements should cap at confirmation amount');
+      assertEqual(completedSnapshot.settlementStatus, '已结清', 'multiple posted settlements should derive a settled status');
       assertEqual(ignoredRows[0]?.settledAmount, 0, 'returned cash-flow should not write back settlement progress');
+    }
+  },
+  {
+    name: 'NP-14 reopens a settled receivable or payable when its posted settlement is reversed',
+    run: () => {
+      const record = createReceivablePayableRecord({
+        amount: 1000,
+        linkedTransactionNos: ['FIN-202606-0030'],
+        settledAmount: 1000,
+        settlementStatus: '已结清'
+      });
+      const receipt = {
+        amount: 1000,
+        direction: '收入',
+        sourceNo: record.documentNo,
+        status: '已入账',
+        transactionNo: 'FIN-202606-0030'
+      } as FinanceTransactionRecord;
+      const reversal = {
+        adjustmentContext: {
+          mode: '冲正' as const,
+          originTransactionNo: receipt.transactionNo,
+          reason: '客户原收款退回'
+        },
+        amount: 1000,
+        direction: '支出',
+        sourceNo: receipt.transactionNo,
+        status: '已入账',
+        transactionNo: 'FIN-ADJ-202606-0001'
+      } as FinanceTransactionRecord;
+      const snapshot = getFinanceReceivablePayableSettlementSnapshot(record, [receipt, reversal]);
+
+      assertEqual(snapshot.settledAmount, 0, 'posted reversal should offset the original receipt');
+      assertEqual(snapshot.settlementStatus, '未结清', 'posted reversal should reopen the receivable');
     }
   }
 ];
 
 export function runFinanceReceivablesPayablesModelTests() {
   const failures: string[] = [];
+  const passedTestNames: string[] = [];
   let passed = 0;
 
   tests.forEach((test) => {
     try {
       test.run();
       passed += 1;
+      passedTestNames.push(test.name);
     } catch (error) {
       failures.push(`${test.name}: ${(error as Error).message}`);
     }
   });
 
   return {
+    executedTestNames: tests.map((test) => test.name),
     failures,
     passed,
+    passedTestNames,
     total: tests.length
   };
 }

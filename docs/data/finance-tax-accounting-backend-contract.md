@@ -2,7 +2,7 @@
 
 Status: `backend_contract_draft`
 
-Last updated: `2026-06-28`
+Last updated: `2026-07-10`
 
 Owner: `财务管理 / 税务管理 / 系统管理`
 
@@ -40,9 +40,9 @@ Rules:
 - No dual-approval workflow is required in this project baseline. Controlled
   finance/system configuration still requires operator identity, effective
   period, and audit events.
-- Imported invoice rows keep their own tax rate, tax amount, invoice color, and
-  red/blue relationship. A later policy change must not rewrite imported invoice
-  tax facts.
+- Imported invoice rows keep their own tax rate, tax amount, taxable
+  classification, VAT treatment, invoice kind, and red/blue relationship. A
+  later policy change must not rewrite imported invoice tax facts.
 - Receivable/payable confirmation snapshots the tax basis and accounting
   mapping used for accrual recognition.
 - Accounting voucher candidates consume backend source facts, tax facts, invoice
@@ -81,8 +81,17 @@ Versioned tax policy profile for the current company/legal entity.
 | `input_deductible` | boolean | yes | first version is false for small-scale profile |
 | `vat_declaration_cycle` | enum | yes | `月度`, `季度` |
 | `vat_quarterly_exemption_threshold` | numeric(18,2) | no | snapshot of configured threshold |
-| `vat_surcharge_rate` | numeric(9,6) | no | combined surcharge estimate if used |
+| `vat_legal_levy_rate` | numeric(9,6) | yes | legal levy rate snapshot, for example `0.030000` |
+| `vat_reduced_levy_rate` | numeric(9,6) | no | temporary reduced levy rate, for example `0.010000` |
+| `vat_taxable_classification_rules` | jsonb | yes | ordinary taxable, exempt, real-estate/land, and non-taxable rule set |
+| `vat_special_invoice_waiver_rule` | jsonb | yes | whether partial exemption/reduction waiver is allowed and special-invoice treatment |
+| `urban_maintenance_tax_rate` | numeric(9,6) | no | local urban maintenance construction tax rate |
+| `education_surcharge_rate` | numeric(9,6) | no | education surcharge rate |
+| `local_education_surcharge_rate` | numeric(9,6) | no | local education surcharge rate |
+| `tax_fee_reduction_rate` | numeric(9,6) | no | qualified six-tax-and-two-fee reduction rate |
+| `tax_fee_reduction_eligibility` | enum | yes | `符合`, `不符合`, or `待确认`; no automatic reduction when unresolved |
 | `cit_prepayment_cycle` | enum | no | currently `季度` in frontend prototype |
+| `rule_packages` | jsonb | no | period-effective individual-income-tax, stamp-duty, and other tax rule package references |
 | `official_source_refs` | jsonb | no | policy source references, document ids, remarks |
 | `activated_by` | uuid | no | required when status becomes `生效中` |
 | `activated_at` | timestamptz | no | activation timestamp |
@@ -94,6 +103,8 @@ Constraints:
   period.
 - A profile already referenced by confirmed source facts cannot be edited in
   place. Create a new version instead.
+- A source period with no covering `生效中` profile must be rejected; it must not
+  fall back to the newest profile.
 
 ### `tax_policy_profile_events`
 
@@ -124,6 +135,9 @@ Immutable tax facts derived from invoice import or invoice ledger confirmation.
 | `invoice_color` | enum | yes | `蓝票`, `红票` |
 | `invoice_status` | enum | yes | `正常`, `作废`, `红冲` |
 | `counterparty_name` | text | yes | snapshot |
+| `taxable_classification` | enum | yes | `普通应税交易`, `免税交易`, `不动产或土地交易`, `不征税` |
+| `vat_treatment` | enum | yes | `免税`, `减按1%`, `按法定征收率`, `不涉及` snapshot |
+| `policy_profile_id` | uuid | yes | profile resolved by invoice accounting period |
 | `tax_rate` | numeric(9,6) | yes | invoice tax rate |
 | `tax_excluded_amount` | numeric(18,2) | yes | amount before tax |
 | `tax_amount` | numeric(18,2) | yes | tax amount |
@@ -140,8 +154,36 @@ Rules:
 
 - Imported invoice facts are not recalculated from the active tax policy.
 - Red invoices must keep the original blue-invoice relationship when known.
+- A special invoice that waives exemption or reduction retains its own VAT
+  treatment even when the declaration-period sales stay below the threshold.
 - Accounting voucher candidates can reference invoice facts as evidence and tax
   basis, but ordinary cash-flow numbers are not the accrual invoice matching key.
+
+### `unbilled_income_tax_facts`
+
+Tax facts confirmed for revenue that has incurred VAT liability before an
+invoice is issued.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | uuid | yes | primary key |
+| `transaction_id` | uuid | yes | reviewed income source row |
+| `accounting_period` | char(7) | yes | declaration accounting period |
+| `policy_profile_id` | uuid | yes | profile resolved for the declaration period |
+| `taxable_classification` | enum | yes | same taxonomy as invoice tax facts |
+| `tax_rate` | numeric(9,6) | yes | confirmed or rule-derived rate |
+| `vat_treatment` | enum | yes | declaration treatment snapshot |
+| `net_amount` | numeric(18,2) | yes | tax-exclusive income amount |
+| `source_hash` | text | yes | reviewed source and tax-fact snapshot |
+| `confirmed_by` | uuid | yes | confirmation operator |
+| `confirmed_at` | timestamptz | yes | confirmation time |
+
+Rules:
+
+- The declaration preparation must not assume every unbilled income row is an
+  ordinary taxable transaction.
+- A missing unbilled-income tax fact blocks tax-basis confirmation instead of
+  silently applying a default rate.
 
 ### `receivable_payable_tax_facts`
 
@@ -161,6 +203,8 @@ Tax and accounting snapshots attached to confirmed receivable/payable items.
 | `accounting_subject_code` | text | yes | mapped subject code snapshot |
 | `accounting_subject_name` | text | yes | mapped subject name snapshot |
 | `tax_rate` | numeric(9,6) | yes | resolved tax rate |
+| `taxable_classification` | enum | yes | resolved VAT transaction classification |
+| `vat_treatment` | enum | yes | resolved VAT treatment snapshot |
 | `tax_excluded_amount` | numeric(18,2) | yes | amount before tax |
 | `tax_amount` | numeric(18,2) | yes | tax amount |
 | `tax_included_amount` | numeric(18,2) | yes | total confirmation amount |
@@ -181,6 +225,100 @@ Rules:
 - A source fact with no usable tax basis must stay `待补票税` or `待补资料`.
 - Once the accounting period is closed, source tax fact rebuild/confirm is
   rejected.
+
+### `tax_filing_matters`
+
+Durable tax-handling aggregate created from a confirmed declaration-preparation
+snapshot. It records external filing and payment facts; it does not recalculate
+the preparation result.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | uuid | yes | primary key |
+| `matter_no` | text | yes | stable business number |
+| `preparation_id` | uuid | yes | confirmed declaration-preparation snapshot |
+| `tax_type` | enum | yes | VAT/surcharge, IIT, CIT, stamp duty, etc. |
+| `period` | text | yes | month, quarter, year, or occurrence period |
+| `prepared_payable_amount` | numeric(18,2) | yes | immutable system-prepared amount |
+| `official_payable_amount` | numeric(18,2) | no | actual result returned by the official system |
+| `official_refundable_amount` | numeric(18,2) | no | actual refundable amount returned by the official system |
+| `declaration_status` | enum | yes | `待申报`, `已申报`, `已核定`, `零申报`, `无需申报`, `已作废` |
+| `process_status` | enum | yes | `待申报`, `待缴款`, `部分缴纳`, `待补回执`, `已完成` |
+| `declaration_version` | integer | yes | starts at 1 and increases after correction/void |
+| `declaration_date` | date | no | actual filing date, never inferred from upload time |
+| `declaration_receipt_no` | text | no | official filing/acceptance number |
+| `declaration_receipt_file_id` | uuid | no | archived declaration receipt |
+| `difference_reason` | text | no | required when prepared and official amounts differ |
+| `paid_amount` | numeric(18,2) | yes | derived sum of effective payment results |
+| `refunded_amount` | numeric(18,2) | yes | derived sum of effective refund results |
+| `payment_status` | enum | yes | `未开始`, `无需缴纳`, `待缴纳`, `部分缴纳`, `已缴纳` |
+| `version` | integer | yes | optimistic concurrency version |
+
+Rules:
+
+- Only confirmed declaration preparation can create or refresh a matter before
+  the first official filing result is recorded.
+- The prepared amount remains immutable evidence. An official amount difference
+  is stored explicitly with a reason instead of overwriting the prepared value.
+- A filing result and a payment result are separate commands. Opening an
+  external tax platform does not advance either status.
+- `process_status` is only the next operator action. Accounting readiness,
+  evidence completeness, and cash settlement are separately derived views and
+  must never be inferred from `process_status = 已完成`.
+- Accounting readiness is reached after the official filing result and filing
+  receipt are recorded. A later payment or refund is not an accrual-voucher
+  prerequisite. Social insurance and housing-fund accrual readiness instead
+  comes from their confirmed contribution schedules.
+- A payable declaration can be paid in multiple effective payment records. The
+  matter is complete only after the official result, required receipts, and full
+  payment are all present.
+- Correction/void appends the current filing version to history, then opens a
+  new declaration version. It never rewrites the historical filing result.
+- Correction after an effective payment requires a separate refund/credit or
+  additional-payment workflow; the first backend version must reject silent
+  replacement of paid results.
+
+### `tax_filing_declaration_history`
+
+Append-only declaration-version history.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | uuid | yes | primary key |
+| `matter_id` | uuid | yes | filing matter |
+| `declaration_version` | integer | yes | archived version |
+| `action` | enum | yes | `更正` or `作废` |
+| `declaration_status` | text | yes | prior official result |
+| `official_payable_amount` | numeric(18,2) | yes | prior official amount |
+| `declaration_date` | date | no | prior filing date |
+| `declaration_receipt_no` | text | no | prior official number |
+| `declaration_receipt_file_id` | uuid | no | prior receipt evidence |
+| `reason` | text | yes | operator-entered reason |
+| `operated_by` | uuid | yes | operator identity |
+| `operated_at` | timestamptz | yes | operation time |
+
+### `tax_filing_payments`
+
+One row per actual payment result. Partial payment therefore creates multiple
+rows and multiple pending-review finance transactions rather than mutating a
+single payment field.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | uuid | yes | primary key |
+| `matter_id` | uuid | yes | filing matter |
+| `amount` | numeric(18,2) | yes | positive amount, not above outstanding amount |
+| `payment_date` | date | yes | actual payment date |
+| `public_account_id` | uuid | yes | company payment account |
+| `payment_receipt_file_id` | uuid | yes | payment evidence |
+| `finance_transaction_id` | uuid | yes | generated pending-review transaction |
+| `status` | enum | yes | `有效` or `已冲正` |
+| `created_by` | uuid | yes | operator identity |
+| `created_at` | timestamptz | yes | operation time |
+
+The payment row, generated finance transaction, matter paid amount, and matter
+status must be committed in one database transaction. An idempotency key is
+required so retries cannot create duplicate payment transactions.
 
 ### `accounting_subjects`
 
@@ -287,6 +425,59 @@ Meaning:
 Invoice matching affects evidence and tax-basis preference. It does not directly
 create cash facts.
 
+### VAT Declaration Calculation Snapshot
+
+The declaration-preparation service resolves one active policy profile from the
+declaration accounting period, then stores an immutable calculation snapshot.
+
+1. Bucket output invoices and confirmed unbilled-income facts by taxable
+   classification and VAT treatment.
+2. Determine the threshold sales base from applicable taxable transactions for
+   the same declaration period. A special invoice remains in that sales base,
+   while its own invoice VAT treatment remains authoritative.
+3. Calculate VAT from invoice facts and confirmed unbilled-income facts; do not
+   overwrite special-invoice VAT with a zero amount merely because the period is
+   below the threshold.
+4. Calculate urban maintenance construction tax, education surcharge, and
+   local education surcharge separately; apply the qualified reduction only
+   when the policy profile and taxpayer-eligibility snapshot are both `符合`.
+5. Keep the electronic-tax-bureau filing result and receipt as the final
+   external result; they do not mutate the source invoice facts.
+
+### Tax Filing Matter
+
+```text
+confirmed preparation -> 待申报
+待申报 -> 待缴款 | 待退税 | 待补回执 | 已完成
+待缴款 -> 部分缴纳 -> 已完成
+待退税 -> 部分退税 -> 已完成
+待缴款 -> 已完成
+已完成 | 待缴款 -> 更正/作废 -> 待申报 (new declaration version)
+```
+
+- `待补回执` means an official result exists but its required declaration
+  receipt is missing. It is not an approval status.
+- Declaration evidence is an independent dimension from the next settlement
+  action. An officially filed payable item may be both `待缴款` and
+  `待补回执`; clients must not hide the missing evidence merely because cash
+  settlement is still pending.
+- The `补充申报回执` command may only add the declaration receipt file or
+  receipt number. It must not rewrite the declaration result, settlement
+  direction, official payable/refundable amount, or declaration version.
+- `部分缴纳` is derived from effective payment rows and the official payable
+  amount. It is never set directly by the client.
+- A zero/no-payment declaration becomes complete after the filing result and
+  declaration receipt are recorded.
+- A payable declaration becomes complete only when the effective payment sum
+  equals the official payable amount and both filing and payment evidence are
+  complete.
+- A correction compares the new official net settlement with all effective
+  historical payments and refunds. The difference may reopen either a payment
+  or a refund action. Accounting creates a versioned difference voucher rather
+  than replacing a booked prior version.
+- Period close checks accounting readiness and booked tax vouchers. It does not
+  wait for a payment or refund whose cash date belongs to a later period.
+
 ## 5. API Draft
 
 All mutating endpoints require authorization, optimistic `version`, and
@@ -319,6 +510,18 @@ Example response:
   "inputDeductible": false,
   "vatDeclarationCycle": "季度",
   "vatQuarterlyExemptionThreshold": "300000.00",
+  "vatLegalLevyRate": "0.030000",
+  "vatReducedLevyRate": "0.010000",
+  "vatSpecialInvoiceWaiverRule": {
+    "supportsPartialExemptionWaiver": true,
+    "supportsPartialReductionWaiver": true
+  },
+  "surchargePolicy": {
+    "urbanMaintenanceTaxRate": "0.070000",
+    "educationSurchargeRate": "0.030000",
+    "localEducationSurchargeRate": "0.020000",
+    "taxFeeReductionRate": "0.500000"
+  },
   "version": 3
 }
 ```
@@ -353,6 +556,23 @@ Example confirm request:
 }
 ```
 
+### Tax Filing Matters
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/api/finance/tax-filing-matters` | GET | list matters by filing period, tax type, and derived process scope |
+| `/api/finance/tax-filing-matters/{matterId}` | GET | read matter, preparation snapshot, declaration history, payments, files, and audit events |
+| `/api/finance/tax-filing-matters/{matterId}/declaration-results` | POST | record one official filing result and archive its receipt |
+| `/api/finance/tax-filing-matters/{matterId}/payments` | POST | record one actual payment and atomically create a pending-review finance transaction |
+| `/api/finance/tax-filing-matters/{matterId}/revisions` | POST | start correction/void and append the prior declaration version to history |
+
+Commands reject stale `version` values. The declaration-result command requires
+an official result status, actual filing date, official payable amount, and
+declaration receipt. A difference reason is required when the official and
+prepared amounts differ. The payment command requires a positive amount not
+above the current outstanding amount, actual payment date, company account,
+and payment receipt.
+
 ### Accounting Subjects And Category Mappings
 
 | Endpoint | Method | Purpose |
@@ -375,6 +595,11 @@ Example confirm request:
 | `ACCOUNTING_SUBJECT_INACTIVE` | subject is inactive for the source period |
 | `CATEGORY_ACCOUNTING_MAPPING_MISSING` | finance category has no effective accounting mapping |
 | `SOURCE_ORIGINAL_EVIDENCE_MISSING` | source lacks required original document/evidence |
+| `TAX_FILING_PREPARATION_NOT_CONFIRMED` | filing matter has no confirmed declaration-preparation snapshot |
+| `TAX_FILING_RESULT_ALREADY_RECORDED` | current declaration version already has an official result |
+| `TAX_FILING_AMOUNT_DIFFERENCE_REASON_REQUIRED` | official and prepared amounts differ without an explanation |
+| `TAX_FILING_PAYMENT_EXCEEDS_OUTSTANDING` | payment amount is above the current outstanding amount |
+| `TAX_FILING_PAID_REVISION_REQUIRES_SETTLEMENT` | paid filing cannot be silently replaced by correction/void |
 | `CLOSED_ACCOUNTING_PERIOD` | period is closed and cannot accept mutation |
 | `IDEMPOTENCY_MISMATCH` | same idempotency key was reused with different payload |
 
@@ -404,7 +629,7 @@ Candidate responses should include:
 ### Stage 1: Contract-Shaped Mock
 
 - Keep `financeTaxPolicyModel.ts`, `financeTaxBasisModel.ts`,
-  `financeInvoiceMatchingModel.ts`, and `financeAccountingVoucherModel.ts` as
+  `financeInvoiceAssociationModel.ts`, and `financeAccountingVoucherModel.ts` as
   local mock implementations.
 - Shape their repository adapters around this contract so later API cutover does
   not change page components.
@@ -431,6 +656,10 @@ Candidate responses should include:
 | --- | --- |
 | active tax profile missing for source period | source tax fact cannot be confirmed |
 | invoice import creates tax facts | imported tax amount remains unchanged after policy profile changes |
+| special invoice below the threshold | special-invoice VAT treatment remains taxable; it is not rewritten as exemption |
+| unbilled income has no confirmed tax fact | declaration preparation stays blocked for tax-basis confirmation |
+| tax policy profile does not cover declaration period | declaration calculation is rejected with `TAX_POLICY_PROFILE_MISSING` |
+| qualified six-tax-and-two-fee subject | surcharge response contains each surcharge amount, reduction amount, and net payable amount |
 | receivable source has complete tax basis and subject mapping | source tax fact can be confirmed and consumed by accrual candidate |
 | receivable source lacks invoice but has confirmed source tax basis | accrual candidate can be `待制单` and invoice evidence remains `发票待补` |
 | finance category lacks accounting mapping | source tax fact stays `待配置`; no voucher candidate is returned |

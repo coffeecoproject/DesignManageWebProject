@@ -1,5 +1,8 @@
 import { getFinanceCategorySnapshot, getFinanceSeedPublicAccountRef } from '../finance/financeData';
 import type { FinanceReceivablePayableRecord } from '../finance/financeReceivablesPayablesData';
+import { deriveFinanceReceivablePayableSettlementRows } from '../finance/financeReceivablesPayablesModel';
+import { buildPayrollIitDeclarationEmployeeRows } from '../finance/financePayrollIitDeclarationModel';
+import { commitFinanceTransactionReview } from '../finance/financeSettlementWorkflow';
 import {
   buildFinanceTransactionFromMyWorkCollection,
   buildMyWorkCollectionReceivableOptions,
@@ -69,6 +72,7 @@ function createReceivableRecord(overrides: Partial<FinanceReceivablePayableRecor
     sourceType: '合同应收',
     taxBasis: {
       basisSource: '来源单据',
+      salesCategory: '服务、不动产和无形资产',
       taxAmount: 9.9,
       taxExcludedAmount: 990.1,
       taxIncludedAmount: 1000,
@@ -199,6 +203,7 @@ const tests: UnitTest[] = [
       assertEqual(record.paperStatus, '待提交', 'paper original should require submission by default');
       assertEqual(record.paymentMethod, '微信', 'expense payment method should be retained');
       assertEqual(record.status, '待审核', 'new expense record should start from approval');
+      assertEqual(record.expenseReviewResult, undefined, 'submission should not prefill expense review conclusions');
       assertEqual(record.files.length, 1, 'attachment should be retained');
     }
   },
@@ -254,6 +259,12 @@ const tests: UnitTest[] = [
       assertEqual(record.status, '待复核', 'submitted collection should enter review');
       assertEqual(record.publicAccountId, testPublicAccountRef.publicAccountId, 'collection public account should be retained');
       assertEqual(record.transferFiles?.length, 1, 'transfer proof should be retained');
+
+      const missingVoucherRecord = createMyWorkExpenseCollectionRecordFromForm(
+        { ...missingVoucherForm, note: '客户未提供正式票据' },
+        9
+      );
+      assertEqual(missingVoucherRecord.expenseReviewResult, undefined, 'missing formal voucher should not prefill reimbursement or salary-tax outcome');
     }
   },
   {
@@ -275,7 +286,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'submitted collections create pending finance review transactions',
+    name: 'NP-13 FRONTEND-CHAIN posts employee collections through finance review without creating natural-person income',
     run() {
       const collectionForm = {
         ...createMyWorkExpenseCollectionForm(),
@@ -307,7 +318,37 @@ const tests: UnitTest[] = [
       assertEqual(financeRecord.publicAccountSnapshot.displayName, testPublicAccountRef.publicAccountSnapshot.displayName, 'public account snapshot should be copied');
       assertEqual(financeRecord.sourceNo, collectionRecord.code, 'finance source should link to employee submission');
       assertEqual(financeRecord.relatedReceivableNo, 'AR-TEST-001', 'finance transaction should retain related receivable number');
+      assertEqual(financeRecord.naturalPersonPayment, undefined, 'employee collection is company money and must not become natural-person income');
       assertEqual(linkMyWorkCollectionFinanceTransaction(collectionRecord, financeRecord.transactionNo).linkedFinanceTransactionNo, financeRecord.transactionNo, 'employee record should keep review transaction number');
+
+      const receivableRecord = createReceivableRecord({ amount: 9800 });
+      const review = commitFinanceTransactionReview(
+        {
+          financeRows: [financeRecord],
+          receivablePayableRows: [receivableRecord]
+        },
+        {
+          operationId: 'np-13-review-operation',
+          reviewedAt: '2026-06-15 15:30',
+          reviewer: '财务复核',
+          transactionId: financeRecord.id
+        }
+      );
+
+      assert(review.success, `employee collection review should succeed: ${review.success ? '' : review.message}`);
+      assertEqual(review.financeRows[0]?.status, '已入账', 'reviewed employee collection should become a posted company receipt');
+      assertEqual(
+        buildPayrollIitDeclarationEmployeeRows([], '2026-06', review.financeRows).length,
+        0,
+        'posted employee collections must remain outside every natural-person income declaration row'
+      );
+
+      const settledReceivables = deriveFinanceReceivablePayableSettlementRows(
+        review.receivablePayableRows,
+        review.financeRows
+      );
+      assertEqual(settledReceivables[0]?.settledAmount, 9800, 'posted employee collection should settle the related company receivable');
+      assertEqual(settledReceivables[0]?.settlementStatus, '已结清', 'related company receivable should be settled after review');
     }
   },
   {
@@ -336,7 +377,20 @@ const tests: UnitTest[] = [
   {
     name: 'resubmits returned records and derives dashboard metrics',
     run() {
-      const returnedRecord = createExpenseCollectionRecord({ status: '退回修改' });
+      const returnedRecord = createExpenseCollectionRecord({
+        expenseReviewResult: {
+          businessReimbursementAmount: 100,
+          employeeBorneAmount: 0,
+          evidenceStatus: '合规',
+          expenseAuthenticity: '真实',
+          overStandardNature: '未超标',
+          reviewedAt: '2026-06-15 09:00',
+          reviewerName: '审核人',
+          salaryTaxableAmount: 0,
+          voucherCompliance: '发票'
+        },
+        status: '退回修改'
+      });
       const form = {
         ...createMyWorkExpenseCollectionForm(returnedRecord),
         amount: 168,
@@ -351,6 +405,7 @@ const tests: UnitTest[] = [
       ]);
 
       assertEqual(resubmitted.status, '待审核', 'resubmitted expense should return to approval');
+      assertEqual(resubmitted.expenseReviewResult, undefined, 'resubmission should clear stale review result');
       assertEqual(resubmitted.operationRecords[0]?.action, '重新提交', 'resubmission should prepend operation');
       assertEqual(metrics.draftCount, 1, 'draft metric should count draft records');
       assertEqual(metrics.pendingMyActionCount, 2, 'returned and draft records should count as my action');
@@ -363,20 +418,24 @@ const tests: UnitTest[] = [
 
 export function runMyWorkExpenseCollectionModelTests() {
   const failures: string[] = [];
+  const passedTestNames: string[] = [];
   let passed = 0;
 
   for (const test of tests) {
     try {
       test.run();
       passed += 1;
+      passedTestNames.push(test.name);
     } catch (error) {
       failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   return {
+    executedTestNames: tests.map((test) => test.name),
     failures,
     passed,
+    passedTestNames,
     total: tests.length
   };
 }

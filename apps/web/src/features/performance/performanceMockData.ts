@@ -930,6 +930,7 @@ export const performanceSignatureBatches: PerformanceSignatureBatch[] = [
 export const performanceDrawingTaskMonthlyRecords: PerformanceDrawingTaskMonthlyRecord[] = [
   {
     id: 'monthly-drawing-202606-liuyu',
+    salarySettlementReference: 'performance-result:monthly-drawing-202606-liuyu:monthly-prepay:v1',
     employeeName: '刘宇',
     workNo: '20260008',
     position: '空间设计师',
@@ -995,6 +996,7 @@ export const performanceDrawingTaskMonthlyRecords: PerformanceDrawingTaskMonthly
   },
   {
     id: 'monthly-drawing-202606-chensi',
+    salarySettlementReference: 'performance-result:monthly-drawing-202606-chensi:monthly-prepay:v1',
     employeeName: '陈思',
     workNo: '20260011',
     position: '主案设计师',
@@ -1060,6 +1062,7 @@ export const performanceDrawingTaskMonthlyRecords: PerformanceDrawingTaskMonthly
   },
   {
     id: 'monthly-drawing-202606-zhaoqian',
+    salarySettlementReference: 'performance-result:monthly-drawing-202606-zhaoqian:monthly-prepay:v1',
     employeeName: '赵倩',
     workNo: '20260004',
     position: '空间设计师',
@@ -1125,6 +1128,7 @@ export const performanceDrawingTaskMonthlyRecords: PerformanceDrawingTaskMonthly
   },
   {
     id: 'monthly-drawing-202605-liuyu',
+    salarySettlementReference: 'performance-result:monthly-drawing-202605-liuyu:monthly-prepay:v1',
     employeeName: '刘宇',
     workNo: '20260008',
     position: '空间设计师',
@@ -1200,6 +1204,7 @@ export const performanceMonthlyCategoryRecords: PerformanceMonthlyCategoryRecord
     category: record.category,
     ruleName: record.ruleName,
     ruleVersion: record.ruleVersion,
+    salarySettlementReference: record.salarySettlementReference,
     performanceMonth: record.performanceMonth,
     monthlyAmount: record.monthlyAmount,
     prepayAmount: record.prepayAmount,
@@ -1213,6 +1218,7 @@ export const performanceMonthlyCategoryRecords: PerformanceMonthlyCategoryRecord
   })),
   {
     id: 'monthly-duty-202606-zhaoqian',
+    salarySettlementReference: 'performance-result:monthly-duty-202606-zhaoqian:monthly-prepay:v1',
     employeeName: '赵倩',
     workNo: '20260004',
     position: '空间设计师',
@@ -1249,6 +1255,7 @@ export const performanceMonthlyCategoryRecords: PerformanceMonthlyCategoryRecord
   },
   {
     id: 'monthly-duty-202606-chensi',
+    salarySettlementReference: 'performance-result:monthly-duty-202606-chensi:monthly-prepay:v1',
     employeeName: '陈思',
     workNo: '20260011',
     position: '主案设计师',
@@ -1285,6 +1292,7 @@ export const performanceMonthlyCategoryRecords: PerformanceMonthlyCategoryRecord
   },
   {
     id: 'monthly-bonus-202605-liuyu',
+    salarySettlementReference: 'performance-result:monthly-bonus-202605-liuyu:monthly-prepay:v1',
     employeeName: '刘宇',
     workNo: '20260008',
     position: '空间设计师',

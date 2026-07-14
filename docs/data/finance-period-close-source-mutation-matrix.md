@@ -39,8 +39,7 @@ production period-lock evidence.
 | Source area | Owner pages | Accounting-period source | Local route skeleton coverage |
 | --- | --- | --- | --- |
 | `应收应付` | `/my-work/expense-review`, `/finance/receivables-payables` | source-generated receivable/payable accounting period; settlement occurrence month | create, adjust, settlement, void, tax-basis |
-| `发票台账` | `/tax/invoices` | imported invoice ledger period | invoice import |
-| `发票匹配` | `/tax/invoice-matching`, `/tax/invoices`, `/tax/declaration-preparation` | invoice period plus linked business/accrual period and red-original blue invoice period | match, unmatch, period reassignment, red-original, subsequent invoice |
+| `发票台账` | `/tax/invoices`, `/finance/receivables-payables` detail drawer | invoice period plus linked receivable/payable period and red-original blue invoice period | invoice import, shared invoice association, red-original relation |
 | `收支流水` | `/finance/review`, `/finance/transactions` | transaction occurrence month and adjustment target month | review, return, void, voucher files, correction/difference |
 | `银行对账` | `/finance/bank-reconciliation` | bank transaction period plus linked system cash-flow periods | confirm, revoke, system-flow creation, adjustment, exception resolution |
 | `会计凭证` | `/finance/accounting-vouchers` | voucher source-fact accounting period and target later-adjustment period | prepare, batch prepare, book, batch book, reverse, later-period adjustment |
@@ -58,9 +57,10 @@ production period-lock evidence.
   behavior. A disabled button is not sufficient evidence.
 - Direct route-style backend contract skeletons must reject closed periods
   before source row status, amount, period, version, or linkage changes.
-- `发票台账` and `发票匹配` are separate domains: importing invoice facts writes
-  invoice-ledger source rows, while matching writes invoice-business
-  associations.
+- `发票台账` is the sole invoice-fact owner. Importing invoice facts, saving
+  invoice-business associations, associating an invoice from receivable/payable,
+  and linking a red invoice to its original blue invoice all use the shared
+  invoice-association contract.
 - Employee-facing drafts are not source mutations until they create or change
   receivable/payable, cash-flow, invoice, voucher, tax, payroll, social-
   insurance, or opening-balance facts.

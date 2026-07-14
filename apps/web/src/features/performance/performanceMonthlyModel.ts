@@ -68,6 +68,14 @@ function roundPerformanceValue(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+export function buildPerformanceSalarySettlementReference(
+  performanceResultId: string,
+  resultKind: 'monthly-prepay' | 'quarterly-review',
+  revision = 'v1'
+) {
+  return `performance-result:${performanceResultId}:${resultKind}:${revision}`;
+}
+
 function getMemberActiveEndDate(member: PeopleMember) {
   if (member.status === '离职') {
     return member.contractEndAt ?? member.archiveUpdatedAt;
@@ -248,6 +256,7 @@ function toMonthlyCategoryRecord(record: PerformanceDrawingTaskMonthlyRecord): P
     category: record.category,
     ruleName: record.ruleName,
     ruleVersion: record.ruleVersion,
+    salarySettlementReference: record.salarySettlementReference,
     performanceMonth: record.performanceMonth,
     monthlyAmount: record.monthlyAmount,
     prepayAmount: record.prepayAmount,
@@ -260,6 +269,7 @@ function toMonthlyCategoryRecord(record: PerformanceDrawingTaskMonthlyRecord): P
     executionContract: record.executionContract,
     employmentScope: record.employmentScope,
     prorationSummary: record.prorationSummary,
+    quarterlyReviewResult: record.quarterlyReviewResult,
     events: record.events
   };
 }

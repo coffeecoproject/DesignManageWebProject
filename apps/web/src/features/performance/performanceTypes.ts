@@ -136,6 +136,17 @@ export type PerformanceMonthlyProrationSummary = {
   originalFullScore: number;
 };
 
+export type PerformanceQuarterlyReviewResult = {
+  confirmedAt: string;
+  finalAmount: number;
+  prepayAmount: number;
+  reviewPeriod: string;
+  salarySettlementReference: string;
+  settlementDate: string;
+  sourceMonths: string[];
+  sourceRecordIds: string[];
+};
+
 export type PerformanceExecutionContractStatus = '已匹配' | '缺少签署' | '签署版本不一致' | '岗位不适用' | '规则未发布' | '规则未配置';
 
 export type PerformanceExecutionContractSource = '结构化规则' | '签署规则选项' | '未匹配';
@@ -167,6 +178,7 @@ export type PerformanceMonthlyCategoryRecord = {
   category: PerformanceRuleCategory;
   ruleName: string;
   ruleVersion: string;
+  salarySettlementReference: string;
   performanceMonth: string;
   monthlyAmount: number;
   prepayAmount: number;
@@ -179,6 +191,7 @@ export type PerformanceMonthlyCategoryRecord = {
   executionContract?: PerformanceExecutionContract;
   employmentScope?: PerformanceMonthlyEmploymentScope;
   prorationSummary?: PerformanceMonthlyProrationSummary;
+  quarterlyReviewResult?: PerformanceQuarterlyReviewResult;
   events: PerformanceMonthlyEvent[];
 };
 
@@ -191,6 +204,7 @@ export type PerformanceDrawingTaskMonthlyRecord = {
   category: '绘图任务制';
   ruleName: string;
   ruleVersion: string;
+  salarySettlementReference: string;
   performanceMonth: string;
   taskScore: number;
   qualityScore: number;
@@ -207,6 +221,7 @@ export type PerformanceDrawingTaskMonthlyRecord = {
   executionContract?: PerformanceExecutionContract;
   employmentScope?: PerformanceMonthlyEmploymentScope;
   prorationSummary?: PerformanceMonthlyProrationSummary;
+  quarterlyReviewResult?: PerformanceQuarterlyReviewResult;
   events: PerformanceMonthlyEvent[];
 };
 

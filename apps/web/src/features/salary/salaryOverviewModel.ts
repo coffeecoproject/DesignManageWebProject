@@ -76,7 +76,19 @@ const salaryOverviewBoardDefinitions: SalaryOverviewBoardDefinition[] = [
     id: 'performance-prepay',
     label: '绩效预发',
     type: '应发',
-    getAmount: (report) => report.performancePayAmount
+    getAmount: (report) => report.performancePrepayAmount
+  },
+  {
+    id: 'performance-quarterly-increase',
+    label: '季度绩效补发',
+    type: '应发',
+    getAmount: (report) => Math.max(0, report.performanceQuarterlyAdjustmentAmount)
+  },
+  {
+    id: 'performance-quarterly-deduction',
+    label: '季度绩效追回',
+    type: '扣减',
+    getAmount: (report) => Math.abs(Math.min(0, report.performanceQuarterlyAdjustmentAmount))
   },
   {
     id: 'attendance-increase',
@@ -308,7 +320,7 @@ export function buildSalaryOverview(reports: SalaryMonthlyReport[]): SalaryOverv
       grossSalary,
       netSalary,
       recordCount: reports.length,
-      settledCount: reports.filter((report) => report.status === '已结算').length
+      settledCount: reports.filter((report) => report.status === '已发放').length
     }
   };
 }

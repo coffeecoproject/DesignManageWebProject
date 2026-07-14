@@ -6,7 +6,6 @@ export const financePeriodClosePermissionScopes = [
   'finance.accountingPeriod.reopen',
   'finance.receivablePayable.write',
   'finance.invoiceLedger.write',
-  'finance.invoiceMatching.write',
   'finance.cashFlow.review',
   'finance.bankReconciliation.reconcile',
   'finance.accountingVoucher.prepare',

@@ -109,7 +109,7 @@ function createState(overrides: Partial<PeriodClosePersistentState> = {}): Perio
       }),
       createSourceRecord({
         id: 'shared-id',
-        sourceArea: 'invoice_matching',
+        sourceArea: 'invoice_ledger',
         sourceNo: 'INV-202606-002'
       })
     ],
@@ -439,7 +439,7 @@ const tests: UnitTest[] = [
         (record) => record.id === 'shared-id' && record.sourceArea === 'receivable_payable'
       );
       const invoiceRow = result.state.sourceRecords.find(
-        (record) => record.id === 'shared-id' && record.sourceArea === 'invoice_matching'
+        (record) => record.id === 'shared-id' && record.sourceArea === 'invoice_ledger'
       );
 
       assertObject(receivableRow, 'receivable row should exist');

@@ -46,6 +46,7 @@ import {
 import {
   buildFinanceFinancialStatementReport,
   type FinanceCashFlowStatementLine,
+  type FinanceFinancialStatementArchiveStatus,
   type FinanceFinancialStatementReport,
   type FinanceStatementMode
 } from './financeFinancialStatementsModel';
@@ -102,8 +103,9 @@ const statementModeTone: Record<FinanceStatementMode, 'blue' | 'gray'> = {
 };
 
 const statementArchiveStatusTone = {
+  待结账预览: 'blue',
   已归档: 'green',
-  待归档: 'amber'
+  快照缺失: 'red'
 } as const;
 
 const trialBalanceTone = {
@@ -112,6 +114,11 @@ const trialBalanceTone = {
 } as const;
 
 const cashFlowReadinessTone = {
+  可出具: 'green',
+  待处理: 'amber'
+} as const;
+
+const financialStatementReadinessTone = {
   可出具: 'green',
   待处理: 'amber'
 } as const;
@@ -161,8 +168,10 @@ type StatementDisplayRow = {
 type FinancialStatementArchiveRow = {
   accountingPeriod: string;
   archiveGeneratedAt?: string;
+  archiveGeneratedBy?: string;
+  archiveReason?: string;
   archiveSource: string;
-  archiveStatus: keyof typeof statementArchiveStatusTone;
+  archiveStatus: FinanceFinancialStatementArchiveStatus;
   assetTotal: number;
   balanceSheetRows: BalanceSheetDisplayRow[];
   bookedVoucherCount: number;
@@ -170,6 +179,7 @@ type FinancialStatementArchiveRow = {
   cashFlowReadiness: FinanceFinancialStatementReport['cashFlowReadiness'];
   cashFlowRows: StatementDisplayRow[];
   expenseTotal: number;
+  financialStatementReadiness: FinanceFinancialStatementReport['financialStatementReadiness'];
   incomeTotal: number;
   liabilityEquityTotal: number;
   periodLabel: string;
@@ -185,7 +195,7 @@ type FinancialStatementArchiveRow = {
 };
 
 type FinancialStatementArchiveMetrics = {
-  cashFlowReadyCount: number;
+  statementReadyCount: number;
   officialCount: number;
   periodCount: number;
   trialCount: number;
@@ -618,6 +628,10 @@ function getPeriodReportStatus({
   period: FinancialStatementPeriodDescriptor;
   report: FinanceFinancialStatementReport;
 }): FinanceStatementMode {
+  if (report.financialStatementReadiness !== '可出具') {
+    return '待结账';
+  }
+
   if (period.type === 'month') {
     return report.mode;
   }
@@ -820,17 +834,27 @@ function buildFinancialStatementArchiveRows({
       : reportStatus === '正式报表'
         ? getAggregateGeneratedAt(period, accountingPeriodLocks)
         : undefined;
-    const archiveStatus: FinancialStatementArchiveRow['archiveStatus'] =
-      reportStatus === '正式报表' ? '已归档' : '待归档';
-    const archiveSource = archiveStatus === '已归档'
-      ? period.type === 'month'
-        ? '期间结账快照'
-        : '已结账月份汇总'
-      : '等待期间结账';
+    const archiveStatus: FinancialStatementArchiveRow['archiveStatus'] = reportStatus !== '正式报表'
+      ? '待结账预览'
+      : period.type === 'month'
+        ? report.archive.status
+        : '已归档';
+    const archiveSource = archiveStatus === '待结账预览'
+      ? '实时总账预览'
+      : archiveStatus === '快照缺失'
+        ? '结账快照缺失'
+        : period.type === 'month'
+          ? report.archive.source
+          : '已结账月份汇总';
+    const archiveGeneratedAt = archiveStatus === '已归档'
+      ? generatedAt ?? report.archive.archivedAt
+      : report.archive.archivedAt;
 
     return {
       accountingPeriod: period.key,
-      archiveGeneratedAt: archiveStatus === '已归档' ? generatedAt : undefined,
+      archiveGeneratedAt,
+      archiveGeneratedBy: report.archive.archivedBy,
+      archiveReason: report.archive.closeReason,
       archiveSource,
       archiveStatus,
       assetTotal: report.assetTotal,
@@ -840,6 +864,7 @@ function buildFinancialStatementArchiveRows({
       cashFlowReadiness: report.cashFlowReadiness,
       cashFlowRows: buildCashFlowRows(report),
       expenseTotal: getExpenseTotal(report),
+      financialStatementReadiness: report.financialStatementReadiness,
       incomeTotal: getIncomeTotal(report),
       liabilityEquityTotal: report.liabilityEquityTotal,
       periodLabel: period.label,
@@ -858,7 +883,7 @@ function buildFinancialStatementArchiveRows({
 
 function buildArchiveMetrics(rows: FinancialStatementArchiveRow[]): FinancialStatementArchiveMetrics {
   return {
-    cashFlowReadyCount: rows.filter((row) => row.cashFlowReadiness === '可出具').length,
+    statementReadyCount: rows.filter((row) => row.financialStatementReadiness === '可出具').length,
     officialCount: rows.filter((row) => row.reportStatus === '正式报表').length,
     periodCount: rows.length,
     trialCount: rows.filter((row) => row.reportStatus === '待结账').length
@@ -929,13 +954,13 @@ function createArchiveColumns(): TableColumnsType<FinancialStatementArchiveRow> 
       )
     },
     {
-      title: '归档',
+      title: '结账归档',
       dataIndex: 'archiveStatus',
       width: 168,
       render: (_, record) => (
         <CompactCell
           primary={<StatusTag toneMap={statementArchiveStatusTone} value={record.archiveStatus} />}
-          secondary={record.archiveGeneratedAt ?? record.archiveSource}
+          secondary={record.archiveGeneratedAt ? `${record.archiveSource} / ${record.archiveGeneratedAt}` : record.archiveSource}
         />
       )
     }
@@ -1034,24 +1059,17 @@ function createStatementColumns(periodType: FinancialStatementCycle): TableColum
   ];
 }
 
-function CashFlowReadinessNotice({ report }: { report: FinanceFinancialStatementReport }) {
-  if (report.cashFlowReadiness === '可出具') {
+function FinancialStatementReadinessNotice({ report }: { report: FinanceFinancialStatementReport }) {
+  if (report.financialStatementReadiness === '可出具') {
     return null;
   }
-
-  const hasMappingGaps = report.cashFlowMappingGaps.length > 0;
 
   return (
     <div className="financial-statements-cash-flow-readiness" data-testid="finance-cash-flow-readiness-notice">
       <CompactCell
-        primary="现金流量表暂不可出具"
-        secondary={hasMappingGaps ? `${report.cashFlowMappingGaps.length} 项分类待处理` : '现金余额需核对'}
+        primary="报表暂不可出具"
+        secondary={report.financialStatementReadinessDetail}
       />
-      <span>
-        {hasMappingGaps
-          ? '部分现金或银行收付尚未归入现金流量表项目。'
-          : '现金流量净额与期初、期末现金余额尚未勾稽一致。'}
-      </span>
     </div>
   );
 }
@@ -1059,14 +1077,24 @@ function CashFlowReadinessNotice({ report }: { report: FinanceFinancialStatement
 function buildFinancialStatementOverviewItems(record: FinancialStatementArchiveRow): DetailInfoGridItem[] {
   const items: DetailInfoGridItem[] = [
     { label: '覆盖时间', value: record.periodRangeLabel },
-    { label: '归档状态', value: <StatusTag toneMap={statementArchiveStatusTone} value={record.archiveStatus} /> },
-    { label: '归档来源', value: record.archiveSource },
+    { label: '报表状态', value: <StatusTag toneMap={statementModeTone} value={record.reportStatus} /> },
+    { label: '结账归档', value: <StatusTag toneMap={statementArchiveStatusTone} value={record.archiveStatus} /> },
+    { label: '归档依据', value: record.archiveSource },
+    { label: '报表校验', value: <StatusTag toneMap={financialStatementReadinessTone} value={record.financialStatementReadiness} /> },
     { label: '会计准则', value: accountingSubjectProfile.accountingStandard },
     { label: '记账本位币', value: accountingSubjectProfile.currency }
   ];
 
   if (record.archiveGeneratedAt) {
     items.push({ label: '归档时间', value: record.archiveGeneratedAt });
+  }
+
+  if (record.archiveGeneratedBy) {
+    items.push({ label: '结账人', value: record.archiveGeneratedBy });
+  }
+
+  if (record.archiveReason) {
+    items.push({ label: '结账说明', value: record.archiveReason, wide: true });
   }
 
   items.push(
@@ -1113,6 +1141,22 @@ function FinancialStatementOverview({ record }: { record: FinancialStatementArch
           items={buildFinancialStatementOverviewItems(record)}
         />
       </DetailSection>
+      <FinancialStatementReadinessNotice report={record.report} />
+    </>
+  );
+}
+
+function FinancialStatementNotes({ report }: { report: FinanceFinancialStatementReport }) {
+  return (
+    <>
+      {report.notes.map((note) => (
+        <DetailSection icon={<FileTextOutlined />} key={note.key} title={note.title}>
+          <DetailInfoGrid
+            columns={note.items.length > 2 ? 3 : 2}
+            items={note.items.map((item) => ({ label: item.label, value: item.value }))}
+          />
+        </DetailSection>
+      ))}
     </>
   );
 }
@@ -1156,6 +1200,11 @@ function FinancialStatementDetailDrawer({
             label: '概览'
           },
           {
+            children: <FinancialStatementNotes report={record.report} />,
+            key: 'notes',
+            label: '报表附注'
+          },
+          {
             children: (
               <DetailSection icon={<BookOutlined />} title="资产负债表">
                 <CompactDetailTable<BalanceSheetDisplayRow>
@@ -1194,7 +1243,6 @@ function FinancialStatementDetailDrawer({
                     scrollX={640}
                   />
                 </DetailSection>
-                <CashFlowReadinessNotice report={record.report} />
               </>
             ),
             key: 'cash-flow',
@@ -1214,8 +1262,10 @@ export function FinanceFinancialStatementsPage() {
     accountingVoucherLifecycleRows,
     bankReconciliationRows,
     financeRows,
+    invoiceBusinessAllocationRows,
     invoiceRows,
     ledgerOpeningAdjustmentRows,
+    monthEndMatterRows,
     receivablePayableRows,
     taxMatterRows
   } = useFinanceManagement();
@@ -1232,14 +1282,21 @@ export function FinanceFinancialStatementsPage() {
       taxMatterRows,
       bankReconciliationRows,
       ledgerOpeningAdjustmentRows,
-      accountingVoucherLaterPeriodAdjustmentRows
+      accountingVoucherLaterPeriodAdjustmentRows,
+      {
+        accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+        invoiceBusinessAllocationRows,
+        monthEndMatterRows
+      }
     ),
     [
       accountingVoucherLaterPeriodAdjustmentRows,
       bankReconciliationRows,
       financeRows,
+      invoiceBusinessAllocationRows,
       invoiceRows,
       ledgerOpeningAdjustmentRows,
+      monthEndMatterRows,
       receivablePayableRows,
       taxMatterRows
     ]
@@ -1281,9 +1338,9 @@ export function FinanceFinancialStatementsPage() {
       metrics={
         <MetricGrid columns={4} density="compact">
           <MetricCard icon={<CalendarOutlined />} label="期间数" value={archiveMetrics.periodCount} />
-          <MetricCard icon={<FileProtectOutlined />} label="已归档" value={archiveMetrics.officialCount} />
+          <MetricCard icon={<FileProtectOutlined />} label="已归档报表" value={archiveMetrics.officialCount} />
           <MetricCard icon={<AuditOutlined />} label="待结账" value={archiveMetrics.trialCount} />
-          <MetricCard icon={<FileTextOutlined />} label="现金流量表可出具" value={archiveMetrics.cashFlowReadyCount} />
+          <MetricCard icon={<FileTextOutlined />} label="报表校验通过" value={archiveMetrics.statementReadyCount} />
         </MetricGrid>
       }
       filters={

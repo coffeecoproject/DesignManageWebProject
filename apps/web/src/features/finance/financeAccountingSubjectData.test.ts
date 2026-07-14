@@ -23,11 +23,11 @@ const tests: UnitTest[] = [
     run: () => {
       const metrics = buildAccountingSubjectMetrics(accountingSubjectSeedRows);
 
-      assertEqual(metrics.enabledCount, 45, 'enabled subject count should include small-enterprise parent and detail subjects');
-      assertEqual(metrics.standardCount, 45, 'standard count should include built-in standard subjects');
-      assertEqual(metrics.balanceSheetCount, 31, 'balance sheet count should include asset, liability, and equity subjects');
+      assertEqual(metrics.enabledCount, 47, 'enabled subject count should include separate education surcharge subjects');
+      assertEqual(metrics.standardCount, 47, 'standard count should include built-in standard subjects');
+      assertEqual(metrics.balanceSheetCount, 33, 'balance sheet count should include separate surcharge liability subjects');
       assertEqual(metrics.profitStatementCount, 14, 'profit statement count should include profit and loss subjects');
-      assertEqual(metrics.cashFlowMappedCount, 31, 'cash-flow mapped count should include counterpart subjects used by cash vouchers');
+      assertEqual(metrics.cashFlowMappedCount, 33, 'cash-flow mapped count should include separate surcharge payment subjects');
     }
   },
   {

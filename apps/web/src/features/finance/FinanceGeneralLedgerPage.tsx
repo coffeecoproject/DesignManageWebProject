@@ -23,6 +23,7 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
 import {
   accountingStatementTargetTone,
+  accountingSubjectProfile,
   accountingSubjectTypeOptions,
   accountingSubjectTypeTone,
   type AccountingSubjectType
@@ -248,8 +249,10 @@ export function FinanceGeneralLedgerPage() {
     accountingVoucherLifecycleRows,
     bankReconciliationRows,
     financeRows,
+    invoiceBusinessAllocationRows,
     invoiceRows,
     ledgerOpeningAdjustmentRows,
+    monthEndMatterRows,
     receivablePayableRows,
     taxMatterRows
   } = useFinanceManagement();
@@ -266,7 +269,12 @@ export function FinanceGeneralLedgerPage() {
           taxMatterRows,
           bankReconciliationRows,
           ledgerOpeningAdjustmentRows,
-          accountingVoucherLaterPeriodAdjustmentRows
+          accountingVoucherLaterPeriodAdjustmentRows,
+          {
+            accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+            invoiceBusinessAllocationRows,
+            monthEndMatterRows
+          }
         ),
         accountingVoucherLifecycleRows
       ),
@@ -275,8 +283,10 @@ export function FinanceGeneralLedgerPage() {
       accountingVoucherLifecycleRows,
       bankReconciliationRows,
       financeRows,
+      invoiceBusinessAllocationRows,
       invoiceRows,
       ledgerOpeningAdjustmentRows,
+      monthEndMatterRows,
       receivablePayableRows,
       taxMatterRows
     ]

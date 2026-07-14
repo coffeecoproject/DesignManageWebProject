@@ -1,10 +1,10 @@
 import type { TableColumnsType } from 'antd';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
-import { StatusTag } from '../../components/Detail';
 import { CompactCell } from '../../components/TableCell';
+import { DeclarationCheckResultCell } from './DeclarationCheckResultCell';
+import { getCorporateIncomeTaxSourceCheckResult } from './declarationCheckResultModel';
 import {
   buildCorporateIncomeTaxSourceRows,
-  corporateIncomeTaxSourceStatusTone,
   type FinanceCorporateIncomeTaxSourceRow,
   type FinanceDeclarationPreparationRecord
 } from './financeDeclarationPreparationData';
@@ -25,25 +25,28 @@ const columns: TableColumnsType<FinanceCorporateIncomeTaxSourceRow> = [
   },
   {
     align: 'right',
-    dataIndex: 'amount',
-    key: 'amount',
-    render: (amount: number) => formatMoney(amount),
-    title: '金额',
+    dataIndex: 'value',
+    key: 'value',
+    render: (value: number, record) =>
+      record.displayValue
+        ?? (record.valueKind === 'amount' ? formatMoney(value) : `${value.toLocaleString('zh-CN')} ${record.unit ?? '项'}`),
+    title: '关键数据',
     width: 150
-  },
-  {
-    dataIndex: 'status',
-    key: 'status',
-    render: (status: FinanceCorporateIncomeTaxSourceRow['status']) => (
-      <StatusTag toneMap={corporateIncomeTaxSourceStatusTone} value={status} />
-    ),
-    title: '状态',
-    width: 120
   },
   {
     dataIndex: 'result',
     key: 'result',
-    title: '来源结果'
+    render: (_result: string, record) => {
+      const presentation = getCorporateIncomeTaxSourceCheckResult(record);
+
+      return (
+        <DeclarationCheckResultCell
+          {...presentation}
+          tag={record.status === '已同步' ? undefined : { tone: 'amber', value: '待完成' }}
+        />
+      );
+    },
+    title: '核对结果'
   }
 ];
 
@@ -54,7 +57,7 @@ export function CorporateIncomeTaxSourceTable({ record }: { record: FinanceDecla
       columns={columns}
       dataSource={buildCorporateIncomeTaxSourceRows(record)}
       rowKey="id"
-      scrollX={860}
+      scrollX={760}
     />
   );
 }

@@ -153,8 +153,10 @@ export function FinanceReviewPage() {
       return;
     }
 
-    if (!reviewFinanceTransaction(record.id)) {
-      void messageApi.warning('当前流水不可复核入账');
+    const reviewResult = reviewFinanceTransaction(record.id);
+
+    if (!reviewResult.success) {
+      void messageApi.warning(reviewResult.message);
       return;
     }
 

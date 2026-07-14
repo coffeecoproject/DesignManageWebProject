@@ -29,11 +29,9 @@ import {
   accountingVoucherDefaultMonth,
   accountingVoucherIssueLabels,
   accountingVoucherStatusOptions,
-  applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
   buildAccountingVoucherFromLaterPeriodAdjustment,
   buildAccountingVoucherMetrics,
-  buildAccountingVouchers,
   canBookAccountingVoucher,
   canCreateLaterPeriodAccountingVoucherAdjustment,
   canReverseAccountingVoucher,
@@ -190,10 +188,6 @@ function getIssueAction(issue: AccountingVoucherIssueCode) {
 
   if (issue === 'unbalanced_entries') {
     return '检查分录规则';
-  }
-
-  if (issue === 'bank_reconciliation_pending') {
-    return '需完成银行对账';
   }
 
   if (issue === 'bank_reconciliation_source_missing') {
@@ -457,6 +451,8 @@ function AccountingVoucherDetailDrawer({
           label: '票据状态',
           value: <StatusTag toneMap={taxEvidenceStatusTone} value={record.taxBasis.evidenceStatus as AccountingVoucherTaxEvidenceStatus} />
         },
+        { label: '业务税务分类', value: record.taxBasis.taxableClassification ?? '-' },
+        { label: '本期税额口径', value: record.taxBasis.taxOutcome ?? '以票面或申报结果为准' },
         { label: '税率', value: record.taxBasis.taxRate },
         { label: '价税合计', value: formatMoney(record.taxBasis.taxIncludedAmount) },
         { label: '不含税金额', value: formatMoney(record.taxBasis.taxExcludedAmount) },
@@ -1005,14 +1001,9 @@ export function FinanceAccountingVouchersPage() {
     accountingPeriodLocks,
     accountingVoucherLaterPeriodAdjustmentRows,
     accountingVoucherLifecycleRows,
-    bankReconciliationRows,
-    financeRows,
-    invoiceRows,
-    ledgerOpeningAdjustmentRows,
+    accountingVoucherRows: voucherRows,
     bookAccountingVoucher,
-    receivablePayableRows,
-    reverseAccountingVoucher,
-    taxMatterRows
+    reverseAccountingVoucher
   } = useFinanceManagement();
   const [messageApi, contextHolder] = message.useMessage();
   const [searchParams] = useSearchParams();
@@ -1033,31 +1024,6 @@ export function FinanceAccountingVouchersPage() {
     reason: '',
     reversedAt: ''
   });
-
-  const generatedVoucherRows = useMemo(
-    () => buildAccountingVouchers(
-      receivablePayableRows,
-      financeRows,
-      invoiceRows,
-      taxMatterRows,
-      bankReconciliationRows,
-      ledgerOpeningAdjustmentRows,
-      accountingVoucherLaterPeriodAdjustmentRows
-    ),
-    [
-      accountingVoucherLaterPeriodAdjustmentRows,
-      bankReconciliationRows,
-      financeRows,
-      invoiceRows,
-      ledgerOpeningAdjustmentRows,
-      receivablePayableRows,
-      taxMatterRows
-    ]
-  );
-  const voucherRows = useMemo(
-    () => applyAccountingVoucherLifecycle(generatedVoucherRows, accountingVoucherLifecycleRows),
-    [accountingVoucherLifecycleRows, generatedVoucherRows]
-  );
 
   useEffect(() => {
     setFilters((currentFilters) => getAccountingVoucherFiltersFromQueryString(deepLinkQuery, currentFilters));

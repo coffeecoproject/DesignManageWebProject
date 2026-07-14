@@ -1,7 +1,6 @@
 import type { FinanceTransactionRecord } from './financeData';
 import type {
-  FinanceInvoiceDirection,
-  FinanceInvoiceMatchedBusinessRef,
+  FinanceInvoiceBusinessAllocation,
   FinanceInvoiceMatchStatus,
   FinanceInvoiceRecord
 } from './financeInvoiceData';
@@ -12,7 +11,7 @@ export type FinanceRedInvoiceOriginalAssociationStatus = '待关联原票' | '�
 export type FinanceTransactionMatchedInvoice = {
   amount: number;
   counterparty: string;
-  direction: FinanceInvoiceDirection;
+  direction: FinanceInvoiceRecord['direction'];
   id: string;
   invoiceDate: string;
   invoiceNo: string;
@@ -37,6 +36,8 @@ export type FinanceOriginalInvoiceRedSummary = {
   remainingAfterCurrentAmount: number;
 };
 
+const moneyTolerance = 0.01;
+
 export function isInvoiceEffective(record: FinanceInvoiceRecord) {
   return record.invoiceStatus !== '作废';
 }
@@ -54,21 +55,50 @@ export function getInvoiceTaxAmount(record: FinanceInvoiceRecord) {
 }
 
 export function isSameMoneyAmount(left: number, right: number) {
-  return Math.abs(left - right) < 0.01;
+  return Math.abs(left - right) < moneyTolerance;
 }
 
-export function getInvoiceMatchedAmount(record: FinanceInvoiceRecord) {
-  return record.matchedBusinessRefs.reduce((total, match) => total + match.amount, 0);
+export function isFinanceInvoiceAllocationEffective(allocation: FinanceInvoiceBusinessAllocation) {
+  return allocation.status === '有效';
 }
 
-export function getInvoiceMatchedBusinessNos(record: FinanceInvoiceRecord) {
-  return Array.from(new Set(record.matchedBusinessRefs.map((match) => match.recordNo)));
+export function getInvoiceAllocations(
+  invoice: Pick<FinanceInvoiceRecord, 'id' | 'invoiceStatus'>,
+  allocations: FinanceInvoiceBusinessAllocation[]
+) {
+  if (invoice.invoiceStatus === '作废') {
+    return [];
+  }
+
+  return allocations.filter(
+    (allocation) => allocation.invoiceId === invoice.id && isFinanceInvoiceAllocationEffective(allocation)
+  );
 }
 
-export function getInvoiceMatchStatus(record: FinanceInvoiceRecord): FinanceInvoiceMatchStatus {
-  const matchedAmount = getInvoiceMatchedAmount(record);
+export function getInvoiceMatchedAmount(record: FinanceInvoiceRecord, allocations: FinanceInvoiceBusinessAllocation[]) {
+  if (record.invoiceStatus !== '正常') {
+    return 0;
+  }
 
-  if (isSameMoneyAmount(matchedAmount, record.taxIncludedAmount)) {
+  return getInvoiceAllocations(record, allocations)
+    .reduce((total, allocation) => total + Math.max(0, allocation.taxIncludedAmount), 0);
+}
+
+export function getInvoiceMatchedBusinessNos(record: FinanceInvoiceRecord, allocations: FinanceInvoiceBusinessAllocation[]) {
+  return Array.from(new Set(getInvoiceAllocations(record, allocations).map((allocation) => allocation.targetNo)));
+}
+
+export function getInvoiceMatchStatus(
+  record: FinanceInvoiceRecord,
+  allocations: FinanceInvoiceBusinessAllocation[] = []
+): FinanceInvoiceMatchStatus {
+  if (record.invoiceStatus === '作废') {
+    return '已作废';
+  }
+
+  const matchedAmount = getInvoiceMatchedAmount(record, allocations);
+
+  if (isSameMoneyAmount(matchedAmount, Math.abs(record.taxIncludedAmount))) {
     return '已匹配';
   }
 
@@ -84,7 +114,7 @@ export function getRedInvoiceOriginalAssociationStatus(record: FinanceInvoiceRec
 }
 
 export function getRedInvoiceAmount(record: FinanceInvoiceRecord) {
-  return record.invoiceStatus === '红冲' && isInvoiceEffective(record) ? Math.abs(record.totalAmount) : 0;
+  return record.invoiceStatus === '红冲' && isInvoiceEffective(record) ? Math.abs(record.taxIncludedAmount) : 0;
 }
 
 export function getOriginalInvoiceRedAmount(
@@ -111,7 +141,7 @@ export function buildOriginalInvoiceRedSummary(
   invoices: FinanceInvoiceRecord[],
   currentRedInvoice?: FinanceInvoiceRecord
 ): FinanceOriginalInvoiceRedSummary {
-  const originalInvoiceAmount = Math.abs(originalInvoice.totalAmount);
+  const originalInvoiceAmount = Math.abs(originalInvoice.taxIncludedAmount);
   const alreadyRedAmount = getOriginalInvoiceRedAmount(originalInvoice.id, invoices, {
     excludeRedInvoiceId: currentRedInvoice?.id
   });
@@ -123,7 +153,7 @@ export function buildOriginalInvoiceRedSummary(
     alreadyRedAmount,
     availableRedAmount,
     currentRedAmount,
-    isOverLimit: remainingAfterCurrentAmount < -0.01,
+    isOverLimit: remainingAfterCurrentAmount < -moneyTolerance,
     originalInvoiceAmount,
     remainingAfterCurrentAmount: Math.max(0, remainingAfterCurrentAmount)
   };
@@ -169,40 +199,40 @@ export function isTransactionInvoiceAssociationRequired(record: FinanceTransacti
   return false;
 }
 
-function getMatchedBusinessContribution(invoice: FinanceInvoiceRecord, amount: number) {
-  if (invoice.invoiceStatus === '红冲') {
-    return 0;
-  }
-
-  return Math.max(0, amount);
-}
-
-export function doesInvoiceBusinessRefMatchTransaction(
+export function doesInvoiceAllocationMatchTransaction(
   record: FinanceTransactionRecord,
-  ref: FinanceInvoiceMatchedBusinessRef
+  allocation: FinanceInvoiceBusinessAllocation
 ) {
-  return ref.sourceNo === record.sourceNo || ref.recordNo === record.sourceNo || ref.sourceNo === record.transactionNo;
+  return allocation.targetType === '未开票收入' && allocation.targetId === record.id;
 }
 
 export function buildTransactionInvoiceAssociation(
   record: FinanceTransactionRecord,
-  invoices: FinanceInvoiceRecord[]
+  invoices: FinanceInvoiceRecord[],
+  allocations: FinanceInvoiceBusinessAllocation[] = []
 ): FinanceTransactionInvoiceAssociation {
   const requiredAmount = isTransactionInvoiceAssociationRequired(record) ? record.amount : 0;
-  const matchedInvoices = invoices.flatMap((invoice) =>
-    invoice.matchedBusinessRefs
-      .filter((match) => doesInvoiceBusinessRefMatchTransaction(record, match))
-      .map((match) => ({
-        amount: match.amount,
-        counterparty: invoice.counterparty,
-        direction: invoice.direction,
-        id: `${invoice.id}-${match.id}`,
-        invoiceDate: invoice.invoiceDate,
-        invoiceNo: invoice.invoiceNo,
-        invoiceStatus: invoice.invoiceStatus,
-        totalAmount: invoice.totalAmount
-      }))
-  );
+  const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
+  const matchedAllocations = allocations.filter((allocation) => {
+    const invoice = invoiceById.get(allocation.invoiceId);
+
+    return Boolean(invoice && invoice.invoiceStatus === '正常' && isFinanceInvoiceAllocationEffective(allocation)) &&
+      doesInvoiceAllocationMatchTransaction(record, allocation);
+  });
+  const matchedInvoices = matchedAllocations.flatMap((allocation) => {
+    const invoice = invoiceById.get(allocation.invoiceId);
+
+    return invoice ? [{
+      amount: allocation.taxIncludedAmount,
+      counterparty: invoice.counterparty,
+      direction: invoice.direction,
+      id: `${invoice.id}-${allocation.id}`,
+      invoiceDate: invoice.invoiceDate,
+      invoiceNo: invoice.invoiceNo,
+      invoiceStatus: invoice.invoiceStatus,
+      totalAmount: invoice.taxIncludedAmount
+    }] : [];
+  });
 
   if (!requiredAmount) {
     return {
@@ -214,45 +244,19 @@ export function buildTransactionInvoiceAssociation(
     };
   }
 
-  const matchedAmount = invoices.reduce(
-    (total, invoice) =>
-      total +
-      invoice.matchedBusinessRefs.reduce(
-        (invoiceTotal, match) =>
-          doesInvoiceBusinessRefMatchTransaction(record, match)
-            ? invoiceTotal + getMatchedBusinessContribution(invoice, match.amount)
-            : invoiceTotal,
-        0
-      ),
+  const matchedAmount = matchedAllocations.reduce(
+    (total, allocation) => total + Math.max(0, allocation.taxIncludedAmount),
     0
   );
   const remainingAmount = Math.max(0, requiredAmount - matchedAmount);
 
   if (isSameMoneyAmount(matchedAmount, 0)) {
-    return {
-      matchedAmount,
-      matchedInvoices,
-      remainingAmount,
-      requiredAmount,
-      status: '未关联'
-    };
+    return { matchedAmount, matchedInvoices, remainingAmount, requiredAmount, status: '未关联' };
   }
 
   if (matchedAmount >= requiredAmount || isSameMoneyAmount(matchedAmount, requiredAmount)) {
-    return {
-      matchedAmount,
-      matchedInvoices,
-      remainingAmount: 0,
-      requiredAmount,
-      status: '已关联'
-    };
+    return { matchedAmount, matchedInvoices, remainingAmount: 0, requiredAmount, status: '已关联' };
   }
 
-  return {
-    matchedAmount,
-    matchedInvoices,
-    remainingAmount,
-    requiredAmount,
-    status: '部分关联'
-  };
+  return { matchedAmount, matchedInvoices, remainingAmount, requiredAmount, status: '部分关联' };
 }

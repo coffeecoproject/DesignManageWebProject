@@ -80,7 +80,15 @@ export function FinanceTransactionAdjustmentDrawer({
   );
   const availableModeOptions = bankContext ? adjustmentModeOptions.filter((mode) => mode === '补差') : adjustmentModeOptions;
   const adjustmentAmount = form ? getFinanceTransactionAdjustmentAmount(form) : 0;
-  const primaryDisabled = !originRecord || !form || adjustmentAmount <= 0 || form.reason.trim().length === 0;
+  const requiresFullReversal = Boolean(originRecord?.naturalPersonPayment && form?.mode === '冲正');
+  const hasInvalidPartialNaturalPersonReversal = Boolean(
+    requiresFullReversal && originRecord && Math.abs(adjustmentAmount - originRecord.amount) >= 0.01
+  );
+  const primaryDisabled = !originRecord
+    || !form
+    || adjustmentAmount <= 0
+    || form.reason.trim().length === 0
+    || hasInvalidPartialNaturalPersonReversal;
 
   function updateForm<K extends keyof FinanceTransactionAdjustmentFormValue>(field: K, value: FinanceTransactionAdjustmentFormValue[K]) {
     setForm((current) => current ? { ...current, [field]: value } : current);
@@ -186,7 +194,7 @@ export function FinanceTransactionAdjustmentDrawer({
               </DrawerFormField>
               <DrawerFormField label="处理金额" required>
                 <Input
-                  disabled={Boolean(bankContext)}
+                  disabled={Boolean(bankContext) || requiresFullReversal}
                   value={form.amountText}
                   onChange={(event) => updateForm('amountText', event.target.value)}
                 />

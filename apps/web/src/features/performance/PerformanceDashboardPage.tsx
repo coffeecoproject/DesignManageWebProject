@@ -19,15 +19,8 @@ import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
-import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
-import { useWorkCalendarState } from '../system/WorkCalendarState';
-import {
-  performanceDrawingTaskMonthlyRecords,
-  performanceMonthlyCategoryRecords,
-  performanceRulePresets
-} from './performanceMockData';
-import { buildPerformanceMonthlyRecords } from './performanceMonthlyModel';
-import { performanceSignatureEmployees, signatureRuleOptions } from './performanceSignatureArchiveData';
+import { usePerformanceRuleState } from './PerformanceRuleState';
+import { performanceSignatureEmployees } from './performanceSignatureArchiveData';
 import {
   buildPerformanceDashboardData,
   buildPerformanceDashboardPeriodRange,
@@ -38,6 +31,7 @@ import {
   type PerformanceDashboardRiskRow,
   type PerformanceDashboardTrendPoint
 } from './performanceDashboardModel';
+import { usePerformanceMonthlyRecords } from './usePerformanceMonthlyRecords';
 
 type PerformanceDashboardCustomRange = {
   endDate: string;
@@ -189,22 +183,8 @@ export function PerformanceDashboardPage() {
     endDate: defaultPerformanceDashboardPeriodRange.endDate,
     startDate: defaultPerformanceDashboardPeriodRange.startDate
   }));
-  const { peopleRows } = usePeopleOrganizationState();
-  const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
-  const performanceMonthlyRecords = useMemo(
-    () =>
-      buildPerformanceMonthlyRecords({
-        annualExceptionRows,
-        categoryRecords: performanceMonthlyCategoryRecords,
-        drawingTaskRecords: performanceDrawingTaskMonthlyRecords,
-        peopleRows,
-        ruleOptions: signatureRuleOptions,
-        ruleRows: performanceRulePresets,
-        signatureEmployees: performanceSignatureEmployees,
-        workCalendarRows
-      }),
-    [annualExceptionRows, peopleRows, workCalendarRows]
-  );
+  const performanceMonthlyRecords = usePerformanceMonthlyRecords();
+  const { performanceRuleRows } = usePerformanceRuleState();
 
   const selectedPeriodRange = useMemo(
     () =>
@@ -220,11 +200,11 @@ export function PerformanceDashboardPage() {
       buildPerformanceDashboardData({
         monthlyRecords: performanceMonthlyRecords.categoryRecords,
         periodRange: selectedPeriodRange,
-        ruleRows: performanceRulePresets,
+        ruleRows: performanceRuleRows,
         signatureEmployees: performanceSignatureEmployees,
         today: performanceDashboardToday
       }),
-    [performanceMonthlyRecords.categoryRecords, selectedPeriodRange]
+    [performanceMonthlyRecords.categoryRecords, performanceRuleRows, selectedPeriodRange]
   );
 
   const riskColumns = useMemo<TableColumnsType<PerformanceDashboardRiskRow>>(

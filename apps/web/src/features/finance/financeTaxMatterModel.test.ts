@@ -1,28 +1,64 @@
-import { getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
+import { financeTransactionRecords, getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
+import { financeInvoiceBusinessAllocations, financeInvoiceRecords, type FinanceInvoiceRecord } from './financeInvoiceData';
+import { financeReceivablePayableRecords } from './financeReceivablesPayablesData';
 import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
-import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
-import type { SalaryMonthlyReport } from '../salary/salaryDomain';
+import { financeTaxMatterRecords, type FinanceTaxMatterRecord } from './financeTaxFilingData';
+import type { SalaryMonthlyReport, SalaryPaymentRecord } from '../salary/salaryDomain';
+import type { PeopleMember } from '../people/peopleTypes';
+import type { AccountingPeriodLockRecord, AccountingVoucherRecord } from './financeAccountingVoucherModel';
 import {
   applyDeclarationPreparationSourceState,
   buildCorporateIncomeTaxSourceRows,
+  ensurePayrollIitDeclarationPreparationRecords,
   financeDeclarationPreparationRecords,
-  getDeclarationPreparationProgress
+  getDeclarationPreparationProgress,
+  getDeclarationPreparationUnbilledIncomeCandidates,
+  isDeclarationPreparationReady,
+  recalculateCorporateIncomeTaxSummary
 } from './financeDeclarationPreparationData';
 import { getAccountingPeriodFromBusinessPeriod } from './financeUtils';
-import { getActiveFinanceTaxPolicyProfile } from './financeTaxPolicyModel';
 import {
-  applyPayrollIitSummaryToTaxMatter,
+  getActiveFinanceTaxPolicyProfile,
+  getFinanceTaxPolicyProfileForPeriod,
+  getFinanceVatDeclarationOutcome,
+  getFinanceVatExemptionThreshold,
+  getFinanceVatSurchargeSummary,
+  resolveFinanceVatInvoiceTreatment
+} from './financeTaxPolicyModel';
+import {
+  applyDeclarationPreparationToTaxMatter,
   applySocialInsuranceSummaryToTaxMatter,
   attachTaxMatterPaymentTransaction,
-  buildPayrollIitTaxMatterEmployeeRows,
-  buildPayrollIitTaxMatterSummary,
+  attachTaxMatterRefundTransaction,
   buildSocialInsuranceTaxMatterSummary,
   buildTaxMatterPaymentTransaction,
+  buildTaxMatterRefundTransaction,
+  deriveTaxMatterProcessStatus,
   getMissingTaxMatterReceiptTypes,
+  getTaxMatterOutstandingAmount,
+  getTaxMatterRefundOutstandingAmount,
+  getTaxMatterLinkedRefundAmount,
   getTaxMatterLinkedPaymentAmount,
+  getTaxMatterDeclarationPreparationSnapshot,
+  getTaxMatterDeclarationResultValidationError,
   getTaxMatterRequiredReceiptTypes,
-  hasTaxMatterRequiredReceiptFiles
+  hasTaxMatterRequiredReceiptFiles,
+  ensurePayrollIitTaxMatterRecords,
+  recordTaxMatterDeclarationResult,
+  recordTaxMatterPaymentResult,
+  recordTaxMatterRefundResult,
+  startTaxMatterDeclarationRevision,
+  supplementTaxMatterDeclarationReceipt
 } from './financeTaxMatterModel';
+import {
+  buildPayrollIitDeclarationEmployeeRows,
+  buildPayrollIitDeclarationSummary
+} from './financePayrollIitDeclarationModel';
+import { buildCorporateIncomeTaxAccountingSource } from './financeCorporateIncomeTaxModel';
+import {
+  getCorporateIncomeTaxSourceCheckResult,
+  getPreparationItemCheckResult
+} from './declarationCheckResultModel';
 
 type UnitTest = {
   name: string;
@@ -68,7 +104,9 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
   return {
     dataStatus: '待复核',
     declarationDueDate: '2026-07-20',
+    declarationHistory: [],
     declarationStatus: '待申报',
+    declarationVersion: 1,
     files: [],
     id: 'tax-matter-social',
     linkedTransactionNos: [],
@@ -79,6 +117,7 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
     paidAmount: 0,
     participantSummary: '待确认',
     payableAmount: 0,
+    preparedPayableAmount: 0,
     paymentDueDate: '2026-07-20',
     paymentStatus: '未开始',
     period: '2026-06',
@@ -140,10 +179,30 @@ function createFinanceRow(overrides: Partial<FinanceTransactionRecord> = {}): Fi
 }
 
 function createSalaryReport(overrides: Partial<SalaryMonthlyReport> = {}): SalaryMonthlyReport {
+  const personalIncomeTaxAmount = overrides.personalIncomeTaxAmount ?? 315;
+  const taxableIncomeAmount = overrides.personalIncomeTaxRecords?.[0]?.currentIncomeAmount ?? 12100;
+  const settlementSnapshot = overrides.settlementSnapshot ?? {
+    businessDeductionAmount: 0,
+    employeeGrossPayableAmount: taxableIncomeAmount,
+    employeeHousingFundAmount: 0,
+    employeeNetPayableAmount: taxableIncomeAmount - personalIncomeTaxAmount,
+    employeeSocialInsuranceAmount: 0,
+    employerContributionAmount: 0,
+    employerHousingFundAmount: 0,
+    employerSocialInsuranceAmount: 0,
+    grossEarningsAmount: taxableIncomeAmount,
+    payrollMonth: '2026-06',
+    payrollNo: `PAY-202606-${overrides.member?.id ?? 'EMP-001'}`,
+    taxableIncomeAmount,
+    totalEmploymentCostAmount: taxableIncomeAmount,
+    withheldPersonalIncomeTaxAmount: personalIncomeTaxAmount
+  };
+
   return {
     month: '2026-06',
     member: { id: 'EMP-001', name: '测试员工', position: '财务专员' } as SalaryMonthlyReport['member'],
-    personalIncomeTaxAmount: 315,
+    personalIncomeTaxAmount,
+    settlementSnapshot,
     personalIncomeTaxRecords: [
       {
         amount: 315,
@@ -178,12 +237,234 @@ function createSalaryReport(overrides: Partial<SalaryMonthlyReport> = {}): Salar
   } as SalaryMonthlyReport;
 }
 
+function createSalaryPaymentRecordForTest(
+  report: SalaryMonthlyReport,
+  overrides: Partial<SalaryPaymentRecord> = {}
+): SalaryPaymentRecord {
+  return {
+    employeeName: report.member.name,
+    employeeNo: report.member.id,
+    id: `salary-payment-${report.month}-${report.member.id}`,
+    identityNo: report.member.identityNo ?? '420102199001011234',
+    paymentAccountName: '测试付款账户',
+    paymentEvidenceStatus: '已核验',
+    financeTransactionNo: `FIN-TEST-${report.member.id}`,
+    paidAt: '2026-06-15 10:30',
+    paidBy: '测试出纳',
+    payrollMonth: '2026-05',
+    payrollNo: `PAY-202605-${report.member.id}`,
+    personalIncomeTaxRecord: report.personalIncomeTaxRecords[0],
+    position: report.member.position,
+    settlementSnapshot: report.settlementSnapshot,
+    taxPeriod: '2026-06',
+    ...overrides
+  };
+}
+
+function createBookedCorporateIncomeTaxSourceVoucher(): AccountingVoucherRecord {
+  return {
+    accountingPeriod: '2026-06',
+    amount: 150000,
+    bookedAt: '2026-06-30 17:10',
+    bookedBy: '李明',
+    businessType: '权责凭证',
+    counterparty: '测试业务汇总',
+    id: 'voucher-cit-source-2026q2',
+    invoiceRefs: [],
+    issueReasons: [],
+    kind: '转账凭证',
+    lines: [
+      { amount: 100000, auxiliary: '测试客户', id: 'cit-line-1', side: '借方', subjectCode: '1122', summary: '确认设计服务收入' },
+      { amount: 100000, auxiliary: '测试客户', id: 'cit-line-2', side: '贷方', subjectCode: '5001', summary: '确认设计服务收入' },
+      { amount: 30000, auxiliary: '测试供应商', id: 'cit-line-3', side: '借方', subjectCode: '5401', summary: '确认项目成本' },
+      { amount: 30000, auxiliary: '测试供应商', id: 'cit-line-4', side: '贷方', subjectCode: '2202', summary: '确认项目成本' },
+      { amount: 20000, auxiliary: '测试员工', id: 'cit-line-5', side: '借方', subjectCode: '5602.01', summary: '确认职工薪酬' },
+      { amount: 20000, auxiliary: '测试员工', id: 'cit-line-6', side: '贷方', subjectCode: '2211.01', summary: '确认职工薪酬' }
+    ],
+    sourceModule: '应收应付',
+    sourceNo: 'CIT-SOURCE-2026Q2',
+    sourceRefs: [],
+    sourceTitle: '企业所得税账务来源测试',
+    sourceType: '业务确认',
+    status: '已记账',
+    summary: '企业所得税账务来源测试',
+    voucherDate: '2026-06-30',
+    voucherNo: '记-202606-099'
+  };
+}
+
+const corporateIncomeTaxPeopleRows = [
+  {
+    id: 'EMP-CIT-001',
+    joinedAt: '2025-01-01',
+    personnelType: '全职',
+    status: '在职'
+  },
+  {
+    id: 'EMP-CIT-002',
+    joinedAt: '2026-04-01',
+    personnelType: '全职',
+    status: '在职'
+  }
+] as PeopleMember[];
+
+const q2ClosedPeriodLocks: AccountingPeriodLockRecord[] = ['2026-04', '2026-05', '2026-06'].map((accountingPeriod) => ({
+  accountingPeriod,
+  status: '已结账'
+}));
+
+function getCorporateIncomeTaxPreparationRows(records = financeDeclarationPreparationRecords) {
+  const voucherRows = [createBookedCorporateIncomeTaxSourceVoucher()];
+  const accountingSource = buildCorporateIncomeTaxAccountingSource({
+    periodLocks: q2ClosedPeriodLocks,
+    peopleRows: corporateIncomeTaxPeopleRows,
+    period: '2026-Q2',
+    voucherRows
+  });
+  const annualAccountingSource = buildCorporateIncomeTaxAccountingSource({
+    peopleRows: corporateIncomeTaxPeopleRows,
+    period: '2026',
+    voucherRows
+  });
+
+  return applyDeclarationPreparationSourceState(
+    records,
+    [],
+    [],
+    [],
+    [],
+    financeTaxMatterRecords,
+    [],
+    {
+      ...(accountingSource ? { '2026-Q2': accountingSource } : {}),
+      ...(annualAccountingSource ? { '2026': annualAccountingSource } : {})
+    },
+    q2ClosedPeriodLocks
+  );
+}
+
 const tests: UnitTest[] = [
+  {
+    name: 'uses confirmed declaration snapshots in tax handling details',
+    run: () => {
+      const preparation = financeDeclarationPreparationRecords.find(
+        (record) => record.preparationNo === 'PREP-2026Q1-VAT'
+      );
+
+      if (!preparation) {
+        throw new Error('missing confirmed VAT declaration preparation fixture');
+      }
+
+      const snapshot = getTaxMatterDeclarationPreparationSnapshot({
+        ...preparation,
+        unbilledIncomeDeclarations: [],
+        vatSummary: {
+          ...preparation.vatSummary,
+          declaredNetSalesAmount: 999999
+        }
+      });
+
+      assertEqual(
+        snapshot.vatSummary.declaredNetSalesAmount,
+        preparation.confirmedVatSummary?.declaredNetSalesAmount,
+        'tax handling should read the confirmed VAT summary'
+      );
+      assertDeepEqual(
+        snapshot.unbilledIncomeDeclarations,
+        preparation.confirmedUnbilledIncomeDeclarations,
+        'tax handling should read confirmed unbilled income facts'
+      );
+    }
+  },
+  {
+    name: 'separates quarterly CIT prepayment from annual settlement',
+    run: () => {
+      const preparationRows = getCorporateIncomeTaxPreparationRows();
+      const quarterly = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q2-CIT');
+      const annual = preparationRows.find((record) => record.preparationNo === 'PREP-2026-CIT-ANNUAL');
+      const annualMatter = financeTaxMatterRecords.find((record) => record.matterNo === 'TAX-2026-CIT-ANNUAL');
+
+      if (!quarterly || !annual || !annualMatter) {
+        throw new Error('missing quarterly or annual corporate income tax fixtures');
+      }
+
+      const annualHandling = applyDeclarationPreparationToTaxMatter(annualMatter, preparationRows);
+
+      assertEqual(quarterly.declarationScenario, '季度预缴', 'quarterly CIT should use the prepayment scenario');
+      assertEqual(annual.declarationScenario, '年度汇算', 'annual CIT should use the settlement scenario');
+      assertEqual(annual.citSummary?.cumulativeOperatingRevenueAmount, 100000, 'annual CIT should consume full-year booked accounting facts');
+      assertEqual(annual.citAnnualSettlement?.yearEndClosed, false, 'annual settlement should wait for December close');
+      assertEqual(annual.citAnnualSettlement?.q4PrepaymentReady, false, 'annual settlement should wait for Q4 prepayment');
+      assertEqual(annual.citAnnualSettlement?.adjustments.length, 0, 'annual settlement must not manufacture tax adjustments without source facts');
+      assertEqual(annual.citSummary?.priorLossDeductionAmount, 0, 'annual settlement must not manufacture prior-year loss deductions');
+      assertEqual(annual.citAnnualSettlement?.adjustmentSourceReady, false, 'annual settlement should wait for annual adjustment review');
+      assertEqual(annual.citAnnualSettlement?.priorLossSourceReady, false, 'annual settlement should wait for prior-loss review');
+      assertEqual(
+        buildCorporateIncomeTaxSourceRows(annual)[0]?.name,
+        '年度账务完整性',
+        'annual settlement should use annual accounting-readiness wording'
+      );
+      assertEqual(
+        buildCorporateIncomeTaxSourceRows(annual).some((row) => row.name === '职工薪酬附报'),
+        true,
+        'annual CIT source details should retain payroll reporting'
+      );
+      assertEqual(getDeclarationPreparationProgress(annual).pendingCount, 5, 'annual settlement should block on accounting and annual tax source prerequisites');
+      assertEqual(annualHandling.processStatus, '数据待确认', 'tax handling should remain blocked before annual settlement is confirmed');
+      assertEqual(annualHandling.payableAmount, 0, 'annual tax handling must not consume an unconfirmed settlement amount');
+    }
+  },
+  {
+    name: 'uses reviewed annual CIT source facts instead of generated mock adjustments',
+    run: () => {
+      const sourceRows = financeDeclarationPreparationRecords.map((record) =>
+        record.preparationNo === 'PREP-2026-CIT-ANNUAL'
+          ? {
+              ...record,
+              citAnnualSourceReview: {
+                adjustments: [
+                  {
+                    accountingAmount: 1000,
+                    adjustmentAmount: 400,
+                    deductibleAmount: 600,
+                    direction: '调增' as const,
+                    id: 'cit-annual-adjustment-reviewed-001',
+                    item: '已核对纳税调整',
+                    sourceModule: '总账',
+                    sourceNo: 'VOUCHER-2026-001',
+                    status: '已归集' as const
+                  }
+                ],
+                adjustmentReviewCompleted: true,
+                priorLossDeductionAmount: 200,
+                priorLossReviewCompleted: true,
+                priorLossSourceNo: 'LOSS-2025-001',
+                reviewedAt: '2027-04-01 10:00',
+                reviewedBy: '李明'
+              }
+            }
+          : record
+      );
+      const annual = getCorporateIncomeTaxPreparationRows(sourceRows).find(
+        (record) => record.preparationNo === 'PREP-2026-CIT-ANNUAL'
+      );
+
+      if (!annual) {
+        throw new Error('missing reviewed annual corporate income tax fixture');
+      }
+
+      assertEqual(annual.citSummary?.taxAdjustmentIncreaseAmount, 400, 'annual CIT should consume reviewed adjustment facts');
+      assertEqual(annual.citSummary?.priorLossDeductionAmount, 200, 'annual CIT should consume reviewed prior-loss facts');
+      assertEqual(annual.citAnnualSettlement?.adjustmentSourceReady, true, 'reviewed adjustments should clear the adjustment blocker');
+      assertEqual(annual.citAnnualSettlement?.priorLossSourceReady, true, 'reviewed prior losses should clear the loss blocker');
+      assertEqual(getDeclarationPreparationProgress(annual).pendingCount, 3, 'reviewed tax sources should leave only year-end accounting prerequisites');
+    }
+  },
   {
     name: 'keeps corporate income tax preparation on small low-profit prepayment basis',
     run: () => {
       const taxPolicy = getActiveFinanceTaxPolicyProfile().corporateIncomeTax;
-      const preparationRows = applyDeclarationPreparationSourceState(financeDeclarationPreparationRecords, [], []);
+      const preparationRows = getCorporateIncomeTaxPreparationRows();
       const q2CitPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q2-CIT');
       const q1CitPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q1-CIT');
 
@@ -194,45 +475,395 @@ const tests: UnitTest[] = [
       const q2Progress = getDeclarationPreparationProgress(q2CitPreparation);
       const q1Progress = getDeclarationPreparationProgress(q1CitPreparation);
       const q2SourceRows = buildCorporateIncomeTaxSourceRows(q2CitPreparation);
-      const q2ProfitSourceItem = q2CitPreparation.items.find((item) => item.type === '利润数据确认');
+      const q2ProfitSourceItem = q2CitPreparation.items.find((item) => item.type === '利润数据同步');
+      const q2AdjustmentItem = q2CitPreparation.items.find((item) => item.type === '纳税调整测算');
 
       assertEqual(q2CitPreparation.citSummary?.smallLowProfitEligible, true, 'Q2 CIT should be treated as small low-profit candidate');
       assertEqual(q2CitPreparation.citSummary?.effectiveTaxRate, taxPolicy.smallLowProfitEffectiveTaxRate, 'Q2 CIT should use configured effective prepayment estimate');
       assertEqual(q2CitPreparation.citSummary?.smallLowProfitTaxableIncomeLimit, taxPolicy.smallLowProfitTaxableIncomeLimit, 'Q2 CIT should use configured taxable income limit');
-      assertEqual(q2CitPreparation.citSummary?.estimatedCorporateIncomeTaxAmount, 815, 'Q2 CIT estimate should use taxable income times effective rate');
+      assertEqual(q2CitPreparation.citSummary?.cumulativeOperatingRevenueAmount, 100000, 'Q2 CIT should derive revenue from booked ledger entries');
+      assertEqual(q2CitPreparation.citSummary?.cumulativeOperatingCostAmount, 30000, 'Q2 CIT should derive operating cost from booked ledger entries');
+      assertEqual(q2CitPreparation.citSummary?.cumulativePayrollAndSocialInsuranceAmount, 20000, 'Q2 CIT should derive payroll expense from booked ledger entries');
+      assertEqual(q2CitPreparation.citSummary?.cumulativeProfitBeforeTaxAmount, 50000, 'Q2 CIT should derive year-to-date profit before income tax from the ledger');
+      assertEqual(q2CitPreparation.citSummary?.averageEmployeeCount, 1.5, 'Q2 CIT should use quarterly average employee counts from personnel dates');
+      assertEqual(q2CitPreparation.citSummary?.cumulativeTaxableIncomeAmount, 45500, 'Q2 CIT should calculate cumulative actual profit after adjustments and prior losses');
+      assertEqual(q2CitPreparation.citSummary?.cumulativeIncomeTaxPayableAmount, 2275, 'Q2 CIT should calculate cumulative income tax after small-low-profit relief');
+      assertEqual(q2CitPreparation.citSummary?.taxPaidYearToDateAmount, 500, 'Q2 CIT should consume paid Q1 tax matters');
+      assertEqual(q2CitPreparation.citSummary?.currentPeriodPayableAmount, 1775, 'Q2 CIT should deduct prior paid tax from cumulative payable tax');
       assertEqual(q2ProfitSourceItem?.status, '无需确认', 'Q2 CIT synced profit source should be read-only');
       assertDeepEqual(
         q2SourceRows.map((row) => [row.name, row.sourceModule, row.status]),
         [
-          ['经营收入', '经营数据', '已同步'],
-          ['成本费用', '经营数据', '已同步'],
-          ['薪酬社保', '薪酬社保', '已同步'],
-          ['纳税调整', '申报准备', '待确认'],
-          ['弥补亏损', '历史亏损台账', '待确认'],
-          ['小型微利资格', '税务口径', '待确认']
+          ['季度账务完整性', '期间结账', '已同步'],
+          ['以前季度申报', '税务办理', '已同步'],
+          ['本年累计营业收入', '利润表', '已同步'],
+          ['本年累计营业成本', '利润表', '已同步'],
+          ['本年累计利润总额', '利润表', '已同步'],
+          ['纳税调整', '申报准备', '已同步'],
+          ['弥补亏损', '历史亏损台账', '已同步'],
+          ['本年实际已缴税额', '税务办理', '已同步'],
+          ['小型微利资格', '税务口径', '已同步']
         ],
         'Q2 CIT source rows should separate finance, payroll, adjustment, loss, and policy sources'
       );
+      assertDeepEqual(
+        q2SourceRows.slice(0, 2).map((row) => [row.name, row.valueKind, row.unit]),
+        [
+          ['季度账务完整性', 'count', '张'],
+          ['以前季度申报', 'count', '个季度']
+        ],
+        'CIT readiness rows should preserve count semantics instead of formatting quantities as money'
+      );
+      assertEqual(q2SourceRows[2]?.valueKind, 'amount', 'CIT accounting amounts should keep money semantics');
+      assertEqual(q2SourceRows[0]?.displayValue, '无待记账', 'ready CIT accounting source should avoid a meaningless zero count');
+      assertEqual(q2SourceRows[1]?.displayValue, '申报连续', 'ready prior filings should show the business conclusion');
+      assertEqual(q2SourceRows.at(-1)?.displayValue, '符合', 'small low-profit source should show its qualification conclusion');
+      assertEqual(
+        getPreparationItemCheckResult(q2AdjustmentItem!).summary,
+        '净调增 500.00 元',
+        'CIT adjustment result should lead with its concise conclusion'
+      );
+      assertEqual(
+        getCorporateIncomeTaxSourceCheckResult(q2SourceRows[0]!).summary,
+        '账务期间完整',
+        'ready CIT source should lead with its business conclusion'
+      );
+      assertEqual(
+        getCorporateIncomeTaxSourceCheckResult(q2SourceRows.at(-1)!).summary,
+        '符合小型微利企业条件',
+        'qualification source should not lead with a long policy explanation'
+      );
+      assertEqual(
+        q2SourceRows.some((row) => row.name === '职工薪酬附报'),
+        false,
+        'quarterly CIT source details should not expose annual payroll reporting'
+      );
       assertEqual(q2Progress.processedCount, 0, 'Q2 CIT should not count synced profit source as a manual confirmation');
-      assertEqual(q2Progress.pendingCount, 3, 'Q2 CIT should still require adjustment, eligibility, and prepayment-basis confirmation');
-      assertEqual(q1CitPreparation.citSummary?.estimatedCorporateIncomeTaxAmount, 500, 'Q1 completed CIT fixture should align with small low-profit estimate');
+      assertEqual(q2Progress.pendingCount, 0, 'Q2 CIT should expose calculations for one final preparation confirmation');
+      assertEqual(isDeclarationPreparationReady(q2CitPreparation), true, 'Q2 CIT should be ready for the single final confirmation when source facts are complete');
+      assertEqual(q1CitPreparation.citSummary?.currentPeriodPayableAmount, 500, 'Q1 completed CIT fixture should align with small low-profit prepayment');
       assertEqual(q1Progress.pendingCount, 0, 'Q1 completed CIT fixture should not expose pending preparation items');
+    }
+  },
+  {
+    name: 'excludes unbooked vouchers from corporate income tax accounting sources',
+    run: () => {
+      const bookedVoucher = createBookedCorporateIncomeTaxSourceVoucher();
+      const source = buildCorporateIncomeTaxAccountingSource({
+        peopleRows: corporateIncomeTaxPeopleRows,
+        period: '2026-Q2',
+        voucherRows: [{ ...bookedVoucher, status: '待记账' }]
+      });
+
+      assertEqual(source?.cumulativeOperatingRevenueAmount, 0, 'unbooked revenue must not enter CIT preparation');
+      assertEqual(source?.cumulativeProfitBeforeTaxAmount, 0, 'unbooked profit must not enter CIT preparation');
+    }
+  },
+  {
+    name: 'blocks quarterly CIT confirmation until the quarter is closed and prior filings are continuous',
+    run: () => {
+      const voucherRows: AccountingVoucherRecord[] = [];
+      const accountingSource = buildCorporateIncomeTaxAccountingSource({
+        peopleRows: corporateIncomeTaxPeopleRows,
+        period: '2026-Q2',
+        voucherRows
+      });
+      const [preparation] = applyDeclarationPreparationSourceState(
+        financeDeclarationPreparationRecords.filter((record) => record.preparationNo === 'PREP-2026Q2-CIT'),
+        [],
+        [],
+        [],
+        [],
+        financeTaxMatterRecords.filter((record) => record.period !== '2026-Q1'),
+        [],
+        accountingSource ? { '2026-Q2': accountingSource } : {}
+      );
+
+      if (!preparation) {
+        throw new Error('missing Q2 CIT preparation fixture');
+      }
+
+      assertEqual(preparation.citSummary?.accountingSourceReady, false, 'unclosed quarter must not be treated as a complete accounting source');
+      assertDeepEqual(preparation.citSummary?.unclosedAccountingPeriods, ['2026-04', '2026-05', '2026-06'], 'all unclosed quarter months should remain visible');
+      assertDeepEqual(preparation.citSummary?.missingPriorQuarterPeriods, ['2026-Q1'], 'missing prior filing should be explicit');
+      assertEqual(getDeclarationPreparationProgress(preparation).pendingCount, 2, 'accounting and filing continuity should both block confirmation');
+      assertEqual(isDeclarationPreparationReady(preparation), false, 'an incomplete source that currently calculates to zero must not become a zero filing');
+    }
+  },
+  {
+    name: 'does not create another CIT payment when prior prepayments cover cumulative tax',
+    run: () => {
+      const q2Preparation = getCorporateIncomeTaxPreparationRows().find((record) => record.preparationNo === 'PREP-2026Q2-CIT');
+
+      if (!q2Preparation?.citSummary) {
+        throw new Error('missing Q2 CIT preparation fixture');
+      }
+
+      const recalculated = recalculateCorporateIncomeTaxSummary(q2Preparation.citSummary, 2500);
+
+      assertEqual(recalculated.cumulativeIncomeTaxPayableAmount, 2275, 'cumulative payable tax should remain unchanged');
+      assertEqual(recalculated.currentPeriodPayableAmount, 0, 'covered cumulative tax should produce zero current payment');
+      assertEqual(recalculated.overpaidTaxAmount, 225, 'excess prior prepayment should remain visible for filing treatment');
+    }
+  },
+  {
+    name: 'reopens confirmed CIT preparation when prior paid tax changes',
+    run: () => {
+      const q2Preparation = getCorporateIncomeTaxPreparationRows().find((record) => record.preparationNo === 'PREP-2026Q2-CIT');
+
+      if (!q2Preparation?.citSummary) {
+        throw new Error('missing Q2 CIT preparation fixture');
+      }
+
+      const [recalculated] = getCorporateIncomeTaxPreparationRows(
+        [
+          {
+            ...q2Preparation,
+            confirmedCitSummary: q2Preparation.citSummary,
+            confirmedSourceSnapshotKey: 'confirmed-before-prior-payment-change',
+            items: q2Preparation.items.map((item) => ({
+              ...item,
+              status: item.status === '无需确认' ? '无需确认' : '已确认'
+            })),
+            status: '可申报'
+          }
+        ]
+      );
+      const adjustmentItem = recalculated.items.find((item) => item.type === '纳税调整测算');
+      const basisItem = recalculated.items.find((item) => item.type === '预缴测算');
+
+      assertEqual(recalculated.status, '准备中', 'changed cumulative payment evidence should reopen preparation');
+      assertEqual(adjustmentItem?.status, '无需确认', 'tax adjustments should remain a read-only calculated result');
+      assertEqual(basisItem?.status, '无需确认', 'changed source facts should refresh the prepayment calculation without row-level reconfirmation');
     }
   },
   {
     name: 'uses shared VAT policy in declaration preparation measurement',
     run: () => {
       const vatPolicy = getActiveFinanceTaxPolicyProfile().vatDeclaration;
-      const preparationRows = applyDeclarationPreparationSourceState(financeDeclarationPreparationRecords, [], []);
+      const preparationRows = applyDeclarationPreparationSourceState(financeDeclarationPreparationRecords, [], [], []);
       const q2VatPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
 
       if (!q2VatPreparation) {
         throw new Error('missing VAT declaration preparation fixture');
       }
 
-      assertEqual(q2VatPreparation.vatSummary.quarterlyExemptionThreshold, vatPolicy.quarterlyExemptionThreshold, 'VAT preparation should use configured quarterly threshold');
-      assertEqual(q2VatPreparation.vatSummary.isBelowQuarterlyExemptionThreshold, true, 'empty Q2 VAT fixture should be below configured threshold');
+      assertEqual(q2VatPreparation.vatSummary.exemptionThreshold, getFinanceVatExemptionThreshold(vatPolicy), 'VAT preparation should use the configured period threshold');
+      assertEqual(q2VatPreparation.vatSummary.isBelowExemptionThreshold, true, 'empty Q2 VAT fixture should be below configured threshold');
       assertEqual(q2VatPreparation.items.some((item) => item.sourceModule === '税务口径'), false, 'VAT items should not duplicate tax policy as a manual source row');
+      assertEqual(q2VatPreparation.items.find((item) => item.type === '申报测算')?.status, '无需确认', 'VAT measurement should be reviewed through the single final confirmation instead of a row action');
+    }
+  },
+  {
+    name: 'separates a taxed later invoice from the prior exempt unbilled offset',
+    run: () => {
+      const preparationRows = applyDeclarationPreparationSourceState(
+        financeDeclarationPreparationRecords,
+        financeInvoiceRecords,
+        financeTransactionRecords,
+        financeReceivablePayableRecords,
+        financeInvoiceBusinessAllocations
+      );
+      const q2VatPreparation = preparationRows.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!q2VatPreparation) {
+        throw new Error('missing VAT declaration preparation fixture');
+      }
+
+      assertEqual(q2VatPreparation.vatSummary.taxOutcome, '混合口径', 'a 1% later invoice and exempt ordinary sales should remain separate filing treatments');
+      assertEqual(q2VatPreparation.vatSummary.estimatedVatAfterExemption, 9.9, 'the later 1% invoice should retain its output VAT after the prior exempt sales offset');
+      assertEqual(q2VatPreparation.vatSummary.estimatedSurcharge > 0, true, 'VAT payable should create the configured surcharge estimate');
+      assertEqual(q2VatPreparation.vatSummary.priorUnbilledOffsetNetAmount, 990.1, 'a later invoice linked to the original receivable should offset prior unbilled income');
+      assertEqual(
+        q2VatPreparation.vatSummary.exemptSalesAmount +
+          q2VatPreparation.vatSummary.reducedRateSalesAmount +
+          q2VatPreparation.vatSummary.legalRateSalesAmount,
+        q2VatPreparation.vatSummary.declaredNetSalesAmount,
+        'filing treatment lines should reconcile to declared sales'
+      );
+    }
+  },
+  {
+    name: 'derives unbilled taxable facts from confirmed receivables instead of cash receipts',
+    run: () => {
+      const preparation = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!preparation) {
+        throw new Error('missing Q2 VAT preparation fixture');
+      }
+
+      const candidates = getDeclarationPreparationUnbilledIncomeCandidates(
+        preparation,
+        financeInvoiceRecords,
+        financeReceivablePayableRecords,
+        financeInvoiceBusinessAllocations
+      );
+      const unpaidReceivable = candidates.find((candidate) => candidate.businessRecord.id === 'ar-202606-007');
+
+      assertEqual(Boolean(unpaidReceivable), true, 'an unpaid but confirmed receivable should still be an unbilled taxable fact');
+      assertEqual(unpaidReceivable?.businessRecord.settlementStatus, '未结清', 'cash settlement must not control VAT recognition');
+      assertEqual(unpaidReceivable?.taxBasisResolved, true, 'the receivable tax basis should be ready for automatic inclusion');
+      assertEqual(unpaidReceivable?.selectedForInclusion, true, 'a resolved system candidate should be selected by default');
+      assertEqual(unpaidReceivable?.status, '系统纳入', 'the default selection must be presented as a system result');
+    }
+  },
+  {
+    name: 'requires a reason when finance excludes a system-selected unbilled income candidate',
+    run: () => {
+      const source = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!source) {
+        throw new Error('missing Q2 VAT preparation fixture');
+      }
+
+      const pendingReasonRecord = {
+        ...source,
+        status: '准备中' as const,
+        unbilledIncomeExclusions: [{
+          businessRecordId: 'ar-202606-007',
+          excludedAt: '2026-06-30 15:00',
+          excludedBy: '李明'
+        }]
+      };
+      const pendingCandidate = getDeclarationPreparationUnbilledIncomeCandidates(
+        pendingReasonRecord,
+        financeInvoiceRecords,
+        financeReceivablePayableRecords,
+        financeInvoiceBusinessAllocations
+      ).find((candidate) => candidate.businessRecord.id === 'ar-202606-007');
+      const excludedRecord = {
+        ...pendingReasonRecord,
+        unbilledIncomeExclusions: [{
+          ...pendingReasonRecord.unbilledIncomeExclusions[0]!,
+          reason: '尚未发生纳税义务' as const
+        }]
+      };
+      const excludedCandidate = getDeclarationPreparationUnbilledIncomeCandidates(
+        excludedRecord,
+        financeInvoiceRecords,
+        financeReceivablePayableRecords,
+        financeInvoiceBusinessAllocations
+      ).find((candidate) => candidate.businessRecord.id === 'ar-202606-007');
+      const prepared = applyDeclarationPreparationSourceState(
+        [excludedRecord],
+        financeInvoiceRecords,
+        financeTransactionRecords,
+        financeReceivablePayableRecords,
+        financeInvoiceBusinessAllocations
+      )[0];
+
+      assertEqual(pendingCandidate?.status, '排除待说明', 'an unchecked candidate without a reason must remain blocked');
+      assertEqual(excludedCandidate?.status, '已排除', 'a supported reason should complete the exception review');
+      assertEqual(excludedCandidate?.includedInDeclaration, false, 'an explained exception must not enter the VAT calculation');
+      assertEqual(
+        prepared?.unbilledIncomeDeclarations?.some((fact) => fact.businessRecordId === 'ar-202606-007'),
+        false,
+        'the declaration snapshot must exclude the explained business record'
+      );
+    }
+  },
+  {
+    name: 'allows a zero declaration period without requiring a blue invoice',
+    run: () => {
+      const source = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!source) {
+        throw new Error('missing Q2 VAT preparation fixture');
+      }
+
+      const zeroPreparation = {
+        ...source,
+        id: 'declaration-prep-zero-vat',
+        period: '2026-Q3',
+        preparationNo: 'PREP-2026Q3-VAT'
+      };
+      const prepared = applyDeclarationPreparationSourceState([zeroPreparation], [], [], [])[0];
+      const outputItem = prepared?.items.find((item) => item.type === '销项发票核对');
+
+      assertEqual(outputItem?.status, '无需确认', 'a period without blue invoices should be a valid no-invoice state');
+      assertEqual(isDeclarationPreparationReady(prepared!), true, 'a zero declaration should be confirmable when no source issue remains');
+    }
+  },
+  {
+    name: 'uses the policy effective for the accounting period and keeps special-invoice sales taxable below the exemption threshold',
+    run: () => {
+      const policy = getFinanceTaxPolicyProfileForPeriod('2026-06');
+      const preparation = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!policy || !preparation) {
+        throw new Error('missing 2026 policy or VAT preparation fixture');
+      }
+
+      const specialInvoice: FinanceInvoiceRecord = {
+        accountingPeriod: '2026-06',
+        counterparty: '专票客户',
+        declarationPeriod: '2026-Q2',
+        declarationTreatment: '本期申报',
+        direction: '销项',
+        id: 'invoice-special-202606',
+        importedAt: '2026-06-21 18:00',
+        invoiceColor: '蓝票',
+        invoiceDate: '2026-06-21',
+        invoiceKind: '专用发票',
+        invoiceNo: 'SPECIAL-202606-001',
+        invoiceStatus: '正常',
+        salesCategory: '服务、不动产和无形资产',
+        netAmount: 200000,
+        sourceFile: '2026-06_销项专票.xlsx',
+        taxAmount: 2000,
+        taxExcludedAmount: 200000,
+        taxIncludedAmount: 202000,
+        taxRate: '1%',
+        taxableClassification: '普通应税交易',
+        totalAmount: 202000,
+        vatTreatment: '减按1%'
+      };
+      const prepared = applyDeclarationPreparationSourceState([preparation], [specialInvoice], [], [])[0];
+      const surcharge = getFinanceVatSurchargeSummary({ accountingPeriod: '2026-06', vatPayableAmount: 1000 });
+
+      assertEqual(policy.version, '2026.1', '2026 period should resolve the current effective policy version');
+      assertEqual(getFinanceTaxPolicyProfileForPeriod('2028-01'), undefined, 'periods outside the configured policy window must not silently reuse it');
+      assertEqual(
+        getFinanceVatDeclarationOutcome({
+          accountingPeriod: '2026-06',
+          taxableClassification: '普通应税交易',
+          taxableSalesAmount: 300001
+        }),
+        '减按1%',
+        'a threshold calculation must use the period-specific profile instead of a static page value'
+      );
+      assertEqual(
+        resolveFinanceVatInvoiceTreatment({
+          accountingPeriod: '2026-06',
+          direction: '销项',
+          taxRate: '3%',
+          taxableClassification: '普通应税交易'
+        }),
+        '按法定征收率',
+        'a special invoice issued at the legal rate should retain its legal-rate treatment'
+      );
+      assertEqual(prepared?.vatSummary.isBelowExemptionThreshold, true, 'special-invoice fixture should remain below the quarterly threshold');
+      assertEqual(prepared?.vatSummary.specialInvoiceSalesAmount, 200000, 'special invoice sales should be tracked separately');
+      assertEqual(prepared?.vatSummary.estimatedVatAfterExemption, 2000, 'ticketed special-invoice tax must not be overwritten to zero by the threshold');
+      assertEqual(surcharge.totalBeforeReduction, 120, 'Wuhan surcharge base should remain split at 7% + 3% + 2%');
+      assertEqual(surcharge.totalAfterReduction, 60, 'qualified small-scale tax matters should apply the 50% six-tax-and-two-fee reduction');
+    }
+  },
+  {
+    name: 'keeps an archived declaration result as historical evidence when local source facts later change',
+    run: () => {
+      const archivedPreparation = financeDeclarationPreparationRecords.find(
+        (record) => record.preparationNo === 'PREP-2026Q1-VAT'
+      );
+
+      if (!archivedPreparation) {
+        throw new Error('missing archived VAT declaration preparation fixture');
+      }
+
+      const prepared = applyDeclarationPreparationSourceState([archivedPreparation], [], [], [])[0];
+
+      assertEqual(prepared?.status, '已进入税务办理', 'archived declaration preparation must remain historical readback');
+      assertEqual(prepared?.vatSummary.appliedTaxRate, '按票面分项', 'archived declaration preparation must preserve its confirmed filing result');
     }
   },
   {
@@ -305,13 +936,13 @@ const tests: UnitTest[] = [
         ],
         'source items should point to social-insurance confirmation and verification result'
       );
-      assertEqual(readyMatter.processStatus, '可申报', 'fully confirmed employee rows should move tax matter to handling');
+      assertEqual(readyMatter.processStatus, '待申报', 'fully confirmed employee rows should move tax matter to handling');
       assertEqual(readyMatter.dataStatus, '已确认', 'fully confirmed employee rows should mark source data confirmed');
       assertEqual(completedMatter.payableAmount, 888, 'completed tax matters should not be silently recalculated');
     }
   },
   {
-    name: 'applies confirmed monthly salary results to personal income tax matters',
+    name: 'requires confirmed personal income tax preparation before tax handling',
     run: () => {
       const pendingMatter = createTaxMatter({
         matterNo: 'TAX-202606-IIT',
@@ -319,159 +950,592 @@ const tests: UnitTest[] = [
         sourceItems: [],
         title: '2026-06 个人所得税'
       });
-      const summary = buildPayrollIitTaxMatterSummary(
-        [
-          createSalaryReport(),
-          createSalaryReport({
-            personalIncomeTaxAmount: 72,
-            personalIncomeTaxRecords: [
-              {
-                amount: 72,
-                basicDeductionAmount: 5000,
-                cumulativeAdditionalDeductionAmount: 0,
-                cumulativeBasicDeductionAmount: 30000,
-                cumulativeIncomeAmount: 48000,
-                cumulativeOtherDeductionAmount: 0,
-                cumulativeSpecialDeductionAmount: 3600,
-                cumulativeTaxAmount: 432,
-                cumulativeTaxableIncomeAmount: 14400,
-                currentAdditionalDeductionAmount: 0,
-                currentIncomeAmount: 8000,
-                currentOtherDeductionAmount: 0,
-                currentSpecialDeductionAmount: 600,
-                currentTaxableIncomeAmount: 2400,
-                employeeName: '测试员工二',
-                employeeNo: 'EMP-002',
-                id: 'personal-tax-EMP-002-2026-06',
-                payrollMonth: '2026-06',
-                priorCumulativePeriod: '2026-05',
-                priorWithheldTaxAmount: 360,
-                quickDeductionAmount: 0,
-                reason: '薪酬明细累计预扣',
-                sourceModule: '薪酬明细',
-                sourceMonth: '2026-06',
-                taxRate: 0.03
-              }
-            ],
-            status: '待确认'
-          })
-        ],
-        '2026-06'
-      );
-      const waitingMatter = applyPayrollIitSummaryToTaxMatter(pendingMatter, [
-        createSalaryReport(),
-        createSalaryReport({ id: 'salary-report-002', status: '待确认' } as Partial<SalaryMonthlyReport>)
-      ]);
-      const readyMatter = applyPayrollIitSummaryToTaxMatter(pendingMatter, [
+      const secondTaxRecord = {
+        amount: 72,
+        basicDeductionAmount: 5000,
+        cumulativeAdditionalDeductionAmount: 0,
+        cumulativeBasicDeductionAmount: 30000,
+        cumulativeIncomeAmount: 48000,
+        cumulativeOtherDeductionAmount: 0,
+        cumulativeSpecialDeductionAmount: 3600,
+        cumulativeTaxAmount: 432,
+        cumulativeTaxableIncomeAmount: 14400,
+        currentAdditionalDeductionAmount: 0,
+        currentIncomeAmount: 8000,
+        currentOtherDeductionAmount: 0,
+        currentSpecialDeductionAmount: 600,
+        currentTaxableIncomeAmount: 2400,
+        employeeName: '测试员工二',
+        employeeNo: 'EMP-002',
+        id: 'personal-tax-EMP-002-2026-06',
+        payrollMonth: '2026-06',
+        priorCumulativePeriod: '2026-05',
+        priorWithheldTaxAmount: 360,
+        quickDeductionAmount: 0,
+        reason: '薪酬明细累计预扣',
+        sourceModule: '薪酬明细' as const,
+        sourceMonth: '2026-06',
+        taxRate: 0.03
+      };
+      const salaryReports = [
         createSalaryReport(),
         createSalaryReport({
+          id: 'salary-report-002',
+          member: { id: 'EMP-002', name: '测试员工二', position: '空间设计师' } as SalaryMonthlyReport['member'],
           personalIncomeTaxAmount: 72,
-          personalIncomeTaxRecords: [
-            {
-              amount: 72,
-              basicDeductionAmount: 5000,
-              cumulativeAdditionalDeductionAmount: 0,
-              cumulativeBasicDeductionAmount: 30000,
-              cumulativeIncomeAmount: 48000,
-              cumulativeOtherDeductionAmount: 0,
-              cumulativeSpecialDeductionAmount: 3600,
-              cumulativeTaxAmount: 432,
-              cumulativeTaxableIncomeAmount: 14400,
-              currentAdditionalDeductionAmount: 0,
-              currentIncomeAmount: 8000,
-              currentOtherDeductionAmount: 0,
-              currentSpecialDeductionAmount: 600,
-              currentTaxableIncomeAmount: 2400,
-              employeeName: '测试员工二',
-              employeeNo: 'EMP-002',
-              id: 'personal-tax-EMP-002-2026-06',
-              payrollMonth: '2026-06',
-              priorCumulativePeriod: '2026-05',
-              priorWithheldTaxAmount: 360,
-              quickDeductionAmount: 0,
-              reason: '薪酬明细累计预扣',
-              sourceModule: '薪酬明细',
-              sourceMonth: '2026-06',
-              taxRate: 0.03
-            }
-          ],
-          status: '已结算'
+          personalIncomeTaxRecords: [secondTaxRecord],
+          status: '已确认'
+        } as Partial<SalaryMonthlyReport>)
+      ];
+      const readyPayments = salaryReports.map((report) => createSalaryPaymentRecordForTest(report));
+      const salaryFinanceRows = readyPayments.map(
+        (payment, index): FinanceTransactionRecord => ({
+          ...financeTransactionRecords[0],
+          amount: payment.settlementSnapshot.employeeNetPayableAmount,
+          id: `finance-salary-test-${index + 1}`,
+          occurredAt: payment.paidAt.slice(0, 10),
+          sourceNo: payment.payrollNo,
+          sourceType: '薪酬发放',
+          status: '已入账',
+          transactionNo: payment.financeTransactionNo ?? `FIN-TEST-${index + 1}`
         })
-      ]);
-      const currentCompletedMatter = applyPayrollIitSummaryToTaxMatter(
-        createTaxMatter({
-          matterNo: 'TAX-202606-IIT',
-          matterType: '个人所得税',
-          paidAmount: 387,
-          payableAmount: 387,
-          paymentStatus: '已缴纳',
-          processStatus: '已完成',
-          sourceItems: [],
-          title: '2026-06 个人所得税'
-        }),
-        [
-          createSalaryReport(),
-          createSalaryReport({ id: 'salary-report-002', status: '待确认' } as Partial<SalaryMonthlyReport>)
-        ]
       );
-      const historicalCompletedMatter = applyPayrollIitSummaryToTaxMatter(
-        createTaxMatter({
-          matterNo: 'TAX-202605-IIT',
-          matterType: '个人所得税',
-          paidAmount: 288,
-          payableAmount: 288,
-          period: '2026-05',
-          processStatus: '已完成',
-          title: '2026-05 个人所得税'
-        }),
-        []
+      const sourceChangedPayments = readyPayments.map((payment) =>
+        payment.employeeNo === 'EMP-002'
+          ? {
+              ...payment,
+              settlementSnapshot: {
+                ...payment.settlementSnapshot,
+                withheldPersonalIncomeTaxAmount:
+                  payment.settlementSnapshot.withheldPersonalIncomeTaxAmount + 1
+              }
+            }
+          : payment
       );
-      const employeeRows = buildPayrollIitTaxMatterEmployeeRows(
-        [
-          createSalaryReport(),
-          createSalaryReport({
-            id: 'salary-report-002',
-            member: { id: 'EMP-002', name: '测试员工二', position: '空间设计师' } as SalaryMonthlyReport['member'],
-            personalIncomeTaxAmount: 72,
-            status: '待确认'
-          } as Partial<SalaryMonthlyReport>)
-        ],
-        '2026-06'
+      const summary = buildPayrollIitDeclarationSummary(readyPayments, '2026-06', salaryFinanceRows);
+      const employeeRows = buildPayrollIitDeclarationEmployeeRows(readyPayments, '2026-06', salaryFinanceRows);
+      const seedPreparation = financeDeclarationPreparationRecords.find(
+        (record) => record.preparationNo === 'PREP-202606-IIT'
       );
 
-      assertEqual(summary.sourceStatus, '待复核', 'pending salary reports should keep IIT source under review');
-      assertEqual(summary.participantSummary, '1/2 人', 'IIT participant summary should expose confirmed salary progress');
-      assertEqual(summary.payableAmount, 0, 'IIT payable amount should not expose partial salary confirmation result');
-      assertEqual(waitingMatter.processStatus, '数据待确认', 'unconfirmed salary should keep IIT matter pending confirmation');
-      assertEqual(waitingMatter.payableAmount, 0, 'pending IIT matter should not carry a partial payable amount');
-      assertEqual(readyMatter.payableAmount, 387, 'IIT matter should sum derived tax from confirmed monthly salary reports');
-      assertEqual(readyMatter.processStatus, '可申报', 'confirmed salary reports should move IIT matter to handling');
-      assertEqual(currentCompletedMatter.processStatus, '数据待确认', 'current completed IIT matter should reopen when salary source becomes unconfirmed');
-      assertEqual(currentCompletedMatter.paidAmount, 0, 'current reopened IIT matter should clear paid amount before handling');
-      assertEqual(historicalCompletedMatter.processStatus, '已完成', 'historical completed IIT matter should remain archived');
+      if (!seedPreparation) {
+        throw new Error('missing IIT declaration preparation seed');
+      }
+
+      const pendingPreparation = applyDeclarationPreparationSourceState(
+        [seedPreparation], [], [], [], [], [], []
+      )[0];
+      const derivedReadyPreparation = applyDeclarationPreparationSourceState(
+        [seedPreparation], [], salaryFinanceRows, [], [], [], readyPayments
+      )[0];
+
+      if (!pendingPreparation || !derivedReadyPreparation) {
+        throw new Error('missing derived IIT declaration preparation');
+      }
+
+      const confirmedPreparation = {
+        ...derivedReadyPreparation,
+        confirmedIitEmployeeRows: derivedReadyPreparation.iitEmployeeRows,
+        confirmedIitSummary: derivedReadyPreparation.iitSummary,
+        confirmedSourceSnapshotKey: derivedReadyPreparation.sourceSnapshotKey,
+        items: derivedReadyPreparation.items,
+        status: '可申报' as const
+      };
+      const waitingMatter = applyDeclarationPreparationToTaxMatter(pendingMatter, [pendingPreparation]);
+      const readyMatter = applyDeclarationPreparationToTaxMatter(pendingMatter, [confirmedPreparation]);
+      const sourceChangedPreparation = applyDeclarationPreparationSourceState(
+        [confirmedPreparation], [], salaryFinanceRows, [], [], [], sourceChangedPayments
+      )[0];
+      const identityChangedPreparation = applyDeclarationPreparationSourceState(
+        [confirmedPreparation],
+        [],
+        salaryFinanceRows,
+        [],
+        [],
+        [],
+        readyPayments.map((payment) =>
+          payment.employeeNo === 'EMP-002'
+            ? { ...payment, identityNo: '420102199202022222' }
+            : payment
+        )
+      )[0];
+      const sourceChangedMatter = applyDeclarationPreparationToTaxMatter(
+        pendingMatter,
+        sourceChangedPreparation ? [sourceChangedPreparation] : []
+      );
+
+      assertEqual(summary.sourceStatus, '已确认', 'actual salary payments should release IIT preparation');
+      assertEqual(summary.participantSummary, '2/2 人', 'IIT preparation should expose paid salary records');
+      assertEqual(summary.payableAmount, 387, 'IIT preparation should total frozen withholding from actual payments');
+      assertEqual(waitingMatter.processStatus, '数据待确认', 'tax handling should wait for confirmed IIT preparation');
+      assertEqual(waitingMatter.payableAmount, 0, 'tax handling must not consume a partial preparation amount');
+      assertEqual(readyMatter.payableAmount, 387, 'confirmed IIT preparation should supply the filing amount');
+      assertEqual(readyMatter.processStatus, '待申报', 'confirmed IIT preparation should release tax handling');
+      assertEqual(sourceChangedPreparation?.status, '准备中', 'salary source changes should reopen IIT preparation');
+      assertEqual(identityChangedPreparation?.status, '准备中', 'identity changes should reopen IIT preparation before filing');
+      assertEqual(sourceChangedMatter.processStatus, '数据待确认', 'reopened IIT preparation should block tax handling again');
       assertDeepEqual(
-        employeeRows.map((row) => [row.employeeNo, row.salaryStatus, row.includedInFiling, row.personalIncomeTaxAmount]),
+        employeeRows.map((row) => [row.employeeNo, row.paymentStatus, row.payrollMonth, row.includedInFiling, row.personalIncomeTaxAmount]),
         [
-          ['EMP-001', '已确认', true, 315],
-          ['EMP-002', '待确认', false, 0]
+          ['EMP-001', '已核验', '2026-05', true, 315],
+          ['EMP-002', '已核验', '2026-05', true, 72]
         ],
-        'IIT employee rows should mark only confirmed salary reports as filing sources'
+        'IIT preparation employees should consume only frozen actual-payment records'
       );
       assertDeepEqual(
         readyMatter.sourceItems.map((item) => [item.name, item.sourceModule, item.status]),
-        [
-          ['薪酬明细', '薪酬明细', '已确认'],
-          ['工资薪金个税表', '自然人电子税务局', '待准备']
-        ],
-        'IIT source items should point to monthly salary and natural person tax filing'
+        [['办理依据', '申报准备', '已确认']],
+        'IIT tax handling should consume only the confirmed preparation result'
       );
+    }
+  },
+  {
+    name: 'generates monthly IIT preparation and handling records from a new actual payment period',
+    run: () => {
+      const payment = createSalaryPaymentRecordForTest(createSalaryReport(), {
+        paidAt: '2026-07-15 10:30',
+        taxPeriod: '2026-07'
+      });
+      const preparations = ensurePayrollIitDeclarationPreparationRecords([], [payment]);
+      const matters = ensurePayrollIitTaxMatterRecords([], preparations);
+
+      assertEqual(preparations.length, 1, 'a new actual payment period should generate one IIT preparation record');
+      assertEqual(preparations[0]?.period, '2026-07', 'the generated preparation should use the actual payment month');
+      assertEqual(matters.length, 1, 'the generated preparation should create one tax handling matter');
+      assertEqual(matters[0]?.declarationDueDate, '2026-08-15', 'the handling matter should use the next-month due date');
+      assertEqual(matters[0]?.processStatus, '数据待确认', 'a generated matter should wait for preparation confirmation');
+    }
+  },
+  {
+    name: 'NP-14 reopens a confirmed IIT preparation after a posted labor payment reversal',
+    run: () => {
+      const seedPreparation = financeDeclarationPreparationRecords.find(
+        (record) => record.preparationNo === 'PREP-202606-IIT'
+      );
+      const laborSeed = financeTransactionRecords.find(
+        (record) => record.naturalPersonPayment?.incomeType === '劳务报酬'
+      );
+
+      if (!seedPreparation || !laborSeed) {
+        throw new Error('missing IIT preparation or labor payment seed');
+      }
+
+      const postedLabor = {
+        ...laborSeed,
+        files: [
+          {
+            id: 'labor-posted-proof',
+            name: '劳务付款回单.pdf',
+            status: '已上传' as const,
+            type: '付款回单',
+            updatedAt: '2026-06-18'
+          }
+        ],
+        status: '已入账' as const,
+        voucherStatus: '已上传' as const
+      };
+      const readyPreparation = applyDeclarationPreparationSourceState(
+        [seedPreparation], [], [postedLabor]
+      )[0];
+
+      if (!readyPreparation) {
+        throw new Error('missing derived labor IIT preparation');
+      }
+
+      const confirmedPreparation = {
+        ...readyPreparation,
+        confirmedIitEmployeeRows: readyPreparation.iitEmployeeRows,
+        confirmedIitSummary: readyPreparation.iitSummary,
+        confirmedSourceSnapshotKey: readyPreparation.sourceSnapshotKey,
+        status: '可申报' as const
+      };
+      const postedReversal: FinanceTransactionRecord = {
+        ...postedLabor,
+        adjustmentContext: {
+          mode: '冲正',
+          originTransactionNo: postedLabor.transactionNo,
+          reason: '劳务付款冲正'
+        },
+        id: 'labor-posted-reversal',
+        naturalPersonPayment: undefined,
+        sourceType: '流水冲正',
+        transactionNo: 'FIN-LABOR-REVERSAL-001'
+      };
+      const reopenedPreparation = applyDeclarationPreparationSourceState(
+        [confirmedPreparation], [], [postedLabor, postedReversal]
+      )[0];
+
+      assertEqual(readyPreparation.iitSummary?.payableAmount, 480, 'posted labor should enter IIT preparation at withheld amount');
+      assertEqual(reopenedPreparation?.status, '准备中', 'posted reversal should invalidate a confirmed IIT snapshot');
+      assertEqual(reopenedPreparation?.iitSummary?.reportCount, 0, 'reversed labor should no longer remain in filing participants');
+    }
+  },
+  {
+    name: 'NP-15 preserves the filed labor snapshot and opens the existing declaration correction path',
+    run: () => {
+      const seedPreparation = financeDeclarationPreparationRecords.find(
+        (record) => record.preparationNo === 'PREP-202606-IIT'
+      );
+      const laborSeed = financeTransactionRecords.find(
+        (record) => record.naturalPersonPayment?.incomeType === '劳务报酬'
+      );
+
+      if (!seedPreparation || !laborSeed) {
+        throw new Error('missing IIT preparation or labor payment seed');
+      }
+
+      const postedLabor = {
+        ...laborSeed,
+        status: '已入账' as const,
+        voucherStatus: '已上传' as const
+      };
+      const readyPreparation = applyDeclarationPreparationSourceState(
+        [seedPreparation], [], [postedLabor]
+      )[0];
+
+      if (!readyPreparation) {
+        throw new Error('missing filed labor IIT preparation');
+      }
+
+      const filedPreparation = {
+        ...readyPreparation,
+        confirmedIitEmployeeRows: readyPreparation.iitEmployeeRows,
+        confirmedIitSummary: readyPreparation.iitSummary,
+        confirmedSourceSnapshotKey: readyPreparation.sourceSnapshotKey,
+        status: '已进入税务办理' as const
+      };
+      const postedReversal: FinanceTransactionRecord = {
+        ...postedLabor,
+        adjustmentContext: {
+          mode: '冲正',
+          originTransactionNo: postedLabor.transactionNo,
+          reason: '申报后劳务付款冲正'
+        },
+        id: 'labor-filed-reversal',
+        naturalPersonPayment: undefined,
+        sourceType: '流水冲正',
+        transactionNo: 'FIN-LABOR-FILED-REVERSAL-001'
+      };
+      const preservedPreparation = applyDeclarationPreparationSourceState(
+        [filedPreparation], [], [postedLabor, postedReversal]
+      )[0];
+      const filedMatter = createTaxMatter({
+        dataStatus: '已确认',
+        declarationDate: '2026-07-10',
+        declarationReceiptNo: 'IIT-202606-001',
+        declarationStatus: '申报成功',
+        declarationVersion: 1,
+        matterType: '个人所得税',
+        paidAmount: 480,
+        payableAmount: 480,
+        paymentStatus: '已缴纳',
+        processStatus: '已完成'
+      });
+      const revision = startTaxMatterDeclarationRevision(filedMatter, '更正', '劳务付款冲正后更正申报');
+
+      assertEqual(preservedPreparation?.status, '已进入税务办理', 'filed preparation must remain immutable after source reversal');
+      assertEqual(preservedPreparation?.iitSummary?.payableAmount, 480, 'filed preparation must retain the original declared labor amount');
+      assertEqual(revision.declarationVersion, 2, 'post-filing reversal should use the existing correction version path');
+      assertEqual(revision.declarationHistory[0]?.filedPayableAmount, 480, 'correction history must retain the original official amount');
+    }
+  },
+  {
+    name: 'preserves a finalized historical declaration source snapshot when preparation history is unavailable',
+    run: () => {
+      const historicalMatter = createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '零申报',
+        matterType: '增值税及附加',
+        sourceItems: [
+          {
+            id: 'historical-preparation-source',
+            name: '办理依据',
+            sourceModule: '申报准备',
+            status: '已确认',
+            updatedAt: '2026-01-15'
+          }
+        ]
+      });
+
+      const result = applyDeclarationPreparationToTaxMatter(historicalMatter, []);
+
+      assertEqual(result.sourceItems[0]?.status, '已确认', 'finalized historical declarations must keep their source snapshot');
+      assertEqual(result.dataStatus, '已确认', 'missing historical preparation data must not reopen an official declaration');
+    }
+  },
+  {
+    name: 'records official declaration results without overwriting the prepared estimate',
+    run: () => {
+      const source = createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '待申报',
+        matterType: '企业所得税',
+        payableAmount: 5462.99,
+        preparedPayableAmount: 5462.99,
+        paymentStatus: '待缴纳',
+        processStatus: '待申报'
+      });
+      const receipt = {
+        id: 'cit-declaration-receipt',
+        name: '企业所得税季度预缴申报回执.pdf',
+        status: '已上传' as const,
+        type: '申报回执',
+        updatedAt: '2026-07-12'
+      };
+      const result = recordTaxMatterDeclarationResult(source, {
+        declarationDate: '2026-07-12',
+        declarationReceiptFile: receipt,
+        declarationReceiptNo: 'CIT-2026Q2-001',
+        declarationStatus: '申报成功',
+        differenceReason: '电子税务局核定金额与系统测算存在尾差',
+        settlementAmount: 5463,
+        settlementDirection: '应缴'
+      });
+
+      assertEqual(result.preparedPayableAmount, 5462.99, 'prepared estimate should remain as the comparison baseline');
+      assertEqual(result.payableAmount, 5463, 'official payable amount should become the payment basis');
+      assertEqual(result.declarationReceiptFileId, receipt.id, 'declaration result should reference its receipt');
+      assertEqual(result.processStatus, '待缴款', 'declared payable matter should move to payment');
+      assertEqual(result.declarationDifferenceReason, '电子税务局核定金额与系统测算存在尾差', 'official difference should remain auditable');
+    }
+  },
+  {
+    name: 'supplements declaration evidence without rewriting the official filing result',
+    run: () => {
+      const declared = recordTaxMatterDeclarationResult(createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '待申报',
+        matterType: '企业所得税',
+        preparedPayableAmount: 0,
+        processStatus: '待申报'
+      }), {
+        declarationDate: '2026-07-12',
+        declarationStatus: '零申报',
+        settlementAmount: 0,
+        settlementDirection: '无需补退'
+      });
+      const result = supplementTaxMatterDeclarationReceipt(declared, {
+        declarationReceiptNo: 'CIT-ZERO-2026Q2-001'
+      });
+
+      assertEqual(declared.processStatus, '待补回执', 'official filing without evidence should remain pending evidence');
+      assertEqual(result.processStatus, '已完成', 'supplemented evidence should complete a zero filing');
+      assertEqual(result.declarationStatus, declared.declarationStatus, 'supplementing evidence must not change filing status');
+      assertEqual(result.payableAmount, declared.payableAmount, 'supplementing evidence must not change payable amount');
+      assertEqual(result.settlementDirection, declared.settlementDirection, 'supplementing evidence must not change settlement direction');
+      assertEqual(result.operationRecords[0]?.action, '补充申报回执', 'evidence supplement should be independently auditable');
+    }
+  },
+  {
+    name: 'keeps zero filing as a declared result rather than inferring it from amount alone',
+    run: () => {
+      const source = createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '待申报',
+        matterType: '增值税及附加',
+        preparedPayableAmount: 0,
+        processStatus: '待申报'
+      });
+      const result = recordTaxMatterDeclarationResult(source, {
+        declarationDate: '2026-07-12',
+        declarationReceiptFile: {
+          id: 'vat-zero-receipt',
+          name: '增值税零申报回执.pdf',
+          status: '已上传',
+          type: '申报回执',
+          updatedAt: '2026-07-12'
+        },
+        declarationStatus: '零申报',
+        settlementAmount: 0,
+        settlementDirection: '无需补退'
+      });
+
+      assertEqual(result.declarationStatus, '零申报', 'zero filing should be an explicit official result');
+      assertEqual(result.paymentStatus, '无需缴纳', 'zero filing should not create a payment task');
+      assertEqual(result.processStatus, '已完成', 'zero filing with receipt should complete handling');
+    }
+  },
+  {
+    name: 'tracks a tax refund in installments until the official refund is received',
+    run: () => {
+      const declared = recordTaxMatterDeclarationResult(createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '待申报',
+        matterType: '企业所得税',
+        processStatus: '待申报'
+      }), {
+        declarationDate: '2026-07-12',
+        declarationReceiptNo: 'CIT-REFUND-001',
+        declarationStatus: '申报成功',
+        settlementAmount: 500,
+        settlementDirection: '应退'
+      });
+      const firstRefund = recordTaxMatterRefundResult(declared, {
+        amount: 200,
+        receiptFile: {
+          id: 'cit-refund-receipt-1',
+          name: '企业所得税退税回单-1.pdf',
+          status: '已上传',
+          type: '退税回单',
+          updatedAt: '2026-07-12'
+        },
+        refundDate: '2026-07-12'
+      });
+      const finalRefund = recordTaxMatterRefundResult(firstRefund, {
+        amount: 300,
+        receiptFile: {
+          id: 'cit-refund-receipt-2',
+          name: '企业所得税退税回单-2.pdf',
+          status: '已上传',
+          type: '退税回单',
+          updatedAt: '2026-07-13'
+        },
+        refundDate: '2026-07-13'
+      });
+
+      assertEqual(declared.processStatus, '待退税', 'official refund result should become a refund task');
+      assertEqual(firstRefund.processStatus, '部分退税', 'partial refund should remain actionable');
+      assertEqual(getTaxMatterRefundOutstandingAmount(firstRefund), 300, 'remaining refund should be derived');
+      assertEqual(finalRefund.processStatus, '已完成', 'full refund should complete the matter');
+    }
+  },
+  {
+    name: 'rejects IIT declaration totals that are detached from confirmed person-level details',
+    run: () => {
+      const iitMatter = createTaxMatter({
+        dataStatus: '已确认',
+        matterType: '个人所得税',
+        payableAmount: 0,
+        preparedPayableAmount: 480,
+        processStatus: '待申报'
+      });
+      const mismatchedInput = {
+        declarationDate: '2026-07-10',
+        declarationReceiptNo: 'IIT-202606-001',
+        declarationStatus: '申报成功' as const,
+        settlementAmount: 500,
+        settlementDirection: '应缴' as const
+      };
+
+      assertEqual(
+        getTaxMatterDeclarationResultValidationError(iitMatter, mismatchedInput),
+        '个人所得税申报金额与人员明细不一致，请先更正工资或劳务来源',
+        'IIT filing must not replace employee-level withholding with an arbitrary official total'
+      );
+      assertEqual(
+        recordTaxMatterDeclarationResult(iitMatter, mismatchedInput),
+        iitMatter,
+        'invalid IIT declaration result must leave the tax matter unchanged'
+      );
+      assertEqual(
+        getTaxMatterDeclarationResultValidationError(iitMatter, {
+          ...mismatchedInput,
+          settlementAmount: 480
+        }),
+        undefined,
+        'IIT filing should accept the total derived from confirmed person-level details'
+      );
+    }
+  },
+  {
+    name: 'supports multiple payment registrations until the official payable amount is fully paid',
+    run: () => {
+      const declared = createTaxMatter({
+        dataStatus: '已确认',
+        declarationReceiptFileId: 'cit-declaration-receipt',
+        declarationStatus: '申报成功',
+        matterType: '企业所得税',
+        payableAmount: 1000,
+        preparedPayableAmount: 1000,
+        paymentStatus: '待缴纳',
+        processStatus: '待缴款'
+      });
+      const firstPayment = recordTaxMatterPaymentResult(declared, {
+        amount: 400,
+        paymentDate: '2026-07-12',
+        receiptFile: {
+          id: 'cit-payment-receipt-1',
+          name: '企业所得税缴款回单-1.pdf',
+          status: '已上传',
+          type: '缴款回单',
+          updatedAt: '2026-07-12'
+        }
+      });
+      const finalPayment = recordTaxMatterPaymentResult(firstPayment, {
+        amount: 600,
+        paymentDate: '2026-07-13',
+        receiptFile: {
+          id: 'cit-payment-receipt-2',
+          name: '企业所得税缴款回单-2.pdf',
+          status: '已上传',
+          type: '缴款回单',
+          updatedAt: '2026-07-13'
+        }
+      });
+
+      assertEqual(firstPayment.paidAmount, 400, 'first payment should accumulate paid amount');
+      assertEqual(firstPayment.processStatus, '部分缴纳', 'first partial payment should remain actionable');
+      assertEqual(getTaxMatterOutstandingAmount(firstPayment), 600, 'outstanding amount should be derived from official payable less paid');
+      assertEqual(finalPayment.paidAmount, 1000, 'final payment should accumulate all registrations');
+      assertEqual(finalPayment.processStatus, '已完成', 'full payment with declaration evidence should complete handling');
+    }
+  },
+  {
+    name: 'preserves the prior declaration version when a correction starts',
+    run: () => {
+      const declared = createTaxMatter({
+        dataStatus: '已确认',
+        declarationDate: '2026-07-12',
+        declarationReceiptFileId: 'cit-declaration-receipt',
+        declarationReceiptNo: 'CIT-2026Q2-001',
+        declarationStatus: '申报成功',
+        declarationVersion: 1,
+        matterType: '企业所得税',
+        payableAmount: 1000,
+        preparedPayableAmount: 980,
+        paymentStatus: '待缴纳',
+        processStatus: '待缴款'
+      });
+      const corrected = startTaxMatterDeclarationRevision(declared, '更正', '发现纳税调整项目遗漏');
+
+      assertEqual(corrected.declarationVersion, 2, 'correction should open a new declaration version');
+      assertEqual(corrected.declarationStatus, '待申报', 'new version should wait for an official declaration result');
+      assertEqual(corrected.payableAmount, 980, 'new version should return to the current prepared estimate');
+      assertEqual(corrected.declarationHistory.length, 1, 'previous declaration should remain in history');
+      assertEqual(corrected.declarationHistory[0]?.filedPayableAmount, 1000, 'history should retain the prior official amount');
+      assertEqual(corrected.declarationHistory[0]?.reason, '发现纳税调整项目遗漏', 'history should retain the correction reason');
+    }
+  },
+  {
+    name: 'derives declaration workflow independently from the closed accounting period',
+    run: () => {
+      const source = createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '申报成功',
+        declarationReceiptFileId: 'receipt',
+        matterType: '企业所得税',
+        paidAmount: 0,
+        payableAmount: 500
+      });
+
+      assertEqual(deriveTaxMatterProcessStatus(source), '待缴款', 'tax handling status should depend on filing and payment facts');
     }
   },
   {
     name: 'requires receipt files by tax matter type and payable amount',
     run: () => {
-      const payableCit = createTaxMatter({ matterType: '企业所得税', payableAmount: 815 });
-      const zeroVat = createTaxMatter({ matterType: '增值税及附加', payableAmount: 0 });
+      const payableCit = createTaxMatter({
+        declarationStatus: '申报成功',
+        matterType: '企业所得税',
+        payableAmount: 815,
+        paymentStatus: '已缴纳'
+      });
+      const zeroVat = createTaxMatter({
+        declarationStatus: '零申报',
+        matterType: '增值税及附加',
+        payableAmount: 0,
+        paymentStatus: '无需缴纳'
+      });
       const socialMatter = createTaxMatter({ matterType: '社保缴纳', payableAmount: 3075 });
       const onlyDeclarationReceipt = [
         {
@@ -533,8 +1597,9 @@ const tests: UnitTest[] = [
         linkedTransactionNos: [existingRow.transactionNo],
         paidAmount: 3075,
         payableAmount: 3075,
+        paymentDate: '2026-07-16',
         paymentStatus: '已缴纳',
-        processStatus: '待上传回执'
+        processStatus: '待补回执'
       });
       const transaction = buildTaxMatterPaymentTransaction({
         financeRows: [existingRow],
@@ -545,6 +1610,7 @@ const tests: UnitTest[] = [
 
       assertEqual(getTaxMatterLinkedPaymentAmount(matter, [existingRow]), 1000, 'linked amount should come from active finance rows');
       assertEqual(transaction?.amount, 2075, 'generated payment flow should only register unpaid delta');
+      assertEqual(transaction?.occurredAt, '2026-07-16', 'generated payment flow should use the actual payment date');
       assertEqual(transaction?.transactionNo, 'FIN-202607-0002', 'generated transaction number should follow accounting period sequence');
       assertEqual(transaction?.status, '待复核', 'generated payment flow should enter review instead of direct posting');
       assertEqual(transaction?.sourceNo, 'TAX-202606-SOCIAL', 'generated payment flow should keep tax matter source number');
@@ -562,6 +1628,154 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'builds each tax refund receipt as a separate pending-review income transaction',
+    run: () => {
+      const refundReceipt = {
+        id: 'tax-refund-receipt-1',
+        name: '企业所得税退税回单.pdf',
+        status: '已上传' as const,
+        type: '退税回单',
+        updatedAt: '2026-07-13'
+      };
+      const declaredMatter = createTaxMatter({
+        declarationStatus: '申报成功',
+        matterNo: 'TAX-2025-CIT-ANNUAL',
+        matterType: '企业所得税',
+        payableAmount: 0,
+        refundableAmount: 1200,
+        refundedAmount: 0,
+        refundStatus: '待退税',
+        settlementDirection: '应退',
+        title: '2025 年企业所得税年度汇算'
+      });
+      const refundedMatter = recordTaxMatterRefundResult(declaredMatter, {
+        amount: 500,
+        receiptFile: refundReceipt,
+        refundDate: '2026-07-13'
+      });
+      const transaction = buildTaxMatterRefundTransaction({
+        financeRows: [],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: refundedMatter,
+        refundAmount: 500,
+        refundDate: '2026-07-13',
+        refundReceiptFile: refundReceipt
+      });
+      const attachedMatter = attachTaxMatterRefundTransaction(refundedMatter, transaction);
+
+      assertEqual(transaction?.direction, '收入', 'tax refund should enter the receipt side of cash flow');
+      assertEqual(transaction?.category, '税费退还', 'tax refund should use a dedicated non-operating category');
+      assertEqual(transaction?.amount, 500, 'tax refund transaction should use the actual received amount');
+      assertEqual(transaction?.status, '待复核', 'tax refund should enter finance review before posting');
+      assertEqual(transaction?.sourceType, '税费事项', 'tax refund should retain the tax-matter source contract');
+      assertEqual(transaction?.voucherStatus, '已上传', 'tax refund transaction should carry its receipt');
+      assertEqual(
+        getTaxMatterLinkedRefundAmount(attachedMatter, transaction ? [transaction] : []),
+        500,
+        'linked refund amount should count receipt transactions only'
+      );
+      assertEqual(
+        getTaxMatterLinkedPaymentAmount(attachedMatter, transaction ? [transaction] : []),
+        0,
+        'refund receipts must not be counted as tax payments'
+      );
+      assertDeepEqual(
+        attachedMatter.linkedTransactionNos,
+        transaction ? [transaction.transactionNo] : [],
+        'tax matter should link the generated refund transaction'
+      );
+    }
+  },
+  {
+    name: 'keeps VAT and surcharge payment allocations aligned with the declaration settlement',
+    run: () => {
+      const sourceMatter = financeTaxMatterRecords.find((record) => record.matterNo === 'TAX-2026Q1-VAT');
+
+      if (!sourceMatter) {
+        throw new Error('expected VAT tax matter seed to exist');
+      }
+
+      const transaction = buildTaxMatterPaymentTransaction({
+        financeRows: [],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: { ...sourceMatter, linkedTransactionNos: [] }
+      });
+
+      assertEqual(transaction?.amount, 466.51, 'VAT payment flow should use the declared combined payable amount');
+      assertDeepEqual(
+        transaction?.taxPaymentAllocations,
+        [
+          { amount: 440.1, subjectCode: '2221.01', taxType: '增值税' },
+          { amount: 15.41, subjectCode: '2221.04', taxType: '城市维护建设税' },
+          { amount: 6.6, subjectCode: '2221.06', taxType: '教育费附加' },
+          { amount: 4.4, subjectCode: '2221.07', taxType: '地方教育附加' }
+        ],
+        'VAT payment flow should retain the four liability-clearing allocations'
+      );
+    }
+  },
+  {
+    name: 'subtracts prior VAT payment allocations before generating a remaining payment flow',
+    run: () => {
+      const sourceMatter = financeTaxMatterRecords.find((record) => record.matterNo === 'TAX-2026Q1-VAT');
+
+      if (!sourceMatter) {
+        throw new Error('expected VAT tax matter seed to exist');
+      }
+
+      const priorPayment = createFinanceRow({
+        amount: 200,
+        sourceNo: sourceMatter.matterNo,
+        sourceTitle: sourceMatter.title,
+        sourceType: '税费事项',
+        taxPaymentAllocations: [
+          { amount: 180, subjectCode: '2221.01', taxType: '增值税' },
+          { amount: 10, subjectCode: '2221.04', taxType: '城市维护建设税' },
+          { amount: 6, subjectCode: '2221.06', taxType: '教育费附加' },
+          { amount: 4, subjectCode: '2221.07', taxType: '地方教育附加' }
+        ],
+        transactionNo: 'FIN-202604-0998'
+      });
+      const transaction = buildTaxMatterPaymentTransaction({
+        financeRows: [priorPayment],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: { ...sourceMatter, linkedTransactionNos: [priorPayment.transactionNo] }
+      });
+
+      assertEqual(transaction?.amount, 266.51, 'remaining VAT payment should exclude the prior linked payment');
+      assertDeepEqual(
+        transaction?.taxPaymentAllocations,
+        [
+          { amount: 260.1, subjectCode: '2221.01', taxType: '增值税' },
+          { amount: 5.41, subjectCode: '2221.04', taxType: '城市维护建设税' },
+          { amount: 0.6, subjectCode: '2221.06', taxType: '教育费附加' },
+          { amount: 0.4, subjectCode: '2221.07', taxType: '地方教育附加' }
+        ],
+        'remaining payment should carry only the unregistered liability allocations'
+      );
+    }
+  },
+  {
+    name: 'does not build tax payment transaction without actual payment date',
+    run: () => {
+      const matter = createTaxMatter({
+        declarationDate: '2026-07-15',
+        files: [{ id: 'tax-file-payment-date', name: '企业所得税缴款回单.pdf', status: '已上传', type: '缴款回单', updatedAt: '2026-07-15' }],
+        paidAmount: 815,
+        payableAmount: 815,
+        paymentStatus: '已缴纳'
+      });
+
+      const transaction = buildTaxMatterPaymentTransaction({
+        financeRows: [],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: matter
+      });
+
+      assertEqual(transaction, undefined, 'tax payment flow should require the actual payment date');
+    }
+  },
+  {
     name: 'does not build tax payment transaction before payment voucher exists',
     run: () => {
       const matter = createTaxMatter({
@@ -569,8 +1783,9 @@ const tests: UnitTest[] = [
         files: [{ id: 'tax-file-declaration', name: '企业所得税申报回执.pdf', status: '已上传', type: '申报回执', updatedAt: '2026-07-15' }],
         paidAmount: 815,
         payableAmount: 815,
+        paymentDate: '2026-07-15',
         paymentStatus: '已缴纳',
-        processStatus: '待上传回执'
+        processStatus: '待补回执'
       });
       const transaction = buildTaxMatterPaymentTransaction({
         financeRows: [],
@@ -580,25 +1795,58 @@ const tests: UnitTest[] = [
 
       assertEqual(transaction, undefined, 'tax payment flow should wait until payment voucher is available');
     }
+  },
+  {
+    name: 'derives a correction refund from the official result and historical net settlement',
+    run: () => {
+      const original = createTaxMatter({
+        dataStatus: '已确认',
+        declarationDate: '2026-04-15',
+        declarationReceiptNo: 'CIT-Q1-001',
+        declarationStatus: '申报成功',
+        matterType: '企业所得税',
+        paidAmount: 1000,
+        payableAmount: 1000,
+        paymentDate: '2026-04-15',
+        paymentStatus: '已缴纳',
+        processStatus: '已完成',
+        sourceItems: [{ id: 'cit-source', name: '申报准备', sourceModule: '申报准备', status: '已确认', updatedAt: '2026-04-15' }]
+      });
+      const revision = startTaxMatterDeclarationRevision(original, '更正', '年度调整后形成退税');
+      const corrected = recordTaxMatterDeclarationResult(revision, {
+        declarationDate: '2026-05-10',
+        declarationReceiptNo: 'CIT-Q1-REVISION-002',
+        declarationStatus: '申报成功',
+        settlementAmount: 200,
+        settlementDirection: '应退'
+      });
+
+      assertEqual(getTaxMatterRefundOutstandingAmount(corrected), 1200, 'refund should include the original overpayment and the corrected refundable amount');
+      assertEqual(corrected.processStatus, '待退税', 'corrected overpayment should enter the refund flow');
+    }
   }
 ];
 
 export function runFinanceTaxMatterModelTests() {
   const failures: string[] = [];
+  const passedTestNames: string[] = [];
   let passed = 0;
 
   for (const test of tests) {
     try {
       test.run();
       passed += 1;
+      passedTestNames.push(test.name);
     } catch (error) {
       failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   return {
+    executedTestNames: tests.map((test) => test.name),
     failures,
     passed,
+    passedTestNames,
     total: tests.length
   };
 }

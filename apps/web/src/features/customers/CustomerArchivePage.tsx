@@ -319,6 +319,7 @@ export function CustomerArchivePage() {
                 items={[
                   { label: '客户编号', value: activeCustomer.code },
                   { label: '所属行业', value: activeCustomer.industry },
+                  { label: '纳税人识别号', value: activeCustomer.taxpayerIdentificationNo },
                   {
                     label: '合作状态',
                     value: activeCustomerStatus ? <StatusTag toneMap={customerStatusTone} value={activeCustomerStatus} /> : '-'
@@ -369,6 +370,12 @@ export function CustomerArchivePage() {
             </DrawerFormField>
             <DrawerFormField label="所属行业" required>
               <Input value={customerForm.industry} onChange={(event) => updateCustomerForm('industry', event.target.value)} />
+            </DrawerFormField>
+            <DrawerFormField label="纳税人识别号" required>
+              <Input
+                value={customerForm.taxpayerIdentificationNo}
+                onChange={(event) => updateCustomerForm('taxpayerIdentificationNo', event.target.value)}
+              />
             </DrawerFormField>
             <DrawerFormField label="内部对接人" required>
               <Input value={customerForm.owner} onChange={(event) => updateCustomerForm('owner', event.target.value)} />

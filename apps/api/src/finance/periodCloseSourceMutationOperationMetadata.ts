@@ -61,38 +61,24 @@ export const financeSourceMutationOperationMetadata = [
     periodCheckMode: 'source_period'
   },
   {
-    accountingPeriodSource: '发票所属月份和被匹配业务源单归属月份',
-    closedPeriodBehavior: '闭期时不得确认发票匹配或回写应收应付税额依据。',
+    accountingPeriodSource: '发票所属月份和被关联应收应付归属月份',
+    closedPeriodBehavior: '闭期或已记账来源时不得调整发票关联。',
     closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '确认发票匹配',
+    operation: '保存发票关联',
     periodCheckMode: 'source_and_target_period'
   },
   {
-    accountingPeriodSource: '发票所属月份和原匹配业务源单归属月份',
-    closedPeriodBehavior: '闭期时不得撤销发票匹配或清除已作为税额依据的关联。',
+    accountingPeriodSource: '应收应付归属月份和关联发票所属月份',
+    closedPeriodBehavior: '闭期或已记账来源时不得调整发票关联。',
     closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '撤销发票匹配',
+    operation: '从应收应付关联发票',
     periodCheckMode: 'source_and_target_period'
   },
   {
-    accountingPeriodSource: '发票当前所属月份和目标归属月份',
-    closedPeriodBehavior: '闭期时不得把发票调入或调出已结账期间。',
-    closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '调整发票归属期间',
-    periodCheckMode: 'source_and_target_period'
-  },
-  {
-    accountingPeriodSource: '红票所属月份和原蓝票所属月份',
+    accountingPeriodSource: '红票所属月份、原蓝票所属月份和已有原票关系的历史月份',
     closedPeriodBehavior: '闭期时不得补建或改写红票原票关系。',
     closedPeriodPath: 'reject_then_later_period_adjustment',
     operation: '确认红票原票关系',
-    periodCheckMode: 'source_and_target_period'
-  },
-  {
-    accountingPeriodSource: '前期未开票业务归属月份和后续发票所属月份',
-    closedPeriodBehavior: '闭期时不得改写后续开票关系；只能形成后续期间调整事实。',
-    closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '确认后续开票',
     periodCheckMode: 'source_and_target_period'
   },
   {
@@ -213,27 +199,6 @@ export const financeSourceMutationOperationMetadata = [
     closedPeriodPath: 'reject_then_later_period_adjustment',
     operation: '确认申报准备项',
     periodCheckMode: 'source_period'
-  },
-  {
-    accountingPeriodSource: '未开票收入业务归属月份',
-    closedPeriodBehavior: '闭期时不得确认未开票收入申报口径。',
-    closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '确认未开票收入申报口径',
-    periodCheckMode: 'source_period'
-  },
-  {
-    accountingPeriodSource: '未开票收入业务归属月份',
-    closedPeriodBehavior: '闭期时不得把本期收入改为暂不申报。',
-    closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '确认本期暂不计入未开票收入',
-    periodCheckMode: 'source_period'
-  },
-  {
-    accountingPeriodSource: '前期未开票收入归属月份和后续发票所属月份',
-    closedPeriodBehavior: '闭期时不得改写前期未开票后续开票关系。',
-    closedPeriodPath: 'reject_then_later_period_adjustment',
-    operation: '确认前期未开票后续开票',
-    periodCheckMode: 'source_and_target_period'
   },
   {
     accountingPeriodSource: '申报准备结果所属会计月份',

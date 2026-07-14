@@ -48,12 +48,12 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     title: '生成应收应付'
   },
   {
-    currentEvidence: '发票台账导入、发票匹配、税额依据前端模型和本地契约矩阵',
+    currentEvidence: '发票台账导入、共享发票关联、税额依据前端模型和本地契约矩阵',
     currentEvidenceLevel: 'frontend_session',
     formalBackendGap: '缺真实发票导入解析、发票持久化、税额依据 API 和发票源文件证据',
     id: 'invoice-or-tax-basis',
     order: 2,
-    ownerModule: '发票台账 / 发票匹配 / 应收应付',
+    ownerModule: '发票台账 / 应收应付',
     ownerRoute: '/tax/invoices',
     title: '匹配或补充发票 / 税额依据'
   },
@@ -108,13 +108,13 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     title: '记账入总账'
   },
   {
-    currentEvidence: '薪酬社保、税务办理、会计凭证和后续调整事项已由各自来源模块进入期间结账检查',
+    currentEvidence: '月末事项、薪酬社保、税务办理、会计凭证和后续调整事项已由各自来源模块进入期间结账检查',
     currentEvidenceLevel: 'frontend_session',
     formalBackendGap: '缺后端来源状态汇总服务、来源到候选凭证的统一事实快照和跨模块闭期一致性校验',
     id: 'source-prerequisites-complete',
     order: 8,
-    ownerModule: '薪酬社保 / 税务办理 / 会计凭证',
-    ownerRoute: '/finance/accounting-vouchers',
+    ownerModule: '月末事项 / 薪酬社保 / 税务办理 / 会计凭证',
+    ownerRoute: '/finance/month-end',
     title: '完成来源事项'
   },
   {
@@ -149,7 +149,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
   },
   {
     currentEvidence:
-      '期间结账前端 read model 汇总八项检查并派生 canClose；本地 API gateway contract 可路由 close-checks；row-backed gateway contract 可通过请求形态提交结账锁，但未成为真实后端权威',
+      '期间结账前端 read model 汇总九项检查并派生 canClose；本地 API gateway contract 可路由 close-checks；row-backed gateway contract 可通过请求形态提交结账锁，但未成为真实后端权威',
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺后端 close-checks 唯一权威、监听 server、稳定快照 hash 和服务端 canClose',
     id: 'close-checks-passed',
@@ -159,11 +159,21 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     title: 'close-checks 全部通过'
   },
   {
+    currentEvidence: '期间结账模型从账套启用期间补齐至最新候选期间的连续月份，并以已结账锁校验直接前序期间；列表、详情和确认动作统一读取该结果',
+    currentEvidenceLevel: 'frontend_session',
+    formalBackendGap: '缺服务端连续期间锁校验、并发结账事务和历史锁顺序修复流程',
+    id: 'prior-period-closed',
+    order: 13,
+    ownerModule: '期间结账',
+    ownerRoute: '/finance/period-close',
+    title: '前序期间已结账'
+  },
+  {
     currentEvidence: '期间结账确认抽屉写入前端 session 期间锁、结账说明和快照；本地 row-backed gateway contract 可写入候选 period lock / close snapshot / event / idempotency rows',
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺真实持久化期间锁、数据库 migration、SQL 事务、并发版本和操作人鉴权',
     id: 'period-close-confirmed',
-    order: 13,
+    order: 14,
     ownerModule: '期间结账',
     ownerRoute: '/finance/period-close',
     title: '确认结账'
@@ -173,7 +183,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺真实源单 API、数据库事务、权限中间件和直接 API 调用拒绝证据',
     id: 'closed-period-mutation-blocked',
-    order: 14,
+    order: 15,
     ownerModule: '各源单模块',
     ownerRoute: '/finance/period-close',
     title: '已结账期间禁止修改'
@@ -184,7 +194,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺正式监听 HTTP、三张表查询 API、总账/科目余额查询 API、现金流量表项目映射持久化/补充资料、报表快照 repository、归档和审计证据',
     id: 'closed-period-report-readback',
-    order: 15,
+    order: 16,
     ownerModule: '总账 / 财务报表',
     ownerRoute: '/finance/financial-statements',
     title: '报表读取已结账结果'
@@ -205,6 +215,13 @@ export const financePeriodCloseCheckAcceptanceMatrix: readonly FinancePeriodClos
     ownerRoute: '/finance/accounting-vouchers',
     sourceActionPolicy: 'navigate_when_blocked',
     title: '凭证记账'
+  },
+  {
+    code: 'month_end_matters',
+    ownerModule: '月末事项',
+    ownerRoute: '/finance/month-end',
+    sourceActionPolicy: 'navigate_when_blocked',
+    title: '月末事项'
   },
   {
     code: 'general_ledger_trial_balance',
@@ -244,6 +261,18 @@ export const financePeriodCloseCheckAcceptanceMatrix: readonly FinancePeriodClos
 ];
 
 export const financePeriodCloseExceptionAcceptanceMatrix: readonly FinancePeriodCloseExceptionAcceptance[] = [
+  {
+    currentEvidence: 'period-close model expands the account-set period range and requires an 已结账 lock for the direct previous period before a later period can close',
+    expected: '不能结账；需先完成前一会计期间结账',
+    id: 'prior-period-unclosed-blocks-close',
+    title: '前序期间未结账'
+  },
+  {
+    currentEvidence: 'month-end model blocks records left in 待确认 before the voucher candidate stage',
+    expected: '不能结账',
+    id: 'pending-month-end-matter-blocks-close',
+    title: '月末事项待确认'
+  },
   {
     currentEvidence: 'period-close model blocks pending/issue voucher rows',
     expected: '不能结账',
@@ -290,18 +319,18 @@ export const financePeriodCloseExceptionAcceptanceMatrix: readonly FinancePeriod
     title: '已结账后调整应收应付'
   },
   {
-    currentEvidence: 'source-write matrix separates invoice ledger import and invoice matching writes',
+    currentEvidence: 'source-write matrix covers invoice-ledger import, shared association and red-invoice relation writes',
     expected: '闭期直接写入拒绝，普通修正进入后续期间调整或反结账异常流程',
     id: 'closed-invoice-ledger-import-rejected',
     sourceMutationArea: 'invoice_ledger',
     title: '已结账后导入发票台账'
   },
   {
-    currentEvidence: 'source-write matrix and local route skeleton cover invoice matching writes',
+    currentEvidence: 'source-write matrix and local route skeleton cover shared invoice association writes',
     expected: '闭期直接写入拒绝，普通修正进入后续期间调整或反结账异常流程',
-    id: 'closed-invoice-matching-write-rejected',
-    sourceMutationArea: 'invoice_matching',
-    title: '已结账后修改发票匹配'
+    id: 'closed-invoice-association-write-rejected',
+    sourceMutationArea: 'invoice_ledger',
+    title: '已结账后调整发票关联'
   },
   {
     currentEvidence: 'source-write matrix and local route skeleton cover cash-flow review writes',
@@ -345,8 +374,8 @@ export const financePeriodCloseExceptionAcceptanceMatrix: readonly FinancePeriod
     title: '已结账后需要修正'
   },
   {
-    currentEvidence: 'local API reopen route and authorization contract skeleton',
-    expected: '必须写原因和事件，高权限异常流程；真实后端权限仍缺失',
+    currentEvidence: 'FinancePeriodClosePage sequence-exception drawer plus frontend-session reopen audit fields',
+    expected: '历史跳月锁可填写原因后反结账，保留原快照与反结账记录；真实后端高权限仍缺失',
     id: 'reopen-is-exceptional',
     title: '高权限反结账'
   }
@@ -362,6 +391,16 @@ export const financePeriodCloseFrontendStandards: readonly FinancePeriodCloseFro
     currentEvidence: 'FinancePeriodClosePage only passes primary confirm action when record.canClose is true',
     id: 'confirm-only-when-clear',
     standard: '确认结账只在全部检查通过时出现'
+  },
+  {
+    currentEvidence: 'FinancePeriodClosePage uses the model continuity blocker in the list, detail drawer and confirmation guard without adding it to the current-period check table',
+    id: 'continuous-period-close',
+    standard: '账套启用后，前序会计期间未结账时后序期间不可结账，并只展示一次前期阻断原因'
+  },
+  {
+    currentEvidence: 'FinancePeriodClosePage exposes a reason-required reopen drawer only for locked sequence exceptions',
+    id: 'sequence-exception-reopen',
+    standard: '跳月结账异常可反结账修复，保留原快照和修复记录后回到连续结账流程'
   },
   {
     currentEvidence: 'PeriodCloseConfirmDrawer requires non-empty close reason before submit',

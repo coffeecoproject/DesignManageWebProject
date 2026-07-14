@@ -19,6 +19,7 @@ export type CustomerForm = {
   name: string;
   note: string;
   owner: string;
+  taxpayerIdentificationNo: string;
 };
 
 type BuildCustomerRecordInput = {
@@ -51,7 +52,8 @@ export function createDefaultCustomerForm(): CustomerForm {
     industry: '',
     name: '',
     note: '',
-    owner: '李明'
+    owner: '李明',
+    taxpayerIdentificationNo: ''
   };
 }
 
@@ -70,7 +72,8 @@ export function buildCustomerForm(record: CustomerRecord): CustomerForm {
     industry: record.industry,
     name: record.name,
     note: record.note,
-    owner: record.owner
+    owner: record.owner,
+    taxpayerIdentificationNo: record.taxpayerIdentificationNo
   };
 }
 
@@ -135,6 +138,7 @@ export function isCustomerFormValid(form: CustomerForm) {
 
   return Boolean(
     form.name.trim() &&
+      form.taxpayerIdentificationNo.trim() &&
       form.industry.trim() &&
       form.owner.trim() &&
       hasValidContacts
@@ -180,6 +184,7 @@ export function buildCustomerRecordForSave({
       name: form.name.trim(),
       note: form.note.trim() || '暂无备注。',
       owner: form.owner.trim(),
+      taxpayerIdentificationNo: form.taxpayerIdentificationNo.trim(),
       updatedAt
     };
   }
@@ -190,6 +195,7 @@ export function buildCustomerRecordForSave({
     name: form.name.trim(),
     industry: form.industry.trim(),
     owner: form.owner.trim(),
+    taxpayerIdentificationNo: form.taxpayerIdentificationNo.trim(),
     contacts,
     brandCount: 0,
     storeCount: 0,

@@ -1,14 +1,37 @@
 import type { StatusTagTone } from '../../components/Detail';
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
+import { getFinanceVatSurchargeSummary, type FinanceVatSurchargeSummary } from './financeTaxPolicyModel';
 
 export type FinanceTaxMatterType = '个人所得税' | '社保缴纳' | '公积金缴纳' | '增值税及附加' | '企业所得税' | '印花税' | '其他税费';
 export type FinanceTaxMatterPeriodType = '月度' | '季度' | '年度' | '按次';
-export type FinanceTaxMatterProcessStatus = '数据待确认' | '可申报' | '待上传回执' | '已完成';
+export type FinanceTaxMatterProcessStatus = '数据待确认' | '待申报' | '待缴款' | '部分缴纳' | '待退税' | '部分退税' | '待补回执' | '已完成';
+export type FinanceTaxMatterAccountingStatus = '无需生成' | '待确认' | '可生成';
+export type FinanceTaxMatterEvidenceStatus = '无需回执' | '待补回执' | '已齐全';
 export type FinanceTaxMatterDataStatus = '待准备' | '待复核' | '已确认';
-export type FinanceTaxMatterDeclarationStatus = '待申报' | '已申报' | '已核定' | '零申报' | '无需申报';
+export type FinanceTaxMatterDeclarationStatus = '待申报' | '申报成功' | '零申报' | '无申报义务' | '已作废';
 export type FinanceTaxMatterPaymentStatus = '未开始' | '无需缴纳' | '待缴纳' | '部分缴纳' | '已缴纳';
+export type FinanceTaxMatterRefundStatus = '不适用' | '待退税' | '部分退税' | '已退税';
+export type FinanceTaxMatterSettlementDirection = '待确定' | '应缴' | '无需补退' | '应退';
 export type FinanceTaxMatterSourceStatus = '待准备' | '待复核' | '已确认' | '不适用';
+export type FinanceTaxMatterDeclarationScenario = '月度扣缴' | '季度申报' | '季度预缴' | '年度汇算' | '按次申报';
+
+export type FinanceTaxMatterDeclarationHistoryRecord = {
+  action: '更正' | '作废';
+  declarationDate?: string;
+  declarationReceiptFileId?: string;
+  declarationReceiptNo?: string;
+  declarationStatus: FinanceTaxMatterDeclarationStatus;
+  filedAccountingAmount?: number;
+  filedPayableAmount: number;
+  filedRefundableAmount?: number;
+  filedVatSurcharge?: FinanceVatSurchargeSummary;
+  id: string;
+  operatedAt: string;
+  operatedBy: string;
+  reason: string;
+  version: number;
+};
 
 export type FinanceTaxMatterSourceItem = {
   id: string;
@@ -18,11 +41,31 @@ export type FinanceTaxMatterSourceItem = {
   updatedAt: string;
 };
 
+export type FinanceVatTaxSettlementSnapshot = {
+  declaredVatAmount: number;
+  sourceRecognizedVatAmount: number;
+  surcharge: FinanceVatSurchargeSummary;
+  totalPayableAmount: number;
+};
+
+export type FinanceSocialInsuranceSettlementSnapshot = {
+  category: '社保' | '公积金';
+  companyAmount: number;
+  personalAmount: number;
+  totalAmount: number;
+};
+
 export type FinanceTaxMatterRecord = {
   dataStatus: FinanceTaxMatterDataStatus;
+  declarationScenario?: FinanceTaxMatterDeclarationScenario;
   declarationDate?: string;
   declarationDueDate: string;
+  declarationDifferenceReason?: string;
+  declarationHistory: FinanceTaxMatterDeclarationHistoryRecord[];
+  declarationReceiptFileId?: string;
+  declarationReceiptNo?: string;
   declarationStatus: FinanceTaxMatterDeclarationStatus;
+  declarationVersion: number;
   files: RelatedFileRecord[];
   id: string;
   linkedTransactionNos: string[];
@@ -33,15 +76,30 @@ export type FinanceTaxMatterRecord = {
   paidAmount: number;
   participantSummary: string;
   payableAmount: number;
+  preparedPayableAmount: number;
+  paymentDate?: string;
   paymentDueDate: string;
   paymentStatus: FinanceTaxMatterPaymentStatus;
+  refundableAmount?: number;
+  refundDate?: string;
+  refundedAmount?: number;
+  refundStatus?: FinanceTaxMatterRefundStatus;
   period: string;
   periodType: FinanceTaxMatterPeriodType;
   processStatus: FinanceTaxMatterProcessStatus;
+  settlementDirection?: FinanceTaxMatterSettlementDirection;
+  socialInsuranceSettlement?: FinanceSocialInsuranceSettlementSnapshot;
   sourceItems: FinanceTaxMatterSourceItem[];
   title: string;
   updatedAt: string;
+  vatSettlement?: FinanceVatTaxSettlementSnapshot;
 };
+
+const q1VatSurcharge = getFinanceVatSurchargeSummary({
+  accountingPeriod: '2026-03',
+  qualifiesForMicroTaxFeeReduction: true,
+  vatPayableAmount: 440.1
+});
 
 export const taxMatterTypeTone = {
   个人所得税: 'purple',
@@ -55,8 +113,12 @@ export const taxMatterTypeTone = {
 
 export const taxMatterProcessStatusTone = {
   数据待确认: 'amber',
-  可申报: 'blue',
-  待上传回执: 'amber',
+  待申报: 'blue',
+  待缴款: 'amber',
+  部分缴纳: 'blue',
+  待退税: 'amber',
+  部分退税: 'blue',
+  待补回执: 'amber',
   已完成: 'green'
 } as const satisfies Record<FinanceTaxMatterProcessStatus, StatusTagTone>;
 
@@ -68,10 +130,10 @@ export const taxMatterDataStatusTone = {
 
 export const taxMatterDeclarationStatusTone = {
   待申报: 'amber',
-  已申报: 'green',
-  已核定: 'green',
+  申报成功: 'green',
   零申报: 'gray',
-  无需申报: 'gray'
+  无申报义务: 'gray',
+  已作废: 'gray'
 } as const satisfies Record<FinanceTaxMatterDeclarationStatus, StatusTagTone>;
 
 export const taxMatterPaymentStatusTone = {
@@ -91,28 +153,15 @@ export const taxMatterSourceStatusTone = {
 
 export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   {
-    dataStatus: '已确认',
-    declarationDate: '2026-06-15',
+    dataStatus: '待复核',
+    declarationScenario: '月度扣缴',
     declarationDueDate: '2026-07-15',
-    declarationStatus: '已申报',
-    files: [
-      {
-        id: 'tax-file-001',
-        name: '2026-06_个人所得税申报回执.pdf',
-        status: '已上传',
-        type: '申报回执',
-        updatedAt: '2026-06-15'
-      },
-      {
-        id: 'tax-file-002',
-        name: '2026-06_个人所得税缴款回单.pdf',
-        status: '已上传',
-        type: '缴款回单',
-        updatedAt: '2026-06-15'
-      }
-    ],
+    declarationHistory: [],
+    declarationVersion: 1,
+    declarationStatus: '待申报',
+    files: [],
     id: 'tax-matter-001',
-    linkedTransactionNos: ['FIN-202606-0007'],
+    linkedTransactionNos: [],
     matterNo: 'TAX-202606-IIT',
     matterType: '个人所得税',
     operationRecords: [
@@ -121,49 +170,37 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         time: '2026-06-18 09:30',
         actor: '李明',
         object: 'TAX-202606-IIT',
-        action: '来源同步',
-        summary: '同步薪酬明细数据，形成 2026-06 个人所得税事项'
-      },
-      {
-        id: 'tax-op-002',
-        time: '2026-06-15 11:45',
-        actor: '财务复核',
-        object: 'TAX-202606-IIT',
-        action: '完成缴办',
-        summary: '完成个税申报并关联缴款流水 FIN-202606-0007'
+        action: '建立事项',
+        summary: '建立 2026-06 个人所得税办理事项，等待申报准备确认'
       }
     ],
     owner: '李明',
-    paidAmount: 3280.52,
-    participantSummary: '1 人',
-    payableAmount: 3280.52,
+    paidAmount: 0,
+    participantSummary: '0 人',
+    payableAmount: 0,
+    preparedPayableAmount: 0,
     paymentDueDate: '2026-07-15',
-    paymentStatus: '已缴纳',
+    paymentStatus: '未开始',
     period: '2026-06',
     periodType: '月度',
-    processStatus: '已完成',
+    processStatus: '数据待确认',
     sourceItems: [
       {
         id: 'tax-source-001',
-        name: '薪酬明细',
-        sourceModule: '薪酬明细',
-        status: '已确认',
-        updatedAt: '2026-06-15'
-      },
-      {
-        id: 'tax-source-002',
-        name: '工资薪金个税表',
-        sourceModule: '自然人电子税务局',
-        status: '已确认',
-        updatedAt: '2026-06-15'
+        name: '办理依据',
+        sourceModule: '申报准备',
+        status: '待复核',
+        updatedAt: '2026-06-18'
       }
     ],
     title: '2026-06 个人所得税',
-    updatedAt: '2026-06-15'
+    updatedAt: '2026-06-18'
   },
   {
     dataStatus: '待复核',
     declarationDueDate: '2026-07-20',
+    declarationHistory: [],
+    declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
     id: 'tax-matter-002',
@@ -184,6 +221,7 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     paidAmount: 0,
     participantSummary: '1 人',
     payableAmount: 3075,
+    preparedPayableAmount: 3075,
     paymentDueDate: '2026-07-20',
     paymentStatus: '未开始',
     period: '2026-06',
@@ -211,6 +249,8 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   {
     dataStatus: '待复核',
     declarationDueDate: '2026-07-20',
+    declarationHistory: [],
+    declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
     id: 'tax-matter-003',
@@ -231,6 +271,7 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     paidAmount: 0,
     participantSummary: '待确认',
     payableAmount: 0,
+    preparedPayableAmount: 0,
     paymentDueDate: '2026-07-20',
     paymentStatus: '未开始',
     period: '2026-06',
@@ -257,7 +298,10 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   },
   {
     dataStatus: '待复核',
+    declarationScenario: '季度申报',
     declarationDueDate: '2026-07-15',
+    declarationHistory: [],
+    declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
     id: 'tax-matter-004',
@@ -278,6 +322,7 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     paidAmount: 0,
     participantSummary: '季度收入',
     payableAmount: 0,
+    preparedPayableAmount: 0,
     paymentDueDate: '2026-07-15',
     paymentStatus: '未开始',
     period: '2026-Q2',
@@ -297,7 +342,10 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   },
   {
     dataStatus: '待复核',
+    declarationScenario: '季度预缴',
     declarationDueDate: '2026-07-15',
+    declarationHistory: [],
+    declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
     id: 'tax-matter-005',
@@ -316,8 +364,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     ],
     owner: '李明',
     paidAmount: 0,
-    participantSummary: '季度利润',
+    participantSummary: '本年累计利润',
     payableAmount: 0,
+    preparedPayableAmount: 0,
     paymentDueDate: '2026-07-15',
     paymentStatus: '未开始',
     period: '2026-Q2',
@@ -332,12 +381,15 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         updatedAt: '2026-06-21'
       }
     ],
-    title: '2026-Q2 企业所得税预缴',
+    title: '2026-Q2 企业所得税季度预缴',
     updatedAt: '2026-06-21'
   },
   {
     dataStatus: '待复核',
+    declarationScenario: '季度申报',
     declarationDueDate: '2026-07-15',
+    declarationHistory: [],
+    declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
     id: 'tax-matter-006',
@@ -351,31 +403,25 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         actor: '李明',
         object: 'TAX-2026Q2-STAMP',
         action: '建立事项',
-        summary: '登记 2026-Q2 印花税事项'
+        summary: '根据已确认申报准备建立 2026-Q2 印花税办理事项'
       }
     ],
     owner: '李明',
     paidAmount: 0,
-    participantSummary: '合同触发',
+    participantSummary: '应税凭证 2 条',
     payableAmount: 0,
+    preparedPayableAmount: 0,
     paymentDueDate: '2026-07-15',
     paymentStatus: '未开始',
     period: '2026-Q2',
-    periodType: '按次',
+    periodType: '季度',
     processStatus: '数据待确认',
     sourceItems: [
       {
         id: 'tax-source-012',
-        name: '合同签署记录',
-        sourceModule: '合同管理',
+        name: '办理依据',
+        sourceModule: '申报准备',
         status: '待复核',
-        updatedAt: '2026-06-18'
-      },
-      {
-        id: 'tax-source-013',
-        name: '特定业务事项',
-        sourceModule: '经营数据',
-        status: '待准备',
         updatedAt: '2026-06-18'
       }
     ],
@@ -384,9 +430,14 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   },
   {
     dataStatus: '已确认',
+    declarationScenario: '季度申报',
     declarationDate: '2026-04-12',
-    declarationDueDate: '2026-04-15',
-    declarationStatus: '已申报',
+    declarationDueDate: '2026-04-20',
+    declarationHistory: [],
+    declarationReceiptFileId: 'tax-file-q1-vat-receipt',
+    declarationReceiptNo: 'VAT-2026Q1-0001',
+    declarationVersion: 1,
+    declarationStatus: '申报成功',
     files: [
       {
         id: 'tax-file-q1-vat-receipt',
@@ -426,10 +477,12 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
       }
     ],
     owner: '李明',
-    paidAmount: 450,
+    paidAmount: 466.51,
     participantSummary: '季度收入',
-    payableAmount: 450,
-    paymentDueDate: '2026-04-15',
+    payableAmount: 466.51,
+    preparedPayableAmount: 466.51,
+    paymentDate: '2026-04-12',
+    paymentDueDate: '2026-04-20',
     paymentStatus: '已缴纳',
     period: '2026-Q1',
     periodType: '季度',
@@ -444,13 +497,24 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
       }
     ],
     title: '2026-Q1 增值税及附加',
-    updatedAt: '2026-04-12'
+    updatedAt: '2026-04-12',
+    vatSettlement: {
+      declaredVatAmount: 440.1,
+      sourceRecognizedVatAmount: 440.1,
+      surcharge: q1VatSurcharge,
+      totalPayableAmount: 466.51
+    }
   },
   {
     dataStatus: '已确认',
+    declarationScenario: '季度预缴',
     declarationDate: '2026-04-12',
-    declarationDueDate: '2026-04-15',
-    declarationStatus: '已申报',
+    declarationDueDate: '2026-04-20',
+    declarationHistory: [],
+    declarationReceiptFileId: 'tax-file-q1-cit-receipt',
+    declarationReceiptNo: 'CIT-2026Q1-0001',
+    declarationVersion: 1,
+    declarationStatus: '申报成功',
     files: [
       {
         id: 'tax-file-q1-cit-receipt',
@@ -491,9 +555,11 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     ],
     owner: '李明',
     paidAmount: 500,
-    participantSummary: '季度利润',
+    participantSummary: '本年累计利润',
     payableAmount: 500,
-    paymentDueDate: '2026-04-15',
+    preparedPayableAmount: 500,
+    paymentDate: '2026-04-12',
+    paymentDueDate: '2026-04-20',
     paymentStatus: '已缴纳',
     period: '2026-Q1',
     periodType: '季度',
@@ -507,8 +573,193 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         updatedAt: '2026-04-10'
       }
     ],
-    title: '2026-Q1 企业所得税预缴',
+    title: '2026-Q1 企业所得税季度预缴',
     updatedAt: '2026-04-12'
+  },
+  {
+    dataStatus: '已确认',
+    declarationScenario: '季度申报',
+    declarationDate: '2026-01-15',
+    declarationDueDate: '2026-01-20',
+    declarationHistory: [],
+    declarationVersion: 1,
+    declarationStatus: '零申报',
+    files: [],
+    id: 'tax-matter-2025q4-vat-receipt-pending',
+    linkedTransactionNos: [],
+    matterNo: 'TAX-2025Q4-VAT',
+    matterType: '增值税及附加',
+    operationRecords: [
+      {
+        action: '登记申报结果',
+        actor: '李明',
+        id: 'tax-op-2025q4-vat-receipt-pending',
+        object: 'TAX-2025Q4-VAT',
+        summary: '登记 2025-Q4 增值税及附加零申报，申报回执待补充',
+        time: '2026-01-15 15:20'
+      }
+    ],
+    owner: '李明',
+    paidAmount: 0,
+    participantSummary: '季度零申报',
+    payableAmount: 0,
+    preparedPayableAmount: 0,
+    paymentDueDate: '2026-01-20',
+    paymentStatus: '无需缴纳',
+    period: '2025-Q4',
+    periodType: '季度',
+    processStatus: '待补回执',
+    settlementDirection: '无需补退',
+    sourceItems: [
+      {
+        id: 'tax-source-2025q4-vat-preparation',
+        name: '办理依据',
+        sourceModule: '申报准备',
+        status: '已确认',
+        updatedAt: '2026-01-15'
+      }
+    ],
+    title: '2025-Q4 增值税及附加',
+    updatedAt: '2026-01-15'
+  },
+  {
+    dataStatus: '已确认',
+    declarationScenario: '季度申报',
+    declarationDate: '2026-04-10',
+    declarationDueDate: '2026-04-20',
+    declarationHistory: [],
+    declarationVersion: 1,
+    declarationStatus: '无申报义务',
+    files: [],
+    id: 'tax-matter-2026q1-stamp',
+    linkedTransactionNos: [],
+    matterNo: 'TAX-2026Q1-STAMP',
+    matterType: '印花税',
+    operationRecords: [
+      {
+        action: '确认无需申报',
+        actor: '李明',
+        id: 'tax-op-2026q1-stamp-001',
+        object: 'TAX-2026Q1-STAMP',
+        summary: '本期税源核对后无列举应税凭证，确认无需申报',
+        time: '2026-04-10 11:00'
+      }
+    ],
+    owner: '李明',
+    paidAmount: 0,
+    participantSummary: '应税凭证 0 条',
+    payableAmount: 0,
+    preparedPayableAmount: 0,
+    paymentDueDate: '2026-04-20',
+    paymentStatus: '无需缴纳',
+    period: '2026-Q1',
+    periodType: '季度',
+    processStatus: '已完成',
+    sourceItems: [
+      {
+        id: 'tax-source-2026q1-stamp-preparation',
+        name: '办理依据',
+        sourceModule: '申报准备',
+        status: '已确认',
+        updatedAt: '2026-03-31'
+      }
+    ],
+    title: '2026-Q1 印花税',
+    updatedAt: '2026-04-10'
+  },
+  {
+    dataStatus: '已确认',
+    declarationDate: '2026-05-28',
+    declarationDueDate: '2026-05-31',
+    declarationHistory: [],
+    declarationReceiptNo: 'CIT-2025-ANNUAL-001',
+    declarationScenario: '年度汇算',
+    declarationStatus: '申报成功',
+    declarationVersion: 1,
+    files: [],
+    id: 'tax-matter-2025-cit-annual-refund',
+    linkedTransactionNos: [],
+    matterNo: 'TAX-2025-CIT-ANNUAL',
+    matterType: '企业所得税',
+    operationRecords: [
+      {
+        action: '登记申报结果',
+        actor: '李明',
+        id: 'tax-op-2025-cit-annual-refund',
+        object: 'TAX-2025-CIT-ANNUAL',
+        summary: '年度汇算申报成功，应退企业所得税 1,200.00 元',
+        time: '2026-05-28 14:20'
+      }
+    ],
+    owner: '李明',
+    paidAmount: 0,
+    participantSummary: '2025 年度汇算',
+    payableAmount: 0,
+    preparedPayableAmount: 0,
+    paymentDueDate: '2026-08-31',
+    paymentStatus: '无需缴纳',
+    period: '2025',
+    periodType: '年度',
+    processStatus: '待退税',
+    refundableAmount: 1200,
+    refundedAmount: 0,
+    refundStatus: '待退税',
+    settlementDirection: '应退',
+    sourceItems: [
+      {
+        id: 'tax-source-2025-cit-annual-preparation',
+        name: '办理依据',
+        sourceModule: '申报准备',
+        status: '已确认',
+        updatedAt: '2026-05-28'
+      }
+    ],
+    title: '2025 年度企业所得税汇算清缴',
+    updatedAt: '2026-05-28'
+  },
+  {
+    dataStatus: '待准备',
+    declarationDueDate: '2027-05-31',
+    declarationScenario: '年度汇算',
+    declarationHistory: [],
+    declarationVersion: 1,
+    declarationStatus: '待申报',
+    files: [],
+    id: 'tax-matter-2026-cit-annual',
+    linkedTransactionNos: [],
+    matterNo: 'TAX-2026-CIT-ANNUAL',
+    matterType: '企业所得税',
+    operationRecords: [
+      {
+        action: '建立事项',
+        actor: '李明',
+        id: 'tax-op-2026-cit-annual',
+        object: 'TAX-2026-CIT-ANNUAL',
+        summary: '建立 2026 年度企业所得税汇算清缴事项',
+        time: '2026-06-30 10:30'
+      }
+    ],
+    owner: '李明',
+    paidAmount: 0,
+    participantSummary: '年度应纳税所得额',
+    payableAmount: 0,
+    preparedPayableAmount: 0,
+    paymentDueDate: '2027-05-31',
+    paymentStatus: '未开始',
+    period: '2026',
+    periodType: '年度',
+    processStatus: '数据待确认',
+    sourceItems: [
+      {
+        id: 'tax-source-2026-cit-annual',
+        name: '办理依据',
+        sourceModule: '申报准备',
+        status: '待准备',
+        updatedAt: '2026-06-30'
+      }
+    ],
+    title: '2026 年度企业所得税汇算清缴',
+    updatedAt: '2026-06-30'
   }
 ];
 
@@ -519,6 +770,10 @@ export function getTaxMatterOutstandingAmount(record: FinanceTaxMatterRecord) {
 export function getTaxMatterFileStatus(record: FinanceTaxMatterRecord) {
   if (record.files.length > 0) {
     return '已归档';
+  }
+
+  if (record.processStatus === '数据待确认' || record.processStatus === '待申报') {
+    return '未开始';
   }
 
   return record.processStatus === '已完成' ? '待补充' : '待上传';

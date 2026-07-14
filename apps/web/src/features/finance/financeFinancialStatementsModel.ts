@@ -35,9 +35,34 @@ export type FinanceCashFlowMappingGap = {
   voucherNo: string;
 };
 
+export type FinanceFinancialStatementArchiveStatus = '待结账预览' | '已归档' | '快照缺失';
+
+export type FinanceFinancialStatementArchive = {
+  archivedAt?: string;
+  archivedBy?: string;
+  closeReason?: string;
+  source: '实时总账' | '结账快照' | '结账快照缺失';
+  status: FinanceFinancialStatementArchiveStatus;
+};
+
+export type FinanceFinancialStatementNoteItem = {
+  label: string;
+  value: string;
+};
+
+export type FinanceFinancialStatementNote = {
+  items: FinanceFinancialStatementNoteItem[];
+  key: 'basis' | 'receivables-payables' | 'long-lived-assets' | 'later-adjustments';
+  title: string;
+};
+
 export type FinanceFinancialStatementReport = {
   accountingPeriod: string;
+  archive: FinanceFinancialStatementArchive;
   balanceSheetLines: FinanceStatementLine[];
+  balanceSheetDifference: number;
+  balanceSheetReadiness: '待处理' | '可出具';
+  balanceSheetReadinessDetail: string;
   cashFlowClosingBalance: number;
   cashFlowLines: FinanceCashFlowStatementLine[];
   cashFlowMappingGaps: FinanceCashFlowMappingGap[];
@@ -50,8 +75,11 @@ export type FinanceFinancialStatementReport = {
   cashFlowYearToDateNetAmount: number;
   cashFlowYearToDateOpeningBalance: number;
   cashFlowYearToDateReconciliationDifference: number;
+  financialStatementReadiness: '待处理' | '可出具';
+  financialStatementReadinessDetail: string;
   liabilityEquityTotal: number;
   mode: FinanceStatementMode;
+  notes: FinanceFinancialStatementNote[];
   periodLabel: string;
   profitLines: FinanceStatementLine[];
   profitTotal: number;
@@ -65,8 +93,137 @@ function roundStatementAmount(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+const statementTolerance = 0.01;
+
 function getStatementMode(periodSummary: GeneralLedgerPeriodSummary): FinanceStatementMode {
   return periodSummary.periodStatus === '已结账' ? '正式报表' : '待结账';
+}
+
+function getFinanceFinancialStatementArchive(periodSummary: GeneralLedgerPeriodSummary): FinanceFinancialStatementArchive {
+  if (periodSummary.periodStatus !== '已结账') {
+    return {
+      source: '实时总账',
+      status: '待结账预览'
+    };
+  }
+
+  if (periodSummary.readbackSource === '结账快照' && periodSummary.financialStatementSnapshot) {
+    return {
+      archivedAt: periodSummary.lockedAt,
+      archivedBy: periodSummary.lockedBy,
+      closeReason: periodSummary.lockedReason,
+      source: '结账快照',
+      status: '已归档'
+    };
+  }
+
+  return {
+    archivedAt: periodSummary.lockedAt,
+    archivedBy: periodSummary.lockedBy,
+    closeReason: periodSummary.lockedReason,
+    source: '结账快照缺失',
+    status: '快照缺失'
+  };
+}
+
+function getStatementLineByItemName(lines: FinanceStatementLine[], itemName: string) {
+  return lines.find((line) => line.itemName === itemName);
+}
+
+function buildLaterAdjustmentNote(subjectRows: GeneralLedgerSubjectBalanceRow[]): FinanceFinancialStatementNote | undefined {
+  const vouchers = new Map<string, { amount: number; voucherNo: string }>();
+
+  subjectRows.forEach((row) => {
+    row.entries.forEach((entry) => {
+      if (!entry.summary.startsWith('后续调整：')) {
+        return;
+      }
+
+      const current = vouchers.get(entry.voucherId) ?? { amount: 0, voucherNo: entry.voucherNo };
+      vouchers.set(entry.voucherId, {
+        amount: roundStatementAmount(current.amount + entry.debitAmount),
+        voucherNo: entry.voucherNo
+      });
+    });
+  });
+
+  const adjustmentRows = [...vouchers.values()].filter((row) => row.amount > statementTolerance);
+
+  if (adjustmentRows.length === 0) {
+    return undefined;
+  }
+
+  return {
+    items: [
+      {
+        label: '已记账调整',
+        value: `${adjustmentRows.length} 张 / ${formatMoney(adjustmentRows.reduce((total, row) => total + row.amount, 0))}`
+      },
+      { label: '调整凭证', value: adjustmentRows.map((row) => row.voucherNo).join('、') }
+    ],
+    key: 'later-adjustments',
+    title: '后续调整'
+  };
+}
+
+function buildFinanceFinancialStatementNotes({
+  archive,
+  balanceSheetLines,
+  reportBasis,
+  subjectRows
+}: {
+  archive: FinanceFinancialStatementArchive;
+  balanceSheetLines: FinanceStatementLine[];
+  reportBasis: string;
+  subjectRows: GeneralLedgerSubjectBalanceRow[];
+}): FinanceFinancialStatementNote[] {
+  const notes: FinanceFinancialStatementNote[] = [
+    {
+      items: [
+        { label: '编制依据', value: reportBasis },
+        { label: '数据来源', value: archive.source === '结账快照' ? '结账快照' : '已记账总账' }
+      ],
+      key: 'basis',
+      title: '报表口径'
+    }
+  ];
+  const receivables = ['应收账款', '其他应收款']
+    .map((itemName) => getStatementLineByItemName(balanceSheetLines, itemName))
+    .filter((line): line is FinanceStatementLine => Boolean(line && Math.abs(line.amount) > statementTolerance));
+  const payables = ['应付账款', '预收款项', '应付职工薪酬', '其他应付款']
+    .map((itemName) => getStatementLineByItemName(balanceSheetLines, itemName))
+    .filter((line): line is FinanceStatementLine => Boolean(line && Math.abs(line.amount) > statementTolerance));
+
+  if (receivables.length > 0 || payables.length > 0) {
+    notes.push({
+      items: [
+        ...receivables.map((line) => ({ label: line.itemName, value: formatMoney(line.amount) })),
+        ...payables.map((line) => ({ label: line.itemName, value: formatMoney(line.amount) }))
+      ],
+      key: 'receivables-payables',
+      title: '主要往来余额'
+    });
+  }
+
+  const longLivedAssets = ['固定资产', '预付款项', '长期待摊费用']
+    .map((itemName) => getStatementLineByItemName(balanceSheetLines, itemName))
+    .filter((line): line is FinanceStatementLine => Boolean(line && Math.abs(line.amount) > statementTolerance));
+
+  if (longLivedAssets.length > 0) {
+    notes.push({
+      items: longLivedAssets.map((line) => ({ label: line.itemName, value: formatMoney(line.amount) })),
+      key: 'long-lived-assets',
+      title: '固定资产与预付待摊'
+    });
+  }
+
+  const laterAdjustmentNote = buildLaterAdjustmentNote(subjectRows);
+
+  if (laterAdjustmentNote) {
+    notes.push(laterAdjustmentNote);
+  }
+
+  return notes;
 }
 
 function getReportNotice(periodSummary: GeneralLedgerPeriodSummary, mode: FinanceStatementMode) {
@@ -93,7 +250,8 @@ function cloneStatementLines(
 
 function cloneFinancialStatementSnapshotReport(
   periodSummary: GeneralLedgerPeriodSummary,
-  mode: FinanceStatementMode
+  mode: FinanceStatementMode,
+  subjectRows: GeneralLedgerSubjectBalanceRow[]
 ): FinanceFinancialStatementReport | undefined {
   const snapshot = periodSummary.financialStatementSnapshot;
 
@@ -101,10 +259,14 @@ function cloneFinancialStatementSnapshotReport(
     return undefined;
   }
 
+  const archive = getFinanceFinancialStatementArchive(periodSummary);
+  const balanceSheetLines = cloneStatementLines(snapshot.balanceSheetLines);
+
   return {
     ...snapshot,
     accountingPeriod: periodSummary.periodKey ?? snapshot.accountingPeriod,
-    balanceSheetLines: cloneStatementLines(snapshot.balanceSheetLines),
+    archive,
+    balanceSheetLines,
     cashFlowLines: snapshot.cashFlowLines.map((line) => ({
       ...line,
       activity: line.activity as FinanceCashFlowActivity,
@@ -125,7 +287,15 @@ function cloneFinancialStatementSnapshotReport(
     cashFlowYearToDateNetAmount: snapshot.cashFlowYearToDateNetAmount ?? snapshot.cashFlowNetAmount,
     cashFlowYearToDateOpeningBalance: snapshot.cashFlowYearToDateOpeningBalance ?? 0,
     cashFlowYearToDateReconciliationDifference: snapshot.cashFlowYearToDateReconciliationDifference ?? 0,
+    balanceSheetReadiness: snapshot.balanceSheetReadiness as FinanceFinancialStatementReport['balanceSheetReadiness'],
+    financialStatementReadiness: snapshot.financialStatementReadiness as FinanceFinancialStatementReport['financialStatementReadiness'],
     mode,
+    notes: buildFinanceFinancialStatementNotes({
+      archive,
+      balanceSheetLines,
+      reportBasis: snapshot.reportBasis,
+      subjectRows
+    }),
     periodLabel: periodSummary.periodLabel,
     profitLines: cloneStatementLines(snapshot.profitLines),
     reportNotice: getReportNotice(periodSummary, mode),
@@ -559,6 +729,76 @@ function getCashFlowReadinessDetail({
   return '本期无现金或银行存款变动，现金流量表金额为零。';
 }
 
+function getBalanceSheetReadiness({
+  assetTotal,
+  balanceSheetLines,
+  liabilityEquityTotal
+}: {
+  assetTotal: number;
+  balanceSheetLines: FinanceStatementLine[];
+  liabilityEquityTotal: number;
+}) {
+  const difference = roundStatementAmount(assetTotal - liabilityEquityTotal);
+  const negativeAssetItems = balanceSheetLines
+    .filter((line) => line.section === '资产' && line.amount < -statementTolerance)
+    .map((line) => line.itemName);
+  const negativeLiabilityItems = balanceSheetLines
+    .filter((line) => line.section === '负债' && line.amount < -statementTolerance)
+    .map((line) => line.itemName);
+  const details: string[] = [];
+
+  if (Math.abs(difference) > statementTolerance) {
+    details.push(`资产合计与负债和所有者权益合计相差 ${formatMoney(Math.abs(difference))}`);
+  }
+
+  if (negativeAssetItems.length > 0) {
+    details.push(`资产项目出现负数：${negativeAssetItems.join('、')}`);
+  }
+
+  if (negativeLiabilityItems.length > 0) {
+    details.push(`负债项目出现负数：${negativeLiabilityItems.join('、')}`);
+  }
+
+  return {
+    difference,
+    detail: details.length === 0 ? '资产负债表勾稽一致。' : `${details.join('；')}。`,
+    readiness: details.length === 0 ? '可出具' as const : '待处理' as const
+  };
+}
+
+function getFinancialStatementReadiness({
+  balanceSheetReadiness,
+  balanceSheetReadinessDetail,
+  cashFlowReadiness,
+  cashFlowReadinessDetail,
+  trialBalanceStatus
+}: {
+  balanceSheetReadiness: FinanceFinancialStatementReport['balanceSheetReadiness'];
+  balanceSheetReadinessDetail: string;
+  cashFlowReadiness: FinanceFinancialStatementReport['cashFlowReadiness'];
+  cashFlowReadinessDetail: string;
+  trialBalanceStatus: FinanceFinancialStatementReport['trialBalanceStatus'];
+}) {
+  const details: string[] = [];
+
+  if (trialBalanceStatus !== '平衡') {
+    details.push('总账试算不平');
+  }
+
+  if (balanceSheetReadiness !== '可出具') {
+    details.push(balanceSheetReadinessDetail);
+  }
+
+  if (cashFlowReadiness !== '可出具') {
+    details.push(cashFlowReadinessDetail);
+  }
+
+  return {
+    detail: details.length === 0 ? '三张表校验已通过。' : details.join('；'),
+    readiness: details.length === 0 ? '可出具' as const : '待处理' as const
+  };
+}
+
 function uniqueCashFlowMappingGaps(gaps: FinanceCashFlowMappingGap[]) {
   const seen = new Set<string>();
 
@@ -584,7 +824,7 @@ export function buildFinanceFinancialStatementReport({
   yearToDateSubjectRows?: GeneralLedgerSubjectBalanceRow[];
 }): FinanceFinancialStatementReport {
   const mode = getStatementMode(periodSummary);
-  const snapshotReport = cloneFinancialStatementSnapshotReport(periodSummary, mode);
+  const snapshotReport = cloneFinancialStatementSnapshotReport(periodSummary, mode, subjectRows);
 
   if (snapshotReport) {
     return snapshotReport;
@@ -640,6 +880,11 @@ export function buildFinanceFinancialStatementReport({
   const balanceSheetLines = appendCurrentProfitToEquityIfNeeded(rawBalanceSheetLines, profitLines, profitTotal);
   const assetTotal = getBalanceSheetTotal(balanceSheetLines, ['资产']);
   const liabilityEquityTotal = getBalanceSheetTotal(balanceSheetLines, ['负债', '所有者权益']);
+  const balanceSheetValidation = getBalanceSheetReadiness({
+    assetTotal,
+    balanceSheetLines,
+    liabilityEquityTotal
+  });
   const allCashFlowMappingGaps = uniqueCashFlowMappingGaps([...cashFlowMappingGaps, ...yearToDateMappingGaps]);
   const cashFlowReadiness =
     allCashFlowMappingGaps.length === 0
@@ -647,34 +892,56 @@ export function buildFinanceFinancialStatementReport({
     && Math.abs(cashFlowYearToDateReconciliationDifference) <= 0.01
       ? '可出具'
       : '待处理';
+  const cashFlowReadinessDetail = getCashFlowReadinessDetail({
+    cashFlowReconciliationDifference,
+    cashFlowLines: cashFlowLinesWithYearToDate,
+    cashFlowMappingGaps: allCashFlowMappingGaps,
+    cashFlowYearToDateReconciliationDifference
+  });
+  const financialStatementValidation = getFinancialStatementReadiness({
+    balanceSheetReadiness: balanceSheetValidation.readiness,
+    balanceSheetReadinessDetail: balanceSheetValidation.detail,
+    cashFlowReadiness,
+    cashFlowReadinessDetail,
+    trialBalanceStatus: periodSummary.trialBalanceStatus
+  });
+  const archive = getFinanceFinancialStatementArchive(periodSummary);
+  const reportBasis = `总账：${periodSummary.bookedVoucherCount} 张已记账凭证 / ${formatMoney(periodSummary.debitTotal)} 借方 / ${formatMoney(periodSummary.creditTotal)} 贷方`;
 
   return {
     accountingPeriod: periodSummary.periodKey ?? periodSummary.periodLabel,
+    archive,
     assetTotal,
     balanceSheetLines,
+    balanceSheetDifference: balanceSheetValidation.difference,
+    balanceSheetReadiness: balanceSheetValidation.readiness,
+    balanceSheetReadinessDetail: balanceSheetValidation.detail,
     cashFlowClosingBalance: cashBalance.closingBalance,
     cashFlowLines: cashFlowLinesWithYearToDate,
     cashFlowMappingGaps: allCashFlowMappingGaps,
     cashFlowNetAmount,
     cashFlowOpeningBalance: cashBalance.openingBalance,
     cashFlowReadiness,
-    cashFlowReadinessDetail: getCashFlowReadinessDetail({
-      cashFlowReconciliationDifference,
-      cashFlowLines: cashFlowLinesWithYearToDate,
-      cashFlowMappingGaps: allCashFlowMappingGaps,
-      cashFlowYearToDateReconciliationDifference
-    }),
+    cashFlowReadinessDetail,
     cashFlowReconciliationDifference,
     cashFlowYearToDateClosingBalance: yearToDateCashBalance.closingBalance,
     cashFlowYearToDateNetAmount,
     cashFlowYearToDateOpeningBalance: yearToDateCashBalance.openingBalance,
     cashFlowYearToDateReconciliationDifference,
+    financialStatementReadiness: financialStatementValidation.readiness,
+    financialStatementReadinessDetail: financialStatementValidation.detail,
     liabilityEquityTotal,
     mode,
+    notes: buildFinanceFinancialStatementNotes({
+      archive,
+      balanceSheetLines,
+      reportBasis,
+      subjectRows
+    }),
     periodLabel: periodSummary.periodLabel,
     profitLines,
     profitTotal,
-    reportBasis: `总账：${periodSummary.bookedVoucherCount} 张已记账凭证 / ${formatMoney(periodSummary.debitTotal)} 借方 / ${formatMoney(periodSummary.creditTotal)} 贷方`,
+    reportBasis,
     reportNotice: mode === '正式报表' ? getReportNotice(periodSummary, mode) : getTrialReportNotice(mode),
     trialBalanceStatus: periodSummary.trialBalanceStatus
   };

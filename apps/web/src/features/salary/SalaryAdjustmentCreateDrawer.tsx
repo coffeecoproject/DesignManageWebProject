@@ -18,6 +18,7 @@ import {
   isSalaryAdjustmentFormValid,
   salaryDetailDefaultMonth,
   salaryAdjustmentDirectionTone,
+  salaryAdjustmentTaxTreatmentOptions,
   salaryAdjustmentTypeOptions,
   salaryMonthlyStatusTone,
   type SalaryAdjustmentFormValue
@@ -126,7 +127,7 @@ export function SalaryAdjustmentCreateDrawer({
               value={<StatusTag toneMap={salaryMonthlyStatusTone} value={selectedReport.status} />}
             />
             <ReadOnlyField label="本月基础薪资" value={formatSalaryMoney(selectedReport.baseSalaryAmount)} />
-            <ReadOnlyField label="绩效预发" value={formatSalaryMoney(selectedReport.performancePayAmount)} />
+            <ReadOnlyField label="绩效计入" value={formatSalaryMoney(selectedReport.performancePayAmount)} />
             <ReadOnlyField label="社保公积金" value={formatSalaryMoney(selectedReport.socialInsuranceDeductionAmount)} />
             <ReadOnlyField label="个税扣减" value={formatSalaryMoney(selectedReport.personalIncomeTaxAmount)} />
             <ReadOnlyField label="当前实发" value={formatSalaryMoney(selectedReport.netSalary)} />
@@ -150,6 +151,13 @@ export function SalaryAdjustmentCreateDrawer({
             label="影响方向"
             value={<StatusTag toneMap={salaryAdjustmentDirectionTone} value={adjustmentDirection} />}
           />
+          <DrawerFormField label="个税口径" required>
+            <Select
+              value={form.taxTreatment}
+              options={salaryAdjustmentTaxTreatmentOptions.map((option) => ({ label: option, value: option }))}
+              onChange={(taxTreatment) => onChange('taxTreatment', taxTreatment)}
+            />
+          </DrawerFormField>
           <DrawerFormField label="调整金额" required>
             <InputNumber
               min={0.01}

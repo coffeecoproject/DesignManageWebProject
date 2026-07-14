@@ -9,7 +9,8 @@ import {
   applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
   buildAccountingVoucherFromLaterPeriodAdjustment,
-  createAccountingVoucherLifecycleRecord
+  createAccountingVoucherLifecycleRecord,
+  reopenAccountingPeriodLock
 } from './financeAccountingVoucherModel';
 import type { FinanceTransactionRecord } from './financeData';
 import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
@@ -89,13 +90,43 @@ function createFinanceTransaction(overrides: Partial<FinanceTransactionRecord>):
 
 function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord>): FinanceTaxMatterRecord {
   return {
+    dataStatus: '已确认',
+    declarationDate: '2026-07-10',
+    declarationDueDate: '2026-07-15',
+    declarationHistory: [],
+    declarationReceiptNo: 'DECLARATION-RECEIPT-001',
+    declarationStatus: '申报成功',
+    declarationVersion: 1,
+    files: [],
+    id: 'tax-matter-test-001',
+    linkedTransactionNos: [],
     matterNo: 'TAX-TEST-001',
     matterType: '个人所得税',
+    operationRecords: [],
+    owner: '李明',
+    paidAmount: 100,
+    participantSummary: '1 人',
+    payableAmount: 100,
+    preparedPayableAmount: 100,
+    paymentDate: '2026-07-10',
+    paymentDueDate: '2026-07-15',
+    paymentStatus: '已缴纳',
     period: '2026-06',
     periodType: '月度',
     processStatus: '已完成',
+    sourceItems: [
+      {
+        id: 'tax-source-test-001',
+        name: '申报准备',
+        sourceModule: '申报准备',
+        status: '已确认',
+        updatedAt: '2026-07-10'
+      }
+    ],
+    title: '2026-06 个人所得税',
+    updatedAt: '2026-07-10',
     ...overrides
-  } as FinanceTaxMatterRecord;
+  };
 }
 
 function createLaterPeriodAdjustment(
@@ -125,6 +156,7 @@ function createLaterPeriodAdjustment(
 }
 
 function buildRows({
+  accountingPeriodStart,
   filters = defaultFinancePeriodCloseFilters,
   financeRows = [],
   laterPeriodAdjustmentRows = [],
@@ -133,6 +165,7 @@ function buildRows({
   taxMatterRows = [],
   voucherRows = []
 }: {
+  accountingPeriodStart?: string;
   filters?: FinancePeriodCloseFilters;
   financeRows?: FinanceTransactionRecord[];
   laterPeriodAdjustmentRows?: AccountingVoucherLaterPeriodAdjustmentRecord[];
@@ -142,6 +175,7 @@ function buildRows({
   voucherRows?: AccountingVoucherRecord[];
 }) {
   return buildFinancePeriodCloseRecords({
+    accountingPeriodStart,
     filters,
     financeRows,
     laterPeriodAdjustmentRows,
@@ -187,6 +221,7 @@ const tests: UnitTest[] = [
       assertEqual(
         period.checkItems.map((item) => item.code).join(','),
         [
+          'month_end_matters',
           'voucher_preparation',
           'voucher_booking',
           'general_ledger_trial_balance',
@@ -216,6 +251,141 @@ const tests: UnitTest[] = [
         '平衡',
         'period close summary snapshot should carry financial statement snapshot readiness'
       );
+    }
+  },
+  {
+    name: 'requires the prior accounting period to be closed before a later clear period can close',
+    run: () => {
+      const julyVoucher = createVoucher('已记账', {
+        accountingPeriod: '2026-07',
+        id: 'voucher-july-booked',
+        voucherDate: '2026-07-15'
+      });
+      const julyLedgerEntries = balancedLedgerEntries.map((entry) => ({
+        ...entry,
+        accountingPeriod: '2026-07',
+        id: `july-${entry.id}`,
+        voucherDate: '2026-07-15',
+        voucherId: julyVoucher.id
+      }));
+      const rows = buildRows({
+        accountingPeriodStart: '2026-06',
+        filters: {
+          ...defaultFinancePeriodCloseFilters,
+          accountingPeriodTime: { mode: 'month', month: '2026-07' }
+        },
+        financeRows: [createFinanceTransaction({ accountingPeriod: '2026-07', transactionNo: 'FIN-JULY-CONTINUITY' })],
+        ledgerEntries: julyLedgerEntries,
+        taxMatterRows: [createTaxMatter({ period: '2026-07' })],
+        voucherRows: [julyVoucher]
+      });
+      const july = rows.find((record) => record.accountingPeriod === '2026-07');
+
+      if (!july) {
+        throw new Error('expected 2026-07 period');
+      }
+
+      assertEqual(rows.length, 1, 'month filtering should keep only the selected later period after continuity is derived');
+      assertEqual(july.status, '需处理', 'later period should not remain closeable while the prior period is open');
+      assertEqual(july.canClose, false, 'prior-period blocker should disable close confirmation');
+      assertEqual(july.blockedCheckCount, 0, 'prior-period blocker should not be duplicated as a current-period check item');
+      assertEqual(july.continuityStatus, '待前期结账', 'later period should expose the prior-period close blocker');
+      assertEqual(july.continuityBlockerPeriod, '2026-06', 'later period should name the direct prior accounting period');
+      assertEqual(
+        july.continuityDetail,
+        '需先完成 2026-06 期间结账，当前期间才能结账。',
+        'later period should expose concise continuity guidance'
+      );
+      assertEqual(
+        july.checkItems.every((item) => item.status === '通过'),
+        true,
+        'current-period checks should stay passed when only the prior-period continuity is blocking'
+      );
+    }
+  },
+  {
+    name: 'derives a continuous month range from account-set start and only unlocks each direct successor after its prior lock',
+    run: () => {
+      const julyVoucher = createVoucher('已记账', {
+        accountingPeriod: '2026-07',
+        id: 'voucher-july-sequence',
+        voucherDate: '2026-07-15'
+      });
+      const rows = buildRows({
+        accountingPeriodStart: '2026-05',
+        financeRows: [createFinanceTransaction({ accountingPeriod: '2026-07', transactionNo: 'FIN-JULY-SEQUENCE' })],
+        ledgerEntries: balancedLedgerEntries.map((entry) => ({
+          ...entry,
+          accountingPeriod: '2026-07',
+          id: `sequence-${entry.id}`,
+          voucherDate: '2026-07-15',
+          voucherId: julyVoucher.id
+        })),
+        periodLocks: [createAccountingPeriodLockRecord('2026-05', '2026-05 月结确认')],
+        taxMatterRows: [createTaxMatter({ period: '2026-07' })],
+        voucherRows: [julyVoucher]
+      });
+      const june = rows.find((record) => record.accountingPeriod === '2026-06');
+      const july = rows.find((record) => record.accountingPeriod === '2026-07');
+
+      if (!june || !july) {
+        throw new Error('expected 2026-06 and 2026-07 periods');
+      }
+
+      assertEqual(
+        rows.map((record) => record.accountingPeriod).join(','),
+        '2026-07,2026-06,2026-05',
+        'account-set start should fill blank months through the latest closing candidate'
+      );
+      assertEqual(june.status, '可结账', 'the direct successor of a closed period should be eligible after its own checks pass');
+      assertEqual(june.continuityStatus, '前期已结账', 'june should recognize the locked start period');
+      assertEqual(july.status, '需处理', 'july should remain blocked until june itself is closed');
+      assertEqual(july.continuityBlockerPeriod, '2026-06', 'july should require its direct prior period instead of any earlier lock');
+    }
+  },
+  {
+    name: 'flags existing out-of-order period locks and restores the regular continuity blocker after a repair reopen',
+    run: () => {
+      const legacyPeriodLocks = [createAccountingPeriodLockRecord('2026-07', 'legacy 2026-07 close')];
+      const rows = buildRows({
+        accountingPeriodStart: '2026-06',
+        financeRows: [createFinanceTransaction({ accountingPeriod: '2026-07', transactionNo: 'FIN-OUT-OF-ORDER' })],
+        periodLocks: legacyPeriodLocks,
+        taxMatterRows: [createTaxMatter({ period: '2026-07' })]
+      });
+      const july = rows.find((record) => record.accountingPeriod === '2026-07');
+
+      if (!july) {
+        throw new Error('expected 2026-07 period');
+      }
+
+      assertEqual(july.status, '已结账', 'existing period lock should remain read-only instead of being silently rewritten');
+      assertEqual(july.canClose, false, 'closed period should remain non-closeable');
+      assertEqual(july.continuityStatus, '锁定顺序异常', 'out-of-order historical lock should remain visible');
+      assertEqual(july.continuityBlockerPeriod, '2026-06', 'out-of-order lock should identify the missing prior close');
+
+      const reopenedRows = buildRows({
+        accountingPeriodStart: '2026-06',
+        financeRows: [createFinanceTransaction({ accountingPeriod: '2026-07', transactionNo: 'FIN-OUT-OF-ORDER' })],
+        periodLocks: reopenAccountingPeriodLock(legacyPeriodLocks, '2026-07', {
+          reason: '补齐前期结账顺序',
+          reopenedAt: '2026-08-01 09:30',
+          reopenedBy: '李明'
+        }),
+        taxMatterRows: [createTaxMatter({ period: '2026-07' })]
+      });
+      const reopenedJuly = reopenedRows.find((record) => record.accountingPeriod === '2026-07');
+
+      if (!reopenedJuly) {
+        throw new Error('expected reopened 2026-07 period');
+      }
+
+      assertEqual(reopenedJuly.status, '需处理', 'reopened period should return to the ordinary close workflow');
+      assertEqual(reopenedJuly.continuityStatus, '待前期结账', 'reopened period should require its missing prior period');
+      assertEqual(reopenedJuly.continuityBlockerPeriod, '2026-06', 'reopened period should retain the direct prior-period requirement');
+      assertEqual(reopenedJuly.reopenedBy, '李明', 'reopened period should expose the repair operator for readback');
+      assertEqual(reopenedJuly.reopenedAt, '2026-08-01 09:30', 'reopened period should expose the repair time for readback');
+      assertEqual(reopenedJuly.reopenReason, '补齐前期结账顺序', 'reopened period should expose the repair reason for readback');
     }
   },
   {
@@ -561,6 +731,7 @@ const tests: UnitTest[] = [
         },
         laterPeriodAdjustmentRows: [{ ...targetAdjustment, candidateStatus: '待记账' }],
         ledgerEntries: [],
+        periodLocks: [createAccountingPeriodLockRecord('2026-06', '2026-06 月结确认')],
         voucherRows: [adjustmentVoucher]
       });
       const pendingTargetPeriod = pendingTargetRows.find((record) => record.accountingPeriod === '2026-07');
@@ -597,6 +768,7 @@ const tests: UnitTest[] = [
         },
         laterPeriodAdjustmentRows: [{ ...targetAdjustment, candidateStatus: '已记账' }],
         ledgerEntries: bookedLedgerEntries,
+        periodLocks: [createAccountingPeriodLockRecord('2026-06', '2026-06 月结确认')],
         voucherRows: bookedVoucherRows
       });
       const bookedTargetPeriod = bookedTargetRows.find((record) => record.accountingPeriod === '2026-07');
@@ -813,12 +985,39 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'does not block period close only because a declared tax remains unpaid',
+    run: () => {
+      const rows = buildRows({
+        financeRows: [createFinanceTransaction({})],
+        ledgerEntries: balancedLedgerEntries,
+        taxMatterRows: [createTaxMatter({
+          paidAmount: 0,
+          paymentDate: undefined,
+          paymentStatus: '待缴纳',
+          processStatus: '待缴款'
+        })],
+        voucherRows: [createVoucher('已记账')]
+      });
+      const period = rows.find((record) => record.accountingPeriod === '2026-06');
+
+      if (!period) {
+        throw new Error('expected 2026-06 period');
+      }
+
+      assertEqual(period.taxHandlingPendingCount, 0, 'later tax cash settlement must not be a period tax-accounting blocker');
+      assertEqual(period.status, '可结账', 'declared and booked tax should allow close before the later payment date');
+    }
+  },
+  {
     name: 'blocks close when reviewed cash flow is not reconciled or tax matter is unfinished',
     run: () => {
       const rows = buildRows({
         financeRows: [createFinanceTransaction({ reconciliationStatus: '未对账' })],
         ledgerEntries: balancedLedgerEntries,
-        taxMatterRows: [createTaxMatter({ processStatus: '待上传回执' })],
+        taxMatterRows: [createTaxMatter({
+          declarationReceiptNo: undefined,
+          processStatus: '待补回执'
+        })],
         voucherRows: [createVoucher('已记账')]
       });
       const period = rows.find((record) => record.accountingPeriod === '2026-06');
@@ -864,9 +1063,20 @@ const tests: UnitTest[] = [
         financeRows: [createFinanceTransaction({})],
         ledgerEntries: balancedLedgerEntries,
         taxMatterRows: [
-          createTaxMatter({ id: 'tax-iit', processStatus: '数据待确认' } as Partial<FinanceTaxMatterRecord>),
-          createTaxMatter({ id: 'social', matterType: '社保缴纳', processStatus: '数据待确认' } as Partial<FinanceTaxMatterRecord>),
-          createTaxMatter({ id: 'housing', matterType: '公积金缴纳', processStatus: '待上传回执' } as Partial<FinanceTaxMatterRecord>)
+          createTaxMatter({ id: 'tax-iit', dataStatus: '待复核', processStatus: '数据待确认' }),
+          createTaxMatter({ id: 'social', dataStatus: '待复核', matterType: '社保缴纳', processStatus: '数据待确认' }),
+          createTaxMatter({
+            id: 'housing',
+            matterType: '公积金缴纳',
+            processStatus: '待补回执',
+            sourceItems: [{
+              id: 'housing-source-pending',
+              name: '公积金缴费明细',
+              sourceModule: '社保公积金',
+              status: '待复核',
+              updatedAt: '2026-07-10'
+            }]
+          })
         ],
         voucherRows: [createVoucher('已记账')]
       });
@@ -909,6 +1119,7 @@ const tests: UnitTest[] = [
         taxMatterRows: [
           createTaxMatter({
             matterType: '增值税及附加',
+            dataStatus: '待复核',
             period: '2026-Q2',
             periodType: '季度',
             processStatus: '数据待确认'
@@ -987,7 +1198,28 @@ const tests: UnitTest[] = [
           blockedCheckCount: 0,
           bookedVoucherCount: 7,
           creditTotal: 8800,
-          debitTotal: 8800,
+            debitTotal: 8800,
+            financialStatementReport: {
+              accountingPeriod: '2026-06',
+              assetTotal: 0,
+              balanceSheetDifference: 0,
+              balanceSheetLines: [],
+              balanceSheetReadiness: '可出具',
+              balanceSheetReadinessDetail: '资产负债表勾稽一致。',
+              cashFlowLines: [],
+              cashFlowMappingGaps: [],
+              cashFlowNetAmount: 0,
+              cashFlowReadiness: '可出具',
+              cashFlowReadinessDetail: '本期无现金或银行存款变动，现金流量表金额为零。',
+              financialStatementReadiness: '可出具',
+              financialStatementReadinessDetail: '三张表校验已通过。',
+              liabilityEquityTotal: 0,
+              periodLabel: '2026-06 当月',
+              profitLines: [],
+              profitTotal: 0,
+              reportBasis: '总账：7 张已记账凭证 / 8,800.00 元借方 / 8,800.00 元贷方',
+              trialBalanceStatus: '平衡'
+            },
             readyToBookVoucherCount: 0,
             generatedVoucherCount: 7,
             issueVoucherCount: 0,
@@ -1082,6 +1314,28 @@ const tests: UnitTest[] = [
         true,
         'legacy closed readback fallback should point to the close record instead of live source drift'
       );
+    }
+  },
+  {
+    name: 'limits period-close records to the configured account-set start period',
+    run: () => {
+      const rows = buildFinancePeriodCloseRecords({
+        accountingPeriodStart: '2026-06',
+        financeRows: [
+          createFinanceTransaction({ accountingPeriod: '2026-04', transactionNo: 'FIN-APRIL-HISTORY' }),
+          createFinanceTransaction({ accountingPeriod: '2026-06', transactionNo: 'FIN-JUNE-ACTIVE' })
+        ],
+        ledgerEntries: balancedLedgerEntries,
+        periodLocks: [],
+        taxMatterRows: [createTaxMatter({ period: '2026-04' }), createTaxMatter({})],
+        voucherRows: [
+          createVoucher('已记账', { accountingPeriod: '2026-04', id: 'voucher-april-history', voucherDate: '2026-04-15' }),
+          createVoucher('已记账', { id: 'voucher-june-active' })
+        ]
+      });
+
+      assertEqual(rows.length, 1, 'pre-start accounting periods should stay outside period-close records');
+      assertEqual(rows[0]?.accountingPeriod, '2026-06', 'period close should start from the enabled account-set period');
     }
   },
   {

@@ -300,6 +300,10 @@ export const peopleMembers: PeopleMember[] = [
     wechat: 'wx_person_3201',
     idDocumentType: '居民身份证',
     identityNo: '430104199605191128',
+    taxIdentityProfile: {
+      identityType: '居民个人',
+      status: '已确认'
+    },
     idValidUntil: '2036-02-28',
     hukouAddress: '湖南省长沙市岳麓区银盆岭街道示例路 22 号',
     address: '湖南省长沙市岳麓区麓谷示例公寓 5 栋 1502',

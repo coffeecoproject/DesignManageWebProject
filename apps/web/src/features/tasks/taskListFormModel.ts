@@ -29,6 +29,7 @@ export type StoreTaskForm = {
   brandId: string;
   executorId: string;
   materials: TaskFileDraft[];
+  laborGrossAmount: number | null;
   note: string;
   plannedDurationHours: number | null;
   storeId: string;
@@ -152,6 +153,7 @@ export function buildDefaultTaskForm({
     acceptorId: '',
     brandId: brand?.id ?? '',
     executorId: '',
+    laborGrossAmount: null,
     materials: [createTaskFileDraft('PDF图纸')],
     note: '',
     plannedDurationHours: null,
@@ -198,6 +200,7 @@ export function getTaskCreateValidationState({
   hasPartialMaterial,
   hasValidAcceptor,
   hasValidExecutor,
+  requiresLaborAgreement,
   selectableExecutorCount
 }: {
   availableTaskOptions: BrandTaskOption[];
@@ -207,6 +210,7 @@ export function getTaskCreateValidationState({
   hasPartialMaterial: boolean;
   hasValidAcceptor: boolean;
   hasValidExecutor: boolean;
+  requiresLaborAgreement: boolean;
   selectableExecutorCount: number;
 }): TaskCreateValidationState {
   if (selectableExecutorCount === 0) {
@@ -231,11 +235,14 @@ export function getTaskCreateValidationState({
     !hasValidExecutor ||
     !hasValidAcceptor ||
     !generatedPlannedDeliveryAt ||
-    availableTaskOptions.length === 0;
+    availableTaskOptions.length === 0 ||
+    (requiresLaborAgreement && (typeof form.laborGrossAmount !== 'number' || form.laborGrossAmount <= 0));
 
   return {
     disabled,
-    warningMessage: '请补全品牌门店、任务类型、预计用时、执行人和验收人'
+    warningMessage: requiresLaborAgreement
+      ? '请补全品牌门店、任务类型、预计用时、执行人、验收人和兼职任务税前金额'
+      : '请补全品牌门店、任务类型、预计用时、执行人和验收人'
   };
 }
 
@@ -250,7 +257,7 @@ export function buildTaskCreateInput({
   selectedBrand
 }: {
   acceptor: { id: string; name: string };
-  executor: { id: string; name: string };
+  executor: { contractNo: string; id: string; name: string; personnelType: '全职' | '兼职' };
   fileIdPrefix?: string;
   form: StoreTaskForm;
   generatedPlannedDeliveryAt: string;
@@ -265,6 +272,14 @@ export function buildTaskCreateInput({
     acceptorName: acceptor.name,
     executorId: executor.id,
     executorName: executor.name,
+    laborAgreement:
+      executor.personnelType === '兼职'
+        ? {
+            agreedGrossAmount: form.laborGrossAmount ?? 0,
+            agreementVersion: executor.contractNo,
+            projectId: `${executor.contractNo}/${form.taskConfigId}`
+          }
+        : undefined,
     files: buildTaskFilesFromDrafts({
       drafts: form.materials,
       idPrefix: fileIdPrefix,

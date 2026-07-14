@@ -36,11 +36,13 @@ import {
   buildSalaryMonthlyReportId,
   formatSalaryMoney,
   type SalaryAdjustmentRecord,
-  type SalaryMonthlyReport
+  type SalaryMonthlyReport,
+  type SalaryPaymentEvidenceInput
 } from './salaryDomain';
 import { SalaryAdjustmentCreateDrawer } from './SalaryAdjustmentCreateDrawer';
 import { salaryMonthlyColumns } from './SalaryMonthlyColumns';
 import { SalaryMonthlyDetailDrawer } from './SalaryMonthlyDetailDrawer';
+import { SalaryPaymentConfirmDrawer } from './SalaryPaymentConfirmDrawer';
 import { useSalaryMonthlyReportBuilder } from './salaryReportBuilder';
 
 const salaryDetailDefaultMonthRange = getDateScopeMonthRange(salaryDetailDefaultMonth);
@@ -93,10 +95,11 @@ function getSalaryReportMonths({
 
 export function SalaryMonthlyPage() {
   const [messageApi, contextHolder] = message.useMessage();
-  const { getAccountingPeriodGuard } = useFinanceManagement();
-  const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
+  const { financeRows, getAccountingPeriodGuard } = useFinanceManagement();
+  const { getSalaryMonthlyReports, salaryReportMonths, salaryState } = useSalaryMonthlyReportBuilder();
   const [filters, setFilters] = useState<SalaryMonthlyFilters>(defaultSalaryMonthlyFilters);
   const [activeReportId, setActiveReportId] = useState<string>();
+  const [paymentReportId, setPaymentReportId] = useState<string>();
   const adjustmentDrawer = useDrawerFormState<SalaryAdjustmentRecord, SalaryAdjustmentFormValue>({
     createForm: () => createSalaryAdjustmentForm(getSalaryAdjustmentDefaultMonth(filters.salaryTime)),
     editForm: createSalaryAdjustmentFormFromRecord
@@ -105,11 +108,11 @@ export function SalaryMonthlyPage() {
   const reportMonths = useMemo(
     () =>
       getSalaryReportMonths({
-        salaryDetailMonths: salaryState.salaryDetailMonths,
+        salaryDetailMonths: salaryReportMonths,
         salaryRange,
         salaryTime: filters.salaryTime
       }),
-    [filters.salaryTime, salaryRange, salaryState.salaryDetailMonths]
+    [filters.salaryTime, salaryRange, salaryReportMonths]
   );
   const reports = useMemo(
     () =>
@@ -123,7 +126,37 @@ export function SalaryMonthlyPage() {
     [getSalaryMonthlyReports, reportMonths]
   );
   const activeReport = reports.find((report) => report.id === activeReportId);
-  const activeReportPeriodGuard = activeReport
+  const paymentReport = reports.find((report) => report.id === paymentReportId);
+  const paymentCandidates = useMemo<SalaryPaymentEvidenceInput[]>(() => {
+    if (!paymentReport?.workflow?.payrollNo) {
+      return [];
+    }
+
+    const usedTransactionNos = new Set(
+      salaryState.salaryPaymentRecords
+        .map((record) => record.financeTransactionNo)
+        .filter((transactionNo): transactionNo is string => Boolean(transactionNo))
+    );
+
+    return financeRows
+      .filter(
+        (row) =>
+          row.sourceType === '薪酬发放' &&
+          row.status === '已入账' &&
+          row.sourceNo === paymentReport.workflow?.payrollNo &&
+          !usedTransactionNos.has(row.transactionNo)
+      )
+      .map((row) => ({
+        accountName: row.publicAccountSnapshot?.displayName ?? '-',
+        amount: row.amount,
+        financeTransactionNo: row.transactionNo,
+        occurredAt: row.occurredAt,
+        payrollNo: row.sourceNo,
+        status: '已入账' as const
+      }))
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+  }, [financeRows, paymentReport, salaryState.salaryPaymentRecords]);
+  const activeReportPeriodGuard = activeReport?.canConfirm
     ? getAccountingPeriodGuard(getSalaryMonthlyAccountingPeriod(activeReport.month), '处理薪酬明细')
     : undefined;
   const adjustmentPeriodGuard = adjustmentDrawer.open
@@ -151,7 +184,7 @@ export function SalaryMonthlyPage() {
       netSalary: filteredReports.reduce((total, report) => total + report.netSalary, 0),
       processing: filteredReports.filter((report) => report.status === '结算中').length,
       readyToConfirm: filteredReports.filter((report) => report.status === '待确认').length,
-      settled: filteredReports.filter((report) => report.status === '已结算').length,
+      paid: filteredReports.filter((report) => report.status === '已发放').length,
       total: filteredReports.length
     }),
     [filteredReports]
@@ -188,10 +221,10 @@ export function SalaryMonthlyPage() {
       return;
     }
 
-    const confirmed = salaryState.confirmSalaryMonthlyReport(report.member.id, report.month);
+    const result = salaryState.confirmSalaryMonthlyReport(report);
 
-    if (!confirmed) {
-      void messageApi.warning('工资已结算，不能再确认');
+    if (!result.success) {
+      void messageApi.warning(result.reason ?? '薪酬明细确认失败');
       return;
     }
 
@@ -199,20 +232,40 @@ export function SalaryMonthlyPage() {
     void messageApi.success('薪酬明细已确认');
   }
 
-  function handleSettle(report: SalaryMonthlyReport) {
-    if (!guardSalaryMonthlyMutation(report.month, '结算薪酬明细')) {
+  function openPaymentDrawer(report: SalaryMonthlyReport) {
+    setPaymentReportId(report.id);
+  }
+
+  function handlePay(report: SalaryMonthlyReport, evidence: SalaryPaymentEvidenceInput) {
+    if (!guardSalaryMonthlyMutation(evidence.occurredAt.slice(0, 7), '确认工资发放')) {
       return;
     }
 
-    const settled = salaryState.settleSalaryMonthlyReport(report.member.id, report.month);
+    const result = salaryState.markSalaryMonthlyPaid(report, evidence);
 
-    if (!settled) {
-      void messageApi.warning('薪酬明细已结算，不能重复结算');
+    if (!result.success) {
+      void messageApi.warning(result.reason ?? '工资发放事实核验失败');
       return;
     }
 
+    setPaymentReportId(undefined);
     setActiveReportId(report.id);
-    void messageApi.success('薪酬明细已结算，相关考勤月报已锁定');
+    void messageApi.success('工资发放事实已记录，个税按实际发放月份冻结');
+  }
+
+  function handleRecalculatePayment(report: SalaryMonthlyReport, paymentDate: string) {
+    if (!guardSalaryMonthlyMutation(paymentDate.slice(0, 7), '重新核定工资发放')) {
+      return;
+    }
+
+    const result = salaryState.recalculateSalaryMonthlyPayment(report, paymentDate);
+
+    if (!result.success) {
+      void messageApi.warning(result.reason ?? '薪酬重新核定失败');
+      return;
+    }
+
+    void messageApi.success(`已按 ${result.personalIncomeTaxPeriod} 个税月份重新核定`);
   }
 
   function handleSaveAdjustment(record: SalaryAdjustmentRecord) {
@@ -223,7 +276,7 @@ export function SalaryMonthlyPage() {
     const saved = salaryState.saveSalaryAdjustment(record);
 
     if (!saved) {
-      void messageApi.warning('工资已结算，不能再调整');
+      void messageApi.warning('工资已发放，不能再调整');
       return;
     }
 
@@ -253,7 +306,7 @@ export function SalaryMonthlyPage() {
             <FilterField label="状态" controlWidth="status-select">
               <Select
                 value={filters.status}
-                options={['全部', '结算中', '待确认', '已确认', '已结算'].map((status) => ({
+                options={['全部', '结算中', '待确认', '已确认', '已发放'].map((status) => ({
                   label: status,
                   value: status
                 }))}
@@ -274,7 +327,7 @@ export function SalaryMonthlyPage() {
           <MetricCard icon={<FileSearchOutlined />} label="涉及员工" value={metrics.employeeCount} />
           <MetricCard icon={<ReloadOutlined />} label="结算中" value={metrics.processing} />
           <MetricCard icon={<CheckCircleOutlined />} label="待确认" value={metrics.readyToConfirm} />
-          <MetricCard icon={<WalletOutlined />} label="已结算" value={metrics.settled} />
+          <MetricCard icon={<WalletOutlined />} label="已发放" value={metrics.paid} />
           <MetricCard icon={<WalletOutlined />} label="应发合计" value={formatSalaryMoney(metrics.grossSalary)} />
           <MetricCard icon={<FileSearchOutlined />} label="扣减合计" value={formatSalaryMoney(metrics.deductionAmount)} />
           <MetricCard icon={<CheckCircleOutlined />} label="实发合计" value={formatSalaryMoney(metrics.netSalary)} />
@@ -304,7 +357,16 @@ export function SalaryMonthlyPage() {
         report={activeReport}
         onClose={() => setActiveReportId(undefined)}
         onConfirm={handleConfirm}
-        onSettle={handleSettle}
+        onOpenPayment={openPaymentDrawer}
+      />
+
+      <SalaryPaymentConfirmDrawer
+        open={Boolean(paymentReport)}
+        paymentCandidates={paymentCandidates}
+        report={paymentReport}
+        onCancel={() => setPaymentReportId(undefined)}
+        onConfirm={handlePay}
+        onRecalculate={handleRecalculatePayment}
       />
 
       <SalaryAdjustmentCreateDrawer

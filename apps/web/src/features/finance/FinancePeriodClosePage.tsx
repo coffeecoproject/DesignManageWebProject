@@ -26,6 +26,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
+import { accountingSubjectProfile } from './financeAccountingSubjectData';
 import {
   applyAccountingVoucherLifecycle,
   buildAccountingVoucherFromLaterPeriodAdjustment,
@@ -120,6 +121,7 @@ function PeriodCloseDrawer({
   record,
   onClose,
   onConfirmClose,
+  onReopen,
   onStartLaterAdjustment
 }: {
   canStartLaterAdjustment: boolean;
@@ -127,6 +129,7 @@ function PeriodCloseDrawer({
   record?: FinancePeriodCloseRecord;
   onClose: () => void;
   onConfirmClose: (record: FinancePeriodCloseRecord) => void;
+  onReopen: (record: FinancePeriodCloseRecord) => void;
   onStartLaterAdjustment: (record: FinancePeriodCloseRecord) => void;
 }) {
   if (!record) {
@@ -214,7 +217,16 @@ function PeriodCloseDrawer({
     .filter((item) => item.count > 0)
     .map<DetailInfoGridItem>((item) => ({ label: item.label, value: formatCount(item.count, item.unit) }));
   const hasLaterAdjustments = record.laterAdjustmentSourceCount > 0 || record.laterAdjustmentTargetCount > 0;
-  const closeCheckSummaryCard = isClosed
+  const hasContinuityBlocker = Boolean(record.continuityBlockerPeriod);
+  const canReopenSequenceException = isClosed && record.continuityStatus === '锁定顺序异常';
+  const closeCheckSummaryCard = hasContinuityBlocker
+    ? {
+        icon: <WarningOutlined />,
+        key: 'continuity',
+        label: record.continuityStatus === '锁定顺序异常' ? '结账顺序' : '前期结账',
+        value: record.continuityBlockerPeriod
+      }
+    : isClosed
     ? {
         icon: <CheckCircleOutlined />,
         key: 'checkReadback',
@@ -242,7 +254,14 @@ function PeriodCloseDrawer({
       closeAction={{ label: '关闭', onClick: onClose }}
       open={Boolean(record)}
       primaryAction={
-        record.canClose
+        canReopenSequenceException
+          ? {
+              icon: <WarningOutlined />,
+              label: '修复结账顺序',
+              onClick: () => onReopen(record),
+              testId: 'finance-period-close-reopen-button'
+            }
+          : record.canClose
           ? {
               icon: <LockOutlined />,
               label: '确认结账',
@@ -293,6 +312,16 @@ function PeriodCloseDrawer({
           closeCheckSummaryCard
         ]}
       />
+
+      {hasContinuityBlocker ? (
+        <Alert
+          className="drawer-inline-alert"
+          data-testid="finance-period-close-continuity-alert"
+          message={record.continuityDetail}
+          showIcon
+          type="warning"
+        />
+      ) : null}
 
       <DetailTabs
         items={[
@@ -357,6 +386,20 @@ function PeriodCloseDrawer({
                     <DetailInfoGrid
                       columns={3}
                       items={closeSnapshotItems}
+                    />
+                  </DetailSection>
+                ) : null}
+
+                {record.reopenedAt ? (
+                  <DetailSection icon={<WarningOutlined />} title="结账修复记录">
+                    <DetailInfoGrid
+                      columns={3}
+                      items={[
+                        { label: '修复状态', value: '已反结账' },
+                        { label: '修复人', value: record.reopenedBy },
+                        { label: '修复时间', value: record.reopenedAt },
+                        { label: '修复原因', value: record.reopenReason, wide: true }
+                      ]}
                     />
                   </DetailSection>
                 ) : null}
@@ -600,6 +643,7 @@ function PeriodCloseConfirmDrawer({
   }
 
   const canSubmit = record.canClose && reason.trim().length > 0;
+  const hasContinuityBlocker = Boolean(record.continuityBlockerPeriod);
 
   return (
     <DetailDrawerShell
@@ -637,7 +681,8 @@ function PeriodCloseConfirmDrawer({
 
       <Alert
         className="drawer-inline-alert"
-        message={getFinancePeriodCloseConfirmationNotice()}
+        data-testid="finance-period-close-confirm-notice"
+        message={hasContinuityBlocker ? record.continuityDetail : getFinancePeriodCloseConfirmationNotice()}
         showIcon
         type="warning"
       />
@@ -649,7 +694,7 @@ function PeriodCloseConfirmDrawer({
             { label: '检查结果', value: `${record.checkItems.length} 项通过` },
             { label: '总账余额', value: formatCount(record.generalLedgerSnapshotRows?.length ?? 0, '个科目') },
             { label: '财务报表', value: record.financialStatementSnapshot ? '将生成正式快照' : '暂不可生成' },
-            { label: '期间状态', value: '确认后锁定' }
+            { label: '期间状态', value: hasContinuityBlocker ? '需先完成前期结账' : '确认后锁定' }
           ]}
         />
       </DetailSection>
@@ -674,6 +719,86 @@ function PeriodCloseConfirmDrawer({
   );
 }
 
+function PeriodCloseReopenDrawer({
+  record,
+  reason,
+  onCancel,
+  onChangeReason,
+  onSubmit
+}: {
+  record?: FinancePeriodCloseRecord;
+  reason: string;
+  onCancel: () => void;
+  onChangeReason: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  if (!record) {
+    return null;
+  }
+
+  const canSubmit = record.status === '已结账' && record.continuityStatus === '锁定顺序异常' && reason.trim().length > 0;
+
+  return (
+    <DetailDrawerShell
+      bodyTestId="finance-period-close-reopen-drawer"
+      className="finance-transaction-drawer"
+      closeAction={{ label: '取消', onClick: onCancel }}
+      open={Boolean(record)}
+      primaryAction={{
+        disabled: !canSubmit,
+        icon: <WarningOutlined />,
+        label: '确认反结账',
+        onClick: onSubmit,
+        testId: 'finance-period-close-reopen-submit'
+      }}
+      title={
+        <DetailDrawerTitle
+          status="已结账"
+          statusToneMap={periodCloseStatusTone}
+          subtitle={record.accountingPeriod}
+          title="修复结账顺序"
+        />
+      }
+      width={760}
+      onClose={onCancel}
+    >
+      <Alert
+        className="drawer-inline-alert"
+        data-testid="finance-period-close-reopen-notice"
+        message={`本期在 ${record.continuityBlockerPeriod} 未结账时已结账。反结账后，需先完成前期结账再重新结账。`}
+        showIcon
+        type="warning"
+      />
+
+      <DetailSection icon={<ProfileOutlined />} title="修复范围">
+        <DetailInfoGrid
+          columns={2}
+          items={[
+            { label: '当前期间', value: record.accountingPeriod },
+            { label: '缺失前期', value: record.continuityBlockerPeriod },
+            { label: '当前状态', value: '结账顺序异常' },
+            { label: '处理结果', value: '恢复开放，保留历史快照' }
+          ]}
+        />
+      </DetailSection>
+
+      <DetailSection icon={<WarningOutlined />} title="反结账确认">
+        <DrawerFormGrid>
+          <DrawerFormField label="修复原因" required wide>
+            <Input.TextArea
+              autoSize={{ minRows: 3, maxRows: 5 }}
+              data-testid="finance-period-close-reopen-reason"
+              placeholder="填写本次反结账修复原因"
+              value={reason}
+              onChange={(event) => onChangeReason(event.target.value)}
+            />
+          </DrawerFormField>
+        </DrawerFormGrid>
+      </DetailSection>
+    </DetailDrawerShell>
+  );
+}
+
 export function FinancePeriodClosePage() {
   const {
     addAccountingVoucherLaterPeriodAdjustment,
@@ -683,9 +808,12 @@ export function FinancePeriodClosePage() {
     bankReconciliationRows,
     closeAccountingPeriod,
     financeRows,
+    invoiceBusinessAllocationRows,
     invoiceRows,
     ledgerOpeningAdjustmentRows,
+    monthEndMatterRows,
     receivablePayableRows,
+    reopenAccountingPeriod,
     taxMatterRows
   } = useFinanceManagement();
   const [messageApi, contextHolder] = message.useMessage();
@@ -693,6 +821,8 @@ export function FinancePeriodClosePage() {
   const [activePeriod, setActivePeriod] = useState<string>();
   const [confirmPeriod, setConfirmPeriod] = useState<string>();
   const [closeReason, setCloseReason] = useState('');
+  const [reopenPeriod, setReopenPeriod] = useState<string>();
+  const [reopenReason, setReopenReason] = useState('');
   const [laterAdjustmentPeriod, setLaterAdjustmentPeriod] = useState<string>();
   const [laterAdjustmentVoucherId, setLaterAdjustmentVoucherId] = useState<string>();
   const [laterAdjustmentForm, setLaterAdjustmentForm] = useState<AccountingVoucherLaterPeriodAdjustmentInput>({
@@ -711,7 +841,12 @@ export function FinancePeriodClosePage() {
           taxMatterRows,
           bankReconciliationRows,
           ledgerOpeningAdjustmentRows,
-          accountingVoucherLaterPeriodAdjustmentRows
+          accountingVoucherLaterPeriodAdjustmentRows,
+          {
+            accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+            invoiceBusinessAllocationRows,
+            monthEndMatterRows
+          }
         ),
         accountingVoucherLifecycleRows
       ),
@@ -720,8 +855,10 @@ export function FinancePeriodClosePage() {
       accountingVoucherLifecycleRows,
       bankReconciliationRows,
       financeRows,
+      invoiceBusinessAllocationRows,
       invoiceRows,
       ledgerOpeningAdjustmentRows,
+      monthEndMatterRows,
       receivablePayableRows,
       taxMatterRows
     ]
@@ -730,10 +867,12 @@ export function FinancePeriodClosePage() {
   const periodCloseReadModel = useMemo(
     () =>
       buildFinancePeriodCloseReadModel({
+        accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
         financeRows,
         filters,
         laterPeriodAdjustmentRows: accountingVoucherLaterPeriodAdjustmentRows,
         ledgerEntries,
+        monthEndMatterRows,
         periodLocks: accountingPeriodLocks,
         taxMatterRows,
         voucherRows
@@ -744,6 +883,7 @@ export function FinancePeriodClosePage() {
       financeRows,
       filters,
       ledgerEntries,
+      monthEndMatterRows,
       taxMatterRows,
       voucherRows
     ]
@@ -757,6 +897,10 @@ export function FinancePeriodClosePage() {
   const confirmRecord = useMemo(
     () => rows.find((record) => record.accountingPeriod === confirmPeriod),
     [confirmPeriod, rows]
+  );
+  const reopenRecord = useMemo(
+    () => rows.find((record) => record.accountingPeriod === reopenPeriod),
+    [reopenPeriod, rows]
   );
   const activeLaterAdjustmentRows = useMemo(
     () =>
@@ -799,12 +943,58 @@ export function FinancePeriodClosePage() {
   );
 
   function openConfirmClose(record: FinancePeriodCloseRecord) {
+    if (!record.canClose) {
+      void messageApi.warning(record.continuityDetail || '本期结账前置检查尚未完成');
+      return;
+    }
+
     setCloseReason('');
     setConfirmPeriod(record.accountingPeriod);
   }
 
+  function openReopen(record: FinancePeriodCloseRecord) {
+    if (record.status !== '已结账' || record.continuityStatus !== '锁定顺序异常') {
+      void messageApi.warning('当前期间不需要修复结账顺序');
+      return;
+    }
+
+    setReopenReason('');
+    setReopenPeriod(record.accountingPeriod);
+  }
+
+  function closeReopenDrawer() {
+    setReopenPeriod(undefined);
+    setReopenReason('');
+  }
+
+  function submitReopen() {
+    if (!reopenRecord || !reopenReason.trim()) {
+      return;
+    }
+
+    if (reopenRecord.status !== '已结账' || reopenRecord.continuityStatus !== '锁定顺序异常') {
+      void messageApi.warning('当前期间不再需要修复结账顺序');
+      closeReopenDrawer();
+      return;
+    }
+
+    if (!reopenAccountingPeriod(reopenRecord.accountingPeriod, reopenReason)) {
+      void messageApi.warning('反结账未完成，请刷新后重试');
+      return;
+    }
+
+    setActivePeriod(reopenRecord.accountingPeriod);
+    closeReopenDrawer();
+    void messageApi.success(`已反结账 ${reopenRecord.accountingPeriod}，请先完成 ${reopenRecord.continuityBlockerPeriod} 结账`);
+  }
+
   function submitConfirmClose() {
-    if (!confirmRecord || !confirmRecord.canClose || !closeReason.trim()) {
+    if (!confirmRecord || !closeReason.trim()) {
+      return;
+    }
+
+    if (!confirmRecord.canClose) {
+      void messageApi.warning(confirmRecord.continuityDetail || '本期结账前置检查尚未完成');
       return;
     }
 
@@ -989,6 +1179,15 @@ export function FinancePeriodClosePage() {
       key: 'closed',
       width: 180,
       render: (_, record) => {
+        if (record.continuityBlockerPeriod) {
+          return (
+            <CompactCell
+              primary={record.status === '已结账' ? '结账顺序异常' : `需先结 ${record.continuityBlockerPeriod}`}
+              secondary={record.status === '已结账' ? '前期未结账' : '本期暂不可结账'}
+            />
+          );
+        }
+
         if (record.closedAt) {
           return <CompactCell primary={record.closedAt} secondary={record.closedBy} />;
         }
@@ -1062,6 +1261,7 @@ export function FinancePeriodClosePage() {
           record={activeRecord}
           onClose={() => setActivePeriod(undefined)}
           onConfirmClose={openConfirmClose}
+          onReopen={openReopen}
           onStartLaterAdjustment={openLaterAdjustment}
         />
 
@@ -1071,6 +1271,14 @@ export function FinancePeriodClosePage() {
           onCancel={() => setConfirmPeriod(undefined)}
           onChangeReason={setCloseReason}
           onSubmit={submitConfirmClose}
+        />
+
+        <PeriodCloseReopenDrawer
+          record={reopenRecord}
+          reason={reopenReason}
+          onCancel={closeReopenDrawer}
+          onChangeReason={setReopenReason}
+          onSubmit={submitReopen}
         />
 
         <PeriodCloseLaterAdjustmentDrawer

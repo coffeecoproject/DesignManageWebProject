@@ -22,13 +22,17 @@ import {
   type GeneralLedgerSubjectBalanceRow
 } from './financeGeneralLedgerModel';
 import type { FinanceTaxMatterRecord, FinanceTaxMatterType } from './financeTaxFilingData';
+import { getTaxMatterAccountingStatus } from './financeTaxMatterModel';
+import type { FinanceMonthEndMatterRecord } from './financeMonthEndModel';
 import { financeToday, getAccountingPeriodFromBusinessPeriod } from './financeUtils';
 
 export type FinancePeriodCloseStatus = '可结账' | '需处理' | '已结账';
+export type FinancePeriodCloseContinuityStatus = '账套启用期' | '前期已结账' | '待前期结账' | '锁定顺序异常';
 export type FinancePeriodCloseCheckStatus = '通过' | '需处理';
 export type FinancePeriodCloseCheckCode =
   | 'voucher_preparation'
   | 'voucher_booking'
+  | 'month_end_matters'
   | 'general_ledger_trial_balance'
   | 'financial_statements'
   | 'cash_review'
@@ -62,6 +66,9 @@ export type FinancePeriodCloseRecord = {
   closedAt?: string;
   closedBy?: string;
   closeReason?: string;
+  continuityBlockerPeriod?: string;
+  continuityDetail: string;
+  continuityStatus: FinancePeriodCloseContinuityStatus;
   creditTotal: number;
   debitTotal: number;
   financialStatementSnapshot?: AccountingPeriodCloseFinancialStatementSnapshot;
@@ -72,6 +79,9 @@ export type FinancePeriodCloseRecord = {
   pendingReviewCashFlowCount: number;
   pendingVoucherCount: number;
   periodLabel: string;
+  reopenedAt?: string;
+  reopenedBy?: string;
+  reopenReason?: string;
   financialStatementReadinessDetail: string;
   financialStatementReadinessMode: '待结账' | '正式报表' | '暂不可出具';
   laterAdjustmentSummary: string;
@@ -185,11 +195,14 @@ function createFinancialStatementSnapshot(
   return {
     accountingPeriod: report.accountingPeriod,
     assetTotal: report.assetTotal,
+    balanceSheetDifference: report.balanceSheetDifference,
     balanceSheetLines: report.balanceSheetLines.map((line) => ({
       ...line,
       openingAmount: line.openingAmount,
       sourceSubjectCodes: [...line.sourceSubjectCodes]
     })),
+    balanceSheetReadiness: report.balanceSheetReadiness,
+    balanceSheetReadinessDetail: report.balanceSheetReadinessDetail,
     cashFlowLines: report.cashFlowLines.map((line) => ({
       ...line,
       sourceSubjectCodes: [...line.sourceSubjectCodes],
@@ -211,6 +224,8 @@ function createFinancialStatementSnapshot(
     cashFlowYearToDateNetAmount: report.cashFlowYearToDateNetAmount,
     cashFlowYearToDateOpeningBalance: report.cashFlowYearToDateOpeningBalance,
     cashFlowYearToDateReconciliationDifference: report.cashFlowYearToDateReconciliationDifference,
+    financialStatementReadiness: report.financialStatementReadiness,
+    financialStatementReadinessDetail: report.financialStatementReadinessDetail,
     liabilityEquityTotal: report.liabilityEquityTotal,
     periodLabel: report.periodLabel,
     profitLines: report.profitLines.map((line) => ({
@@ -248,6 +263,7 @@ const closingRelevantVoucherStatuses = new Set<AccountingVoucherStatus>([
 const currentFinancePeriodCloseCheckCodes = new Set<string>([
   'voucher_preparation',
   'voucher_booking',
+  'month_end_matters',
   'general_ledger_trial_balance',
   'financial_statements',
   'cash_review',
@@ -280,6 +296,10 @@ const periodCloseCheckActions: Partial<Record<FinancePeriodCloseCheckCode, Perio
   financial_statements: {
     label: '去财务报表',
     path: '/finance/financial-statements'
+  },
+  month_end_matters: {
+    label: '去月末事项',
+    path: '/finance/month-end'
   },
   social_insurance_housing_fund: {
     label: '去社保公积金',
@@ -442,15 +462,15 @@ function normalizeStoredCheckSourceSummary({
 }
 
 function getFinancialStatementReadinessMode({
-  cashFlowMappingGapCount = 0,
+  financialStatementReadiness,
   periodLock,
   trialBalanceStatus
 }: {
-  cashFlowMappingGapCount?: number;
+  financialStatementReadiness: FinanceFinancialStatementReport['financialStatementReadiness'];
   periodLock?: AccountingPeriodLockRecord;
   trialBalanceStatus: FinancePeriodCloseRecord['trialBalanceStatus'];
 }) {
-  if (trialBalanceStatus !== '平衡' || cashFlowMappingGapCount > 0) {
+  if (trialBalanceStatus !== '平衡' || financialStatementReadiness !== '可出具') {
     return '暂不可出具';
   }
 
@@ -458,16 +478,12 @@ function getFinancialStatementReadinessMode({
 }
 
 function getFinancialStatementReadinessDetail({
-  cashFlowMappingGapCount = 0,
+  financialStatementReadinessDetail,
   mode
 }: {
-  cashFlowMappingGapCount?: number;
+  financialStatementReadinessDetail: string;
   mode: FinancePeriodCloseRecord['financialStatementReadinessMode'];
 }) {
-  if (cashFlowMappingGapCount > 0) {
-    return `${cashFlowMappingGapCount} 张含现金/银行分录的凭证缺少对方科目现金流量项目映射；暂不从应收应付、流水或发票等业务单据倒推。`;
-  }
-
   if (mode === '正式报表') {
     return '本期已结账，报表按结账时快照只读回看。';
   }
@@ -476,7 +492,7 @@ function getFinancialStatementReadinessDetail({
     return '本期报表检查已通过，确认结账后生成正式报表。';
   }
 
-  return '总账试算不平，暂不可作为本期报表来源。';
+  return financialStatementReadinessDetail;
 }
 
 function getLaterAdjustmentSummary({
@@ -555,6 +571,7 @@ function collectPeriods({
   financeRows,
   laterPeriodAdjustmentRows,
   ledgerEntries,
+  monthEndMatterRows,
   periodLocks,
   taxMatterRows,
   voucherRows
@@ -562,6 +579,7 @@ function collectPeriods({
   financeRows: FinanceTransactionRecord[];
   laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[];
   ledgerEntries: AccountingLedgerEntry[];
+  monthEndMatterRows: FinanceMonthEndMatterRecord[];
   periodLocks: AccountingPeriodLockRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
@@ -575,6 +593,7 @@ function collectPeriods({
   });
   ledgerEntries.forEach((entry) => periods.add(entry.accountingPeriod));
   financeRows.forEach((record) => periods.add(record.accountingPeriod));
+  monthEndMatterRows.forEach((record) => periods.add(record.accountingPeriod));
   taxMatterRows.forEach((record) => {
     const accountingPeriod = getTaxMatterAccountingPeriod(record);
 
@@ -585,6 +604,127 @@ function collectPeriods({
   periodLocks.forEach((record) => periods.add(record.accountingPeriod));
 
   return [...periods].sort((left, right) => right.localeCompare(left));
+}
+
+function getNextPeriod(accountingPeriod: string) {
+  const match = accountingPeriod.match(/^(\d{4})-(\d{2})$/);
+
+  if (!match) {
+    return accountingPeriod;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+}
+
+function getPreviousPeriod(accountingPeriod: string) {
+  const match = accountingPeriod.match(/^(\d{4})-(\d{2})$/);
+
+  if (!match) {
+    return accountingPeriod;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const previousMonth = month === 1 ? 12 : month - 1;
+  const previousYear = month === 1 ? year - 1 : year;
+
+  return `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
+}
+
+function expandAccountingPeriods({
+  accountingPeriodStart,
+  periods
+}: {
+  accountingPeriodStart?: string;
+  periods: string[];
+}) {
+  if (!accountingPeriodStart) {
+    return periods;
+  }
+
+  const inScopePeriods = periods.filter((period) => period >= accountingPeriodStart);
+  const latestPeriod = inScopePeriods.sort((left, right) => left.localeCompare(right)).at(-1) ?? accountingPeriodStart;
+  const expandedPeriods: string[] = [];
+  let cursor = accountingPeriodStart;
+
+  while (cursor <= latestPeriod) {
+    expandedPeriods.push(cursor);
+    const nextPeriod = getNextPeriod(cursor);
+
+    if (nextPeriod === cursor) {
+      break;
+    }
+
+    cursor = nextPeriod;
+  }
+
+  return expandedPeriods;
+}
+
+function applyPeriodCloseContinuity({
+  accountingPeriodStart,
+  periodLocks,
+  records
+}: {
+  accountingPeriodStart?: string;
+  periodLocks: AccountingPeriodLockRecord[];
+  records: FinancePeriodCloseRecord[];
+}) {
+  const orderedRecords = [...records].sort((left, right) => left.accountingPeriod.localeCompare(right.accountingPeriod));
+  const firstAccountingPeriod = accountingPeriodStart ?? orderedRecords[0]?.accountingPeriod;
+  const closedPeriods = new Set(
+    periodLocks.filter((record) => record.status === '已结账').map((record) => record.accountingPeriod)
+  );
+
+  return orderedRecords.map((record) => {
+    if (!firstAccountingPeriod || record.accountingPeriod === firstAccountingPeriod) {
+      return {
+        ...record,
+        continuityDetail: `账套自 ${record.accountingPeriod} 启用，本期可作为首个结账期间。`,
+        continuityStatus: '账套启用期' as const
+      };
+    }
+
+    const previousPeriod = getPreviousPeriod(record.accountingPeriod);
+    const previousPeriodClosed = closedPeriods.has(previousPeriod);
+
+    if (record.status === '已结账') {
+      return previousPeriodClosed
+        ? {
+            ...record,
+            continuityDetail: `前期 ${previousPeriod} 已结账。`,
+            continuityStatus: '前期已结账' as const
+          }
+        : {
+            ...record,
+            continuityBlockerPeriod: previousPeriod,
+            continuityDetail: `前期 ${previousPeriod} 未结账，当前已结账记录存在顺序异常。`,
+            continuityStatus: '锁定顺序异常' as const
+          };
+    }
+
+    if (previousPeriodClosed) {
+      return {
+        ...record,
+        continuityDetail: `前期 ${previousPeriod} 已结账。`,
+        continuityStatus: '前期已结账' as const
+      };
+    }
+
+    return {
+      ...record,
+      canClose: false,
+      continuityBlockerPeriod: previousPeriod,
+      continuityDetail: `需先完成 ${previousPeriod} 期间结账，当前期间才能结账。`,
+      continuityStatus: '待前期结账' as const,
+      status: '需处理' as const
+    };
+  });
 }
 
 function isPeriodInsideFilter(period: string, value: DateScopeFilterValue) {
@@ -611,6 +751,9 @@ function matchesPeriodKeyword(record: FinancePeriodCloseRecord, keyword: string)
     record.accountingPeriod,
     record.periodLabel,
     record.status,
+    record.continuityStatus,
+    record.continuityBlockerPeriod ?? '',
+    record.continuityDetail,
     record.trialBalanceStatus,
     ...record.checkItems.flatMap((item) => [item.title, item.detail, item.status])
   ].some((value) => value.toLowerCase().includes(normalizedKeyword));
@@ -624,6 +767,7 @@ function buildPeriodCloseRecord({
   financeRows,
   laterPeriodAdjustmentRows,
   ledgerEntries,
+  monthEndMatterRows,
   period,
   periodLocks,
   taxMatterRows,
@@ -632,12 +776,14 @@ function buildPeriodCloseRecord({
   financeRows: FinanceTransactionRecord[];
   laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[];
   ledgerEntries: AccountingLedgerEntry[];
+  monthEndMatterRows: FinanceMonthEndMatterRecord[];
   period: string;
   periodLocks: AccountingPeriodLockRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
 }): FinancePeriodCloseRecord {
   const periodLock = periodLocks.find((record) => record.accountingPeriod === period && record.status === '已结账');
+  const periodLockHistory = periodLocks.find((record) => record.accountingPeriod === period);
   const periodVoucherRows = voucherRows.filter((record) => record.accountingPeriod === period && closingRelevantVoucherStatuses.has(record.status));
   const sourcePendingVoucherRows = periodVoucherRows.filter((record) =>
     record.status === '待生成' || record.status === '需处理'
@@ -661,13 +807,20 @@ function buildPeriodCloseRecord({
   const pendingReviewCashFlowCount = pendingReviewCashFlowRows.length;
   const periodTaxMatterRows = taxMatterRows.filter((record) => getTaxMatterAccountingPeriod(record) === period);
   const pendingTaxHandlingRows = periodTaxMatterRows.filter((record) =>
-    !isSocialInsuranceMatter(record) && record.processStatus !== '已完成'
+    !isSocialInsuranceMatter(record)
+      && (
+        record.dataStatus !== '已确认'
+        || ['数据待确认', '待申报', '待补回执'].includes(record.processStatus)
+      )
   );
   const taxHandlingPendingCount = pendingTaxHandlingRows.length;
   const pendingSocialInsuranceRows = periodTaxMatterRows.filter((record) =>
-    isSocialInsuranceMatter(record) && record.processStatus !== '已完成'
+    isSocialInsuranceMatter(record) && getTaxMatterAccountingStatus(record) === '待确认'
   );
   const socialInsurancePendingCount = pendingSocialInsuranceRows.length;
+  const pendingMonthEndMatterRows = monthEndMatterRows.filter(
+    (record) => record.accountingPeriod === period && record.status === '待确认'
+  );
   const ledgerResponse = buildGeneralLedgerResponse({
     entries: ledgerEntries,
     filters: {
@@ -683,9 +836,8 @@ function buildPeriodCloseRecord({
   });
   const liveGeneralLedgerSnapshotRows = createGeneralLedgerSnapshotRows(ledgerResponse.rows);
   const liveFinancialStatementSnapshot = createFinancialStatementSnapshot(financialStatementReport);
-  const cashFlowMappingGapCount = financialStatementReport.cashFlowMappingGaps.length;
   const liveFinancialStatementReadinessMode = getFinancialStatementReadinessMode({
-    cashFlowMappingGapCount,
+    financialStatementReadiness: financialStatementReport.financialStatementReadiness,
     periodLock,
     trialBalanceStatus: periodSummary.trialBalanceStatus
   });
@@ -694,6 +846,16 @@ function buildPeriodCloseRecord({
   const laterAdjustmentCount = laterAdjustmentSourceRows.length + laterAdjustmentTargetRows.length;
 
   const checkItems: FinancePeriodCloseCheckItem[] = [
+    createCheckItem({
+      code: 'month_end_matters',
+      detail: pendingMonthEndMatterRows.length === 0
+        ? '本期月末事项已确认或无需处理。'
+        : `还有 ${pendingMonthEndMatterRows.length} 项月末事项待确认。`,
+      nextStep: '需先在月末事项确认本期折旧、摊销或收入确认来源',
+      passed: pendingMonthEndMatterRows.length === 0,
+      sourceSummary: summarizeCheckSources('月末事项', pendingMonthEndMatterRows.map((record) => record.sourceNo)),
+      title: '月末事项'
+    }),
     createCheckItem({
       action: buildAccountingVoucherCheckAction(sourcePendingVoucherRows, period),
       code: 'voucher_preparation',
@@ -726,11 +888,11 @@ function buildPeriodCloseRecord({
     }),
     createCheckItem({
       code: 'financial_statements',
-      detail: financialStatementReport.cashFlowReadiness === '可出具'
+      detail: financialStatementReport.financialStatementReadiness === '可出具'
         ? '本期资产负债表、利润表、现金流量表已可生成。'
-        : financialStatementReport.cashFlowReadinessDetail,
+        : financialStatementReport.financialStatementReadinessDetail,
       nextStep: '需先处理财务报表生成阻断',
-      passed: financialStatementReport.cashFlowReadiness === '可出具',
+      passed: financialStatementReport.financialStatementReadiness === '可出具',
       sourceSummary: summarizeCheckSources('财务报表', financialStatementReport.cashFlowMappingGaps.map((record) => record.voucherNo), '项'),
       title: '财务报表'
     }),
@@ -782,6 +944,8 @@ function buildPeriodCloseRecord({
     closedAt: periodLock?.lockedAt,
     closedBy: periodLock?.lockedBy,
     closeReason: periodLock?.reason,
+    continuityDetail: '',
+    continuityStatus: '账套启用期',
     creditTotal: periodSummary.creditTotal,
     debitTotal: periodSummary.debitTotal,
     financialStatementSnapshot: liveFinancialStatementSnapshot,
@@ -793,7 +957,7 @@ function buildPeriodCloseRecord({
     pendingVoucherCount,
     periodLabel: getPeriodLabel(period),
     financialStatementReadinessDetail: getFinancialStatementReadinessDetail({
-      cashFlowMappingGapCount,
+      financialStatementReadinessDetail: financialStatementReport.financialStatementReadinessDetail,
       mode: liveFinancialStatementReadinessMode
     }),
     financialStatementReadinessMode: liveFinancialStatementReadinessMode,
@@ -818,7 +982,9 @@ function buildPeriodCloseRecord({
   const displaySummary = periodLock?.closeSummarySnapshot ?? liveSummarySnapshot;
   const displayTrialBalanceStatus = getTrialBalanceStatusFromSnapshot(displaySummary.trialBalanceStatus);
   const displayFinancialStatementReadinessMode = getFinancialStatementReadinessMode({
-    cashFlowMappingGapCount: periodLock ? 0 : cashFlowMappingGapCount,
+    financialStatementReadiness: periodLock
+      ? (displaySummary.financialStatementReport?.financialStatementReadiness as FinanceFinancialStatementReport['financialStatementReadiness'] | undefined) ?? '待处理'
+      : financialStatementReport.financialStatementReadiness,
     periodLock,
     trialBalanceStatus: displayTrialBalanceStatus
   });
@@ -831,6 +997,8 @@ function buildPeriodCloseRecord({
     closedAt: periodLock?.lockedAt,
     closedBy: periodLock?.lockedBy,
     closeReason: periodLock?.reason,
+    continuityDetail: '',
+    continuityStatus: '账套启用期',
     creditTotal: displaySummary.creditTotal,
     debitTotal: displaySummary.debitTotal,
     financialStatementSnapshot: displaySummary.financialStatementReport
@@ -845,8 +1013,13 @@ function buildPeriodCloseRecord({
     pendingReviewCashFlowCount: displaySummary.pendingReviewCashFlowCount ?? 0,
     pendingVoucherCount: displaySummary.pendingVoucherCount,
     periodLabel: getPeriodLabel(period),
+    reopenedAt: periodLockHistory?.status === '已反结账' ? periodLockHistory.reopenedAt : undefined,
+    reopenedBy: periodLockHistory?.status === '已反结账' ? periodLockHistory.reopenedBy : undefined,
+    reopenReason: periodLockHistory?.status === '已反结账' ? periodLockHistory.reopenReason : undefined,
     financialStatementReadinessDetail: getFinancialStatementReadinessDetail({
-      cashFlowMappingGapCount: periodLock ? 0 : cashFlowMappingGapCount,
+      financialStatementReadinessDetail: periodLock
+        ? displaySummary.financialStatementReport?.financialStatementReadinessDetail ?? '结账快照缺少报表校验结果。'
+        : financialStatementReport.financialStatementReadinessDetail,
       mode: displayFinancialStatementReadinessMode
     }),
     financialStatementReadinessMode: displayFinancialStatementReadinessMode,
@@ -871,32 +1044,49 @@ function buildPeriodCloseRecord({
 }
 
 export function buildFinancePeriodCloseRecords({
+  accountingPeriodStart,
   filters = defaultFinancePeriodCloseFilters,
   financeRows,
   laterPeriodAdjustmentRows = [],
   ledgerEntries,
+  monthEndMatterRows = [],
   periodLocks = [],
   taxMatterRows,
   voucherRows
 }: {
+  accountingPeriodStart?: string;
   filters?: FinancePeriodCloseFilters;
   financeRows: FinanceTransactionRecord[];
   laterPeriodAdjustmentRows?: AccountingVoucherLaterPeriodAdjustmentRecord[];
   ledgerEntries: AccountingLedgerEntry[];
+  monthEndMatterRows?: FinanceMonthEndMatterRecord[];
   periodLocks?: AccountingPeriodLockRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
 }) {
-  return collectPeriods({ financeRows, laterPeriodAdjustmentRows, ledgerEntries, periodLocks, taxMatterRows, voucherRows })
+  const periods = expandAccountingPeriods({
+    accountingPeriodStart,
+    periods: collectPeriods({ financeRows, laterPeriodAdjustmentRows, ledgerEntries, monthEndMatterRows, periodLocks, taxMatterRows, voucherRows })
+  });
+  const records = applyPeriodCloseContinuity({
+    accountingPeriodStart,
+    periodLocks,
+    records: periods
+      .filter((period) => !accountingPeriodStart || period >= accountingPeriodStart)
     .map((period) => buildPeriodCloseRecord({
       financeRows,
       laterPeriodAdjustmentRows,
       ledgerEntries,
+      monthEndMatterRows,
       period,
       periodLocks,
       taxMatterRows,
       voucherRows
     }))
+  });
+
+  return records
+    .sort((left, right) => right.accountingPeriod.localeCompare(left.accountingPeriod))
     .filter((record) => isPeriodInsideFilter(record.accountingPeriod, filters.accountingPeriodTime))
     .filter((record) => matchesPeriodCloseStatus(record, filters.closeStatus))
     .filter((record) => matchesPeriodKeyword(record, filters.keyword));
@@ -912,27 +1102,33 @@ export function buildFinancePeriodCloseMetrics(rows: FinancePeriodCloseRecord[])
 }
 
 export function buildFinancePeriodCloseReadModel({
+  accountingPeriodStart,
   filters = defaultFinancePeriodCloseFilters,
   financeRows,
   laterPeriodAdjustmentRows = [],
   ledgerEntries,
+  monthEndMatterRows = [],
   periodLocks = [],
   taxMatterRows,
   voucherRows
 }: {
+  accountingPeriodStart?: string;
   filters?: FinancePeriodCloseFilters;
   financeRows: FinanceTransactionRecord[];
   laterPeriodAdjustmentRows?: AccountingVoucherLaterPeriodAdjustmentRecord[];
   ledgerEntries: AccountingLedgerEntry[];
+  monthEndMatterRows?: FinanceMonthEndMatterRecord[];
   periodLocks?: AccountingPeriodLockRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
 }): FinancePeriodCloseReadModel {
   const records = buildFinancePeriodCloseRecords({
+    accountingPeriodStart,
     filters,
     financeRows,
     laterPeriodAdjustmentRows,
     ledgerEntries,
+    monthEndMatterRows,
     periodLocks,
     taxMatterRows,
     voucherRows

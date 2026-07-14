@@ -202,6 +202,7 @@ export function buildFinanceTransactionAdjustmentRecord({
     paymentMethod: getAdjustmentPaymentMethod(direction, originRecord),
     publicAccountId: originRecord.publicAccountId,
     publicAccountSnapshot: originRecord.publicAccountSnapshot,
+    relatedReceivableNo: originRecord.relatedReceivableNo,
     reconciliationStatus: '未对账',
     registeredBy: '李明',
     reviewDueAt: getDefaultFinanceReviewDueAt(form.occurredAt),
@@ -213,4 +214,33 @@ export function buildFinanceTransactionAdjustmentRecord({
     updatedAt: `${financeToday} 16:50`,
     voucherStatus: files.length > 0 ? '已上传' : '待补充'
   };
+}
+
+export function getFinanceTransactionAdjustmentBlocker(
+  originRecord: FinanceTransactionRecord | undefined,
+  mode: FinanceTransactionAdjustmentMode,
+  existingRows: FinanceTransactionRecord[],
+  adjustmentRecordId?: string
+) {
+  if (!originRecord) {
+    return '原流水不存在';
+  }
+
+  if (originRecord.status !== '已入账') {
+    return '仅已入账流水可以发起冲正补差';
+  }
+
+  if (mode !== '冲正') {
+    return undefined;
+  }
+
+  const duplicateReversal = existingRows.some(
+    (record) =>
+      record.id !== adjustmentRecordId
+      && record.adjustmentContext?.mode === '冲正'
+      && record.adjustmentContext.originTransactionNo === originRecord.transactionNo
+      && (record.status === '待复核' || record.status === '已入账')
+  );
+
+  return duplicateReversal ? '该流水已有待复核或已入账的冲正记录' : undefined;
 }

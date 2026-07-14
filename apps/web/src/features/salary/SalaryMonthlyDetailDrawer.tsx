@@ -53,7 +53,7 @@ type SalaryMonthlyDetailDrawerProps = {
   periodReadbackNotice?: string;
   onClose: () => void;
   onConfirm: (report: SalaryMonthlyReport) => void;
-  onSettle: (report: SalaryMonthlyReport) => void;
+  onOpenPayment: (report: SalaryMonthlyReport) => void;
 };
 
 export function SalaryMonthlyDetailDrawer({
@@ -62,7 +62,7 @@ export function SalaryMonthlyDetailDrawer({
   periodReadbackNotice,
   onClose,
   onConfirm,
-  onSettle
+  onOpenPayment
 }: SalaryMonthlyDetailDrawerProps) {
   if (!report) {
     return null;
@@ -248,6 +248,7 @@ export function SalaryMonthlyDetailDrawer({
     }
   ];
   const statutoryDeductionRows = getStatutoryDeductionRows(report);
+  const personalIncomeTaxRecord = report.personalIncomeTaxRecords[0];
   const payslipStatus = getSalaryPayslipStatus(report);
   const payslipLines = getSalaryPayslipLines(report);
   const primaryAction =
@@ -258,12 +259,12 @@ export function SalaryMonthlyDetailDrawer({
           label: '确认薪酬',
           onClick: () => onConfirm(report)
         }
-      : report.canSettle
+      : report.canPay
         ? {
             disabled: Boolean(periodReadbackNotice),
             icon: <WalletOutlined />,
-            label: '标记已结算',
-            onClick: () => onSettle(report)
+            label: '确认已发放',
+            onClick: () => onOpenPayment(report)
           }
         : undefined;
 
@@ -314,7 +315,7 @@ export function SalaryMonthlyDetailDrawer({
                       { label: '岗位', value: report.member.position },
                       { label: '计薪方式', value: report.salaryMode },
                       { label: '确认时间', value: report.workflow?.confirmedAt ?? '-' },
-                      { label: '结算时间', value: report.workflow?.settledAt ?? '-' },
+                      { label: '发放时间', value: report.workflow?.paidAt ?? '-' },
                       { label: '生成时间', value: getSalaryPayslipGeneratedAt(report) },
                       {
                         label: '缺少确认项',
@@ -371,24 +372,58 @@ export function SalaryMonthlyDetailDrawer({
                       { label: '计薪基准', value: `${salaryStandardPayrollDays} 天 / ${salaryStandardPayrollHours} 小时` },
                       { label: '计薪小时均价', value: formatSalaryMoney(report.baseSalaryPayableHours > 0 ? report.baseSalaryAmount / report.baseSalaryPayableHours : 0) },
                       { label: '状态', value: <StatusTag toneMap={salaryMonthlyStatusTone} value={report.status} /> },
-                      { label: '绩效预发', value: formatSalaryMoney(report.performancePayAmount) },
+                      { label: '绩效预发', value: formatSalaryMoney(report.performancePrepayAmount) },
+                      { label: '季度绩效差额', value: formatSignedMoney(report.performanceQuarterlyAdjustmentAmount) },
                       { label: '适用工作日历', value: report.attendanceReport.workCalendarName },
                       { label: '应出勤', value: formatDays(report.expectedWorkdays) },
                       { label: '计薪出勤', value: `${formatHours(report.payableAttendanceHours)} / ${formatDays(report.payableAttendanceDays)}` },
                       { label: '考勤扣减', value: `${formatHours(report.attendanceReport.payrollDeductionHours)} / ${formatSalaryMoney(report.attendanceDeductionAmount)}` },
                       { label: '人工考勤调整', value: `${formatHours(report.attendanceReport.adjustmentHours)} / ${formatSignedMoney(report.attendanceAdjustmentAmount)}` },
-                      { label: '社保公积金', value: formatSalaryMoney(report.socialInsuranceDeductionAmount) },
+                      { label: '个人社保', value: formatSalaryMoney(report.settlementSnapshot.employeeSocialInsuranceAmount) },
+                      { label: '个人公积金', value: formatSalaryMoney(report.settlementSnapshot.employeeHousingFundAmount) },
+                      { label: '单位社保', value: formatSalaryMoney(report.settlementSnapshot.employerSocialInsuranceAmount) },
+                      { label: '单位公积金', value: formatSalaryMoney(report.settlementSnapshot.employerHousingFundAmount) },
+                      { label: '计税工资', value: formatSalaryMoney(report.taxableSalaryIncomeAmount) },
                       { label: '个税扣减', value: formatSalaryMoney(report.personalIncomeTaxAmount) },
+                      { label: '员工实发', value: formatSalaryMoney(report.settlementSnapshot.employeeNetPayableAmount) },
+                      { label: '单位承担', value: formatSalaryMoney(report.settlementSnapshot.employerContributionAmount) },
+                      { label: '用工成本', value: formatSalaryMoney(report.settlementSnapshot.totalEmploymentCostAmount) },
                       { label: '薪酬调整', value: formatSignedMoney(report.salaryAdjustmentAmount) },
                       { label: '薪酬单号', value: report.workflow?.payrollNo ?? '-' }
                     ]}
+                  />
+                </DetailSection>
+                <DetailSection icon={<CalculatorOutlined />} title="个税计算">
+                  <DetailInfoGrid
+                    columns={3}
+                    items={
+                      personalIncomeTaxRecord
+                        ? [
+                            { label: '本月计税工资', value: formatSalaryMoney(personalIncomeTaxRecord.currentIncomeAmount) },
+                            { label: '本月基本减除', value: formatSalaryMoney(personalIncomeTaxRecord.basicDeductionAmount) },
+                            { label: '本月社保公积金', value: formatSalaryMoney(personalIncomeTaxRecord.currentSpecialDeductionAmount) },
+                            { label: '本月专项附加扣除', value: formatSalaryMoney(personalIncomeTaxRecord.currentAdditionalDeductionAmount) },
+                            { label: '本月其他扣除', value: formatSalaryMoney(personalIncomeTaxRecord.currentOtherDeductionAmount) },
+                            { label: '本年累计收入', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeIncomeAmount) },
+                            { label: '累计基本减除', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeBasicDeductionAmount) },
+                            { label: '累计专项扣除', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeSpecialDeductionAmount) },
+                            { label: '累计专项附加扣除', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeAdditionalDeductionAmount) },
+                            { label: '累计其他扣除', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeOtherDeductionAmount) },
+                            { label: '累计应纳税所得额', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeTaxableIncomeAmount) },
+                            { label: '税率 / 速算扣除', value: `${(personalIncomeTaxRecord.taxRate * 100).toFixed(0)}% / ${formatSalaryMoney(personalIncomeTaxRecord.quickDeductionAmount)}` },
+                            { label: '累计应扣税额', value: formatSalaryMoney(personalIncomeTaxRecord.cumulativeTaxAmount) },
+                            { label: '前期已扣', value: formatSalaryMoney(personalIncomeTaxRecord.priorWithheldTaxAmount) },
+                            { label: '本月应扣', value: formatSalaryMoney(personalIncomeTaxRecord.amount) }
+                          ]
+                        : [{ label: '个税计算', value: '待人员报送和扣除信息获取' }]
+                    }
                   />
                 </DetailSection>
                 <DetailSection icon={<FileSearchOutlined />} title="绩效来源">
                   <CompactDetailTable<SalaryPerformanceRecord>
                     columns={performanceColumns}
                     dataSource={report.performanceRecords}
-                    emptyText="暂无进入本月薪酬的绩效预发"
+                    emptyText="暂无进入本月薪酬的绩效结果"
                     rowKey="id"
                     scrollX={720}
                   />

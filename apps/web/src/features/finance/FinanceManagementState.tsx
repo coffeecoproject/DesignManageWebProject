@@ -1,7 +1,8 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
+import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import { useTaskManagementState } from '../tasks/TaskManagementState';
 import {
-  applyAccountingVoucherLifecycle,
   applyAccountingPeriodCloseLock,
   type AccountingPeriodCloseCheckSnapshotItem,
   type AccountingPeriodCloseSummarySnapshot,
@@ -13,6 +14,7 @@ import {
   createReversedAccountingVoucherSnapshot,
   guardAccountingPeriodOpen,
   getNextAccountingVoucherNo,
+  reopenAccountingPeriodLock,
   validateAccountingVoucherReversal,
   type AccountingPeriodLockRecord,
   type AccountingPeriodOpenGuard,
@@ -21,7 +23,7 @@ import {
   type AccountingVoucherLifecycleRecord,
   type AccountingVoucherRecord,
   type AccountingVoucherReversalInput,
-  buildAccountingLedgerEntries,
+  applyAccountingVoucherLifecycle,
   buildAccountingVouchers
 } from './financeAccountingVoucherModel';
 import { financeTransactionRecords, type FinanceTransactionRecord } from './financeData';
@@ -32,62 +34,145 @@ import {
 } from './financeBankReconciliationModel';
 import type { BankStatementRecord } from './financeBankImportContract';
 import {
+  financeStampDutyManualSourceRecords,
+  financeStampDutyInitialSourceResolutions,
   financeDeclarationPreparationRecords,
+  ensurePayrollIitDeclarationPreparationRecords,
   type FinanceDeclarationPreparationRecord
 } from './financeDeclarationPreparationData';
-import { financeInvoiceRecords, type FinanceInvoiceRecord } from './financeInvoiceData';
-import { getInvoiceMatchedReceivablePayableTargets } from './financeInvoiceMatchingModel';
-import { getRedInvoiceOriginalAssociationAffectedInvoices } from './financeInvoiceModel';
+import type {
+  FinanceStampDutySourceRecord,
+  FinanceStampDutySourceResolution
+} from './financeStampDutyModel';
+import {
+  financeInvoiceBusinessAllocations,
+  financeInvoiceImportBatches,
+  financeInvoiceRecords,
+  type FinanceInvoiceImportBatch,
+  type FinanceInvoiceBusinessAllocation,
+  type FinanceInvoiceRecord
+} from './financeInvoiceData';
+import {
+  buildInvoiceBusinessAllocations,
+  buildRedInvoiceBusinessAllocations,
+  doesInvoiceAllocationMatchReceivablePayable,
+  getInvoiceAssociationMatchBasis,
+  getInvoiceBusinessAssociationAllocatedAmount,
+  type FinanceBusinessInvoiceAssociationDraft,
+  type FinanceInvoiceAssociationDraft
+} from './financeInvoiceAssociationModel';
+import { buildOriginalInvoiceRedSummary } from './financeInvoiceModel';
 import {
   financeReceivablePayableRecords,
   type FinanceReceivablePayableRecord
 } from './financeReceivablesPayablesData';
 import {
-  applyFinanceReceivablePayableSettlementReview,
+  deriveFinanceReceivablePayableSettlementRows,
+  hasFinanceReceivablePayableActiveSettlement,
+  hasFinanceReceivablePayableBookedVoucher,
   getFinanceReceivablePayableSettlementTargets
 } from './financeReceivablesPayablesModel';
+import {
+  commitFinanceReceivablePayableSettlementRegistration,
+  commitFinanceTransactionAdjustmentRegistration,
+  commitFinanceTransactionReview,
+  type FinanceSettlementWorkflowResult
+} from './financeSettlementWorkflow';
 import {
   financeTaxMatterRecords,
   type FinanceTaxMatterRecord
 } from './financeTaxFilingData';
-import {
-  buildFinancePeriodCloseRecords,
-  createFinancePeriodCloseSummarySnapshot
-} from './financePeriodCloseModel';
+import { ensurePayrollIitTaxMatterRecords } from './financeTaxMatterModel';
+import { useSalaryManagementState } from '../salary/SalaryManagementState';
+import type { SalaryAdjustmentRecord } from '../salary/salaryDomain';
+import { accountingSubjectProfile } from './financeAccountingSubjectData';
 import type { LedgerOpeningAdjustmentVoucherRecord } from './financeLedgerInitializationModel';
+import {
+  financeMonthEndMatterRecords,
+  markFinanceMonthEndMatterBooked,
+  type FinanceMonthEndMatterRecord
+} from './financeMonthEndModel';
 import { financeToday, getAccountingPeriodFromBusinessPeriod } from './financeUtils';
+import { mergePartTimeLaborReceivablePayableRecords } from './financePartTimeLaborSettlementModel';
+import { mergeSalaryReceivablePayableRecords } from './financeSalarySettlementModel';
+import {
+  buildFinanceExpenseApprovalCommit,
+  buildFinanceExpenseApprovalReversal,
+  buildFinanceExpenseEvidenceSupplement
+} from './financeExpenseApprovalCommitModel';
+import {
+  commitPayrollIitCorrectionAfterPostedReversal,
+  finalizePayrollIitCorrectionPreparation
+} from './financePayrollIitCorrectionWorkflow';
 
 type FinanceManagementStateValue = {
+  addManualStampDutySource: (record: FinanceStampDutySourceRecord) => boolean;
+  saveStampDutySourceResolution: (resolution: FinanceStampDutySourceResolution) => boolean;
   addAccountingVoucherLaterPeriodAdjustment: (record: AccountingVoucherLaterPeriodAdjustmentRecord) => boolean;
   addFinanceTransaction: (record: FinanceTransactionRecord) => boolean;
-  addInvoiceRecords: (records: FinanceInvoiceRecord[]) => boolean;
+  registerReceivablePayableSettlement: (
+    recordId: string,
+    transaction: FinanceTransactionRecord
+  ) => FinanceSettlementWorkflowResult;
+  importInvoiceBatch: (batch: FinanceInvoiceImportBatch, records: FinanceInvoiceRecord[]) => boolean;
   addLedgerOpeningAdjustmentVoucher: (record: LedgerOpeningAdjustmentVoucherRecord) => boolean;
   addSourceGeneratedReceivablePayableRecord: (record: FinanceReceivablePayableRecord) => boolean;
+  commitExpenseApprovalFinancialPlan: (plan: {
+    payableRecord?: FinanceReceivablePayableRecord;
+    salaryAdjustment?: SalaryAdjustmentRecord;
+  }) => boolean;
+  revokeExpenseApprovalFinancialPlan: (input: {
+    occurredAt: string;
+    reason: string;
+    salaryAdjustmentId?: string;
+    sourceCode: string;
+  }) => { reason?: string; success: boolean };
+  supplementExpenseApprovalEvidence: (sourceCode: string, file: RelatedFileRecord) => boolean;
   addTransactionVoucherFile: (transactionId: string, file: RelatedFileRecord) => boolean;
   accountingPeriodLocks: AccountingPeriodLockRecord[];
   accountingVoucherLaterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[];
   accountingVoucherLifecycleRows: AccountingVoucherLifecycleRecord[];
+  accountingVoucherRows: AccountingVoucherRecord[];
   bankReconciliationRows: FinanceBankReconciliationLinkRecord[];
   confirmBankReconciliation: (bankRecord: BankStatementRecord, transactions: FinanceTransactionRecord[]) => boolean;
   financeRows: FinanceTransactionRecord[];
+  manualStampDutySourceRows: FinanceStampDutySourceRecord[];
+  stampDutySourceResolutionRows: FinanceStampDutySourceResolution[];
   getAccountingPeriodGuard: (accountingPeriod: string | undefined, actionLabel?: string) => AccountingPeriodOpenGuard;
   isAccountingPeriodClosed: (accountingPeriod: string | undefined) => boolean;
-  clearInvoiceMatches: (invoiceId: string) => boolean;
   closeAccountingPeriod: (
     accountingPeriod: string,
     reason?: string,
     closeCheckSnapshot?: AccountingPeriodCloseCheckSnapshotItem[],
     closeSummarySnapshot?: AccountingPeriodCloseSummarySnapshot
   ) => void;
+  commitTaxMatterPayment: (
+    recordId: string,
+    nextRecord: FinanceTaxMatterRecord,
+    transaction: FinanceTransactionRecord
+  ) => boolean;
+  commitTaxMatterDeclarationResult: (
+    recordId: string,
+    nextRecord: FinanceTaxMatterRecord
+  ) => boolean;
+  commitTaxMatterRefund: (
+    recordId: string,
+    nextRecord: FinanceTaxMatterRecord,
+    transaction: FinanceTransactionRecord
+  ) => boolean;
   declarationPreparationRows: FinanceDeclarationPreparationRecord[];
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[];
+  invoiceImportBatches: FinanceInvoiceImportBatch[];
   invoiceRows: FinanceInvoiceRecord[];
   ledgerOpeningAdjustmentRows: LedgerOpeningAdjustmentVoucherRecord[];
+  monthEndMatterRows: FinanceMonthEndMatterRecord[];
   receivablePayableRows: FinanceReceivablePayableRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   removeTransactionVoucherFile: (transactionId: string, fileId: string) => boolean;
   revokeBankReconciliation: (transactionId: string, bankSerialNo: string, reason: string) => boolean;
   returnFinanceTransaction: (transactionId: string) => boolean;
-  reviewFinanceTransaction: (transactionId: string) => boolean;
+  reviewFinanceTransaction: (transactionId: string) => FinanceSettlementWorkflowResult;
+  reopenAccountingPeriod: (accountingPeriod: string, reason: string) => boolean;
   updateFinanceTransactionsByNo: (
     transactionNos: string[],
     updater: (record: FinanceTransactionRecord) => FinanceTransactionRecord
@@ -96,7 +181,12 @@ type FinanceManagementStateValue = {
     recordId: string,
     updater: (record: FinanceReceivablePayableRecord) => FinanceReceivablePayableRecord
   ) => boolean;
-  updateInvoiceRecord: (invoiceId: string, updater: (invoice: FinanceInvoiceRecord) => FinanceInvoiceRecord) => boolean;
+  replaceInvoiceBusinessAssociations: (invoiceId: string, nextDrafts: FinanceInvoiceAssociationDraft[]) => boolean;
+  replaceBusinessInvoiceAssociations: (
+    businessRecordId: string,
+    nextDrafts: FinanceBusinessInvoiceAssociationDraft[]
+  ) => boolean;
+  linkRedInvoiceOriginal: (invoiceId: string, originalInvoiceId: string) => boolean;
   updateDeclarationPreparationRecord: (
     recordId: string,
     updater: (record: FinanceDeclarationPreparationRecord) => FinanceDeclarationPreparationRecord
@@ -104,6 +194,10 @@ type FinanceManagementStateValue = {
   updateTaxMatterRecord: (
     recordId: string,
     updater: (record: FinanceTaxMatterRecord) => FinanceTaxMatterRecord
+  ) => boolean;
+  updateMonthEndMatterRecord: (
+    recordId: string,
+    updater: (record: FinanceMonthEndMatterRecord) => FinanceMonthEndMatterRecord
   ) => boolean;
   bookAccountingVoucher: (record: AccountingVoucherRecord) => boolean;
   reverseAccountingVoucher: (record: AccountingVoucherRecord, reversalInput: AccountingVoucherReversalInput) => boolean;
@@ -116,9 +210,8 @@ type FinanceManagementStateValue = {
 
 const FinanceManagementContext = createContext<FinanceManagementStateValue | undefined>(undefined);
 const currentFinanceActor = '李明';
-const periodCloseDemoAccountingPeriod = '2026-04';
-const reportDemoAccountingPeriods = new Set([periodCloseDemoAccountingPeriod, '2026-06']);
 const seedBankReconciliationRows = buildSeedFinanceBankReconciliationLinks(financeTransactionRecords);
+const seedPendingAccountingVoucherIds = new Set(['voucher-business-ap-202606-003']);
 
 function getAccountingVoucherLifecycleTime(record: AccountingVoucherRecord, clockTime: string) {
   const lifecycleDate = record.voucherDate.slice(0, 7) === financeToday.slice(0, 7) ? financeToday : record.voucherDate;
@@ -132,11 +225,22 @@ function createSeedAccountingVoucherLifecycleRows() {
     financeTransactionRecords,
     financeInvoiceRecords,
     financeTaxMatterRecords,
-    seedBankReconciliationRows
+    seedBankReconciliationRows,
+    [],
+    [],
+    {
+      accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+      invoiceBusinessAllocationRows: financeInvoiceBusinessAllocations,
+      monthEndMatterRows: financeMonthEndMatterRecords
+    }
   );
 
   return seedVoucherRows
-    .filter((record) => reportDemoAccountingPeriods.has(record.accountingPeriod) && record.status === '待记账')
+    .filter((record) => (
+      record.status === '待记账'
+      && !seedPendingAccountingVoucherIds.has(record.id)
+      && (record.businessType !== '资金凭证' || record.sourceRefs.some((sourceRef) => sourceRef.module === '银行对账'))
+    ))
     .reduce<AccountingVoucherLifecycleRecord[]>((lifecycleRows, record) => {
       const bookedAt = getAccountingVoucherLifecycleTime(record, '17:10');
       const bookedLifecycle = createAccountingVoucherLifecycleRecord(
@@ -150,57 +254,42 @@ function createSeedAccountingVoucherLifecycleRows() {
     }, []);
 }
 
-function createSeedAccountingPeriodLocks(lifecycleRows: AccountingVoucherLifecycleRecord[]): AccountingPeriodLockRecord[] {
-  const seedVoucherRows = applyAccountingVoucherLifecycle(
-    buildAccountingVouchers(
-      financeReceivablePayableRecords,
-      financeTransactionRecords,
-      financeInvoiceRecords,
-      financeTaxMatterRecords,
-      seedBankReconciliationRows
-    ),
-    lifecycleRows
-  );
-  const seedLedgerEntries = buildAccountingLedgerEntries(seedVoucherRows);
-  const periodCloseRecord = buildFinancePeriodCloseRecords({
-    financeRows: financeTransactionRecords,
-    ledgerEntries: seedLedgerEntries,
-    periodLocks: [],
-    taxMatterRows: financeTaxMatterRecords,
-    voucherRows: seedVoucherRows
-  }).find((record) => record.accountingPeriod === periodCloseDemoAccountingPeriod);
-
-  if (!periodCloseRecord || !periodCloseRecord.canClose) {
-    return [];
-  }
-
-  return [
-    {
-      accountingPeriod: periodCloseDemoAccountingPeriod,
-      closeCheckSnapshot: periodCloseRecord.checkItems,
-      closeSummarySnapshot: createFinancePeriodCloseSummarySnapshot(periodCloseRecord),
-      lockedAt: '2026-04-30 18:00',
-      lockedBy: currentFinanceActor,
-      reason: '月度结账演示',
-      status: '已结账'
-    }
-  ];
-}
-
 const seedAccountingVoucherLifecycleRows = createSeedAccountingVoucherLifecycleRows();
-const seedAccountingPeriodLocks = createSeedAccountingPeriodLocks(seedAccountingVoucherLifecycleRows);
+const seedAccountingPeriodLocks: AccountingPeriodLockRecord[] = [];
 
 export function FinanceManagementProvider({ children }: { children: ReactNode }) {
+  const {
+    isSalaryAdjustmentPeriodOpen,
+    salaryAdjustments,
+    salaryMonthlyWorkflows,
+    salaryPaymentRecords,
+    reverseSalaryPayment,
+    saveSalaryAdjustment,
+    voidSalaryAdjustment
+  } = useSalaryManagementState();
+  const { peopleRows } = usePeopleOrganizationState();
+  const { partTimeLaborSettlementBatches } = useTaskManagementState();
   const [financeRows, setFinanceRows] = useState<FinanceTransactionRecord[]>(financeTransactionRecords);
   const [invoiceRows, setInvoiceRows] = useState<FinanceInvoiceRecord[]>(financeInvoiceRecords);
+  const [invoiceBusinessAllocationRows, setInvoiceBusinessAllocationRows] = useState<FinanceInvoiceBusinessAllocation[]>(
+    financeInvoiceBusinessAllocations
+  );
+  const [invoiceImportBatches, setInvoiceImportBatches] = useState<FinanceInvoiceImportBatch[]>(financeInvoiceImportBatches);
   const [receivablePayableRows, setReceivablePayableRows] = useState<FinanceReceivablePayableRecord[]>(
     financeReceivablePayableRecords
   );
   const [declarationPreparationRows, setDeclarationPreparationRows] = useState<FinanceDeclarationPreparationRecord[]>(
     financeDeclarationPreparationRecords
   );
+  const [manualStampDutySourceRows, setManualStampDutySourceRows] = useState<FinanceStampDutySourceRecord[]>(
+    financeStampDutyManualSourceRecords
+  );
+  const [stampDutySourceResolutionRows, setStampDutySourceResolutionRows] = useState<FinanceStampDutySourceResolution[]>(
+    financeStampDutyInitialSourceResolutions
+  );
   const [taxMatterRows, setTaxMatterRows] = useState<FinanceTaxMatterRecord[]>(financeTaxMatterRecords);
   const [ledgerOpeningAdjustmentRows, setLedgerOpeningAdjustmentRows] = useState<LedgerOpeningAdjustmentVoucherRecord[]>([]);
+  const [monthEndMatterRows, setMonthEndMatterRows] = useState<FinanceMonthEndMatterRecord[]>(financeMonthEndMatterRecords);
   const [accountingVoucherLaterPeriodAdjustmentRows, setAccountingVoucherLaterPeriodAdjustmentRows] = useState<AccountingVoucherLaterPeriodAdjustmentRecord[]>([]);
   const [accountingVoucherLifecycleRows, setAccountingVoucherLifecycleRows] = useState<AccountingVoucherLifecycleRecord[]>(
     () => [...seedAccountingVoucherLifecycleRows]
@@ -211,13 +300,121 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
   const [bankReconciliationRows, setBankReconciliationRows] = useState<FinanceBankReconciliationLinkRecord[]>(
     () => seedBankReconciliationRows
   );
+  useEffect(() => {
+    setReceivablePayableRows((currentRows) =>
+      mergePartTimeLaborReceivablePayableRecords({
+        batches: partTimeLaborSettlementBatches,
+        people: peopleRows,
+        records: currentRows
+      })
+    );
+  }, [partTimeLaborSettlementBatches, peopleRows]);
+  useEffect(() => {
+    setReceivablePayableRows((currentRows) =>
+      mergeSalaryReceivablePayableRecords({
+        payments: salaryPaymentRecords,
+        people: peopleRows,
+        records: currentRows,
+        workflows: salaryMonthlyWorkflows
+      })
+    );
+  }, [peopleRows, salaryMonthlyWorkflows, salaryPaymentRecords]);
+  const effectiveDeclarationPreparationRows = useMemo(
+    () => ensurePayrollIitDeclarationPreparationRecords(
+      declarationPreparationRows,
+      salaryPaymentRecords,
+      financeRows,
+      receivablePayableRows
+    ),
+    [declarationPreparationRows, financeRows, receivablePayableRows, salaryPaymentRecords]
+  );
+  const effectiveTaxMatterRows = useMemo(
+    () => ensurePayrollIitTaxMatterRecords(taxMatterRows, effectiveDeclarationPreparationRows),
+    [effectiveDeclarationPreparationRows, taxMatterRows]
+  );
+  const derivedReceivablePayableRows = useMemo(
+    () => deriveFinanceReceivablePayableSettlementRows(receivablePayableRows, financeRows),
+    [financeRows, receivablePayableRows]
+  );
+  const accountingVoucherRows = useMemo(
+    () => applyAccountingVoucherLifecycle(
+      buildAccountingVouchers(
+        derivedReceivablePayableRows,
+        financeRows,
+        invoiceRows,
+        effectiveTaxMatterRows,
+        bankReconciliationRows,
+        ledgerOpeningAdjustmentRows,
+        accountingVoucherLaterPeriodAdjustmentRows,
+        {
+          accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+          invoiceBusinessAllocationRows,
+          monthEndMatterRows
+        }
+      ),
+      accountingVoucherLifecycleRows
+    ),
+    [
+      accountingVoucherLaterPeriodAdjustmentRows,
+      accountingVoucherLifecycleRows,
+      bankReconciliationRows,
+      derivedReceivablePayableRows,
+      financeRows,
+      invoiceBusinessAllocationRows,
+      invoiceRows,
+      ledgerOpeningAdjustmentRows,
+      monthEndMatterRows,
+      effectiveTaxMatterRows
+    ]
+  );
 
   const value = useMemo<FinanceManagementStateValue>(
     () => ({
+      addManualStampDutySource(record) {
+        const duplicate = manualStampDutySourceRows.some(
+          (currentRecord) =>
+            currentRecord.sourceId === record.sourceId &&
+            currentRecord.sourceVersion === record.sourceVersion &&
+            currentRecord.taxItem === record.taxItem
+        );
+
+        if (duplicate) {
+          return false;
+        }
+
+        const accountingPeriod = getAccountingPeriodFromBusinessPeriod(record.obligationPeriod);
+
+        if (!guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, '补录印花税应税凭证').allowed) {
+          return false;
+        }
+
+        setManualStampDutySourceRows((currentRows) => [...currentRows, record]);
+        return true;
+      },
+      saveStampDutySourceResolution(resolution) {
+        const accountingPeriod = getAccountingPeriodFromBusinessPeriod(resolution.obligationPeriod);
+
+        if (!guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, '确认印花税税源').allowed) {
+          return false;
+        }
+
+        setStampDutySourceResolutionRows((currentRows) => [
+          ...currentRows.filter(
+            (currentRecord) =>
+              currentRecord.sourceId !== resolution.sourceId || currentRecord.sourceVersion !== resolution.sourceVersion
+          ),
+          resolution
+        ]);
+        return true;
+      },
       accountingPeriodLocks,
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingVoucherLifecycleRows,
+      accountingVoucherRows,
+      invoiceBusinessAllocationRows,
+      invoiceImportBatches,
       ledgerOpeningAdjustmentRows,
+      monthEndMatterRows,
       getAccountingPeriodGuard(accountingPeriod, actionLabel = '修改') {
         return guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, actionLabel);
       },
@@ -278,19 +475,164 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           return false;
         }
 
+        if (record.adjustmentContext) {
+          const result = commitFinanceTransactionAdjustmentRegistration(
+            { financeRows, receivablePayableRows: derivedReceivablePayableRows },
+            record
+          );
+
+          if (!result.success) {
+            return false;
+          }
+
+          setFinanceRows(result.financeRows);
+          return true;
+        }
+
         setFinanceRows((current) => [record, ...current]);
         return true;
       },
-      addInvoiceRecords(records) {
+      registerReceivablePayableSettlement(recordId, transaction) {
+        const record = derivedReceivablePayableRows.find((candidate) => candidate.id === recordId);
+        const recordPeriodGuard = guardAccountingPeriodOpen(
+          accountingPeriodLocks,
+          record?.accountingPeriod,
+          record?.direction === '应收' ? '登记收款流水' : '登记付款流水'
+        );
+        const transactionPeriodGuard = guardAccountingPeriodOpen(
+          accountingPeriodLocks,
+          transaction.accountingPeriod,
+          record?.direction === '应收' ? '登记收款流水' : '登记付款流水'
+        );
+
+        if (!recordPeriodGuard.allowed || !transactionPeriodGuard.allowed) {
+          return {
+            message: recordPeriodGuard.reason ?? transactionPeriodGuard.reason ?? '当前会计期间已锁定',
+            success: false
+          };
+        }
+
+        const result = commitFinanceReceivablePayableSettlementRegistration(
+          { financeRows, receivablePayableRows: derivedReceivablePayableRows },
+          recordId,
+          transaction
+        );
+
+        if (result.success) {
+          setFinanceRows(result.financeRows);
+          setReceivablePayableRows(result.receivablePayableRows);
+        }
+
+        return result;
+      },
+      commitTaxMatterPayment(recordId, nextRecord, transaction) {
+        const currentRecord = effectiveTaxMatterRows.find((record) => record.id === recordId);
+        const duplicateTransaction = financeRows.some(
+          (record) => record.id === transaction.id || record.transactionNo === transaction.transactionNo
+        );
+
+        if (
+          !currentRecord ||
+          nextRecord.id !== currentRecord.id ||
+          transaction.sourceNo !== currentRecord.matterNo ||
+          duplicateTransaction ||
+          !guardAccountingPeriodOpen(accountingPeriodLocks, transaction.accountingPeriod, '登记税费缴款流水').allowed
+        ) {
+          return false;
+        }
+
+        setFinanceRows((currentRows) => [transaction, ...currentRows]);
+        setTaxMatterRows((currentRows) =>
+          currentRows.some((record) => record.id === recordId)
+            ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
+            : [nextRecord, ...currentRows]
+        );
+        return true;
+      },
+      commitTaxMatterDeclarationResult(recordId, nextRecord) {
+        const currentRecord = effectiveTaxMatterRows.find((record) => record.id === recordId);
+
+        if (
+          !currentRecord
+          || nextRecord.id !== currentRecord.id
+          || !['申报成功', '零申报'].includes(nextRecord.declarationStatus)
+        ) {
+          return false;
+        }
+
+        const preparation = effectiveDeclarationPreparationRows.find(
+          (record) =>
+            record.taxType === nextRecord.matterType
+            && record.period === nextRecord.period
+            && (!nextRecord.declarationScenario || record.declarationScenario === nextRecord.declarationScenario)
+        );
+        const nextPreparation = preparation
+          ? finalizePayrollIitCorrectionPreparation(
+              preparation,
+              nextRecord,
+              currentFinanceActor,
+              `${financeToday} 15:10`
+            )
+          : undefined;
+
+        setTaxMatterRows((currentRows) =>
+          currentRows.some((record) => record.id === recordId)
+            ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
+            : [nextRecord, ...currentRows]
+        );
+
+        if (preparation && nextPreparation && nextPreparation !== preparation) {
+          setDeclarationPreparationRows((currentRows) =>
+            currentRows.some((record) => record.id === preparation.id)
+              ? currentRows.map((record) => (record.id === preparation.id ? nextPreparation : record))
+              : [nextPreparation, ...currentRows]
+          );
+        }
+
+        return true;
+      },
+      commitTaxMatterRefund(recordId, nextRecord, transaction) {
+        const currentRecord = effectiveTaxMatterRows.find((record) => record.id === recordId);
+        const duplicateTransaction = financeRows.some(
+          (record) => record.id === transaction.id || record.transactionNo === transaction.transactionNo
+        );
+
+        if (
+          !currentRecord ||
+          nextRecord.id !== currentRecord.id ||
+          transaction.sourceNo !== currentRecord.matterNo ||
+          transaction.direction !== '收入' ||
+          transaction.category !== '税费退还' ||
+          duplicateTransaction ||
+          !guardAccountingPeriodOpen(accountingPeriodLocks, transaction.accountingPeriod, '登记退税流水').allowed
+        ) {
+          return false;
+        }
+
+        setFinanceRows((currentRows) => [transaction, ...currentRows]);
+        setTaxMatterRows((currentRows) =>
+          currentRows.some((record) => record.id === recordId)
+            ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
+            : [nextRecord, ...currentRows]
+        );
+        return true;
+      },
+      importInvoiceBatch(batch, records) {
         const lockedRecord = records.find(
           (record) => !guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '导入税务发票数据').allowed
         );
 
-        if (lockedRecord) {
+        const duplicateInvoice = records.find((record) =>
+          invoiceRows.some((currentRecord) => currentRecord.id === record.id || currentRecord.invoiceNo === record.invoiceNo)
+        );
+        const duplicateBatch = invoiceImportBatches.some((currentBatch) => currentBatch.id === batch.id);
+
+        if (lockedRecord || duplicateInvoice || duplicateBatch) {
           return false;
         }
 
         setInvoiceRows((currentRows) => [...records, ...currentRows]);
+        setInvoiceImportBatches((currentBatches) => [batch, ...currentBatches]);
         return true;
       },
       addSourceGeneratedReceivablePayableRecord(record) {
@@ -307,6 +649,108 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
 
           return alreadyExists ? currentRows : [record, ...currentRows];
         });
+        return true;
+      },
+      commitExpenseApprovalFinancialPlan({ payableRecord, salaryAdjustment }) {
+        let nextSnapshot;
+
+        try {
+          nextSnapshot = buildFinanceExpenseApprovalCommit({
+            isSalaryAdjustmentPeriodOpen,
+            isAccountingPeriodOpen: (accountingPeriod) => guardAccountingPeriodOpen(
+              accountingPeriodLocks,
+              accountingPeriod,
+              '通过报销并生成应付事项'
+            ).allowed,
+            plan: { payableRecord, salaryAdjustment },
+            snapshot: {
+              payableRows: receivablePayableRows,
+              salaryAdjustments
+            }
+          });
+        } catch {
+          return false;
+        }
+
+        if (salaryAdjustment && !saveSalaryAdjustment(salaryAdjustment)) {
+          return false;
+        }
+
+        if (payableRecord) {
+          setReceivablePayableRows(nextSnapshot.payableRows);
+        }
+
+        return true;
+      },
+      revokeExpenseApprovalFinancialPlan({ occurredAt, reason, salaryAdjustmentId, sourceCode }) {
+        let reversal;
+
+        try {
+          reversal = buildFinanceExpenseApprovalReversal({
+            actor: currentFinanceActor,
+            hasActiveSettlement: (record) => hasFinanceReceivablePayableActiveSettlement(
+              financeRows.filter((financeRecord) => record.linkedTransactionNos.includes(financeRecord.transactionNo))
+            ),
+            isAccountingPeriodOpen: (accountingPeriod) => guardAccountingPeriodOpen(
+              accountingPeriodLocks,
+              accountingPeriod,
+              '撤销费用报销审核'
+            ).allowed,
+            isPayableBooked: (record) => hasFinanceReceivablePayableBookedVoucher(
+              record,
+              accountingVoucherLifecycleRows
+            ),
+            isSalaryAdjustmentPeriodOpen,
+            occurredAt,
+            payableRows: receivablePayableRows,
+            reason,
+            salaryAdjustmentId,
+            salaryAdjustments,
+            sourceCode
+          });
+        } catch (error) {
+          return {
+            reason: error instanceof Error ? error.message : '报销财务结果未撤销',
+            success: false
+          };
+        }
+
+        if (reversal.salaryAdjustmentToVoid) {
+          const voidResult = voidSalaryAdjustment(reversal.salaryAdjustmentToVoid.id, occurredAt, reason);
+          if (!voidResult.success) {
+            return voidResult;
+          }
+        }
+
+        setReceivablePayableRows(reversal.payableRows);
+
+        return { success: true };
+      },
+      supplementExpenseApprovalEvidence(sourceCode, file) {
+        try {
+          const nextRows = buildFinanceExpenseEvidenceSupplement({
+            actor: currentFinanceActor,
+            file,
+            hasActiveSettlement: (record) => hasFinanceReceivablePayableActiveSettlement(
+              financeRows.filter((financeRecord) => record.linkedTransactionNos.includes(financeRecord.transactionNo))
+            ),
+            isAccountingPeriodOpen: (accountingPeriod) => guardAccountingPeriodOpen(
+              accountingPeriodLocks,
+              accountingPeriod,
+              '补充报销凭证'
+            ).allowed,
+            isPayableBooked: (record) => hasFinanceReceivablePayableBookedVoucher(
+              record,
+              accountingVoucherLifecycleRows
+            ),
+            payableRows: receivablePayableRows,
+            sourceCode
+          });
+
+          setReceivablePayableRows(nextRows);
+        } catch {
+          return false;
+        }
         return true;
       },
       confirmBankReconciliation(bankRecord, transactions) {
@@ -350,33 +794,6 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         );
         return true;
       },
-      clearInvoiceMatches(invoiceId) {
-        const invoiceToClear = invoiceRows.find((invoice) => invoice.id === invoiceId);
-
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, invoiceToClear?.accountingPeriod, '撤销发票匹配').allowed) {
-          return false;
-        }
-
-        const lockedBusinessTarget = getInvoiceMatchedReceivablePayableTargets(invoiceToClear, receivablePayableRows).find(
-          (record) => !guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '撤销发票匹配').allowed
-        );
-
-        if (lockedBusinessTarget) {
-          return false;
-        }
-
-        setInvoiceRows((currentRows) =>
-          currentRows.map((invoice) =>
-            invoice.id === invoiceId
-              ? {
-                  ...invoice,
-                  matchedBusinessRefs: []
-                }
-              : invoice
-          )
-        );
-        return true;
-      },
       closeAccountingPeriod(accountingPeriod, reason = '期间结账', closeCheckSnapshot, closeSummarySnapshot) {
         setAccountingPeriodLocks((currentRows) => {
           const nextRecord: AccountingPeriodLockRecord = {
@@ -391,6 +808,24 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
 
           return applyAccountingPeriodCloseLock(currentRows, nextRecord);
         });
+      },
+      reopenAccountingPeriod(accountingPeriod, reason) {
+        const currentLock = accountingPeriodLocks.find(
+          (record) => record.accountingPeriod === accountingPeriod && record.status === '已结账'
+        );
+
+        if (!currentLock || !reason.trim()) {
+          return false;
+        }
+
+        setAccountingPeriodLocks((currentRows) =>
+          reopenAccountingPeriodLock(currentRows, accountingPeriod, {
+            reason: reason.trim(),
+            reopenedAt: `${financeToday} 18:30`,
+            reopenedBy: currentFinanceActor
+          })
+        );
+        return true;
       },
       addTransactionVoucherFile(transactionId, file) {
         const transactionToUpdate = financeRows.find((record) => record.id === transactionId);
@@ -538,51 +973,88 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       },
       reviewFinanceTransaction(transactionId) {
         const transactionToReview = financeRows.find((record) => record.id === transactionId);
+        const transactionPeriodGuard = guardAccountingPeriodOpen(
+          accountingPeriodLocks,
+          transactionToReview?.accountingPeriod,
+          '复核流水入账'
+        );
 
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, transactionToReview?.accountingPeriod, '复核流水入账').allowed) {
-          return false;
+        if (!transactionPeriodGuard.allowed) {
+          return {
+            message: transactionPeriodGuard.reason ?? '当前会计期间已锁定',
+            success: false
+          };
         }
 
         const lockedSettlementTarget = getFinanceReceivablePayableSettlementTargets(
           receivablePayableRows,
-          transactionToReview
+          transactionToReview,
+          financeRows
         ).find((record) => !guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '复核流水入账').allowed);
 
         if (lockedSettlementTarget) {
-          return false;
+          return { message: `${lockedSettlementTarget.accountingPeriod} 已结账，不能复核关联流水`, success: false };
         }
 
-        setFinanceRows((current) =>
-          current.map((record) =>
-            record.id === transactionId
-              ? {
-                  ...record,
-                  status: '已入账' as const,
-                  reviewedBy: '财务复核',
-                  reviewedAt: `${financeToday} 15:30`,
-                  updatedAt: `${financeToday} 15:30`,
-                  operationRecords: [
-                    ...record.operationRecords,
-                    {
-                      id: `fin-op-review-${Date.now()}`,
-                      time: `${financeToday} 15:30`,
-                      actor: '财务复核',
-                      object: record.transactionNo,
-                      action: '复核入账',
-                      summary: '核对流水信息和凭证后入账'
-                    }
-                  ]
-                }
-              : record
-          )
+        const result = commitFinanceTransactionReview(
+          { financeRows, receivablePayableRows: derivedReceivablePayableRows },
+          {
+            operationId: `fin-op-review-${Date.now()}`,
+            reviewedAt: `${financeToday} 15:30`,
+            reviewer: '财务复核',
+            transactionId
+          }
         );
 
-        if (transactionToReview?.status === '待复核') {
-          setReceivablePayableRows((currentRows) =>
-            applyFinanceReceivablePayableSettlementReview(currentRows, transactionToReview)
+        if (result.success) {
+          const correctionResult = commitPayrollIitCorrectionAfterPostedReversal(
+            {
+              declarationPreparationRows: effectiveDeclarationPreparationRows,
+              financeRows: result.financeRows,
+              receivablePayableRows: result.receivablePayableRows,
+              salaryPaymentRecords,
+              taxMatterRows: effectiveTaxMatterRows
+            },
+            {
+              actor: '财务复核',
+              occurredAt: `${financeToday} 15:30`,
+              transactionId
+            }
           );
+
+          if (!correctionResult.success) {
+            return { message: correctionResult.message, success: false };
+          }
+
+          const reviewedTransaction = correctionResult.financeRows.find((record) => record.id === transactionId);
+          const reversedOriginTransaction = reviewedTransaction?.adjustmentContext?.originTransactionNo
+            ? correctionResult.financeRows.find(
+                (record) => record.transactionNo === reviewedTransaction.adjustmentContext?.originTransactionNo
+              )
+            : undefined;
+
+          if (
+            reviewedTransaction?.adjustmentContext?.mode === '冲正'
+            && reversedOriginTransaction?.sourceType === '薪酬发放'
+          ) {
+            const salaryReversal = reverseSalaryPayment(
+              reversedOriginTransaction.transactionNo,
+              `${financeToday} 15:30`,
+              '财务复核'
+            );
+
+            if (!salaryReversal.success) {
+              return { message: salaryReversal.reason ?? '工资冲正未能同步薪酬状态', success: false };
+            }
+          }
+
+          setFinanceRows(correctionResult.financeRows);
+          setReceivablePayableRows(correctionResult.receivablePayableRows);
+          setDeclarationPreparationRows(correctionResult.declarationPreparationRows);
+          setTaxMatterRows(correctionResult.taxMatterRows);
         }
-        return true;
+
+        return result;
       },
       updateFinanceTransactionsByNo(transactionNos, updater) {
         const transactionNoSet = new Set(transactionNos);
@@ -623,6 +1095,10 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           return false;
         }
 
+        if (hasFinanceReceivablePayableBookedVoucher(currentRecord, accountingVoucherLifecycleRows)) {
+          return false;
+        }
+
         const nextRecord = updater(currentRecord);
 
         if (!guardAccountingPeriodOpen(accountingPeriodLocks, nextRecord.accountingPeriod, '调整应收应付事项').allowed) {
@@ -634,40 +1110,246 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         );
         return true;
       },
-      updateInvoiceRecord(invoiceId, updater) {
-        const invoiceToUpdate = invoiceRows.find((invoice) => invoice.id === invoiceId);
+      replaceInvoiceBusinessAssociations(invoiceId, nextDrafts) {
+        const invoice = invoiceRows.find((currentInvoice) => currentInvoice.id === invoiceId);
 
-        if (!invoiceToUpdate) {
+        if (!invoice || invoice.invoiceStatus !== '正常') {
           return false;
         }
 
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, invoiceToUpdate.accountingPeriod, '调整发票匹配').allowed) {
+        if (!guardAccountingPeriodOpen(accountingPeriodLocks, invoice.accountingPeriod, '调整发票关联').allowed) {
           return false;
         }
 
-        const nextInvoice = updater(invoiceToUpdate);
+        const nextTotal = nextDrafts.reduce((total, draft) => total + Number(draft.amount.toFixed(2)), 0);
 
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, nextInvoice.accountingPeriod, '调整发票匹配').allowed) {
+        if (
+          nextDrafts.some((draft) => !Number.isFinite(draft.amount) || draft.amount <= 0.01) ||
+          nextTotal - invoice.taxIncludedAmount > 0.01
+        ) {
           return false;
         }
 
-        const lockedOriginalInvoice = getRedInvoiceOriginalAssociationAffectedInvoices(invoiceToUpdate, nextInvoice, invoiceRows).find(
-          (invoice) => !guardAccountingPeriodOpen(accountingPeriodLocks, invoice.accountingPeriod, '调整红冲原票关联').allowed
+        const currentAllocations = invoiceBusinessAllocationRows.filter(
+          (allocation) => allocation.invoiceId === invoice.id && allocation.status === '有效'
         );
+        const affectedReceivablePayableIds = new Set([
+          ...currentAllocations
+            .filter((allocation) => allocation.targetType === '应收应付')
+            .map((allocation) => allocation.targetId),
+          ...nextDrafts
+            .filter((draft) => draft.targetType === '应收应付')
+            .map((draft) => draft.targetId)
+        ]);
 
-        if (lockedOriginalInvoice) {
+        for (const targetId of affectedReceivablePayableIds) {
+          const target = receivablePayableRows.find((record) => record.id === targetId);
+
+          if (
+            !target ||
+            !guardAccountingPeriodOpen(accountingPeriodLocks, target.accountingPeriod, '调整发票关联').allowed ||
+            hasFinanceReceivablePayableBookedVoucher(target, accountingVoucherLifecycleRows)
+          ) {
+            return false;
+          }
+        }
+
+        for (const draft of nextDrafts) {
+          if (draft.targetType === '应收应付') {
+            const target = receivablePayableRows.find((record) => record.id === draft.targetId);
+
+            if (
+              !target ||
+              !guardAccountingPeriodOpen(accountingPeriodLocks, target.accountingPeriod, '调整发票关联').allowed ||
+              hasFinanceReceivablePayableBookedVoucher(target, accountingVoucherLifecycleRows) ||
+              !getInvoiceAssociationMatchBasis(invoice, target, invoiceBusinessAllocationRows)
+            ) {
+              return false;
+            }
+
+            const otherAllocatedAmount = getInvoiceBusinessAssociationAllocatedAmount(target, invoiceRows, invoiceBusinessAllocationRows, {
+              excludeInvoiceId: invoice.id
+            });
+            const nextTargetAmount = nextDrafts
+              .filter((currentDraft) => currentDraft.targetType === '应收应付' && currentDraft.targetId === target.id)
+              .reduce((total, currentDraft) => total + currentDraft.amount, 0);
+
+            if (otherAllocatedAmount + nextTargetAmount - target.amount > 0.01) {
+              return false;
+            }
+          }
+
+        }
+
+        const occurredAt = `${financeToday} 17:20`;
+        setInvoiceBusinessAllocationRows((currentRows) => [
+          ...currentRows.map((allocation) =>
+            allocation.invoiceId === invoice.id && allocation.status === '有效'
+              ? {
+                  ...allocation,
+                  reversedAt: occurredAt,
+                  reversedBy: currentFinanceActor,
+                  reversalReason: '重新关联业务事项',
+                  status: '已撤销' as const
+                }
+              : allocation
+          ),
+          ...buildInvoiceBusinessAllocations(invoice, nextDrafts, {
+            actor: currentFinanceActor,
+            occurredAt,
+            sequence: currentRows.length + 1
+          })
+        ]);
+        return true;
+      },
+      replaceBusinessInvoiceAssociations(businessRecordId, nextDrafts) {
+        const businessRecord = receivablePayableRows.find((record) => record.id === businessRecordId);
+
+        if (
+          !businessRecord ||
+          !guardAccountingPeriodOpen(accountingPeriodLocks, businessRecord.accountingPeriod, '调整发票关联').allowed ||
+          hasFinanceReceivablePayableBookedVoucher(businessRecord, accountingVoucherLifecycleRows)
+        ) {
+          return false;
+        }
+
+        const draftAmountByInvoiceId = new Map(nextDrafts.map((draft) => [draft.invoiceId, Number(draft.amount.toFixed(2))]));
+        const totalAmount = Array.from(draftAmountByInvoiceId.values()).reduce((total, amount) => total + amount, 0);
+
+        if (
+          Array.from(draftAmountByInvoiceId.values()).some((amount) => !Number.isFinite(amount) || amount <= 0.01) ||
+          totalAmount - businessRecord.amount > 0.01
+        ) {
+          return false;
+        }
+
+        const currentlyLinkedInvoiceIds = invoiceBusinessAllocationRows
+          .filter((allocation) => allocation.status === '有效' && doesInvoiceAllocationMatchReceivablePayable(allocation, businessRecord))
+          .map((allocation) => allocation.invoiceId);
+        const affectedInvoiceIds = new Set([...currentlyLinkedInvoiceIds, ...draftAmountByInvoiceId.keys()]);
+
+        for (const invoiceId of affectedInvoiceIds) {
+          const invoice = invoiceRows.find((currentInvoice) => currentInvoice.id === invoiceId);
+          const draftAmount = draftAmountByInvoiceId.get(invoiceId) ?? 0;
+
+          if (
+              !invoice ||
+              invoice.invoiceStatus !== '正常' ||
+              !guardAccountingPeriodOpen(accountingPeriodLocks, invoice.accountingPeriod, '调整发票关联').allowed ||
+              (draftAmount > 0.01 && !getInvoiceAssociationMatchBasis(invoice, businessRecord, invoiceBusinessAllocationRows))
+            ) {
+              return false;
+            }
+
+          const otherReferenceAmount = invoiceBusinessAllocationRows
+            .filter((allocation) => allocation.invoiceId === invoice.id && allocation.status === '有效')
+            .filter((allocation) => !doesInvoiceAllocationMatchReceivablePayable(allocation, businessRecord))
+            .reduce((total, allocation) => total + Math.max(0, allocation.taxIncludedAmount), 0);
+
+          if (otherReferenceAmount + draftAmount - invoice.taxIncludedAmount > 0.01) {
+            return false;
+          }
+        }
+
+        const occurredAt = `${financeToday} 17:21`;
+        setInvoiceBusinessAllocationRows((currentRows) => {
+          const nextRows = currentRows.map((allocation) =>
+            allocation.status === '有效' && doesInvoiceAllocationMatchReceivablePayable(allocation, businessRecord)
+              ? {
+                  ...allocation,
+                  reversedAt: occurredAt,
+                  reversedBy: currentFinanceActor,
+                  reversalReason: '从应收应付重新关联发票',
+                  status: '已撤销' as const
+                }
+              : allocation
+          );
+          const appendedRows = Array.from(draftAmountByInvoiceId.entries()).flatMap(([invoiceId, amount], index) => {
+            if (amount <= 0.01) {
+              return [];
+            }
+
+            const targetInvoice = invoiceRows.find((invoice) => invoice.id === invoiceId);
+            const draft = nextDrafts.find((currentDraft) => currentDraft.invoiceId === invoiceId);
+
+            return targetInvoice && draft ? buildInvoiceBusinessAllocations(targetInvoice, [{
+              amount,
+              matchBasis: draft.matchBasis,
+              targetId: businessRecord.id,
+              targetNo: businessRecord.documentNo,
+              targetTitle: businessRecord.sourceTitle,
+              targetType: '应收应付'
+            }], {
+              actor: currentFinanceActor,
+              occurredAt,
+              sequence: currentRows.length + index + 1
+            }) : [];
+          });
+
+          return [...nextRows, ...appendedRows];
+        });
+        return true;
+      },
+      linkRedInvoiceOriginal(invoiceId, originalInvoiceId) {
+        const redInvoice = invoiceRows.find((invoice) => invoice.id === invoiceId);
+        const originalInvoice = invoiceRows.find((invoice) => invoice.id === originalInvoiceId);
+
+        if (
+          !redInvoice ||
+          !originalInvoice ||
+          redInvoice.invoiceStatus !== '红冲' ||
+          originalInvoice.invoiceStatus !== '正常' ||
+          redInvoice.direction !== originalInvoice.direction ||
+          redInvoice.counterparty !== originalInvoice.counterparty ||
+          originalInvoice.invoiceDate > redInvoice.invoiceDate ||
+          !guardAccountingPeriodOpen(accountingPeriodLocks, redInvoice.accountingPeriod, '确认红冲原票关联').allowed ||
+          accountingVoucherLifecycleRows.some((row) => row.voucherId === `voucher-invoice-${redInvoice.id}` && row.status === '已记账')
+        ) {
+          return false;
+        }
+
+        if (buildOriginalInvoiceRedSummary(originalInvoice, invoiceRows, redInvoice).isOverLimit) {
+          return false;
+        }
+
+        const redAllocations = buildRedInvoiceBusinessAllocations(redInvoice, originalInvoice, invoiceBusinessAllocationRows, {
+          actor: currentFinanceActor,
+          occurredAt: `${financeToday} 17:22`,
+          sequence: invoiceBusinessAllocationRows.length + 1
+        });
+
+        if (Math.abs(redAllocations.reduce((total, allocation) => total + allocation.taxIncludedAmount, 0)) + 0.01 < Math.abs(redInvoice.taxIncludedAmount)) {
           return false;
         }
 
         setInvoiceRows((currentRows) =>
-          currentRows.map((invoice) => {
-            return invoice.id === invoiceId ? nextInvoice : invoice;
-          })
+          currentRows.map((invoice) =>
+            invoice.id === redInvoice.id
+              ? {
+                  ...invoice,
+                  originalInvoiceId: originalInvoice.id
+                }
+              : invoice
+          )
         );
+        setInvoiceBusinessAllocationRows((currentRows) => [
+          ...currentRows.map((allocation) =>
+            allocation.invoiceId === redInvoice.id && allocation.status === '有效'
+              ? {
+                  ...allocation,
+                  reversedAt: `${financeToday} 17:22`,
+                  reversedBy: currentFinanceActor,
+                  reversalReason: '重新关联红字原票',
+                  status: '已撤销' as const
+                }
+              : allocation
+          ),
+          ...redAllocations
+        ]);
         return true;
       },
       updateDeclarationPreparationRecord(recordId, updater) {
-        const currentRecord = declarationPreparationRows.find((record) => record.id === recordId);
+        const currentRecord = effectiveDeclarationPreparationRows.find((record) => record.id === recordId);
 
         if (!currentRecord) {
           return false;
@@ -687,31 +1369,42 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         }
 
         setDeclarationPreparationRows((currentRows) =>
-          currentRows.map((record) => (record.id === recordId ? nextRecord : record))
+          currentRows.some((record) => record.id === recordId)
+            ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
+            : [nextRecord, ...currentRows]
         );
         return true;
       },
       updateTaxMatterRecord(recordId, updater) {
-        const currentRecord = taxMatterRows.find((record) => record.id === recordId);
+        const currentRecord = effectiveTaxMatterRows.find((record) => record.id === recordId);
 
         if (!currentRecord) {
           return false;
         }
 
-        const accountingPeriod = getAccountingPeriodFromBusinessPeriod(currentRecord.period);
+        const nextRecord = updater(currentRecord);
 
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, '调整税务办理事项').allowed) {
+        setTaxMatterRows((currentRows) =>
+          currentRows.some((record) => record.id === recordId)
+            ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
+            : [nextRecord, ...currentRows]
+        );
+        return true;
+      },
+      updateMonthEndMatterRecord(recordId, updater) {
+        const currentRecord = monthEndMatterRows.find((record) => record.id === recordId);
+
+        if (!currentRecord || !guardAccountingPeriodOpen(accountingPeriodLocks, currentRecord.accountingPeriod, '确认月末事项').allowed) {
           return false;
         }
 
         const nextRecord = updater(currentRecord);
-        const nextAccountingPeriod = getAccountingPeriodFromBusinessPeriod(nextRecord.period);
 
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, nextAccountingPeriod, '调整税务办理事项').allowed) {
+        if (!guardAccountingPeriodOpen(accountingPeriodLocks, nextRecord.accountingPeriod, '确认月末事项').allowed) {
           return false;
         }
 
-        setTaxMatterRows((currentRows) =>
+        setMonthEndMatterRows((currentRows) =>
           currentRows.map((record) => (record.id === recordId ? nextRecord : record))
         );
         return true;
@@ -742,6 +1435,16 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
                     ...currentRecord,
                     candidateStatus: '已记账'
                   }
+                : currentRecord
+            )
+          );
+        }
+
+        if (record.sourceModule === '月末事项') {
+          setMonthEndMatterRows((currentRows) =>
+            currentRows.map((currentRecord) =>
+              currentRecord.sourceNo === record.sourceNo
+                ? markFinanceMonthEndMatterBooked(currentRecord, currentFinanceActor)
                 : currentRecord
             )
           );
@@ -873,22 +1576,38 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         return true;
       },
       bankReconciliationRows,
-      declarationPreparationRows,
+      declarationPreparationRows: effectiveDeclarationPreparationRows,
       financeRows,
+      manualStampDutySourceRows,
+      stampDutySourceResolutionRows,
       invoiceRows,
-      receivablePayableRows,
-      taxMatterRows
+      receivablePayableRows: derivedReceivablePayableRows,
+      taxMatterRows: effectiveTaxMatterRows
     }),
     [
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingPeriodLocks,
       accountingVoucherLifecycleRows,
+      accountingVoucherRows,
       bankReconciliationRows,
-      declarationPreparationRows,
+      effectiveDeclarationPreparationRows,
+      effectiveTaxMatterRows,
       financeRows,
+      invoiceBusinessAllocationRows,
+      invoiceImportBatches,
       invoiceRows,
       ledgerOpeningAdjustmentRows,
+      monthEndMatterRows,
+      manualStampDutySourceRows,
+      stampDutySourceResolutionRows,
+      derivedReceivablePayableRows,
       receivablePayableRows,
+      salaryAdjustments,
+      salaryPaymentRecords,
+      isSalaryAdjustmentPeriodOpen,
+      reverseSalaryPayment,
+      saveSalaryAdjustment,
+      voidSalaryAdjustment,
       taxMatterRows
     ]
   );

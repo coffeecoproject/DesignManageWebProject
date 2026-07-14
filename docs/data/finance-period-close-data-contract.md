@@ -376,8 +376,7 @@ an accounting period before mutation.
 | Source area | Required guard period source |
 | --- | --- |
 | `应收应付` | Source `accounting_period` / `accrual_period` |
-| `发票台账` | Imported invoice accounting period / ledger import period |
-| `发票匹配` | Invoice accounting period, linked business/accrual period, and original blue-invoice period for red-invoice association changes |
+| `发票台账` | Imported invoice accounting period, linked business/accrual period, and original blue-invoice period for shared association changes |
 | `收支流水` | Cash-flow accounting period derived from transaction date and accounting policy |
 | `银行对账` | Bank row period plus linked system cash-flow periods |
 | `会计凭证` | Voucher `accounting_period` |

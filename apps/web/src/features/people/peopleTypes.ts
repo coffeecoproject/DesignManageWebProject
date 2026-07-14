@@ -13,6 +13,11 @@ export type PeoplePaymentProfileMode = '工资发放' | '按任务付款';
 export type PeopleSalaryProfileStatus = '已配置' | '待补充' | '已停用';
 export type PeopleHousingFundStatus = '缴存' | '暂不缴存';
 
+export type PeopleTaxIdentityProfile = {
+  identityType: '居民个人' | '非居民个人';
+  status: '待确认' | '已确认';
+};
+
 export type PeopleSalaryProfile = {
   status: PeopleSalaryProfileStatus;
   structure: string;
@@ -81,6 +86,7 @@ export type PeopleMember = {
   wechat: string;
   idDocumentType: string;
   identityNo: string;
+  taxIdentityProfile?: PeopleTaxIdentityProfile;
   idValidUntil: string;
   hukouAddress: string;
   address: string;

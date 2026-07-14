@@ -1,14 +1,33 @@
-import { financeTransactionRecords, type FinanceTransactionRecord } from './financeData';
+import {
+  financeTransactionRecords,
+  getFinanceSeedPublicAccountRef,
+  type FinanceTransactionRecord
+} from './financeData';
 import { buildSeedFinanceBankReconciliationLinks } from './financeBankReconciliationModel';
-import { financeInvoiceRecords, type FinanceInvoiceRecord } from './financeInvoiceData';
+import {
+  financeInvoiceBusinessAllocations,
+  financeInvoiceRecords,
+  type FinanceInvoiceRecord
+} from './financeInvoiceData';
 import { financeReceivablePayableRecords, type FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
+import { buildSalaryReceivablePayableRecord } from './financeSalarySettlementModel';
 import { financeTaxMatterRecords, type FinanceTaxMatterRecord } from './financeTaxFilingData';
+import {
+  buildTaxMatterRefundTransaction,
+  recordTaxMatterDeclarationResult,
+  recordTaxMatterRefundResult,
+  startTaxMatterDeclarationRevision
+} from './financeTaxMatterModel';
+import { buildRedInvoiceBusinessAllocations } from './financeInvoiceAssociationModel';
 import type { LedgerOpeningAdjustmentVoucherRecord } from './financeLedgerInitializationModel';
+import { confirmFinanceMonthEndMatter, financeMonthEndMatterRecords } from './financeMonthEndModel';
+import { financeFixedAssetRecords, financePrepaidExpenseRecords } from './financeMonthEndSourceData';
 import {
   applyAccountingPeriodCloseLock,
   applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
   buildAccountingVoucherMetrics,
+  buildAccountingVoucherFromTaxMatter,
   buildAccountingVouchers,
   buildAccountingVoucherFromLaterPeriodAdjustment,
   canBookAccountingVoucher,
@@ -37,10 +56,12 @@ import {
   isAccountingVoucherBalanced,
   isAccountingPeriodLocked,
   matchesAccountingVoucherFilters,
+  reopenAccountingPeriodLock,
   validateLaterPeriodAccountingVoucherAdjustment,
   validateAccountingVoucherReversal,
   type AccountingPeriodLockRecord,
   type AccountingVoucherLaterPeriodAdjustmentRecord,
+  type AccountingVoucherBuildOptions,
   type AccountingVoucherIssueCode,
   type AccountingVoucherLifecycleRecord,
   type AccountingVoucherLine,
@@ -81,7 +102,8 @@ function buildAccountingVouchersForTest(
   taxMatterRows: FinanceTaxMatterRecord[] = [],
   bankReconciliationRows = buildSeedFinanceBankReconciliationLinks(financeRows),
   openingAdjustmentRows: LedgerOpeningAdjustmentVoucherRecord[] = [],
-  laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = []
+  laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = [],
+  options: AccountingVoucherBuildOptions = {}
 ) {
   return buildAccountingVouchers(
     receivablePayableRows,
@@ -90,7 +112,11 @@ function buildAccountingVouchersForTest(
     taxMatterRows,
     bankReconciliationRows,
     openingAdjustmentRows,
-    laterPeriodAdjustmentRows
+    laterPeriodAdjustmentRows,
+    {
+      ...options,
+      invoiceBusinessAllocationRows: options.invoiceBusinessAllocationRows ?? financeInvoiceBusinessAllocations
+    }
   );
 }
 
@@ -102,6 +128,68 @@ function getTaxMatterByNo(matterNo: string) {
   }
 
   return record;
+}
+
+function createSalarySettlementFixture() {
+  const settlementSnapshot = {
+    businessDeductionAmount: 0,
+    employeeGrossPayableAmount: 12000,
+    employeeHousingFundAmount: 400,
+    employeeNetPayableAmount: 10500,
+    employeeSocialInsuranceAmount: 800,
+    employerContributionAmount: 3000,
+    employerHousingFundAmount: 600,
+    employerSocialInsuranceAmount: 2400,
+    grossEarningsAmount: 12000,
+    payrollMonth: '2026-06',
+    payrollNo: 'PAY-202606-EMP-SALARY',
+    taxableIncomeAmount: 10800,
+    totalEmploymentCostAmount: 15000,
+    withheldPersonalIncomeTaxAmount: 300
+  };
+  const receivablePayable = buildSalaryReceivablePayableRecord({
+    employeeName: '测试员工',
+    employeeNo: 'EMP-SALARY',
+    settlementSnapshot,
+    workflow: {
+      confirmedAt: '2026-06-30 18:00',
+      confirmedBy: '测试财务',
+      id: 'salary-workflow-test',
+      memberId: 'EMP-SALARY',
+      month: '2026-06',
+      note: '',
+      payrollNo: settlementSnapshot.payrollNo,
+      settlementSnapshot,
+      status: '已确认',
+      updatedAt: '2026-06-30 18:00'
+    }
+  });
+  const transactionTemplate = financeTransactionRecords.find((record) => record.status === '已入账');
+
+  if (!transactionTemplate) {
+    throw new Error('expected posted transaction fixture');
+  }
+
+  const paymentTransaction: FinanceTransactionRecord = {
+    ...transactionTemplate,
+    accountingPeriod: '2026-07',
+    amount: settlementSnapshot.employeeNetPayableAmount,
+    category: '工资发放',
+    counterparty: '测试员工',
+    counterpartyType: '员工',
+    direction: '支出',
+    id: 'finance-salary-payment-test',
+    occurredAt: '2026-07-15',
+    reconciliationStatus: '未对账',
+    sourceNo: settlementSnapshot.payrollNo,
+    sourceTitle: '测试员工 2026-06 工资发放',
+    sourceType: '薪酬发放',
+    status: '已入账',
+    transactionNo: 'FIN-SALARY-PAYMENT-TEST',
+    voucherStatus: '已上传'
+  };
+
+  return { paymentTransaction, receivablePayable, settlementSnapshot };
 }
 
 function getLineBySide(record: AccountingVoucherRecord, side: AccountingVoucherLine['side']) {
@@ -271,6 +359,7 @@ function createMissingSubjectPayable(): FinanceReceivablePayableRecord {
     sourceNo: 'EXP-MISSING-SUBJECT-001',
     taxBasis: {
       basisSource: '不涉及发票',
+      salesCategory: '服务、不动产和无形资产',
       taxAmount: 0,
       taxExcludedAmount: origin.amount,
       taxIncludedAmount: origin.amount,
@@ -289,6 +378,7 @@ function createReceivableWithPendingTaxBasis(): FinanceReceivablePayableRecord {
     sourceNo: 'PRJ-PENDING-TAX-BASIS-001',
     taxBasis: {
       basisSource: '待确认',
+      salesCategory: '服务、不动产和无形资产',
       taxAmount: 0,
       taxExcludedAmount: 0,
       taxIncludedAmount: 0,
@@ -305,6 +395,28 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
 }
 
 const tests: UnitTest[] = [
+  {
+    name: 'builds a month-end candidate voucher only after its source matter is confirmed',
+    run: () => {
+      const pendingMatter = financeMonthEndMatterRecords.find((record) => record.type === '固定资产折旧')!;
+      const prepaidMatter = financeMonthEndMatterRecords.find((record) => record.type === '待摊费用摊销')!;
+      const beforeConfirmation = buildAccountingVouchersForTest([], [], [], [], [], [], [], {
+        monthEndMatterRows: [pendingMatter]
+      });
+      const confirmedMatter = confirmFinanceMonthEndMatter(pendingMatter);
+      const afterConfirmation = buildAccountingVouchersForTest([], [], [], [], [], [], [], {
+        monthEndMatterRows: [confirmedMatter]
+      });
+
+      assertEqual(beforeConfirmation.some((record) => record.sourceNo === pendingMatter.sourceNo), false, 'unconfirmed month-end matter should not create a voucher');
+      const voucher = getVoucherBySourceNo(afterConfirmation, confirmedMatter.sourceNo);
+      assertEqual(voucher.status, '待记账', 'confirmed month-end matter should create a ready-to-book voucher');
+      assertEqual(getLineSubjectCode(voucher, '借方'), confirmedMatter.debitSubjectCode, 'month-end debit subject should come from the source schedule');
+      assertEqual(getLineSubjectCode(voucher, '贷方'), confirmedMatter.creditSubjectCode, 'month-end credit subject should come from the source schedule');
+      assertEqual(confirmedMatter.amount, financeFixedAssetRecords[0].monthlyDepreciation, 'depreciation candidate should use the fixed-asset ledger schedule');
+      assertEqual(prepaidMatter.amount, financePrepaidExpenseRecords[0].monthlyAmortization, 'amortization candidate should use the prepaid-expense schedule');
+    }
+  },
   {
     name: 'derives accounting voucher filters and target drawer from deep-link query',
     run: () => {
@@ -348,7 +460,7 @@ const tests: UnitTest[] = [
       assertEqual(metrics.balancedCount, vouchers.length, 'metrics should count every derived voucher row as balanced');
       assertEqual(metrics.readyToBookCount > 0, true, 'complete rows should be ready to book');
       assertEqual(metrics.issueCount > 0, true, 'invoice-incomplete rows should create issue vouchers');
-      assertEqual(metrics.pendingGenerationCount > 0, true, 'bank-unreconciled rows should wait for generation');
+      assertEqual(metrics.pendingGenerationCount, 0, 'bank reconciliation should not keep reviewed cash rows in pending generation');
       assertEqual(
         metrics.readyToBookCount + metrics.issueCount + metrics.pendingGenerationCount,
         vouchers.length,
@@ -392,11 +504,12 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates issued receivable entries with receivable debit, revenue credit, and tax credit',
+    name: 'creates a full revenue credit for a below-threshold ordinary invoice without inventing output VAT',
     run: () => {
       const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const voucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
-      const taxLine = getLineBySubjectCode(voucher, '2221.01');
+      const taxLine = voucher.lines.find((line) => (line.subject?.code ?? line.subjectCode) === '2221.01');
+      const revenueLine = getLineBySubjectCode(voucher, '5001');
 
       assertEqual(voucher.sourceType, '业务确认', 'receivable/payable source should be business confirmation');
       assertEqual(voucher.businessType, '权责凭证', 'receivable/payable confirmation should create accrual voucher');
@@ -405,7 +518,8 @@ const tests: UnitTest[] = [
       assertEqual(voucher.invoiceRefs.length, 1, 'fully invoiced receivable should retain invoice reference');
       assertEqual(getLineSubjectCode(voucher, '借方'), '1122', 'receivable confirmation debit should post to accounts receivable');
       assertEqual(getLineSubjectCode(voucher, '贷方'), '5001', 'contract receivable confirmation credit should post to main business revenue');
-      assertEqual(taxLine.amount, 673.27, 'issued receivable should split output tax from invoice tax amount');
+      assertEqual(taxLine, undefined, 'ordinary invoice under the exemption threshold should not invent output VAT');
+      assertEqual(revenueLine.amount, 68000, 'ordinary invoice under the exemption threshold should credit the full revenue amount');
       assertEqual(getAccountingVoucherDebitTotal(voucher), 68000, 'receivable confirmation debit amount should match source amount');
       assertEqual(getAccountingVoucherCreditTotal(voucher), 68000, 'receivable confirmation credit amount should match source amount');
     }
@@ -432,15 +546,26 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates payable confirmation entries with expense debit and liability credit',
+    name: 'NP-19 splits salary confirmation into net pay and statutory liabilities without changing gross payroll',
     run: () => {
-      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
-      const salaryVoucher = getVoucherBySourceNo(vouchers, 'AP-202606-002');
+      const salaryFixture = createSalarySettlementFixture();
+      const vouchers = buildAccountingVouchersForTest(
+        [salaryFixture.receivablePayable, ...financeReceivablePayableRecords],
+        financeTransactionRecords,
+        financeInvoiceRecords
+      );
+      const salaryVoucher = getVoucherBySourceNo(vouchers, salaryFixture.receivablePayable.documentNo);
       const outsourceVoucher = getVoucherBySourceNo(vouchers, 'AP-202606-003');
       const reimbursementVoucher = getVoucherBySourceNo(vouchers, 'AP-202605-018');
 
+      assertEqual(salaryFixture.receivablePayable.amount, 10500, 'salary payable business amount should equal employee net cash payable');
       assertEqual(getLineSubjectCode(salaryVoucher, '借方'), '5602.01', 'salary payable confirmation should debit payroll expense detail subject');
-      assertEqual(getLineSubjectCode(salaryVoucher, '贷方'), '2211.01', 'salary payable confirmation should credit salary payable detail subject');
+      assertEqual(getLineBySubjectCode(salaryVoucher, '2211.01').amount, 10500, 'salary payable should retain only employee net cash payable');
+      assertEqual(getLineBySubjectCode(salaryVoucher, '2221.03').amount, 300, 'salary confirmation should credit withheld IIT liability');
+      assertEqual(getLineBySubjectCode(salaryVoucher, '2211.03').amount, 800, 'salary confirmation should credit employee social insurance liability');
+      assertEqual(getLineBySubjectCode(salaryVoucher, '2211.04').amount, 400, 'salary confirmation should credit employee housing fund liability');
+      assertEqual(getAccountingVoucherDebitTotal(salaryVoucher), 12000, 'salary expense debit should retain the original payroll result');
+      assertEqual(getAccountingVoucherCreditTotal(salaryVoucher), 12000, 'split salary liabilities should remain balanced');
       assertEqual(getLineSubjectCode(outsourceVoucher, '借方'), '5401', 'outsourcing payable confirmation should debit main business cost');
       assertEqual(getLineSubjectCode(outsourceVoucher, '贷方'), '2202', 'outsourcing payable confirmation should credit accounts payable');
       assertEqual(outsourceVoucher.invoiceRefs.length, 1, 'matched input invoice should be retained as cost basis');
@@ -453,11 +578,16 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates cash settlement entries only after transaction review and bank reconciliation',
+    name: 'creates cash settlement entries after transaction review and original-evidence verification',
     run: () => {
-      const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
+      const salaryFixture = createSalarySettlementFixture();
+      const vouchers = buildAccountingVouchersForTest(
+        [salaryFixture.receivablePayable, ...financeReceivablePayableRecords],
+        [salaryFixture.paymentTransaction, ...financeTransactionRecords],
+        financeInvoiceRecords
+      );
       const cashReceiptVoucher = getVoucherBySourceNo(vouchers, 'FIN-202606-0001');
-      const salaryPaymentVoucher = getVoucherBySourceNo(vouchers, 'FIN-202606-0003');
+      const salaryPaymentVoucher = getVoucherBySourceNo(vouchers, salaryFixture.paymentTransaction.transactionNo);
       const pendingReviewVoucher = vouchers.find((record) => record.sourceNo === 'FIN-202606-0004');
 
       assertEqual(cashReceiptVoucher.sourceType, '收付款', 'cash-flow source should be cash settlement');
@@ -471,11 +601,11 @@ const tests: UnitTest[] = [
       );
       assertEqual(getLineSubjectCode(cashReceiptVoucher, '借方'), '1002', 'cash receipt should debit bank deposit');
       assertEqual(getLineSubjectCode(cashReceiptVoucher, '贷方'), '1122', 'cash receipt should credit accounts receivable');
-      assertEqual(salaryPaymentVoucher.status, '待生成', 'reviewed but unreconciled salary payment should wait for bank reconciliation');
-      assertIncludes(
-        salaryPaymentVoucher.issueReasons,
-        'bank_reconciliation_pending' satisfies AccountingVoucherIssueCode,
-        'unreconciled salary payment should expose bank reconciliation prerequisite'
+      assertEqual(salaryPaymentVoucher.status, '待记账', 'reviewed salary payment with evidence should not wait for bank reconciliation');
+      assertEqual(
+        salaryPaymentVoucher.issueReasons.length,
+        0,
+        'unreconciled salary payment should leave bank reconciliation to the period-close control'
       );
       assertEqual(salaryPaymentVoucher.kind, '付款凭证', 'expense cash-flow should use payment voucher');
       assertEqual(getLineSubjectCode(salaryPaymentVoucher, '借方'), '2211.01', 'salary payment should debit salary payable detail subject');
@@ -528,13 +658,34 @@ const tests: UnitTest[] = [
       assertEqual(adjustmentVoucher.businessType, '调整凭证', 'reviewed adjustment should create adjustment voucher');
       assertEqual(adjustmentVoucher.summary.includes('补差确认'), true, 'adjustment voucher summary should preserve adjustment mode without cash-ledger booking wording');
       assertEqual(adjustmentVoucher.status, '待记账', 'reviewed and bank-reconciled adjustment with evidence should be ready to prepare');
-      assertEqual(unreconciledVoucher.status, '待生成', 'reviewed adjustment should wait until bank reconciliation is complete');
-      assertIncludes(
-        unreconciledVoucher.issueReasons,
-        'bank_reconciliation_pending' satisfies AccountingVoucherIssueCode,
-        'unreconciled adjustment should expose bank reconciliation prerequisite'
-      );
+      assertEqual(unreconciledVoucher.status, '待记账', 'reviewed adjustment with evidence should not wait for bank reconciliation');
       assertEqual(pendingVoucher, undefined, 'pending adjustment should not create accounting voucher');
+    }
+  },
+  {
+    name: 'limits accounting voucher candidates to the configured account-set start period',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(
+        financeReceivablePayableRecords,
+        financeTransactionRecords,
+        financeInvoiceRecords,
+        financeTaxMatterRecords,
+        buildSeedFinanceBankReconciliationLinks(financeTransactionRecords),
+        [],
+        [],
+        { accountingPeriodStart: '2026-06' }
+      );
+
+      assertEqual(
+        vouchers.every((record) => record.accountingPeriod >= '2026-06'),
+        true,
+        'account-set scope should keep pre-start transactions out of accounting candidates'
+      );
+      assertEqual(
+        vouchers.some((record) => record.accountingPeriod === '2026-06'),
+        true,
+        'account-set scope should keep in-scope accounting candidates'
+      );
     }
   },
   {
@@ -589,6 +740,59 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'does not accrue IIT twice and clears the withholding liability through the actual tax payment',
+    run: () => {
+      const iitMatter: FinanceTaxMatterRecord = {
+        ...getTaxMatterByNo('TAX-202606-IIT'),
+        dataStatus: '已确认',
+        declarationDate: '2026-07-10',
+        declarationReceiptNo: 'IIT-202606-001',
+        declarationStatus: '申报成功',
+        payableAmount: 480,
+        preparedPayableAmount: 480,
+        processStatus: '待缴款'
+      };
+      const taxAccrualVoucher = buildAccountingVoucherFromTaxMatter(iitMatter, 0);
+      const seedTransaction = financeTransactionRecords[0];
+
+      if (!seedTransaction) {
+        throw new Error('expected finance transaction seed');
+      }
+
+      const iitPayment: FinanceTransactionRecord = {
+        ...seedTransaction,
+        accountingPeriod: '2026-07',
+        amount: 480,
+        category: '税费缴纳',
+        direction: '支出',
+        id: 'finance-iit-payment-test',
+        occurredAt: '2026-07-15',
+        reconciliationStatus: '已对账',
+        sourceNo: iitMatter.matterNo,
+        sourceTitle: iitMatter.title,
+        sourceType: '税费事项',
+        status: '已入账',
+        transactionNo: 'FIN-202607-IIT-001'
+      };
+      const paymentVoucher = getVoucherBySourceNo(
+        buildAccountingVouchersForTest([], [iitPayment]),
+        iitPayment.transactionNo
+      );
+
+      assertEqual(taxAccrualVoucher, undefined, 'IIT handling must not accrue liability already recognized by salary and labor facts');
+      assertEqual(
+        paymentVoucher.lines.some((line) => line.side === '借方' && line.subjectCode === '2221.03' && line.amount === 480),
+        true,
+        'actual IIT payment must debit the withholding liability'
+      );
+      assertEqual(
+        paymentVoucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '1002' && line.amount === 480),
+        true,
+        'actual IIT payment must credit the company bank account'
+      );
+    }
+  },
+  {
     name: 'creates tax accrual vouchers from completed tax matters without duplicating payment cash facts',
     run: () => {
       const vouchers = buildAccountingVouchersForTest([], financeTransactionRecords, [], financeTaxMatterRecords);
@@ -601,10 +805,30 @@ const tests: UnitTest[] = [
       assertEqual(vatVoucher.accountingPeriod, '2026-03', 'Q1 tax accrual voucher should belong to the tax period end month');
       assertEqual(vatVoucher.voucherDate, '2026-04-12', 'tax voucher should still display the declaration or confirmation date');
       assertEqual(vatVoucher.status, '待记账', 'completed tax matter with receipts should be ready to prepare');
-      assertEqual(getLineSubjectCode(vatVoucher, '借方'), '5403', 'VAT surcharge tax matter should debit taxes and surcharges');
-      assertEqual(getLineSubjectCode(vatVoucher, '贷方'), '2221.01', 'VAT tax matter should credit VAT payable detail subject');
+      assertEqual(vatVoucher.amount, 26.41, 'VAT tax matter voucher should accrue surcharge only');
+      assertEqual(getLineSubjectCode(vatVoucher, '借方'), '5403', 'surcharge accrual should debit taxes and surcharges');
       assertEqual(
-        vatVoucher.sourceRefs.some((sourceRef) => sourceRef.recordNo === 'FIN-202604-0009' && sourceRef.role === '缴款依据'),
+        vatVoucher.lines.some((line) => line.subjectCode === '2221.01'),
+        false,
+        'VAT already recognized by source vouchers must not be accrued again by tax handling'
+      );
+      assertEqual(
+        vatVoucher.lines.some((line) => line.subjectCode === '2221.04' && line.amount === 15.41),
+        true,
+        'surcharge accrual should credit urban maintenance tax separately'
+      );
+      assertEqual(
+        vatVoucher.lines.some((line) => line.subjectCode === '2221.06' && line.amount === 6.6),
+        true,
+        'surcharge accrual should credit education surcharge separately'
+      );
+      assertEqual(
+        vatVoucher.lines.some((line) => line.subjectCode === '2221.07' && line.amount === 4.4),
+        true,
+        'surcharge accrual should credit local education surcharge separately'
+      );
+      assertEqual(
+        vatVoucher.sourceRefs.some((sourceRef) => sourceRef.recordNo === 'FIN-202604-0009' && sourceRef.role === '资金结算依据'),
         true,
         'tax voucher should retain linked payment cash-flow as payment basis'
       );
@@ -614,17 +838,142 @@ const tests: UnitTest[] = [
       assertEqual(vatCashVoucher.businessType, '资金凭证', 'linked tax payment cash-flow should remain cash voucher');
       assertEqual(vatCashVoucher.accountingPeriod, '2026-04', 'linked tax payment cash-flow should stay in the actual payment month');
       assertEqual(vatCashVoucher.status, '待记账', 'reviewed and reconciled tax payment cash-flow should remain ready to prepare');
+      assertEqual(
+        vatCashVoucher.lines.some((line) => line.subjectCode === '2221.01' && line.amount === 440.1),
+        true,
+        'tax payment should clear the VAT liability recognized by source vouchers'
+      );
+      assertEqual(
+        vatCashVoucher.lines.some((line) => line.subjectCode === '2221.04' && line.amount === 15.41),
+        true,
+        'tax payment should clear urban maintenance tax separately'
+      );
+      assertEqual(
+        vatCashVoucher.lines.some((line) => line.subjectCode === '2221.06' && line.amount === 6.6),
+        true,
+        'tax payment should clear education surcharge separately'
+      );
+      assertEqual(
+        vatCashVoucher.lines.some((line) => line.subjectCode === '2221.07' && line.amount === 4.4),
+        true,
+        'tax payment should clear local education surcharge separately'
+      );
+    }
+  },
+  {
+    name: 'posts reviewed tax refunds against the tax liability instead of operating income',
+    run: () => {
+      const sourceMatter = getTaxMatterByNo('TAX-2025-CIT-ANNUAL');
+      const refundReceipt = {
+        id: 'tax-refund-accounting-receipt',
+        name: '企业所得税退税回单.pdf',
+        status: '已上传' as const,
+        type: '退税回单',
+        updatedAt: '2026-07-13'
+      };
+      const refundedMatter = recordTaxMatterRefundResult(sourceMatter, {
+        amount: 500,
+        receiptFile: refundReceipt,
+        refundDate: '2026-07-13'
+      });
+      const pendingTransaction = buildTaxMatterRefundTransaction({
+        financeRows: [],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: refundedMatter,
+        refundAmount: 500,
+        refundDate: '2026-07-13',
+        refundReceiptFile: refundReceipt
+      });
+
+      if (!pendingTransaction) {
+        throw new Error('expected tax refund transaction to be generated');
+      }
+
+      const reviewedTransaction: FinanceTransactionRecord = {
+        ...pendingTransaction,
+        reconciliationStatus: '已对账',
+        reconciledAt: '2026-07-14',
+        status: '已入账'
+      };
+      const voucher = getVoucherBySourceNo(
+        buildAccountingVouchersForTest([], [reviewedTransaction]),
+        reviewedTransaction.transactionNo
+      );
+
+      assertEqual(voucher.businessType, '资金凭证', 'reviewed refund receipt should create a cash voucher');
+      assertEqual(voucher.kind, '收款凭证', 'tax refund receipt should use a receipt voucher');
+      assertEqual(getLineSubjectCode(voucher, '借方'), '1002', 'tax refund receipt should debit bank deposit');
+      assertEqual(getLineSubjectCode(voucher, '贷方'), '2221.02', 'enterprise income tax refund should credit income-tax payable');
+      assertEqual(
+        voucher.lines.some((line) => line.subjectCode === '5051'),
+        false,
+        'tax refund must not be recognized as other operating income'
+      );
+    }
+  },
+  {
+    name: 'blocks combined VAT cash vouchers when liability allocations are missing',
+    run: () => {
+      const sourceTransaction = financeTransactionRecords.find((record) => record.transactionNo === 'FIN-202604-0009');
+
+      if (!sourceTransaction) {
+        throw new Error('expected VAT payment transaction seed to exist');
+      }
+
+      const transaction = {
+        ...sourceTransaction,
+        id: 'vat-payment-without-allocation',
+        taxPaymentAllocations: undefined,
+        transactionNo: 'FIN-202604-ALLOCATION-MISSING'
+      };
+      const voucher = getVoucherBySourceNo(buildAccountingVouchersForTest([], [transaction]), transaction.transactionNo);
+
+      assertEqual(voucher.status, '需处理', 'combined VAT payment without allocations should not be ready for booking');
+      assertIncludes(
+        voucher.issueReasons,
+        'tax_payment_allocation_missing' satisfies AccountingVoucherIssueCode,
+        'combined VAT payment should expose the missing allocation issue'
+      );
+    }
+  },
+  {
+    name: 'blocks surcharge accrual when declared VAT differs from source-recognized liability',
+    run: () => {
+      const sourceMatter = createTaxMatter();
+      const taxMatter = createTaxMatter({
+        id: 'vat-liability-mismatch',
+        matterNo: 'TAX-VAT-LIABILITY-MISMATCH',
+        vatSettlement: sourceMatter.vatSettlement
+          ? { ...sourceMatter.vatSettlement, sourceRecognizedVatAmount: sourceMatter.vatSettlement.declaredVatAmount - 100 }
+          : undefined
+      });
+      const voucher = buildAccountingVoucherFromTaxMatter(taxMatter, 0);
+
+      if (!voucher) {
+        throw new Error('expected VAT surcharge voucher to exist');
+      }
+
+      assertEqual(voucher.status, '需处理', 'VAT liability mismatch should block surcharge voucher booking');
+      assertIncludes(
+        voucher.issueReasons,
+        'vat_liability_mismatch' satisfies AccountingVoucherIssueCode,
+        'VAT liability mismatch should be visible on the voucher'
+      );
     }
   },
   {
     name: 'keeps confirmed but unfinished tax matters waiting for generation',
     run: () => {
       const pendingTaxMatter = createTaxMatter({
+        declarationDate: undefined,
+        declarationReceiptFileId: undefined,
+        declarationReceiptNo: undefined,
+        declarationStatus: '待申报',
         files: [],
         id: 'tax-matter-pending-voucher',
         linkedTransactionNos: [],
         matterNo: 'TAX-PENDING-VOUCHER',
-        processStatus: '待上传回执'
+        processStatus: '待申报'
       });
       const vouchers = buildAccountingVouchersForTest([], [], [], [pendingTaxMatter]);
       const voucher = getVoucherBySourceNo(vouchers, pendingTaxMatter.matterNo);
@@ -641,7 +990,9 @@ const tests: UnitTest[] = [
     name: 'marks completed tax matters missing required receipts as issue',
     run: () => {
       const missingReceiptTaxMatter = createTaxMatter({
-        files: getTaxMatterByNo('TAX-2026Q1-VAT').files.filter((file) => file.type !== '缴款回单'),
+        declarationReceiptFileId: undefined,
+        declarationReceiptNo: undefined,
+        files: getTaxMatterByNo('TAX-2026Q1-VAT').files.filter((file) => file.type !== '申报回执'),
         id: 'tax-matter-missing-receipt-voucher',
         matterNo: 'TAX-MISSING-RECEIPT'
       });
@@ -654,6 +1005,49 @@ const tests: UnitTest[] = [
         'tax_receipt_missing' satisfies AccountingVoucherIssueCode,
         'missing receipt should be exposed as tax voucher issue'
       );
+    }
+  },
+  {
+    name: 'does not couple tax accrual booking to the later payment date',
+    run: () => {
+      const missingPaymentDateMatter = createTaxMatter({
+        id: 'tax-matter-missing-payment-date',
+        matterNo: 'TAX-MISSING-PAYMENT-DATE',
+        paymentDate: undefined
+      });
+      const vouchers = buildAccountingVouchersForTest([], [], [], [missingPaymentDateMatter]);
+      const voucher = getVoucherBySourceNo(vouchers, missingPaymentDateMatter.matterNo);
+
+      assertEqual(voucher.status, '待记账', 'declared tax matter should be ready before the later cash payment');
+      assertEqual(
+        voucher.issueReasons.includes('tax_handling_date_missing' satisfies AccountingVoucherIssueCode),
+        false,
+        'cash payment date must not be an accrual-voucher prerequisite'
+      );
+    }
+  },
+  {
+    name: 'creates a versioned difference voucher for a corrected tax declaration',
+    run: () => {
+      const original = getTaxMatterByNo('TAX-2026Q1-CIT');
+      const revision = startTaxMatterDeclarationRevision(original, '更正', '补充纳税调整后更正申报');
+      const corrected = recordTaxMatterDeclarationResult(revision, {
+        declarationDate: '2026-04-18',
+        declarationReceiptNo: 'CIT-Q1-REVISION-002',
+        declarationStatus: '申报成功',
+        settlementAmount: original.payableAmount + 100,
+        settlementDirection: '应缴'
+      });
+      const voucher = buildAccountingVoucherFromTaxMatter(corrected, 0);
+
+      if (!voucher) {
+        throw new Error('expected corrected tax declaration to create a difference voucher');
+      }
+
+      assertEqual(voucher.id, `${original.id ? `voucher-tax-${original.id}` : ''}-v2`, 'corrected voucher should use an immutable versioned id');
+      assertEqual(voucher.amount, 100, 'corrected voucher should contain only the declaration difference');
+      assertEqual(getLineSubjectCode(voucher, '借方'), '5801', 'additional income tax should debit income tax expense');
+      assertEqual(getLineSubjectCode(voucher, '贷方'), '2221.02', 'additional income tax should credit tax payable');
     }
   },
   {
@@ -796,6 +1190,44 @@ const tests: UnitTest[] = [
         undefined,
         'open period should not show a period-lock notice'
       );
+    }
+  },
+  {
+    name: 'reopens a closed mock period without deleting the original close snapshot',
+    run: () => {
+      const closedLock: AccountingPeriodLockRecord = {
+        accountingPeriod: '2026-07',
+        closeCheckSnapshot: [
+          {
+            code: 'voucher_booking',
+            detail: '已完成记账检查。',
+            status: '通过',
+            title: '凭证记账'
+          }
+        ],
+        lockedAt: '2026-07-31 18:00',
+        lockedBy: '李明',
+        reason: '历史跳月结账',
+        status: '已结账'
+      };
+      const reopenedRows = reopenAccountingPeriodLock([closedLock], '2026-07', {
+        reason: '补齐前期结账顺序',
+        reopenedAt: '2026-08-01 09:30',
+        reopenedBy: '李明'
+      });
+      const reopenedLock = reopenedRows[0];
+
+      assertEqual(reopenedLock?.status, '已反结账', 'reopen should release the closed period lock');
+      assertEqual(reopenedLock?.reopenedBy, '李明', 'reopen should retain the repair operator');
+      assertEqual(reopenedLock?.reopenedAt, '2026-08-01 09:30', 'reopen should retain the repair time');
+      assertEqual(reopenedLock?.reopenReason, '补齐前期结账顺序', 'reopen should retain the repair reason');
+      assertEqual(reopenedLock?.closeCheckSnapshot?.[0]?.title, '凭证记账', 'reopen should retain the original close snapshot');
+      assertEqual(isAccountingPeriodLocked(reopenedRows, '2026-07'), false, 'reopened period should become open to the regular close workflow');
+      assertEqual(reopenAccountingPeriodLock(reopenedRows, '2026-07', {
+        reason: '重复修复',
+        reopenedAt: '2026-08-01 10:00',
+        reopenedBy: '王会计'
+      })[0]?.reopenReason, '补齐前期结账顺序', 'already reopened record should not overwrite the repair audit');
     }
   },
   {
@@ -1239,24 +1671,24 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'allows accrual preparation with source tax basis while invoice evidence remains pending',
+    name: 'allows accrual preparation without inventing VAT when the declaration-period outcome is pending',
     run: () => {
       const vouchers = buildAccountingVouchersForTest(financeReceivablePayableRecords, financeTransactionRecords, financeInvoiceRecords);
       const partialInvoiceVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-002');
       const missingInvoiceVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-003');
-      const partialTaxLine = getLineBySubjectCode(partialInvoiceVoucher, '2221.01');
-      const missingInvoiceTaxLine = getLineBySubjectCode(missingInvoiceVoucher, '2221.01');
+      const partialTaxLine = partialInvoiceVoucher.lines.find((line) => line.subjectCode === '2221.01');
+      const missingInvoiceTaxLine = missingInvoiceVoucher.lines.find((line) => line.subjectCode === '2221.01');
 
       assertEqual(partialInvoiceVoucher.status, '待记账', 'partially invoiced receivable should be ready when source tax basis is complete');
       assertEqual(partialInvoiceVoucher.issueReasons.length, 0, 'partial invoice evidence should remain a reminder instead of blocking preparation');
       assertEqual(partialInvoiceVoucher.taxBasis?.basisSource, '来源单据', 'partial invoice should fall back to source tax basis');
       assertEqual(partialInvoiceVoucher.taxBasis?.evidenceStatus, '发票部分匹配', 'partial invoice should stay visible as evidence status');
-      assertEqual(partialTaxLine.amount, 178.22, 'partial invoice receivable should split full source tax amount');
+      assertEqual(partialTaxLine, undefined, 'partial invoice should not infer VAT for unmatched revenue before declaration preparation');
       assertEqual(missingInvoiceVoucher.status, '待记账', 'receivable without invoice should be ready when source tax basis is complete');
       assertEqual(missingInvoiceVoucher.issueReasons.length, 0, 'missing invoice evidence should remain visible without blocking preparation');
       assertEqual(missingInvoiceVoucher.invoiceRefs.length, 0, 'missing invoice receivable should not invent invoice references');
       assertEqual(missingInvoiceVoucher.taxBasis?.evidenceStatus, '发票待补', 'missing invoice should stay visible as evidence status');
-      assertEqual(missingInvoiceTaxLine.amount, 126.73, 'missing invoice receivable should split source tax amount');
+      assertEqual(missingInvoiceTaxLine, undefined, 'missing invoice should not infer a global VAT amount');
     }
   },
   {
@@ -1285,6 +1717,43 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'builds a ready-to-book adjustment voucher from linked red invoice allocations',
+    run: () => {
+      const originalInvoice = financeInvoiceRecords.find((invoice) => invoice.id === 'invoice-out-202606-009');
+      const redInvoice = financeInvoiceRecords.find((invoice) => invoice.id === 'invoice-out-202606-004');
+
+      if (!originalInvoice || !redInvoice) {
+        throw new Error('expected red invoice and its original blue invoice in seed data');
+      }
+
+      const originalAllocations = financeInvoiceBusinessAllocations.filter((allocation) => allocation.invoiceId === originalInvoice.id);
+      const linkedRedInvoice: FinanceInvoiceRecord = { ...redInvoice, originalInvoiceId: originalInvoice.id };
+      const redAllocations = buildRedInvoiceBusinessAllocations(linkedRedInvoice, originalInvoice, originalAllocations, {
+        actor: '李明',
+        occurredAt: '2026-06-20 18:20',
+        sequence: 2
+      });
+      const vouchers = buildAccountingVouchersForTest(
+        financeReceivablePayableRecords,
+        financeTransactionRecords,
+        [originalInvoice, linkedRedInvoice],
+        [],
+        undefined,
+        [],
+        [],
+        { invoiceBusinessAllocationRows: [...originalAllocations, ...redAllocations] }
+      );
+      const redInvoiceVoucher = getVoucherBySourceNo(vouchers, linkedRedInvoice.invoiceNo);
+
+      assertEqual(redInvoiceVoucher.businessType, '调整凭证', 'linked red invoice should remain an adjustment voucher');
+      assertEqual(redInvoiceVoucher.status, '待记账', 'linked red invoice should be ready to book');
+      assertEqual(getAccountingVoucherDebitTotal(redInvoiceVoucher), 1200, 'red invoice debit should equal its allocated gross amount');
+      assertEqual(getAccountingVoucherCreditTotal(redInvoiceVoucher), 1200, 'red invoice credit should equal its allocated gross amount');
+      assertEqual(getLineBySide(redInvoiceVoucher, '借方').amount, 1200, 'red invoice should reverse the revenue line');
+      assertEqual(getLineBySide(redInvoiceVoucher, '贷方').amount, 1200, 'red invoice should reverse the receivable line');
+    }
+  },
+  {
     name: 'marks reviewed cash voucher as issue when original evidence is missing',
     run: () => {
       const missingEvidenceTransaction = createMissingEvidenceTransaction();
@@ -1310,6 +1779,35 @@ const tests: UnitTest[] = [
         false,
         'payable without subject mapping should stay out of the accounting voucher workbench'
       );
+    }
+  },
+  {
+    name: 'builds stamp duty accrual with tax and surcharge expense and dedicated liability',
+    run: () => {
+      const seed = financeTaxMatterRecords.find((record) => record.matterType === '印花税');
+
+      if (!seed) {
+        throw new Error('expected stamp duty tax matter seed');
+      }
+
+      const record: FinanceTaxMatterRecord = {
+        ...seed,
+        dataStatus: '已确认',
+        declarationDate: '2026-07-10',
+        declarationStatus: '申报成功',
+        payableAmount: 14.26,
+        processStatus: '已完成',
+        sourceItems: seed.sourceItems.map((item) => ({ ...item, status: '已确认' }))
+      };
+      const voucher = buildAccountingVoucherFromTaxMatter(record, 0);
+
+      if (!voucher) {
+        throw new Error('expected stamp duty accrual voucher');
+      }
+
+      assertEqual(voucher.lines[0]?.subjectCode, '5403', 'stamp duty debit subject');
+      assertEqual(voucher.lines[1]?.subjectCode, '2221.05', 'stamp duty credit subject');
+      assertEqual(voucher.amount, 14.26, 'stamp duty voucher amount');
     }
   },
   {
@@ -1356,18 +1854,22 @@ const tests: UnitTest[] = [
 
 export function runFinanceAccountingVoucherModelTests() {
   const failures: string[] = [];
+  const passedTestNames: string[] = [];
 
   tests.forEach((test) => {
     try {
       test.run();
+      passedTestNames.push(test.name);
     } catch (error) {
       failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
 
   return {
+    executedTestNames: tests.map((test) => test.name),
     failures,
     passed: tests.length - failures.length,
+    passedTestNames,
     total: tests.length
   };
 }

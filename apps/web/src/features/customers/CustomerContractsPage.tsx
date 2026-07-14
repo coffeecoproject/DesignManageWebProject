@@ -333,6 +333,7 @@ export function CustomerContractsPage() {
                     <ContractProfileSection
                       contract={activeContract}
                       customerName={getCustomerById(activeContract.customerId)?.name}
+                      customerTaxId={getCustomerById(activeContract.customerId)?.taxpayerIdentificationNo}
                     />
                   )
                 },
@@ -381,7 +382,7 @@ export function CustomerContractsPage() {
         width={760}
         onClose={cancelContractDrawer}
       >
-        <ContractFormSection customers={customerRows} form={contractForm} onChange={updateContractFormPatch} />
+        <ContractFormSection contracts={contractRows} customers={customerRows} form={contractForm} onChange={updateContractFormPatch} />
         <ContractFileUploadSection
           files={contractForm.files}
           onPreview={(file) => {

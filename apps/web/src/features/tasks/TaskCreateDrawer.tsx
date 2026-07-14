@@ -36,6 +36,7 @@ export function TaskCreateDrawer({
       changeAcceptor: onAcceptorChange,
       changeBrand: onBrandChange,
       changeExecutor: onExecutorChange,
+      changeLaborGrossAmount: onLaborGrossAmountChange,
       changeMaterial: onMaterialChange,
       changeNote: onNoteChange,
       changePlannedDurationHours: onPlannedDurationHoursChange,
@@ -43,7 +44,7 @@ export function TaskCreateDrawer({
       changeTaskConfig: onTaskConfigChange,
       removeMaterial: onMaterialRemove
     },
-    candidates: { acceptorCandidates, executorCandidates, selectableExecutorCandidates },
+    candidates: { acceptorCandidates, executorCandidates, selectableExecutorCandidates, selectedExecutorCandidate },
     derived: {
       availableTaskOptions,
       generatedPlannedDeliveryAt,
@@ -133,6 +134,28 @@ export function TaskCreateDrawer({
                 onChange={onAcceptorChange}
               />
             </DrawerFormField>
+            {selectedExecutorCandidate?.member.personnelType === '兼职' ? (
+              <>
+                <DrawerFormField label="约定税前金额" required>
+                  <Space.Compact className="field-control task-duration-control">
+                    <InputNumber
+                      className="task-duration-number"
+                      min={0.01}
+                      precision={2}
+                      placeholder="填写税前金额"
+                      value={form.laborGrossAmount ?? undefined}
+                      onChange={onLaborGrossAmountChange}
+                    />
+                    <Input className="task-duration-unit" readOnly value="元" />
+                  </Space.Compact>
+                </DrawerFormField>
+                <ReadOnlyField
+                  density="compact"
+                  label="劳务协议"
+                  value={selectedExecutorCandidate.member.contractNo || '未配置'}
+                />
+              </>
+            ) : null}
             <ReadOnlyField density="compact" label="任务名称" value={generatedTaskName || '自动生成'} wide />
             <DrawerFormField label="任务说明" wide>
               <Input.TextArea autoSize={{ minRows: 3, maxRows: 5 }} value={form.note} onChange={(event) => onNoteChange(event.target.value)} />

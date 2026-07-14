@@ -4,9 +4,11 @@ import { RouterProvider } from 'react-router-dom';
 import { CustomerManagementProvider } from '../features/customers/CustomerManagementState';
 import { FinanceManagementProvider } from '../features/finance/FinanceManagementState';
 import { FinanceSocialInsuranceProvider } from '../features/finance/FinanceSocialInsuranceState';
+import { MyExpenseReviewProvider } from '../features/my-work/MyExpenseReviewState';
 import { PeopleOrganizationProvider } from '../features/people/PeopleOrganizationState';
 import { PermissionRoleProvider } from '../features/people/PermissionRoleState';
 import { PerformanceRuleProvider } from '../features/performance/PerformanceRuleState';
+import { PerformanceMonthlyProvider } from '../features/performance/PerformanceMonthlyState';
 import { SalaryManagementProvider } from '../features/salary/SalaryManagementState';
 import { FinanceCategoryProvider } from '../features/system/FinanceCategoryState';
 import { PublicAccountConfigProvider } from '../features/system/PublicAccountConfigState';
@@ -54,9 +56,13 @@ export function RootApp() {
                           <FinanceCategoryProvider>
                             <PublicAccountConfigProvider>
                               <TaskManagementProvider>
-                                <FinanceManagementProvider>
-                                  <RouterProvider router={router} />
-                                </FinanceManagementProvider>
+                                <PerformanceMonthlyProvider>
+                                  <FinanceManagementProvider>
+                                    <MyExpenseReviewProvider>
+                                      <RouterProvider router={router} />
+                                    </MyExpenseReviewProvider>
+                                  </FinanceManagementProvider>
+                                </PerformanceMonthlyProvider>
                               </TaskManagementProvider>
                             </PublicAccountConfigProvider>
                           </FinanceCategoryProvider>

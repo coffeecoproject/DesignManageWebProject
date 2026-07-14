@@ -31,11 +31,9 @@ const requiredLocalApiRoutes = [
   '/api/finance/receivables-payables/{id}/void',
   '/api/finance/receivables-payables/{id}/tax-basis',
   '/api/finance/invoices/import',
-  '/api/finance/invoice-matching/{id}/match',
-  '/api/finance/invoice-matching/{id}/unmatch',
-  '/api/finance/invoice-matching/{id}/reassign-period',
-  '/api/finance/invoice-matching/{id}/red-original',
-  '/api/finance/invoice-matching/{id}/subsequent-invoice',
+  '/api/finance/invoices/{id}/associations',
+  '/api/finance/receivables-payables/{id}/invoice-associations',
+  '/api/finance/invoices/{id}/red-original',
   '/api/finance/cash-flows/{id}/review',
   '/api/finance/cash-flows/{id}/return',
   '/api/finance/cash-flows/{id}/void',
@@ -54,9 +52,6 @@ const requiredLocalApiRoutes = [
   '/api/finance/tax-handling/{id}/payment',
   '/api/finance/tax-handling/{id}/receipts',
   '/api/finance/declaration-preparation/{id}/confirm-item',
-  '/api/finance/declaration-preparation/{id}/unbilled-income',
-  '/api/finance/declaration-preparation/{id}/defer-unbilled-income',
-  '/api/finance/declaration-preparation/{id}/subsequent-invoice',
   '/api/finance/declaration-preparation/{id}/confirm',
   '/api/finance/social-insurance/{id}/confirm-detail',
   '/api/finance/social-insurance/{id}/confirm-payment',
@@ -72,9 +67,10 @@ const requiredStateWrites = [
   'addSourceGeneratedReceivablePayableRecord',
   'updateReceivablePayableRecord',
   'addFinanceTransaction',
-  'addInvoiceRecords',
-  'updateInvoiceRecord',
-  'clearInvoiceMatches',
+  'importInvoiceBatch',
+  'replaceInvoiceBusinessAssociations',
+  'replaceBusinessInvoiceAssociations',
+  'linkRedInvoiceOriginal',
   'reviewFinanceTransaction',
   'returnFinanceTransaction',
   'voidFinanceTransaction',
@@ -90,7 +86,7 @@ const requiredStateWrites = [
   'updateDeclarationPreparationRecord',
   'updateSocialInsuranceRecordStatus',
   'confirmSalaryMonthlyReport',
-  'settleSalaryMonthlyReport',
+  'markSalaryMonthlyPaid',
   'saveSalaryAdjustment',
   'addLedgerOpeningAdjustmentVoucher',
   'withdrawEnablement'
@@ -145,13 +141,15 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'keeps invoice import separated from invoice matching',
+    name: 'keeps invoice import and association under the invoice ledger boundary',
     run: () => {
       const invoiceImport = findEntryByRoute('/api/finance/invoices/import');
-      const invoiceMatch = findEntryByRoute('/api/finance/invoice-matching/{id}/match');
+      const invoiceAssociation = findEntryByRoute('/api/finance/invoices/{id}/associations');
+      const businessAssociation = findEntryByRoute('/api/finance/receivables-payables/{id}/invoice-associations');
 
       assertEqual(invoiceImport?.sourceArea, 'invoice_ledger', 'invoice import should use invoice ledger source area');
-      assertEqual(invoiceMatch?.sourceArea, 'invoice_matching', 'invoice matching should stay in matching source area');
+      assertEqual(invoiceAssociation?.sourceArea, 'invoice_ledger', 'invoice association should use invoice ledger source area');
+      assertEqual(businessAssociation?.ownerRoute, '/finance/receivables-payables', 'business-side association should stay in receivable-payable detail');
     }
   }
 ];

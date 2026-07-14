@@ -97,7 +97,7 @@ export const financeSourceMutationRouteDefinitions: SourceMutationRouteDefinitio
     permissionScope: 'finance.invoiceLedger.write',
     sourceArea: 'invoice_ledger',
     sourceIdFromBody: true,
-    successStatus: '导入待匹配'
+    successStatus: '已导入'
   },
   {
     method: 'PATCH',
@@ -132,44 +132,28 @@ export const financeSourceMutationRouteDefinitions: SourceMutationRouteDefinitio
     successStatus: '税额已确认'
   },
   {
-    method: 'POST',
-    operation: '确认发票匹配',
-    pathPattern: /^\/api\/finance\/invoice-matching\/([^/]+)\/match$/,
-    permissionScope: 'finance.invoiceMatching.write',
-    sourceArea: 'invoice_matching',
-    successStatus: '已匹配'
-  },
-  {
-    method: 'POST',
-    operation: '撤销发票匹配',
-    pathPattern: /^\/api\/finance\/invoice-matching\/([^/]+)\/unmatch$/,
-    permissionScope: 'finance.invoiceMatching.write',
-    sourceArea: 'invoice_matching',
-    successStatus: '待关联'
+    method: 'PATCH',
+    operation: '保存发票关联',
+    pathPattern: /^\/api\/finance\/invoices\/([^/]+)\/associations$/,
+    permissionScope: 'finance.invoiceLedger.write',
+    sourceArea: 'invoice_ledger',
+    successStatus: '关联已保存'
   },
   {
     method: 'PATCH',
-    operation: '调整发票归属期间',
-    pathPattern: /^\/api\/finance\/invoice-matching\/([^/]+)\/reassign-period$/,
-    permissionScope: 'finance.invoiceMatching.write',
-    sourceArea: 'invoice_matching',
-    successStatus: '已调整'
+    operation: '从应收应付关联发票',
+    pathPattern: /^\/api\/finance\/receivables-payables\/([^/]+)\/invoice-associations$/,
+    permissionScope: 'finance.receivablePayable.write',
+    sourceArea: 'receivable_payable',
+    successStatus: '关联已保存'
   },
   {
     method: 'POST',
     operation: '确认红票原票关系',
-    pathPattern: /^\/api\/finance\/invoice-matching\/([^/]+)\/red-original$/,
-    permissionScope: 'finance.invoiceMatching.write',
-    sourceArea: 'invoice_matching',
+    pathPattern: /^\/api\/finance\/invoices\/([^/]+)\/red-original$/,
+    permissionScope: 'finance.invoiceLedger.write',
+    sourceArea: 'invoice_ledger',
     successStatus: '红票已关联'
-  },
-  {
-    method: 'POST',
-    operation: '确认后续开票',
-    pathPattern: /^\/api\/finance\/invoice-matching\/([^/]+)\/subsequent-invoice$/,
-    permissionScope: 'finance.invoiceMatching.write',
-    sourceArea: 'invoice_matching',
-    successStatus: '后续开票已确认'
   },
   {
     method: 'POST',
@@ -309,30 +293,6 @@ export const financeSourceMutationRouteDefinitions: SourceMutationRouteDefinitio
     permissionScope: 'finance.taxHandling.write',
     sourceArea: 'tax_handling',
     successStatus: '准备项已确认'
-  },
-  {
-    method: 'POST',
-    operation: '确认未开票收入申报口径',
-    pathPattern: /^\/api\/finance\/declaration-preparation\/([^/]+)\/unbilled-income$/,
-    permissionScope: 'finance.taxHandling.write',
-    sourceArea: 'tax_handling',
-    successStatus: '未开票收入已确认'
-  },
-  {
-    method: 'POST',
-    operation: '确认本期暂不计入未开票收入',
-    pathPattern: /^\/api\/finance\/declaration-preparation\/([^/]+)\/defer-unbilled-income$/,
-    permissionScope: 'finance.taxHandling.write',
-    sourceArea: 'tax_handling',
-    successStatus: '本期暂不计入已确认'
-  },
-  {
-    method: 'POST',
-    operation: '确认前期未开票后续开票',
-    pathPattern: /^\/api\/finance\/declaration-preparation\/([^/]+)\/subsequent-invoice$/,
-    permissionScope: 'finance.taxHandling.write',
-    sourceArea: 'tax_handling',
-    successStatus: '后续开票已处理'
   },
   {
     method: 'POST',

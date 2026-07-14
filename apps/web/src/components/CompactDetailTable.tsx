@@ -7,6 +7,7 @@ export function CompactDetailTable<T extends object>({
   dataSource,
   emptyText,
   expandable,
+  onRow,
   rowSelection,
   rowKey,
   scrollX = 720
@@ -16,6 +17,7 @@ export function CompactDetailTable<T extends object>({
   dataSource: T[];
   emptyText?: string;
   expandable?: TableProps<T>['expandable'];
+  onRow?: TableProps<T>['onRow'];
   rowSelection?: TableProps<T>['rowSelection'];
   rowKey: TableProps<T>['rowKey'];
   scrollX?: number | false;
@@ -31,6 +33,7 @@ export function CompactDetailTable<T extends object>({
         dataSource={dataSource}
         expandable={expandable}
         locale={emptyText ? { emptyText } : undefined}
+        onRow={onRow}
         pagination={false}
         rowKey={rowKey}
         rowSelection={rowSelection}

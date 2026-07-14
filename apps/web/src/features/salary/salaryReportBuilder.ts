@@ -1,17 +1,14 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useFinanceSocialInsuranceState } from '../finance/FinanceSocialInsuranceState';
 import { buildSocialInsurancePayrollDeductions } from '../finance/financeSocialInsuranceModel';
-import {
-  performanceDrawingTaskMonthlyRecords,
-  performanceMonthlyCategoryRecords,
-  performanceRulePresets
-} from '../performance/performanceMockData';
-import { buildPerformanceMonthlyRecords } from '../performance/performanceMonthlyModel';
-import { performanceSignatureEmployees, signatureRuleOptions } from '../performance/performanceSignatureArchiveData';
+import { usePerformanceMonthlyRecords } from '../performance/usePerformanceMonthlyRecords';
 import { buildAttendanceMonthlyReports } from '../people/peopleAttendanceMonthlyDomain';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { useWorkCalendarState } from '../system/WorkCalendarState';
-import { buildPersonalIncomeTaxCumulativeSnapshotsFromReports, buildSalaryMonthlyReports } from './salaryDomain';
+import {
+  buildSalaryMonthlyReports,
+  getSalaryPerformanceSettlementMonths
+} from './salaryDomain';
 import { useSalaryManagementState } from './SalaryManagementState';
 
 export function useSalaryMonthlyReportBuilder() {
@@ -24,6 +21,19 @@ export function useSalaryMonthlyReportBuilder() {
   const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
   const salaryState = useSalaryManagementState();
   const { socialInsuranceRecords } = useFinanceSocialInsuranceState();
+  const performanceRecords = usePerformanceMonthlyRecords().categoryRecords;
+  const salaryReportMonths = useMemo(
+    () => [
+      ...new Set([
+        ...salaryState.salaryDetailMonths,
+        ...getSalaryPerformanceSettlementMonths({
+          performanceRecords,
+          salaryMonthlyWorkflows: salaryState.salaryMonthlyWorkflows
+        })
+      ])
+    ].sort((left, right) => right.localeCompare(left)),
+    [performanceRecords, salaryState.salaryDetailMonths, salaryState.salaryMonthlyWorkflows]
+  );
 
   const buildAttendanceReportsForMonth = useCallback(
     (month: string) =>
@@ -50,77 +60,47 @@ export function useSalaryMonthlyReportBuilder() {
 
   const buildSalaryReportsWithSnapshots = useCallback(
     (month: string, snapshots: typeof salaryState.personalIncomeTaxCumulativeSnapshots) => {
-      const performanceRecords = buildPerformanceMonthlyRecords({
-        annualExceptionRows,
-        categoryRecords: performanceMonthlyCategoryRecords,
-        drawingTaskRecords: performanceDrawingTaskMonthlyRecords,
-        peopleRows,
-        ruleOptions: signatureRuleOptions,
-        ruleRows: performanceRulePresets,
-        signatureEmployees: performanceSignatureEmployees,
-        workCalendarRows
-      }).categoryRecords;
-
       return buildSalaryMonthlyReports({
         attendanceReports: buildAttendanceReportsForMonth(month),
         performanceRecords,
         personalIncomeTaxCumulativeSnapshots: snapshots,
+        personalIncomeTaxProfiles: salaryState.personalIncomeTaxProfiles,
         salaryAdjustments: salaryState.salaryAdjustments,
         salaryMonthlyWorkflows: salaryState.salaryMonthlyWorkflows,
+        salaryPaymentRecords: salaryState.salaryPaymentRecords,
         socialInsuranceDeductions: buildSocialInsurancePayrollDeductions(socialInsuranceRecords, month),
         socialInsuranceSourceRecords: socialInsuranceRecords
       });
     },
     [
-      annualExceptionRows,
       buildAttendanceReportsForMonth,
-      peopleRows,
+      performanceRecords,
       salaryState.salaryAdjustments,
+      salaryState.personalIncomeTaxProfiles,
       salaryState.salaryMonthlyWorkflows,
-      socialInsuranceRecords,
-      workCalendarRows
-    ]
-  );
-
-  const buildRollingPersonalIncomeTaxSnapshots = useCallback(
-    (month: string) => {
-      const priorMonths = salaryState.salaryDetailMonths
-        .filter((salaryDetailMonth) => salaryDetailMonth < month)
-        .sort();
-
-      return priorMonths.reduce(
-        (snapshots, priorMonth) =>
-          buildPersonalIncomeTaxCumulativeSnapshotsFromReports(
-            snapshots,
-            buildSalaryReportsWithSnapshots(priorMonth, snapshots)
-          ),
-        salaryState.personalIncomeTaxCumulativeSnapshots
-      );
-    },
-    [
-      buildSalaryReportsWithSnapshots,
-      salaryState.salaryDetailMonths,
-      salaryState.personalIncomeTaxCumulativeSnapshots
+      salaryState.salaryPaymentRecords,
+      socialInsuranceRecords
     ]
   );
 
   const getSalaryMonthlyReports = useCallback(
     (month: string) => {
-      if (!salaryState.salaryDetailMonths.includes(month)) {
+      if (!salaryReportMonths.includes(month)) {
         return [];
       }
 
-      return buildSalaryReportsWithSnapshots(month, buildRollingPersonalIncomeTaxSnapshots(month));
+      return buildSalaryReportsWithSnapshots(month, salaryState.personalIncomeTaxCumulativeSnapshots);
     },
     [
-      buildRollingPersonalIncomeTaxSnapshots,
       buildSalaryReportsWithSnapshots,
-      salaryState.salaryDetailMonths,
+      salaryState.personalIncomeTaxCumulativeSnapshots,
+      salaryReportMonths
     ]
   );
 
   return {
     getSalaryMonthlyReports,
+    salaryReportMonths,
     salaryState
   };
 }

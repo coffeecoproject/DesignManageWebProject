@@ -36,15 +36,17 @@ function createInvoice(overrides: Partial<FinanceInvoiceRecord>): FinanceInvoice
     invoiceKind: '普通发票',
     invoiceNo: 'TEST-001',
     invoiceStatus: '正常',
-    matchedBusinessRefs: [],
     netAmount: 990,
     sourceFile: '测试发票.xlsx',
     taxAmount: 10,
     taxExcludedAmount: 990,
     taxIncludedAmount: 1000,
     taxRate: '1%',
+    taxableClassification: '普通应税交易',
     totalAmount: 1000,
-    ...overrides
+    vatTreatment: '减按1%',
+    ...overrides,
+    salesCategory: overrides.salesCategory ?? '服务、不动产和无形资产'
   };
 }
 
@@ -65,7 +67,6 @@ const tests: UnitTest[] = [
       assertEqual(invoiceRows.length, 2, 'combined import should generate two invoice rows');
       assertEqual(invoiceRows[0]?.accountingPeriod, '2026-06', 'generated invoice should use import period');
       assertEqual(invoiceRows[0]?.sourceFile, batch.fileName, 'generated invoice should keep imported file as source evidence');
-      assertEqual(invoiceRows[0]?.matchedBusinessRefs.length, 0, 'generated invoice should enter matching as unassociated');
       assert(invoiceRows.every((invoice) => invoice.invoiceStatus === '正常'), 'generated rows should be active normal invoices');
     }
   },

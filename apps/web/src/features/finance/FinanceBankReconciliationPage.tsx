@@ -254,24 +254,6 @@ const bankStatementSeeds: BankStatementRecord[] = [
     summary: '赵倩 2026-06 工资发放'
   },
   {
-    importedAccountName: seedSecondaryPaymentPublicAccountName,
-    ...seedSecondaryPaymentPublicAccountRef,
-    amount: 1806.88,
-    balance: 174193.12,
-    bankSerialNo: 'CMB202606100002',
-    batchNo: 'BANK-IMP-202606-02',
-    counterparty: '陈思',
-    direction: '出账',
-    id: 'bank-statement-003',
-    importedAt: '2026-06-12 09:15',
-    matchedTransactionIds: ['fin-flow-002'],
-    matchReason: '系统流水仍在复核中，不能确认对账',
-    matchStatus: '暂不可对账',
-    matchScore: 82,
-    statementDate: '2026-06-10',
-    summary: '陈思 2026-06 绩效预发'
-  },
-  {
     importedAccountName: seedBankPublicAccountName,
     ...seedBankPublicAccountRef,
     amount: 9800,

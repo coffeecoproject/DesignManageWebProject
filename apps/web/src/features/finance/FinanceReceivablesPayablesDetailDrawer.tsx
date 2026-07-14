@@ -3,6 +3,7 @@ import {
   CheckCircleOutlined,
   FileTextOutlined,
   FileProtectOutlined,
+  LinkOutlined,
   ProfileOutlined,
   WalletOutlined
 } from '@ant-design/icons';
@@ -18,7 +19,7 @@ import { RelatedFileTable, type RelatedFileRecord } from '../../components/Relat
 import { TagChip } from '../../components/TagChip';
 import type { FinanceTransactionRecord } from './financeData';
 import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
-import type { FinanceInvoiceRecord } from './financeInvoiceData';
+import type { FinanceInvoiceBusinessAllocation, FinanceInvoiceRecord } from './financeInvoiceData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import {
   getReceivablePayableOutstandingAmount,
@@ -47,11 +48,15 @@ type FinanceReceivablesPayablesDetailDrawerProps = {
   accountOptions: Array<{ label: string; value: string }>;
   registerableAmount: number;
   recordEditable: boolean;
+  recordEditBlockedReason?: string;
   recordLockedReason?: string;
   settlementForm: FinanceReceivablePayableSettlementFormValue;
   settlementSubmitDisabled: boolean;
   linkedInvoiceRows: FinanceInvoiceRecord[];
   linkedTransactionRows: FinanceTransactionRecord[];
+  invoiceAssociationLockedReason?: string;
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[];
+  onAssociateInvoice?: (record: FinanceReceivablePayableRecord) => void;
   onClose: () => void;
   onDownloadFile: (file: RelatedFileRecord) => void;
   onEdit: (record: FinanceReceivablePayableRecord) => void;
@@ -96,11 +101,15 @@ export function FinanceReceivablesPayablesDetailDrawer({
   accountOptions,
   registerableAmount,
   recordEditable,
+  recordEditBlockedReason,
   recordLockedReason,
   settlementForm,
   settlementSubmitDisabled,
   linkedInvoiceRows,
   linkedTransactionRows,
+  invoiceAssociationLockedReason,
+  invoiceBusinessAllocationRows,
+  onAssociateInvoice,
   onClose,
   onDownloadFile,
   onEdit,
@@ -122,20 +131,24 @@ export function FinanceReceivablesPayablesDetailDrawer({
   const outstandingAmount = getReceivablePayableOutstandingAmount(record);
   const hasActiveSettlement = hasFinanceReceivablePayableActiveSettlement(linkedTransactionRows);
   const missingAccountingRoleLabels = getFinanceReceivablePayableMissingAccountingRoleLabels(record);
-  const taxBasis = resolveFinanceAccrualTaxBasis(record, linkedInvoiceRows);
+  const taxBasis = resolveFinanceAccrualTaxBasis(record, linkedInvoiceRows, invoiceBusinessAllocationRows);
+  const naturalPersonPayment = record.naturalPersonPayment;
+  const laborPayment = naturalPersonPayment?.incomeType === '劳务报酬' ? naturalPersonPayment : undefined;
+  const salarySettlement = record.salarySettlement;
   const periodReadbackNotice = recordLockedReason
     ? getClosedAccountingPeriodReadbackNotice(record.accountingPeriod, '当前权责事项')
     : undefined;
   const linkedInvoiceDetailRows = linkedInvoiceRows.map((invoice) => ({
     id: invoice.id,
     invoice,
-    matchedAmount: invoice.matchedBusinessRefs
-      .filter((ref) =>
-        ref.recordId === record.id ||
-        ref.recordNo === record.documentNo ||
-        ref.sourceNo === record.sourceNo
-      )
-      .reduce((total, ref) => total + ref.amount, 0)
+    matchedAmount: invoiceBusinessAllocationRows
+      .filter((allocation) => (
+        allocation.status === '有效' &&
+        allocation.invoiceId === invoice.id &&
+        allocation.targetType === '应收应付' &&
+        allocation.targetId === record.id
+      ))
+      .reduce((total, allocation) => total + allocation.taxIncludedAmount, 0)
   }));
   const invoiceColumns: TableColumnsType<LinkedInvoiceDetailRow> = [
     {
@@ -209,7 +222,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
           {
             icon: <FileProtectOutlined />,
             key: 'amount',
-            label: amountLabels.amount,
+            label: laborPayment ? '税前应付' : salarySettlement ? '员工实发应付' : amountLabels.amount,
             value: formatMoney(record.amount)
           },
           {
@@ -238,7 +251,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
                       调整事项
                     </Button>
                   ) : (
-                    <TagChip label={recordLockedReason ? '只读回看' : '已有收付进度，事项锁定'} tone="blue" />
+                    <TagChip label={recordEditBlockedReason ?? (recordLockedReason ? '只读回看' : '已有收付进度，事项锁定')} tone="blue" />
                   )
                 }
                 icon={<ProfileOutlined />}
@@ -286,6 +299,30 @@ export function FinanceReceivablesPayablesDetailDrawer({
                     { label: '来源单号', value: record.sourceNo },
                     { label: '来源名称', value: record.sourceTitle },
                     { label: amountLabels.amount, value: formatMoney(record.amount) },
+                    ...(laborPayment
+                      ? [
+                          { label: '所得类型', value: laborPayment.incomeType },
+                          { label: '税前金额', value: formatMoney(laborPayment.grossIncomeAmount) },
+                          { label: '代扣个税', value: formatMoney(laborPayment.withheldTaxAmount) },
+                          { label: '银行实付', value: formatMoney(laborPayment.netPaymentAmount) },
+                          { label: '预计扣缴期间', value: '按实际付款月份确定' },
+                          { label: '结算批次', value: laborPayment.sourceBatchNo },
+                          {
+                            label: '来源任务',
+                            value: laborPayment.sourceRecordNos?.join('、') || '-'
+                          }
+                        ]
+                      : []),
+                    ...(salarySettlement
+                      ? [
+                          { label: '工资薪金', value: formatMoney(salarySettlement.employeeGrossPayableAmount) },
+                          { label: '个人社保', value: formatMoney(salarySettlement.employeeSocialInsuranceAmount) },
+                          { label: '个人公积金', value: formatMoney(salarySettlement.employeeHousingFundAmount) },
+                          { label: '代扣个税', value: formatMoney(salarySettlement.withheldPersonalIncomeTaxAmount) },
+                          { label: '员工实发', value: formatMoney(salarySettlement.employeeNetPayableAmount) },
+                          { label: '单位承担', value: formatMoney(salarySettlement.employerContributionAmount) }
+                        ]
+                      : []),
                     { label: amountLabels.settled, value: formatMoney(record.settledAmount) },
                     { label: amountLabels.outstanding, value: formatMoney(outstandingAmount) },
                     { label: '备注', value: record.note, wide: true }
@@ -333,6 +370,8 @@ export function FinanceReceivablesPayablesDetailDrawer({
                         label: '票据状态',
                         value: <StatusTag toneMap={taxEvidenceStatusTone} value={taxBasis.evidenceStatus} />
                       },
+                      { label: '业务税务分类', value: taxBasis.taxableClassification ?? '-' },
+                      { label: '本期税额口径', value: taxBasis.taxOutcome ?? '以票面或申报结果为准' },
                       { label: '税率', value: taxBasis.taxRate },
                       { label: '价税合计', value: formatMoney(taxBasis.taxIncludedAmount) },
                       { label: '不含税金额', value: formatMoney(taxBasis.taxExcludedAmount) },
@@ -342,6 +381,21 @@ export function FinanceReceivablesPayablesDetailDrawer({
                   />
                 </DetailSection>
                 <DetailSection icon={<FileTextOutlined />} title="发票/票据匹配">
+                  {onAssociateInvoice && taxBasis.basisSource !== '不涉及发票' ? (
+                    invoiceAssociationLockedReason ? (
+                      <Alert message={invoiceAssociationLockedReason} showIcon type="info" />
+                    ) : (
+                      <div className="detail-section-action-row">
+                        <Button
+                          icon={<LinkOutlined />}
+                          type="primary"
+                          onClick={() => onAssociateInvoice(record)}
+                        >
+                          关联发票
+                        </Button>
+                      </div>
+                    )
+                  ) : null}
                   <CompactDetailTable<LinkedInvoiceDetailRow>
                     columns={invoiceColumns}
                     dataSource={linkedInvoiceDetailRows}

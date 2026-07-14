@@ -1,7 +1,7 @@
 import type { UploadFile } from 'antd/es/upload/interface';
 import type { BrandRecord } from '../customers/customerData';
 import type { PerformanceRulePreset } from '../performance/performanceTypes';
-import type { ClientFeedbackRecord, StoreTaskRecord } from './TaskManagementState';
+import type { ClientFeedbackRecord, StoreTaskRecord, TaskPerformanceScoringRecord } from './TaskManagementState';
 import {
   buildAcceptanceFeedbackDraft,
   buildAcceptanceScoringDraft,
@@ -20,6 +20,8 @@ import { getTaskDeadlineState, getTaskSearchText, getTaskStoreContext, getTaskTy
 import { buildTaskFilesFromDrafts, buildTaskReworkScreenshotFiles, hasPartialTaskFileDraft, normalizeCompletedTaskFileDrafts } from './taskFileModel';
 import { defaultTaskFilters, getFilteredStoreTasks } from './taskListFormModel';
 import { appendTaskOperation } from './taskOperationModel';
+import { buildPartTimeLaborAcceptanceRecord, buildPartTimeLaborSettlementBatches } from './partTimeLaborSettlementModel';
+import { applyTaskAcceptanceCommit } from './taskAcceptanceCommitModel';
 
 type UnitTest = {
   name: string;
@@ -27,8 +29,10 @@ type UnitTest = {
 };
 
 type UnitTestResult = {
+  executedTestNames: string[];
   failures: string[];
   passed: number;
+  passedTestNames: string[];
   total: number;
 };
 
@@ -340,6 +344,7 @@ const tests: UnitTest[] = [
             note: '',
             owner: '李明',
             storeCount: 1,
+            taxpayerIdentificationNo: '91420100TEST000001',
             updatedAt: '2026-06-15'
           }
         ],
@@ -407,6 +412,7 @@ const tests: UnitTest[] = [
             note: '',
             owner: '李明',
             storeCount: 1,
+            taxpayerIdentificationNo: '91420100TEST000001',
             updatedAt: '2026-06-15'
           }
         ],
@@ -552,6 +558,7 @@ const tests: UnitTest[] = [
         note: '',
         owner: '李明',
         storeCount: 1,
+        taxpayerIdentificationNo: '91420100TEST000001',
         updatedAt: '2026-06-15'
       }));
       const readyFeedback = {
@@ -610,6 +617,211 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'NP-04 atomically commits task acceptance, performance and the labor source',
+    run() {
+      const task = createTask({
+        acceptedAt: '2026-06-18 16:00',
+        code: 'TASK-PT-001',
+        executorId: '20260006',
+        executorName: '示例兼职 B',
+        id: 'task-part-time-001',
+        laborAgreement: {
+          agreedGrossAmount: 3200,
+          agreementVersion: 'HZ-PT-2026-0006/V1',
+          projectId: 'HZ-PT-2026-0006/STORE-IMAGE'
+        },
+        status: '已完成'
+      });
+      const person = {
+        id: '20260006',
+        name: '示例兼职 B',
+        personnelType: '兼职' as const,
+        taxIdentityProfile: { identityType: '居民个人' as const, status: '已确认' as const }
+      };
+      const acceptanceResult = buildPartTimeLaborAcceptanceRecord({ person, task });
+      assert(acceptanceResult.ready, 'complete accepted part-time task should build a labor acceptance fact');
+      assert(acceptanceResult.acceptanceRecord, 'part-time acceptance should retain a labor fact');
+      const scoringRecord: TaskPerformanceScoringRecord = {
+        adjustmentReason: '',
+        confirmedAt: task.acceptedAt,
+        confirmedBy: '验收人',
+        id: 'score-task-part-time-001',
+        operationRecords: [],
+        qualityDimensionScores: [],
+        qualityScore: 95,
+        sourceMonth: '2026-06',
+        status: '已计入',
+        taskId: task.id,
+        updatedAt: task.acceptedAt ?? ''
+      };
+      const committedState = applyTaskAcceptanceCommit(
+        {
+          partTimeLaborAcceptanceRows: [],
+          storeTaskRows: [createTask({ id: task.id, status: '待验收' })],
+          taskPerformanceScoringRows: []
+        },
+        {
+          laborAcceptance: acceptanceResult.acceptanceRecord,
+          scoringRecord,
+          task
+        }
+      );
+      const result = buildPartTimeLaborSettlementBatches({
+        acceptanceRecords: committedState.partTimeLaborAcceptanceRows,
+        people: [person],
+        settlementPeriod: '2026-06',
+        tasks: committedState.storeTaskRows
+      });
+
+      assertEqual(committedState.storeTaskRows[0]?.status, '已完成', 'acceptance commit should complete the task');
+      assertEqual(committedState.taskPerformanceScoringRows[0]?.id, scoringRecord.id, 'acceptance commit should store performance scoring');
+      assertEqual(result.blockers.length, 0, 'complete accepted labor source should not be blocked');
+      assertEqual(result.batches.length, 1, 'accepted part-time task should produce one batch');
+      assertEqual(result.batches[0]?.grossAmount, 3200, 'batch gross amount should come from the acceptance fact');
+      assertEqual(result.batches[0]?.sources[0]?.taskNo, 'TASK-PT-001', 'source should retain task number');
+      assertEqual(result.batches[0]?.sources[0]?.acceptedAt, '2026-06-18 16:00', 'source should retain acceptance time');
+      assertEqual(result.batches[0]?.sources[0]?.grossAmountSource.recordId, `${task.id}/labor-agreement`, 'source should retain amount fact identity');
+    }
+  },
+  {
+    name: 'NP-05 merges continuous same-project labor in one month and separates different projects',
+    run() {
+      const firstTask = createTask({
+        acceptedAt: '2026-06-10 16:00',
+        code: 'TASK-PT-002',
+        executorId: '20260006',
+        id: 'task-part-time-002',
+        status: '已完成'
+      });
+      const secondTask = createTask({
+        acceptedAt: '2026-06-20 17:00',
+        code: 'TASK-PT-003',
+        executorId: '20260006',
+        id: 'task-part-time-003',
+        status: '已完成'
+      });
+      const acceptanceRecords = [
+        {
+          acceptedAt: '2026-06-20 17:00',
+          agreementVersion: 'HZ-PT-2026-0006/V1',
+          grossAmount: 1700,
+          grossAmountSource: { field: 'acceptedGrossAmount', kind: '验收确认' as const, recordId: 'acceptance-part-time-003' },
+          id: 'acceptance-part-time-003',
+          laborProjectId: 'HZ-PT-2026-0006/STORE-IMAGE-A',
+          taskId: secondTask.id
+        },
+        {
+          acceptedAt: '2026-06-10 16:00',
+          agreementVersion: 'HZ-PT-2026-0006/V1',
+          grossAmount: 1500,
+          grossAmountSource: { field: 'acceptedGrossAmount', kind: '验收确认' as const, recordId: 'acceptance-part-time-002' },
+          id: 'acceptance-part-time-002',
+          laborProjectId: 'HZ-PT-2026-0006/STORE-IMAGE-A',
+          taskId: firstTask.id
+        }
+      ];
+      const people = [
+        {
+          id: '20260006',
+          name: '示例兼职 B',
+          personnelType: '兼职' as const,
+          taxIdentityProfile: { identityType: '居民个人' as const, status: '已确认' as const }
+        }
+      ];
+      const firstResult = buildPartTimeLaborSettlementBatches({
+        acceptanceRecords,
+        people,
+        settlementPeriod: '2026-06',
+        tasks: [secondTask, firstTask]
+      });
+      const reorderedResult = buildPartTimeLaborSettlementBatches({
+        acceptanceRecords: [...acceptanceRecords].reverse(),
+        people,
+        settlementPeriod: '2026-06',
+        tasks: [firstTask, secondTask]
+      });
+
+      assertEqual(firstResult.batches.length, 1, 'same employee, project and period should produce one batch');
+      assertEqual(firstResult.batches[0]?.grossAmount, 3200, 'batch should sum accepted gross amounts before tax calculation');
+      assertEqual(firstResult.batches[0]?.sources.length, 2, 'batch should retain both task sources');
+      assertEqual(firstResult.batches[0]?.sources[0]?.taskNo, 'TASK-PT-002', 'batch sources should have deterministic task ordering');
+      assertEqual(firstResult.batches[0]?.batchKey, reorderedResult.batches[0]?.batchKey, 'batch key should not depend on input order');
+      assertEqual(
+        firstResult.batches[0]?.batchKey,
+        'part-time-labor:2026-06:20260006:HZ-PT-2026-0006%2FSTORE-IMAGE-A',
+        'batch key should derive from period, employee number and labor project'
+      );
+      assertEqual(firstResult.batches[0]?.laborProjectId, 'HZ-PT-2026-0006/STORE-IMAGE-A', 'batch should retain its single labor project');
+
+      const separateProjectResult = buildPartTimeLaborSettlementBatches({
+        acceptanceRecords: [
+          acceptanceRecords[0],
+          { ...acceptanceRecords[1], laborProjectId: 'HZ-PT-2026-0006/STORE-IMAGE-B' }
+        ],
+        people,
+        settlementPeriod: '2026-06',
+        tasks: [firstTask, secondTask]
+      });
+
+      assertEqual(separateProjectResult.batches.length, 2, 'different labor projects must produce separate withholding batches');
+      assertEqual(
+        separateProjectResult.batches.reduce((total, batch) => total + batch.grossAmount, 0),
+        3200,
+        'separate project batches should preserve the total gross income'
+      );
+    }
+  },
+  {
+    name: 'NP-06 blocks pending tax identity and incomplete gross amount facts',
+    run() {
+      const identityPendingTask = createTask({
+        acceptedAt: '2026-06-12 12:00',
+        code: 'TASK-PT-004',
+        executorId: '20260006',
+        id: 'task-part-time-004',
+        status: '已完成'
+      });
+      const amountMissingTask = createTask({
+        acceptedAt: '2026-06-13 12:00',
+        code: 'TASK-PT-005',
+        executorId: '20260007',
+        id: 'task-part-time-005',
+        status: '已完成'
+      });
+      const result = buildPartTimeLaborSettlementBatches({
+        acceptanceRecords: [
+          {
+            acceptedAt: '2026-06-12 12:00',
+            agreementVersion: 'HZ-PT-2026-0006/V1',
+            grossAmount: 3200,
+            grossAmountSource: { field: 'acceptedGrossAmount', kind: '验收确认', recordId: 'acceptance-part-time-004' },
+            id: 'acceptance-part-time-004',
+            laborProjectId: 'HZ-PT-2026-0006/STORE-IMAGE',
+            taskId: identityPendingTask.id
+          },
+          {
+            acceptedAt: '2026-06-13 12:00',
+            agreementVersion: 'HZ-PT-2026-0007/V1',
+            grossAmountSource: { field: 'acceptedGrossAmount', kind: '验收确认', recordId: 'acceptance-part-time-005' },
+            id: 'acceptance-part-time-005',
+            laborProjectId: 'HZ-PT-2026-0007/STORE-IMAGE',
+            taskId: amountMissingTask.id
+          }
+        ],
+        people: [
+          { id: '20260006', name: '示例兼职 B', personnelType: '兼职', taxIdentityProfile: { identityType: '居民个人', status: '待确认' } },
+          { id: '20260007', name: '示例兼职 C', personnelType: '兼职', taxIdentityProfile: { identityType: '居民个人', status: '已确认' } }
+        ],
+        settlementPeriod: '2026-06',
+        tasks: [identityPendingTask, amountMissingTask]
+      });
+
+      assertEqual(result.batches.length, 0, 'blocked sources must not silently produce settlement batches');
+      assert(result.blockers.some((blocker) => blocker.code === 'TAX_IDENTITY_UNCONFIRMED'), 'pending tax identity should return an explicit blocker');
+      assert(result.blockers.some((blocker) => blocker.code === 'GROSS_AMOUNT_MISSING'), 'missing gross amount should return an explicit blocker');
+    }
+  },
+  {
     name: 'task operation model prepends operation and updates timestamp',
     run() {
       const nextTask = appendTaskOperation(createTask(), '提交交付', '提交 1 份交付文件', '执行人', '2026-06-15 12:00');
@@ -624,20 +836,24 @@ const tests: UnitTest[] = [
 
 export function runTaskDomainModelTests(): UnitTestResult {
   const failures: string[] = [];
+  const passedTestNames: string[] = [];
   let passed = 0;
 
   for (const test of tests) {
     try {
       test.run();
       passed += 1;
+      passedTestNames.push(test.name);
     } catch (error) {
       failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   return {
+    executedTestNames: tests.map((test) => test.name),
     failures,
     passed,
+    passedTestNames,
     total: tests.length
   };
 }

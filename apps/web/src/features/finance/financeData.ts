@@ -11,6 +11,9 @@ import {
   type AccountingSubjectBalanceDirection,
   type AccountingSubjectType
 } from './financeAccountingSubjectData';
+import type { FinanceVatInvoiceTreatment, FinanceVatTaxableClassification } from './financeTaxPolicyModel';
+import { partTimeLaborPaymentSnapshot202606 } from './financeNaturalPersonPaymentSeeds';
+import type { NaturalPersonPaymentSnapshot } from './naturalPersonPaymentTypes';
 
 export type FinanceTransactionDirection = '收入' | '支出' | '内部转入';
 export type FinanceTransactionCategory = string;
@@ -24,13 +27,10 @@ export type FinanceInvoiceDeclarationStatus =
   | '已关联发票'
   | '未开票待确认'
   | '未开票已申报'
-  | '本期暂不计入'
-  | '后续开票待处理'
-  | '后续开票已处理';
+  | '后续开票部分关联'
+  | '后续开票已关联';
 export type FinanceSourceType =
   | '合同应收'
-  | '月度绩效'
-  | '季度绩效'
   | '薪酬发放'
   | '外协结算'
   | '报销单'
@@ -45,6 +45,16 @@ export type FinanceTransactionAdjustmentContext = {
   mode: '冲正' | '补差';
   originTransactionNo: string;
   reason: string;
+};
+export type FinanceTransactionVatDeclarationFact = {
+  taxRate?: string;
+  taxableClassification: FinanceVatTaxableClassification;
+  vatTreatment?: FinanceVatInvoiceTreatment;
+};
+export type FinanceTaxPaymentAllocation = {
+  amount: number;
+  subjectCode: string;
+  taxType: '增值税' | '城市维护建设税' | '教育费附加' | '地方教育附加' | '其他税费';
 };
 export type FinancePaymentMethod = '对公账户收款' | '对公账户付款' | '员工代收' | '现金暂收';
 export type FinanceCategoryStatus = '启用' | '停用';
@@ -116,6 +126,7 @@ export type FinanceTransactionRecord = {
   category: FinanceTransactionCategory;
   categorySnapshot: FinanceCategorySnapshot;
   counterparty: string;
+  counterpartyId?: string;
   counterpartyType: '客户' | '员工' | '外协' | '供应商' | '内部';
   amount: number;
   currency: 'CNY';
@@ -126,6 +137,7 @@ export type FinanceTransactionRecord = {
   sourceType: FinanceSourceType;
   sourceNo: string;
   sourceTitle: string;
+  taxPaymentAllocations?: FinanceTaxPaymentAllocation[];
   relatedReceivableNo?: string;
   voucherStatus: FinanceVoucherStatus;
   reconciliationStatus: FinanceReconciliationStatus;
@@ -136,11 +148,13 @@ export type FinanceTransactionRecord = {
   reviewedAt?: string;
   reconciledAt?: string;
   note: string;
+  naturalPersonPayment?: NaturalPersonPaymentSnapshot;
   updatedAt: string;
   files: RelatedFileRecord[];
   invoiceDeclarationPeriod?: string;
   invoiceDeclarationPreparationNo?: string;
   invoiceDeclarationStatus?: FinanceInvoiceDeclarationStatus;
+  vatDeclarationFact?: FinanceTransactionVatDeclarationFact;
   operationRecords: OperationRecord[];
   adjustmentContext?: FinanceTransactionAdjustmentContext;
 };
@@ -290,6 +304,24 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     voucherRequirement: '收入来源凭证'
   },
   {
+    code: 'FC2-REV-TAX-REFUND',
+    counterpartyScope: '内部',
+    defaultSourceType: '税费事项',
+    direction: '收入',
+    id: 'finance-secondary-tax-refund',
+    includeInReport: false,
+    name: '税费退还',
+    note: '税务机关退回的税款，只进入资金与对账链路，不计入经营收入。',
+    defaultAccountingSubjectCode: '2221.99',
+    paymentMethods: ['对公账户收款'],
+    primaryId: 'finance-primary-other-income',
+    reportAggregation: '其他',
+    sortOrder: 35,
+    status: '启用',
+    updatedAt: financeCategoryConfigToday,
+    voucherRequirement: '退税回单'
+  },
+  {
     code: 'FC2-EXP-SALARY',
     counterpartyScope: '员工',
     defaultSourceType: '薪酬发放',
@@ -306,24 +338,6 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     status: '启用',
     updatedAt: financeCategoryConfigToday,
     voucherRequirement: '工资表、付款回单'
-  },
-  {
-    code: 'FC2-EXP-PERFORMANCE',
-    counterpartyScope: '员工',
-    defaultSourceType: '月度绩效',
-    direction: '支出',
-    id: 'finance-secondary-performance',
-    includeInReport: true,
-    name: '绩效发放',
-    note: '员工月度绩效发放。',
-    defaultAccountingSubjectCode: '2211.02',
-    paymentMethods: ['对公账户付款'],
-    primaryId: 'finance-primary-people-expense',
-    reportAggregation: '人员支出',
-    sortOrder: 50,
-    status: '启用',
-    updatedAt: financeCategoryConfigToday,
-    voucherRequirement: '绩效表、付款回单'
   },
   {
     code: 'FC2-EXP-OUTSOURCE',
@@ -483,12 +497,6 @@ export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAcc
     cashCredit: '1002',
     cashDebit: '2241'
   },
-  绩效发放: {
-    accrualExpense: '5602.01',
-    accrualPayable: '2211.02',
-    cashCredit: '1002',
-    cashDebit: '2211.02'
-  },
   客户回款: {
     accrualReceivable: '1122',
     accrualRevenue: '5001',
@@ -513,6 +521,10 @@ export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAcc
     cashCredit: '5051',
     cashDebit: '1002',
     outputVatPayable: '2221.01'
+  },
+  税费退还: {
+    cashCredit: '2221.99',
+    cashDebit: '1002'
   },
   其他支出: {
     accrualExpense: '5602',
@@ -700,106 +712,54 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ]
   },
   {
-    id: 'fin-flow-002',
-    transactionNo: 'FIN-202606-0002',
-    occurredAt: '2026-06-10',
-    accountingPeriod: '2026-06',
-    direction: '支出',
-    category: '绩效发放',
-    counterparty: '陈思',
-    counterpartyType: '员工',
-    amount: 1806.88,
-    currency: 'CNY',
-    paymentMethod: '对公账户付款',
-    ...icbcPaymentPublicAccountRef,
-    sourceType: '月度绩效',
-    sourceNo: 'PERF-202606-20260011',
-    sourceTitle: '陈思 2026-06 绩效预发',
-    voucherStatus: '已上传',
-    reconciliationStatus: '未对账',
-    status: '已入账',
-    registeredBy: '李明',
-    reviewedBy: '财务复核',
-    reviewedAt: '2026-06-10 15:30',
-    note: '月度绩效预发',
-    updatedAt: '2026-06-10 15:30',
-    files: [
-      {
-        id: 'fin-file-002',
-        name: '陈思_2026-06绩效预发表.pdf',
-        status: '已上传',
-        type: '发放依据',
-        updatedAt: '2026-06-10'
-      }
-    ],
-    operationRecords: [
-      {
-        id: 'fin-op-004',
-        time: '2026-06-10 11:30',
-        actor: '李明',
-        object: 'FIN-202606-0002',
-        action: '登记流水',
-        summary: '登记绩效预发 1,806.88 元'
-      },
-      {
-        id: 'fin-op-004-review',
-        time: '2026-06-10 15:30',
-        actor: '财务复核',
-        object: 'FIN-202606-0002',
-        action: '复核入账',
-        summary: '核对绩效发放依据后入账'
-      }
-    ]
-  },
-  {
-    id: 'fin-flow-003',
-    transactionNo: 'FIN-202606-0003',
-    occurredAt: '2026-06-10',
+    id: 'fin-flow-019',
+    transactionNo: 'FIN-202606-0019',
+    occurredAt: '2026-06-15',
     accountingPeriod: '2026-06',
     direction: '支出',
     category: '工资发放',
-    counterparty: '赵倩',
+    counterparty: '示例全职 B',
     counterpartyType: '员工',
-    amount: 12000,
+    amount: 11059.83,
     currency: 'CNY',
     paymentMethod: '对公账户付款',
     ...icbcPaymentPublicAccountRef,
     sourceType: '薪酬发放',
-    sourceNo: 'PAY-202606-20260004',
-    sourceTitle: '赵倩 2026-06 工资发放',
+    sourceNo: 'PAY-202605-20250018',
+    sourceTitle: '示例全职 B 2026-05 工资发放',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
     registeredBy: '李明',
     reviewedBy: '财务复核',
-    reviewedAt: '2026-06-10 15:10',
-    note: '月度工资发放',
-    updatedAt: '2026-06-11 10:04',
+    reviewedAt: '2026-06-15 10:25',
+    note: '五月工资实际发放',
+    updatedAt: '2026-06-15 10:30',
     files: [
       {
-        id: 'fin-file-003',
-        name: '赵倩_工资发放回单.pdf',
+        id: 'fin-file-019',
+        name: '示例全职B_2026-05工资付款回单.pdf',
         status: '已上传',
         type: '付款回单',
-        updatedAt: '2026-06-10'
+        updatedAt: '2026-06-15'
       }
     ],
     operationRecords: [
       {
-        id: 'fin-op-005',
-        time: '2026-06-10 14:30',
+        id: 'fin-op-019-register',
+        time: '2026-06-15 10:10',
         actor: '李明',
-        object: 'FIN-202606-0003',
+        object: 'FIN-202606-0019',
         action: '登记流水',
-        summary: '登记工资发放 12,000 元'
+        summary: '登记五月工资发放 11,059.83 元'
       },
       {
-        id: 'fin-op-006',
-        time: '2026-06-10 15:10',
+        id: 'fin-op-019-review',
+        time: '2026-06-15 10:25',
         actor: '财务复核',
-        object: 'FIN-202606-0003',
+        object: 'FIN-202606-0019',
         action: '复核入账',
-        summary: '核对发放依据和付款回单后入账'
+        summary: '核对工资单和付款回单后入账'
       }
     ]
   },
@@ -811,20 +771,22 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     direction: '支出',
     category: '外协付款',
     counterparty: '示例兼职 B',
+    counterpartyId: '20260006',
     counterpartyType: '外协',
-    amount: 3200,
+    amount: 2720,
     currency: 'CNY',
     paymentMethod: '对公账户付款',
     ...cmbPublicAccountRef,
     sourceType: '外协结算',
     sourceNo: 'OUT-202606-0008',
     sourceTitle: '空间设计外协任务结算',
+    naturalPersonPayment: partTimeLaborPaymentSnapshot202606,
     voucherStatus: '待补充',
     reconciliationStatus: '未对账',
     status: '待复核',
     registeredBy: '李明',
     reviewDueAt: '2026-06-13',
-    note: '待补充付款回单',
+    note: '协议税前金额 3,200 元，代扣个税 480 元，待补充 2,720 元付款回单。',
     updatedAt: '2026-06-12 17:25',
     files: [],
     operationRecords: [
@@ -834,7 +796,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
         actor: '李明',
         object: 'FIN-202606-0004',
         action: '登记流水',
-        summary: '登记外协付款 3,200 元'
+        summary: '登记劳务税后付款 2,720 元'
       }
     ]
   },
@@ -1612,7 +1574,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     category: '税费缴纳',
     counterparty: '税务机关',
     counterpartyType: '内部',
-    amount: 450,
+    amount: 466.51,
     currency: 'CNY',
     paymentMethod: '对公账户付款',
     ...ccbPaymentPublicAccountRef,
@@ -1620,13 +1582,19 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     sourceNo: 'TAX-2026Q1-VAT',
     sourceTitle: '2026-Q1 增值税及附加',
     voucherStatus: '已上传',
+    taxPaymentAllocations: [
+      { amount: 440.1, subjectCode: '2221.01', taxType: '增值税' },
+      { amount: 15.41, subjectCode: '2221.04', taxType: '城市维护建设税' },
+      { amount: 6.6, subjectCode: '2221.06', taxType: '教育费附加' },
+      { amount: 4.4, subjectCode: '2221.07', taxType: '地方教育附加' }
+    ],
     reconciliationStatus: '已对账',
     status: '已入账',
     registeredBy: '李明',
     reviewedBy: '财务复核',
     reviewedAt: '2026-04-12 15:40',
     reconciledAt: '2026-04-12',
-    note: '2026-Q1 增值税及附加缴款',
+    note: '2026-Q1 增值税及附加合并缴款，其中增值税 440.10 元、附加税 26.41 元',
     updatedAt: '2026-04-12 15:45',
     files: [
       {
@@ -1644,66 +1612,13 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
         actor: '李明',
         object: 'FIN-202604-0009',
         action: '登记流水',
-        summary: '登记增值税及附加缴纳 450 元'
+        summary: '登记增值税及附加缴纳 466.51 元'
       },
       {
         id: 'fin-op-032',
         time: '2026-04-12 15:40',
         actor: '财务复核',
         object: 'FIN-202604-0009',
-        action: '复核入账',
-        summary: '核对缴款回单后入账'
-      }
-    ]
-  },
-  {
-    id: 'fin-flow-007',
-    transactionNo: 'FIN-202606-0007',
-    occurredAt: '2026-06-15',
-    accountingPeriod: '2026-06',
-    direction: '支出',
-    category: '税费缴纳',
-    counterparty: '税务机关',
-    counterpartyType: '内部',
-    amount: 3280.52,
-    currency: 'CNY',
-    paymentMethod: '对公账户付款',
-    ...ccbPaymentPublicAccountRef,
-    sourceType: '税费事项',
-    sourceNo: 'TAX-202606-IIT',
-    sourceTitle: '2026-06 个人所得税代扣代缴',
-    voucherStatus: '已上传',
-    reconciliationStatus: '已对账',
-    status: '已入账',
-    registeredBy: '李明',
-    reviewedBy: '财务复核',
-    reviewedAt: '2026-06-15 11:20',
-    reconciledAt: '2026-06-15',
-    note: '个人所得税代扣代缴款项',
-    updatedAt: '2026-06-15 11:45',
-    files: [
-      {
-        id: 'fin-file-007',
-        name: '2026-06_个税缴款回单.pdf',
-        status: '已上传',
-        type: '缴款回单',
-        updatedAt: '2026-06-15'
-      }
-    ],
-    operationRecords: [
-      {
-        id: 'fin-op-011',
-        time: '2026-06-15 10:50',
-        actor: '李明',
-        object: 'FIN-202606-0007',
-        action: '登记流水',
-        summary: '登记个人所得税缴纳 3,280.52 元'
-      },
-      {
-        id: 'fin-op-012',
-        time: '2026-06-15 11:20',
-        actor: '财务复核',
-        object: 'FIN-202606-0007',
         action: '复核入账',
         summary: '核对缴款回单后入账'
       }
@@ -1735,6 +1650,11 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     invoiceDeclarationPeriod: '2026-Q1',
     invoiceDeclarationPreparationNo: 'PREP-2026Q1-VAT',
     invoiceDeclarationStatus: '未开票已申报',
+    vatDeclarationFact: {
+      taxRate: '1%',
+      taxableClassification: '普通应税交易',
+      vatTreatment: '减按1%'
+    },
     note: '2026-Q1 已按未开票收入申报，2026-Q2 补开发票时只做后续开票处理。',
     updatedAt: '2026-03-29 09:20',
     files: [

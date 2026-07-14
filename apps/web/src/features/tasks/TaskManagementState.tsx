@@ -1,6 +1,14 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import type { OperationRecord } from '../../components/OperationRecordTable';
+import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import {
+  buildPartTimeLaborSettlementBatches,
+  type PartTimeLaborAcceptanceRecord,
+  type PartTimeLaborSettlementBatch,
+  type PartTimeLaborSettlementBlocker
+} from './partTimeLaborSettlementModel';
+import { applyTaskAcceptanceCommit, type TaskWorkflowState } from './taskAcceptanceCommitModel';
 
 export type StoreTaskStatus = '进行中' | '待验收' | '验收驳回' | '已完成' | '已中止';
 export type StoreTaskFileSource = '飞书云盘' | '业务服务器';
@@ -26,6 +34,7 @@ export type StoreTaskRecord = {
   name: string;
   executorId?: string;
   executorName?: string;
+  laborAgreement?: StoreTaskLaborAgreement;
   acceptorId: string;
   acceptorName: string;
   status: StoreTaskStatus;
@@ -43,6 +52,12 @@ export type StoreTaskRecord = {
   updatedAt: string;
 };
 
+export type StoreTaskLaborAgreement = {
+  agreedGrossAmount: number;
+  agreementVersion: string;
+  projectId: string;
+};
+
 export type StoreTaskCreateInput = {
   brandId: string;
   customerId: string;
@@ -51,6 +66,7 @@ export type StoreTaskCreateInput = {
   note: string;
   executorId?: string;
   executorName?: string;
+  laborAgreement?: StoreTaskLaborAgreement;
   acceptorId: string;
   acceptorName: string;
   plannedDurationHours: number;
@@ -129,11 +145,21 @@ type TaskManagementStateValue = {
   clientFeedbackRows: ClientFeedbackRecord[];
   createClientFeedback: (input: ClientFeedbackCreateInput) => ClientFeedbackRecord;
   createStoreTask: (input: StoreTaskCreateInput) => StoreTaskRecord;
+  commitTaskAcceptance: (input: TaskAcceptanceCommitInput) => void;
+  partTimeLaborAcceptanceRows: PartTimeLaborAcceptanceRecord[];
+  partTimeLaborSettlementBatches: PartTimeLaborSettlementBatch[];
+  partTimeLaborSettlementBlockers: PartTimeLaborSettlementBlocker[];
   saveClientFeedback: (record: ClientFeedbackRecord) => void;
   saveTaskPerformanceScoring: (record: TaskPerformanceScoringRecord) => void;
   saveStoreTask: (record: StoreTaskRecord) => void;
   taskPerformanceScoringRows: TaskPerformanceScoringRecord[];
   storeTaskRows: StoreTaskRecord[];
+};
+
+export type TaskAcceptanceCommitInput = {
+  laborAcceptance?: PartTimeLaborAcceptanceRecord;
+  scoringRecord: TaskPerformanceScoringRecord;
+  task: StoreTaskRecord;
 };
 
 export const taskManagementToday = '2026-06-15';
@@ -294,6 +320,11 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     acceptorName: '示例全职 A',
     executorId: '20260006',
     executorName: '示例兼职 B',
+    laborAgreement: {
+      agreedGrossAmount: 1200,
+      agreementVersion: 'HZ-PT-2026-0006/V1',
+      projectId: 'HZ-PT-2026-0006/WH-HANKOU'
+    },
     plannedDurationHours: 57,
     plannedDeliveryAt: '2026-06-14 18:00',
     reworkCount: 0,
@@ -410,6 +441,11 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     ],
     executorId: '20260006',
     executorName: '示例兼职 B',
+    laborAgreement: {
+      agreedGrossAmount: 1800,
+      agreementVersion: 'HZ-PT-2026-0006/V1',
+      projectId: 'HZ-PT-2026-0006/WH-HANKOU'
+    },
     plannedDurationHours: 104,
     plannedDeliveryAt: '2026-06-10 18:00',
     reworkCount: 1,
@@ -579,6 +615,11 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     ],
     executorId: '20260006',
     executorName: '示例兼职 B',
+    laborAgreement: {
+      agreedGrossAmount: 1400,
+      agreementVersion: 'HZ-PT-2026-0006/V1',
+      projectId: 'HZ-PT-2026-0006/WH-HANKOU'
+    },
     plannedDurationHours: 80,
     plannedDeliveryAt: '2026-06-08 18:00',
     reworkCount: 1,
@@ -672,6 +713,11 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     acceptorName: '示例全职 A',
     executorId: '20260006',
     executorName: '示例兼职 B',
+    laborAgreement: {
+      agreedGrossAmount: 1600,
+      agreementVersion: 'HZ-PT-2026-0006/V1',
+      projectId: 'HZ-PT-2026-0006/WH-HANKOU'
+    },
     plannedDurationHours: 105,
     plannedDeliveryAt: '2026-06-19 18:00',
     reworkCount: 0,
@@ -934,6 +980,41 @@ const seedClientFeedbackRows: ClientFeedbackRecord[] = [
 const seedTaskPerformanceScoringRows: TaskPerformanceScoringRecord[] = [
   {
     adjustmentReason: '',
+    confirmedAt: '2026-06-13 18:00',
+    confirmedBy: '李明',
+    id: 'score-store-task-2026-006',
+    operationRecords: [
+      {
+        id: 'op-score-store-task-2026-006-create',
+        action: '验收计分',
+        actor: '李明',
+        object: '长沙岳麓首店吧台深化图归档',
+        summary: '绘图任务制V1 / 平面方案 / 质量分 82',
+        time: '2026-06-13 18:00'
+      }
+    ],
+    performanceCategory: '绘图任务制',
+    ruleId: 'perf-rule-space-design-2026-final',
+    ruleName: '绘图任务制V1',
+    ruleVersion: 'V1',
+    scoreItemId: 'space-plan',
+    scoreItemName: '平面方案',
+    scoreValue: 3.4,
+    qualityBand: '80-89分',
+    qualityDimensionScores: [
+      { id: 'quality', maxScore: 40, name: '成果有效性与质量', score: 32 },
+      { id: 'timeliness', maxScore: 25, name: '交付时效', score: 20 },
+      { id: 'workflow', maxScore: 25, name: '流程闭环', score: 22 },
+      { id: 'collaboration', maxScore: 10, name: '项目配合与沟通归档', score: 8 }
+    ],
+    qualityScore: 82,
+    sourceMonth: '2026-06',
+    status: '已计入',
+    taskId: 'store-task-2026-006',
+    updatedAt: '2026-06-13 18:00'
+  },
+  {
+    adjustmentReason: '',
     confirmedAt: '2026-06-10 16:00',
     confirmedBy: '李明',
     id: 'score-store-task-2026-004',
@@ -966,6 +1047,35 @@ const seedTaskPerformanceScoringRows: TaskPerformanceScoringRecord[] = [
     status: '已计入',
     taskId: 'store-task-2026-004',
     updatedAt: '2026-06-10 16:00'
+  }
+];
+
+const seedPartTimeLaborAcceptanceRows: PartTimeLaborAcceptanceRecord[] = [
+  {
+    acceptedAt: '2026-06-10 16:00',
+    agreementVersion: 'HZ-PT-2026-0006/V1',
+    grossAmount: 1800,
+    grossAmountSource: {
+      field: 'agreedGrossAmount',
+      kind: '任务约定',
+      recordId: 'store-task-2026-004/labor-agreement'
+    },
+    id: 'store-task-2026-004/labor-acceptance',
+    laborProjectId: 'HZ-PT-2026-0006/WH-HANKOU',
+    taskId: 'store-task-2026-004'
+  },
+  {
+    acceptedAt: '2026-06-08 17:30',
+    agreementVersion: 'HZ-PT-2026-0006/V1',
+    grossAmount: 1400,
+    grossAmountSource: {
+      field: 'agreedGrossAmount',
+      kind: '任务约定',
+      recordId: 'store-task-2026-007/labor-agreement'
+    },
+    id: 'store-task-2026-007/labor-acceptance',
+    laborProjectId: 'HZ-PT-2026-0006/WH-HANKOU',
+    taskId: 'store-task-2026-007'
   }
 ];
 
@@ -1017,9 +1127,40 @@ function buildClientFeedbackOperation(taskName: string, fileCount: number): Oper
 const TaskManagementStateContext = createContext<TaskManagementStateValue | undefined>(undefined);
 
 export function TaskManagementProvider({ children }: { children: ReactNode }) {
-  const [storeTaskRows, setStoreTaskRows] = useState<StoreTaskRecord[]>(() => seedStoreTaskRows);
+  const { peopleRows } = usePeopleOrganizationState();
+  const [taskWorkflowState, setTaskWorkflowState] = useState<TaskWorkflowState>(() => ({
+    partTimeLaborAcceptanceRows: seedPartTimeLaborAcceptanceRows,
+    storeTaskRows: seedStoreTaskRows,
+    taskPerformanceScoringRows: seedTaskPerformanceScoringRows
+  }));
   const [clientFeedbackRows, setClientFeedbackRows] = useState<ClientFeedbackRecord[]>(() => seedClientFeedbackRows);
-  const [taskPerformanceScoringRows, setTaskPerformanceScoringRows] = useState<TaskPerformanceScoringRecord[]>(() => seedTaskPerformanceScoringRows);
+  const { partTimeLaborAcceptanceRows, storeTaskRows, taskPerformanceScoringRows } = taskWorkflowState;
+  const partTimeLaborSettlementResult = useMemo(() => {
+    const settlementPeriods = Array.from(
+      new Set(
+        storeTaskRows
+          .filter((task) => task.status === '已完成' && task.acceptedAt)
+          .map((task) => task.acceptedAt?.slice(0, 7) ?? '')
+          .filter(Boolean)
+      )
+    ).sort();
+
+    return settlementPeriods.reduce(
+      (result, settlementPeriod) => {
+        const periodResult = buildPartTimeLaborSettlementBatches({
+          acceptanceRecords: partTimeLaborAcceptanceRows,
+          people: peopleRows,
+          settlementPeriod,
+          tasks: storeTaskRows
+        });
+
+        result.batches.push(...periodResult.batches);
+        result.blockers.push(...periodResult.blockers);
+        return result;
+      },
+      { batches: [] as PartTimeLaborSettlementBatch[], blockers: [] as PartTimeLaborSettlementBlocker[] }
+    );
+  }, [partTimeLaborAcceptanceRows, peopleRows, storeTaskRows]);
 
   const value = useMemo<TaskManagementStateValue>(
     () => ({
@@ -1058,28 +1199,44 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
           updatedAt: taskManagementNow
         };
 
-        setStoreTaskRows((currentRows) => [nextRecord, ...currentRows]);
+        setTaskWorkflowState((currentState) => ({
+          ...currentState,
+          storeTaskRows: [nextRecord, ...currentState.storeTaskRows]
+        }));
         return nextRecord;
       },
+      commitTaskAcceptance(input) {
+        setTaskWorkflowState((currentState) => applyTaskAcceptanceCommit(currentState, input));
+      },
+      partTimeLaborAcceptanceRows,
+      partTimeLaborSettlementBatches: partTimeLaborSettlementResult.batches,
+      partTimeLaborSettlementBlockers: partTimeLaborSettlementResult.blockers,
       saveStoreTask(record) {
-        setStoreTaskRows((currentRows) => currentRows.map((currentRecord) => (currentRecord.id === record.id ? record : currentRecord)));
+        setTaskWorkflowState((currentState) => ({
+          ...currentState,
+          storeTaskRows: currentState.storeTaskRows.map((currentRecord) => (currentRecord.id === record.id ? record : currentRecord))
+        }));
       },
       saveClientFeedback(record) {
         setClientFeedbackRows((currentRows) => currentRows.map((currentRecord) => (currentRecord.id === record.id ? record : currentRecord)));
       },
       saveTaskPerformanceScoring(record) {
-        setTaskPerformanceScoringRows((currentRows) => {
+        setTaskWorkflowState((currentState) => {
+          const currentRows = currentState.taskPerformanceScoringRows;
           const existingRecord = currentRows.some((currentRecord) => currentRecord.id === record.id);
 
-          return existingRecord
-            ? currentRows.map((currentRecord) => (currentRecord.id === record.id ? record : currentRecord))
-            : [record, ...currentRows];
+          return {
+            ...currentState,
+            taskPerformanceScoringRows: existingRecord
+              ? currentRows.map((currentRecord) => (currentRecord.id === record.id ? record : currentRecord))
+              : [record, ...currentRows]
+          };
         });
       },
       taskPerformanceScoringRows,
       storeTaskRows
     }),
-    [clientFeedbackRows, storeTaskRows, taskPerformanceScoringRows]
+    [clientFeedbackRows, partTimeLaborAcceptanceRows, partTimeLaborSettlementResult, storeTaskRows, taskPerformanceScoringRows]
   );
 
   return <TaskManagementStateContext.Provider value={value}>{children}</TaskManagementStateContext.Provider>;

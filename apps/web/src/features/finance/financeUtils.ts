@@ -54,9 +54,8 @@ export const invoiceDeclarationStatusTone = {
   已关联发票: 'green',
   未开票待确认: 'amber',
   未开票已申报: 'green',
-  本期暂不计入: 'gray',
-  后续开票待处理: 'amber',
-  后续开票已处理: 'green'
+  后续开票部分关联: 'amber',
+  后续开票已关联: 'green'
 } as const satisfies Record<FinanceInvoiceDeclarationStatus, StatusTagTone>;
 
 export const financeCategoryDisplayName = Object.fromEntries(
@@ -194,14 +193,15 @@ export function getFinanceTransactionInvoiceDeclarationStatus(
 ): FinanceInvoiceDeclarationStatus {
   const explicitStatus = record.invoiceDeclarationStatus;
 
-  if (
-    explicitStatus === '未开票已申报' &&
-    (invoiceAssociation.status === '部分关联' || invoiceAssociation.status === '已关联')
-  ) {
-    return '后续开票待处理';
-  }
+  if (explicitStatus === '未开票已申报') {
+    if (invoiceAssociation.status === '已关联') {
+      return '后续开票已关联';
+    }
 
-  if (explicitStatus === '后续开票已处理') {
+    if (invoiceAssociation.status === '部分关联') {
+      return '后续开票部分关联';
+    }
+
     return explicitStatus;
   }
 

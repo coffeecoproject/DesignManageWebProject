@@ -19,6 +19,9 @@ import {
 } from './contractFormModel';
 import type {
   CustomerContractAmountMode,
+  CustomerContractAgreementChangeType,
+  CustomerContractAmountTaxMode,
+  CustomerContractBusinessNature,
   CustomerContractReceiptRecord,
   CustomerContractRecord,
   CustomerContractType,
@@ -67,10 +70,12 @@ const receiptColumns: TableColumnsType<CustomerContractReceiptRecord> = [
 
 export function ContractProfileSection({
   contract,
-  customerName
+  customerName,
+  customerTaxId
 }: {
   contract: CustomerContractRecord;
   customerName?: string;
+  customerTaxId?: string;
 }) {
   return (
     <CustomerDetailSection icon={<ProfileOutlined />} title="合同资料">
@@ -79,8 +84,15 @@ export function ContractProfileSection({
         items={[
           { label: '合同编号', value: contract.code },
           { label: '所属客户', value: customerName },
+          { label: '客户纳税人识别号', value: customerTaxId },
           { label: '合同类型', value: contract.type },
+          { label: '业务性质', value: contract.stampDutyFacts.businessNature },
           { label: '金额方式', value: contract.amountMode },
+          { label: '价税方式', value: contract.stampDutyFacts.amountTaxMode },
+          ...(contract.stampDutyFacts.amountTaxMode === '价税分列'
+            ? [{ label: '单列增值税额', value: formatContractMoney(contract.stampDutyFacts.vatAmount ?? 0) }]
+            : []),
+          { label: '签署版本', value: contract.stampDutyFacts.signedVersionNo },
           { label: '合同状态', value: <StatusTag toneMap={customerContractStatusTone} value={contract.status} /> },
           { label: '签署日期', value: contract.signedAt },
           { label: '到期日期', value: contract.expiresAt },
@@ -162,10 +174,12 @@ export function ContractFileSection({
 }
 
 export function ContractFormSection({
+  contracts,
   customers,
   form,
   onChange
 }: {
+  contracts: CustomerContractRecord[];
   customers: CustomerRecord[];
   form: ContractForm;
   onChange: ContractFormPatchHandler;
@@ -193,6 +207,24 @@ export function ContractFormSection({
             onChange={(type) => onChange({ type })}
           />
         </DrawerFormField>
+        <DrawerFormField label="业务性质" required>
+          <Select
+            value={form.businessNature}
+            options={(
+              [
+                '设计及咨询服务',
+                '工程施工',
+                '采购或销售',
+                '租赁',
+                '技术服务',
+                '借款',
+                '产权转移',
+                '其他'
+              ] satisfies CustomerContractBusinessNature[]
+            ).map((businessNature) => ({ label: businessNature, value: businessNature }))}
+            onChange={(businessNature) => onChange({ businessNature })}
+          />
+        </DrawerFormField>
         <DrawerFormField label="金额方式" required>
           <Select
             value={form.amountMode}
@@ -216,6 +248,60 @@ export function ContractFormSection({
             onChange={(event) => onChange({ amount: event.target.value })}
           />
         </DrawerFormField>
+        <DrawerFormField label="价税方式" required>
+          <Select
+            value={form.amountTaxMode}
+            options={(
+              ['价税分列', '含税未分列', '不涉及增值税'] satisfies CustomerContractAmountTaxMode[]
+            ).map((amountTaxMode) => ({ label: amountTaxMode, value: amountTaxMode }))}
+            onChange={(amountTaxMode) => onChange({ amountTaxMode, vatAmount: amountTaxMode === '价税分列' ? form.vatAmount : '' })}
+          />
+        </DrawerFormField>
+        {form.amountTaxMode === '价税分列' ? (
+          <DrawerFormField label="单列增值税额" required>
+            <Input value={form.vatAmount} onChange={(event) => onChange({ vatAmount: event.target.value })} />
+          </DrawerFormField>
+        ) : null}
+        <DrawerFormField label="签署版本" required>
+          <Input value={form.signedVersionNo} onChange={(event) => onChange({ signedVersionNo: event.target.value })} />
+        </DrawerFormField>
+        <DrawerFormField label="原合同">
+          <Select
+            allowClear
+            value={form.parentContractId || undefined}
+            options={contracts
+              .filter((contract) => contract.customerId === form.customerId)
+              .map((contract) => ({ label: `${contract.code} / ${contract.name}`, value: contract.id }))}
+            onChange={(parentContractId) =>
+              onChange({
+                agreementChangeAmount: '',
+                agreementChangeType: '',
+                parentContractId: parentContractId ?? ''
+              })
+            }
+          />
+        </DrawerFormField>
+        {form.parentContractId ? (
+          <>
+            <DrawerFormField label="协议变更类型" required>
+              <Select
+                value={form.agreementChangeType || undefined}
+                options={(
+                  ['新增金额', '减少金额', '仅变更非金额条款'] satisfies CustomerContractAgreementChangeType[]
+                ).map((agreementChangeType) => ({ label: agreementChangeType, value: agreementChangeType }))}
+                onChange={(agreementChangeType) => onChange({ agreementChangeType })}
+              />
+            </DrawerFormField>
+            {form.agreementChangeType && form.agreementChangeType !== '仅变更非金额条款' ? (
+              <DrawerFormField label="变更金额" required>
+                <Input
+                  value={form.agreementChangeAmount}
+                  onChange={(event) => onChange({ agreementChangeAmount: event.target.value })}
+                />
+              </DrawerFormField>
+            ) : null}
+          </>
+        ) : null}
         <DrawerFormField label="签署日期" required>
           <Input placeholder="YYYY-MM-DD" value={form.signedAt} onChange={(event) => onChange({ signedAt: event.target.value })} />
         </DrawerFormField>

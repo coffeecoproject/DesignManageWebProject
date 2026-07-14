@@ -82,6 +82,11 @@ const SalaryMonthlyPage = lazy(() =>
     default: module.SalaryMonthlyPage
   }))
 );
+const SalaryPersonalIncomeTaxDeductionsPage = lazy(() =>
+  import('../features/salary/SalaryPersonalIncomeTaxDeductionsPage').then((module) => ({
+    default: module.SalaryPersonalIncomeTaxDeductionsPage
+  }))
+);
 const CustomerArchivePage = lazy(() =>
   import('../features/customers/CustomerArchivePage').then((module) => ({
     default: module.CustomerArchivePage
@@ -137,11 +142,6 @@ const FinanceInvoicesPage = lazy(() =>
     default: module.FinanceInvoicesPage
   }))
 );
-const FinanceInvoiceMatchingPage = lazy(() =>
-  import('../features/finance/FinanceInvoiceMatchingPage').then((module) => ({
-    default: module.FinanceInvoiceMatchingPage
-  }))
-);
 const FinanceDeclarationPreparationPage = lazy(() =>
   import('../features/finance/FinanceDeclarationPreparationPage').then((module) => ({
     default: module.FinanceDeclarationPreparationPage
@@ -185,6 +185,16 @@ const FinanceAccountingSubjectsPage = lazy(() =>
 const FinanceAccountingVouchersPage = lazy(() =>
   import('../features/finance/FinanceAccountingVouchersPage').then((module) => ({
     default: module.FinanceAccountingVouchersPage
+  }))
+);
+const FinanceAssetsPrepaymentsPage = lazy(() =>
+  import('../features/finance/FinanceAssetsPrepaymentsPage').then((module) => ({
+    default: module.FinanceAssetsPrepaymentsPage
+  }))
+);
+const FinanceMonthEndMattersPage = lazy(() =>
+  import('../features/finance/FinanceMonthEndMattersPage').then((module) => ({
+    default: module.FinanceMonthEndMattersPage
   }))
 );
 const FinanceGeneralLedgerPage = lazy(() =>
@@ -483,6 +493,14 @@ export const router = createBrowserRouter([
         element: withPageSuspense(<FinanceAccountingVouchersPage />)
       },
       {
+        path: 'finance/assets-prepayments',
+        element: withPageSuspense(<FinanceAssetsPrepaymentsPage />)
+      },
+      {
+        path: 'finance/month-end',
+        element: withPageSuspense(<FinanceMonthEndMattersPage />)
+      },
+      {
         path: 'finance/general-ledger',
         element: withPageSuspense(<FinanceGeneralLedgerPage />)
       },
@@ -507,10 +525,6 @@ export const router = createBrowserRouter([
         element: withPageSuspense(<FinanceInvoicesPage />)
       },
       {
-        path: 'tax/invoice-matching',
-        element: withPageSuspense(<FinanceInvoiceMatchingPage />)
-      },
-      {
         path: 'tax/declaration-preparation',
         element: withPageSuspense(<FinanceDeclarationPreparationPage />)
       },
@@ -533,6 +547,10 @@ export const router = createBrowserRouter([
       {
         path: 'salary/monthly',
         element: withPageSuspense(<SalaryMonthlyPage />)
+      },
+      {
+        path: 'salary/personal-income-tax',
+        element: withPageSuspense(<SalaryPersonalIncomeTaxDeductionsPage />)
       },
       {
         path: 'salary/adjustments',

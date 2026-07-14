@@ -1,5 +1,8 @@
 import type {
   CustomerContractAmountMode,
+  CustomerContractAgreementChangeType,
+  CustomerContractAmountTaxMode,
+  CustomerContractBusinessNature,
   CustomerContractFileRecord,
   CustomerContractRecord,
   CustomerContractStatus,
@@ -16,16 +19,23 @@ export type ContractDraftFile = {
 };
 
 export type ContractForm = {
+  agreementChangeAmount: string;
+  agreementChangeType: CustomerContractAgreementChangeType | '';
   amount: string;
   amountMode: CustomerContractAmountMode;
+  amountTaxMode: CustomerContractAmountTaxMode;
+  businessNature: CustomerContractBusinessNature;
   customerId: string;
   expiresAt: string;
   files: ContractDraftFile[];
   name: string;
   note: string;
   owner: string;
+  parentContractId: string;
   signedAt: string;
+  signedVersionNo: string;
   type: CustomerContractType;
+  vatAmount: string;
 };
 
 export type CustomerContractReceiptStatus = '未收' | '已收' | '部分已收' | '已收齐';
@@ -104,23 +114,34 @@ export function formatContractMoney(amount: number | null | undefined) {
 
 export function buildDefaultContractForm(customers: CustomerRecord[]): ContractForm {
   return {
+    agreementChangeAmount: '',
+    agreementChangeType: '',
     amount: '',
     amountMode: '固定金额',
+    amountTaxMode: '价税分列',
+    businessNature: '设计及咨询服务',
     customerId: customers[0]?.id ?? '',
     expiresAt: '',
     files: [],
     name: '',
     note: '',
     owner: '李明',
+    parentContractId: '',
     signedAt: '',
-    type: '年框合同'
+    signedVersionNo: 'V1.0',
+    type: '年框合同',
+    vatAmount: ''
   };
 }
 
 export function buildContractForm(record: CustomerContractRecord): ContractForm {
   return {
+    agreementChangeAmount: record.stampDutyFacts.agreementChangeAmount === undefined ? '' : String(record.stampDutyFacts.agreementChangeAmount),
+    agreementChangeType: record.stampDutyFacts.agreementChangeType ?? '',
     amount: record.amount === null ? '' : String(record.amount),
     amountMode: record.amountMode,
+    amountTaxMode: record.stampDutyFacts.amountTaxMode,
+    businessNature: record.stampDutyFacts.businessNature,
     customerId: record.customerId,
     expiresAt: record.expiresAt,
     files: record.files.map((file) => ({
@@ -133,8 +154,11 @@ export function buildContractForm(record: CustomerContractRecord): ContractForm 
     name: record.name,
     note: record.note,
     owner: record.owner,
+    parentContractId: record.stampDutyFacts.parentContractId ?? '',
     signedAt: record.signedAt,
-    type: record.type
+    signedVersionNo: record.stampDutyFacts.signedVersionNo,
+    type: record.type,
+    vatAmount: record.stampDutyFacts.vatAmount === undefined ? '' : String(record.stampDutyFacts.vatAmount)
   };
 }
 
@@ -145,45 +169,72 @@ export function getContractFormAmount(form: ContractForm) {
 export function isContractFormValid(form: ContractForm) {
   const contractAmount = getContractFormAmount(form);
   const amountValid = form.amountMode === '无固定金额' || Boolean(contractAmount && contractAmount > 0);
+  const vatAmount = parseMoneyInput(form.vatAmount);
+  const vatValid = form.amountTaxMode !== '价税分列' || vatAmount <= (contractAmount ?? Number.MAX_SAFE_INTEGER);
+  const agreementChangeAmount = parseMoneyInput(form.agreementChangeAmount);
+  const agreementValid =
+    !form.parentContractId ||
+    (Boolean(form.agreementChangeType) &&
+      (form.agreementChangeType === '仅变更非金额条款' || agreementChangeAmount > 0));
 
   return Boolean(
-    form.customerId &&
+    agreementValid &&
+      form.businessNature &&
+      form.customerId &&
       form.name.trim() &&
       form.owner.trim() &&
+      form.signedVersionNo.trim() &&
       form.signedAt.trim() &&
       form.expiresAt.trim() &&
       form.files.length > 0 &&
-      amountValid
+      amountValid &&
+      vatValid
   );
 }
 
 function getContractFormSnapshot(form: ContractForm) {
   return {
+    agreementChangeAmount: form.parentContractId && form.agreementChangeType !== '仅变更非金额条款'
+      ? parseMoneyInput(form.agreementChangeAmount)
+      : undefined,
+    agreementChangeType: form.parentContractId ? form.agreementChangeType : undefined,
     amount: getContractFormAmount(form),
     amountMode: form.amountMode,
+    amountTaxMode: form.amountTaxMode,
+    businessNature: form.businessNature,
     customerId: form.customerId,
     expiresAt: form.expiresAt.trim(),
     files: form.files.map((file) => ({ name: file.name, type: file.type })),
     name: form.name.trim(),
     note: form.note.trim(),
     owner: form.owner.trim(),
+    parentContractId: form.parentContractId || undefined,
     signedAt: form.signedAt.trim(),
-    type: form.type
+    signedVersionNo: form.signedVersionNo.trim(),
+    type: form.type,
+    vatAmount: form.amountTaxMode === '价税分列' ? parseMoneyInput(form.vatAmount) : undefined
   };
 }
 
 function getContractRecordSnapshot(record: CustomerContractRecord) {
   return {
+    agreementChangeAmount: record.stampDutyFacts.agreementChangeAmount,
+    agreementChangeType: record.stampDutyFacts.agreementChangeType,
     amount: record.amount,
     amountMode: record.amountMode,
+    amountTaxMode: record.stampDutyFacts.amountTaxMode,
+    businessNature: record.stampDutyFacts.businessNature,
     customerId: record.customerId,
     expiresAt: record.expiresAt,
     files: record.files.map((file) => ({ name: file.name, type: file.type })),
     name: record.name,
     note: record.note,
     owner: record.owner,
+    parentContractId: record.stampDutyFacts.parentContractId,
     signedAt: record.signedAt,
-    type: record.type
+    signedVersionNo: record.stampDutyFacts.signedVersionNo,
+    type: record.type,
+    vatAmount: record.stampDutyFacts.vatAmount
   };
 }
 
@@ -327,6 +378,17 @@ export function buildContractRecordForSave({
     owner: form.owner.trim(),
     signedAt,
     status: getContractStatusByDate(expiresAt),
+    stampDutyFacts: {
+      agreementChangeAmount: form.parentContractId && form.agreementChangeType !== '仅变更非金额条款'
+        ? parseMoneyInput(form.agreementChangeAmount)
+        : undefined,
+      agreementChangeType: form.parentContractId ? form.agreementChangeType || undefined : undefined,
+      amountTaxMode: form.amountTaxMode,
+      businessNature: form.businessNature,
+      parentContractId: form.parentContractId || undefined,
+      signedVersionNo: form.signedVersionNo.trim(),
+      vatAmount: form.amountTaxMode === '价税分列' ? parseMoneyInput(form.vatAmount) : undefined
+    },
     type: form.type,
     updatedAt
   };
@@ -345,6 +407,7 @@ export function buildContractRecordForSave({
     name: form.name.trim(),
     type: form.type,
     status: getContractStatusByDate(expiresAt),
+    stampDutyFacts: baseFields.stampDutyFacts,
     signedAt,
     expiresAt,
     files,

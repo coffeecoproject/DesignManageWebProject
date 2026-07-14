@@ -86,6 +86,18 @@ export type FinanceReceivablePayableAccrualReadiness = {
   status: FinanceReceivablePayableAccrualReadinessStatus;
 };
 
+export type FinanceReceivablePayableSettlementSnapshot = {
+  linkedTransactionRows: FinanceTransactionRecord[];
+  pendingSettlementAmount: number;
+  settledAmount: number;
+  settlementStatus: FinanceReceivablePayableSettlementStatus;
+};
+
+type FinanceReceivablePayableVoucherLifecycleRow = {
+  status: '已记账' | '已冲销';
+  voucherId: string;
+};
+
 export type FinanceReceivablePayableFormValue = {
   accountingPeriod: string;
   amount: number;
@@ -326,12 +338,8 @@ export function getFinanceReceivablePayablePayrollDueDate(accountingPeriod: stri
 }
 
 export function getFinanceReceivablePayableDueDate(record: FinanceReceivablePayableRecord) {
-  if (record.sourceType === '薪酬发放' || record.sourceType === '月度绩效') {
+  if (record.sourceType === '薪酬发放') {
     return getFinanceReceivablePayablePayrollDueDate(record.accountingPeriod);
-  }
-
-  if (record.sourceType === '季度绩效') {
-    return getFinanceReceivablePayablePayrollDueDate(record.confirmDate.slice(0, 7));
   }
 
   return record.dueDate;
@@ -390,11 +398,13 @@ export function isFinanceReceivablePayableFormValid(form: FinanceReceivablePayab
 
 export function isFinanceReceivablePayableSettlementFormValid(
   form: FinanceReceivablePayableSettlementFormValue,
-  registerableAmount: number
+  registerableAmount: number,
+  record?: FinanceReceivablePayableRecord
 ) {
   return (
     form.amount > 0 &&
     form.amount <= registerableAmount &&
+    (!record?.naturalPersonPayment || Math.abs(form.amount - registerableAmount) < 0.01) &&
     form.files.length > 0 &&
     form.occurredAt.trim() !== '' &&
     form.publicAccountId.trim() !== ''
@@ -505,7 +515,10 @@ export function isFinanceReceivablePayableActiveSettlementTransaction(record: Fi
 export function getFinanceReceivablePayablePendingSettlementAmount(records: FinanceTransactionRecord[]) {
   return records
     .filter(isFinanceReceivablePayablePendingSettlementTransaction)
-    .reduce((total, record) => total + record.amount, 0);
+    .reduce(
+      (total, record) => total + (record.naturalPersonPayment?.grossIncomeAmount ?? record.amount),
+      0
+    );
 }
 
 export function getFinanceReceivablePayableReviewProgressStatus(
@@ -567,21 +580,27 @@ export function hasFinanceReceivablePayableActiveSettlement(linkedTransactionRow
   return linkedTransactionRows.some(isFinanceReceivablePayableActiveSettlementTransaction);
 }
 
-export function canEditFinanceReceivablePayableRecord(
+export function hasFinanceReceivablePayableBookedVoucher(
   record: FinanceReceivablePayableRecord,
-  linkedTransactionRows: FinanceTransactionRecord[]
+  lifecycleRows: readonly FinanceReceivablePayableVoucherLifecycleRow[] = []
 ) {
-  return !isFinanceReceivablePayableVoided(record) && record.settledAmount <= 0 && !hasFinanceReceivablePayableActiveSettlement(linkedTransactionRows);
+  return lifecycleRows.some(
+    (lifecycle) =>
+      lifecycle.voucherId === `voucher-business-${record.id}`
+      && (lifecycle.status === '已记账' || lifecycle.status === '已冲销')
+  );
 }
 
-export function getFinanceReceivablePayableRegisterableAmount(
+export function canEditFinanceReceivablePayableRecord(
   record: FinanceReceivablePayableRecord,
-  linkedTransactionRows: FinanceTransactionRecord[]
+  linkedTransactionRows: FinanceTransactionRecord[],
+  hasBookedVoucher = false
 ) {
-  return Math.max(
-    0,
-    getReceivablePayableOutstandingAmount(record) -
-      getFinanceReceivablePayablePendingSettlementAmount(linkedTransactionRows)
+  return (
+    !isFinanceReceivablePayableVoided(record)
+    && !hasBookedVoucher
+    && record.settledAmount <= 0
+    && !hasFinanceReceivablePayableActiveSettlement(linkedTransactionRows)
   );
 }
 
@@ -725,13 +744,21 @@ export function buildFinanceReceivablePayableSettlementTransaction(
   const transactionNo = buildNextFinanceTransactionNo(financeRows, form.occurredAt);
   const accountingPeriod = getAccountingPeriod(form.occurredAt);
   const action = record.direction === '应收' ? '登记收款' : '登记付款';
+  const naturalPersonPayment = record.naturalPersonPayment?.incomeType === '劳务报酬'
+    ? {
+        ...record.naturalPersonPayment,
+        taxPeriod: accountingPeriod
+      }
+    : undefined;
+  const bankPaymentAmount = naturalPersonPayment?.netPaymentAmount ?? form.amount;
 
   return {
     accountingPeriod,
-    amount: form.amount,
+    amount: bankPaymentAmount,
     category: record.category,
     categorySnapshot: getFinanceCategorySnapshot(record.category),
     counterparty: record.counterparty,
+    counterpartyId: record.counterpartyId,
     counterpartyType: record.counterpartyType,
     currency: 'CNY',
     direction: getSettlementTransactionDirection(record),
@@ -742,6 +769,9 @@ export function buildFinanceReceivablePayableSettlementTransaction(
     })),
     id: `fin-rp-${record.id}-${Date.now()}`,
     note: form.note.trim(),
+    naturalPersonPayment: record.naturalPersonPayment
+      ? naturalPersonPayment ?? { ...record.naturalPersonPayment, taxPeriod: accountingPeriod }
+      : undefined,
     occurredAt: form.occurredAt,
     operationRecords: [
       {
@@ -749,13 +779,16 @@ export function buildFinanceReceivablePayableSettlementTransaction(
         actor: '李明',
         id: `fin-rp-op-${Date.now()}`,
         object: transactionNo,
-        summary: `${record.documentNo} ${action} ${formatMoney(form.amount)}`,
+        summary: naturalPersonPayment
+          ? `${record.documentNo} ${action} ${formatMoney(bankPaymentAmount)}，代扣个税 ${formatMoney(naturalPersonPayment.withheldTaxAmount)}`
+          : `${record.documentNo} ${action} ${formatMoney(form.amount)}`,
         time: `${financeToday} 10:00`
       }
     ],
     paymentMethod: getSettlementPaymentMethod(record),
     publicAccountId: publicAccountRef.publicAccountId,
     publicAccountSnapshot: publicAccountRef.publicAccountSnapshot,
+    relatedReceivableNo: record.direction === '应收' ? record.documentNo : undefined,
     reconciliationStatus: '未对账',
     registeredBy: '李明',
     reviewDueAt: getDefaultFinanceReviewDueAt(form.occurredAt),
@@ -797,36 +830,61 @@ export function linkFinanceReceivablePayableSettlementTransaction(
 
 export function isFinanceReceivablePayableSettlementForRecord(
   record: FinanceReceivablePayableRecord,
-  transaction: FinanceTransactionRecord
+  transaction: FinanceTransactionRecord,
+  financeRows: FinanceTransactionRecord[] = []
 ) {
   const expectedDirection = record.direction === '应收' ? '收入' : '支出';
+  const transactionByNo = new Map(financeRows.map((candidate) => [candidate.transactionNo, candidate]));
+  const visitedTransactionNos = new Set<string>();
 
-  return (
-    transaction.direction === expectedDirection &&
-    (
-      record.linkedTransactionNos.includes(transaction.transactionNo) ||
-      transaction.sourceNo === record.documentNo ||
-      transaction.relatedReceivableNo === record.documentNo
-    )
-  );
+  function isDirectSettlement(candidate: FinanceTransactionRecord) {
+    return (
+      candidate.direction === expectedDirection
+      && (
+        record.linkedTransactionNos.includes(candidate.transactionNo)
+        || candidate.sourceNo === record.documentNo
+        || candidate.relatedReceivableNo === record.documentNo
+      )
+    );
+  }
+
+  function followsSettlementOrigin(candidate: FinanceTransactionRecord): boolean {
+    if (visitedTransactionNos.has(candidate.transactionNo)) {
+      return false;
+    }
+
+    visitedTransactionNos.add(candidate.transactionNo);
+
+    if (isDirectSettlement(candidate)) {
+      return true;
+    }
+
+    const originTransactionNo = candidate.adjustmentContext?.originTransactionNo;
+    const originTransaction = originTransactionNo ? transactionByNo.get(originTransactionNo) : undefined;
+
+    return originTransaction ? followsSettlementOrigin(originTransaction) : false;
+  }
+
+  return followsSettlementOrigin(transaction);
 }
 
 export function getFinanceReceivablePayableLinkedTransactionRows(
   record: FinanceReceivablePayableRecord,
   financeRows: FinanceTransactionRecord[] = []
 ) {
-  return financeRows.filter((transaction) => isFinanceReceivablePayableSettlementForRecord(record, transaction));
+  return financeRows.filter((transaction) => isFinanceReceivablePayableSettlementForRecord(record, transaction, financeRows));
 }
 
 export function getFinanceReceivablePayableSettlementTargets(
   records: FinanceReceivablePayableRecord[],
-  transaction: FinanceTransactionRecord | undefined
+  transaction: FinanceTransactionRecord | undefined,
+  financeRows: FinanceTransactionRecord[] = []
 ) {
   if (!transaction) {
     return [];
   }
 
-  return records.filter((record) => isFinanceReceivablePayableSettlementForRecord(record, transaction));
+  return records.filter((record) => isFinanceReceivablePayableSettlementForRecord(record, transaction, financeRows));
 }
 
 function getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(
@@ -844,24 +902,116 @@ function getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(
   return '未结清';
 }
 
+function getFinanceReceivablePayableSettlementSignedAmount(
+  record: FinanceReceivablePayableRecord,
+  transaction: FinanceTransactionRecord,
+  financeRows: FinanceTransactionRecord[] = []
+) {
+  const expectedDirection = record.direction === '应收' ? '收入' : '支出';
+  const originTransaction = transaction.adjustmentContext?.mode === '冲正'
+    ? financeRows.find(
+        (candidate) => candidate.transactionNo === transaction.adjustmentContext?.originTransactionNo
+      )
+    : undefined;
+  const settlementAmount = originTransaction?.naturalPersonPayment?.incomeType === '劳务报酬'
+    ? originTransaction.naturalPersonPayment.grossIncomeAmount
+    : transaction.naturalPersonPayment?.grossIncomeAmount ?? transaction.amount;
+
+  if (transaction.direction === expectedDirection) {
+    return settlementAmount;
+  }
+
+  if (transaction.direction === '内部转入') {
+    return 0;
+  }
+
+  return -settlementAmount;
+}
+
+export function getFinanceReceivablePayableSettlementSnapshot(
+  record: FinanceReceivablePayableRecord,
+  financeRows: FinanceTransactionRecord[] = []
+): FinanceReceivablePayableSettlementSnapshot {
+  const linkedTransactionRows = getFinanceReceivablePayableLinkedTransactionRows(record, financeRows);
+  const settledAmount = Math.min(
+    record.amount,
+    Math.max(
+      0,
+      linkedTransactionRows
+        .filter(isFinanceReceivablePayablePostedSettlementTransaction)
+        .reduce(
+          (total, transaction) => total + getFinanceReceivablePayableSettlementSignedAmount(record, transaction, financeRows),
+          0
+        )
+    )
+  );
+  const pendingSettlementAmount = linkedTransactionRows
+    .filter(isFinanceReceivablePayablePendingSettlementTransaction)
+    .filter((transaction) => getFinanceReceivablePayableSettlementSignedAmount(record, transaction, financeRows) > 0)
+    .reduce(
+      (total, transaction) => total + getFinanceReceivablePayableSettlementSignedAmount(record, transaction, financeRows),
+      0
+    );
+
+  return {
+    linkedTransactionRows,
+    pendingSettlementAmount,
+    settledAmount,
+    settlementStatus: getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(record, settledAmount)
+  };
+}
+
+export function deriveFinanceReceivablePayableSettlementRows(
+  records: FinanceReceivablePayableRecord[],
+  financeRows: FinanceTransactionRecord[] = []
+) {
+  return records.map((record) => {
+    const settlement = getFinanceReceivablePayableSettlementSnapshot(record, financeRows);
+
+    return {
+      ...record,
+      settledAmount: settlement.settledAmount,
+      settlementStatus: settlement.settlementStatus
+    };
+  });
+}
+
+export function getFinanceReceivablePayableRegisterableAmount(
+  record: FinanceReceivablePayableRecord,
+  linkedTransactionRows: FinanceTransactionRecord[]
+) {
+  // This argument is already the record's linked settlement collection. Pending
+  // registrations reserve capacity before review regardless of their final netting direction.
+  const pendingSettlementAmount = getFinanceReceivablePayablePendingSettlementAmount(linkedTransactionRows);
+
+  return Math.max(0, getReceivablePayableOutstandingAmount(record) - pendingSettlementAmount);
+}
+
 export function applyFinanceReceivablePayableSettlementReview(
   records: FinanceReceivablePayableRecord[],
-  transaction: FinanceTransactionRecord
+  transaction: FinanceTransactionRecord,
+  financeRows: FinanceTransactionRecord[] = []
 ) {
   if (!isFinanceReceivablePayablePendingSettlementTransaction(transaction)) {
     return records;
   }
 
   return records.map((record) => {
-    if (!isFinanceReceivablePayableSettlementForRecord(record, transaction)) {
+    if (!isFinanceReceivablePayableSettlementForRecord(record, transaction, financeRows)) {
       return record;
     }
 
-    const nextSettledAmount = Math.min(record.amount, record.settledAmount + transaction.amount);
     const nextLinkedTransactionNos = record.linkedTransactionNos.includes(transaction.transactionNo)
       ? record.linkedTransactionNos
       : [...record.linkedTransactionNos, transaction.transactionNo];
-    const action = record.direction === '应收' ? '确认收款入账' : '确认付款入账';
+    const action = transaction.adjustmentContext
+      ? `${transaction.adjustmentContext.mode}${record.direction === '应收' ? '收款' : '付款'}`
+      : record.direction === '应收'
+        ? '确认收款入账'
+        : '确认付款入账';
+    const settlementSummary = transaction.adjustmentContext
+      ? `${transaction.transactionNo} ${transaction.adjustmentContext.mode}入账，结清余额按关联收付款净额重算`
+      : `${transaction.transactionNo} 复核入账，${record.direction === '应收' ? '已收' : '已付'}增加 ${formatMoney(transaction.amount)}`;
 
     return {
       ...record,
@@ -872,13 +1022,11 @@ export function applyFinanceReceivablePayableSettlementReview(
           actor: '财务复核',
           id: `${record.id}-posted-${transaction.transactionNo}`,
           object: record.documentNo,
-          summary: `${transaction.transactionNo} 复核入账，${record.direction === '应收' ? '已收' : '已付'}增加 ${formatMoney(transaction.amount)}`,
+          summary: settlementSummary,
           time: `${financeToday} 15:30`
         },
         ...record.operationRecords
       ],
-      settledAmount: nextSettledAmount,
-      settlementStatus: getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(record, nextSettledAmount),
       updatedAt: `${financeToday} 15:30`
     };
   });

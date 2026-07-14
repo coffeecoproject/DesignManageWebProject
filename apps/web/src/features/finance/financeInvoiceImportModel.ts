@@ -3,6 +3,7 @@ import type {
   FinanceInvoiceImportBatch,
   FinanceInvoiceRecord
 } from './financeInvoiceData';
+import { resolveFinanceVatInvoiceTreatment } from './financeTaxPolicyModel';
 
 type InvoiceImportInput = {
   direction: FinanceInvoiceImportBatch['direction'];
@@ -75,7 +76,7 @@ export function buildFinanceInvoiceRecordsFromImportBatch(
       invoiceKind: '普通发票',
       invoiceNo,
       invoiceStatus: '正常',
-      matchedBusinessRefs: [],
+      salesCategory: '服务、不动产和无形资产',
       netAmount: taxExcludedAmount,
       originalInvoiceId: undefined,
       sourceFile: batch.fileName,
@@ -83,7 +84,14 @@ export function buildFinanceInvoiceRecordsFromImportBatch(
       taxExcludedAmount,
       taxIncludedAmount: totalAmount,
       taxRate: '1%',
-      totalAmount
+      taxableClassification: '普通应税交易',
+      totalAmount,
+      vatTreatment: resolveFinanceVatInvoiceTreatment({
+        accountingPeriod: batch.accountingPeriod,
+        direction,
+        taxRate: '1%',
+        taxableClassification: '普通应税交易'
+      })
     };
   });
 }

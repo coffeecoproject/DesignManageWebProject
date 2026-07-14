@@ -66,9 +66,9 @@ function createState(overrides: Partial<FinanceSourceMutationRouteState> = {}): 
       createSourceRecord({
         accountingPeriod: '2026-05',
         id: 'inv-closed',
-        sourceArea: 'invoice_matching',
+        sourceArea: 'invoice_ledger',
         sourceNo: 'INV-202605-001',
-        status: '待匹配'
+        status: '待关联'
       }),
       createSourceRecord({
         accountingPeriod: '2026-06',
@@ -136,9 +136,9 @@ const tests: UnitTest[] = [
       const response = handleFinanceSourceMutationRoute({
         context: createContext(),
         request: {
-          body: { status: '已调整', targetAccountingPeriod: '2026-06' },
+          body: { targetAccountingPeriod: '2026-06' },
           method: 'PATCH',
-          path: '/api/finance/invoice-matching/inv-closed/reassign-period'
+          path: '/api/finance/invoices/inv-closed/associations'
         },
         state: initialState
       });
@@ -204,32 +204,25 @@ const tests: UnitTest[] = [
           path: '/api/finance/receivables-payables/rp-tax-basis/tax-basis'
         },
         {
-          area: 'invoice_matching',
-          expectedStatus: '已匹配',
-          id: 'invoice-match',
-          method: 'POST',
-          path: '/api/finance/invoice-matching/invoice-match/match'
+          area: 'invoice_ledger',
+          expectedStatus: '关联已保存',
+          id: 'invoice-association',
+          method: 'PATCH',
+          path: '/api/finance/invoices/invoice-association/associations'
         },
         {
-          area: 'invoice_matching',
-          expectedStatus: '待关联',
-          id: 'invoice-unmatch',
-          method: 'POST',
-          path: '/api/finance/invoice-matching/invoice-unmatch/unmatch'
+          area: 'receivable_payable',
+          expectedStatus: '关联已保存',
+          id: 'rp-invoice-association',
+          method: 'PATCH',
+          path: '/api/finance/receivables-payables/rp-invoice-association/invoice-associations'
         },
         {
-          area: 'invoice_matching',
+          area: 'invoice_ledger',
           expectedStatus: '红票已关联',
           id: 'invoice-red',
           method: 'POST',
-          path: '/api/finance/invoice-matching/invoice-red/red-original'
-        },
-        {
-          area: 'invoice_matching',
-          expectedStatus: '后续开票已确认',
-          id: 'invoice-subsequent',
-          method: 'POST',
-          path: '/api/finance/invoice-matching/invoice-subsequent/subsequent-invoice'
+          path: '/api/finance/invoices/invoice-red/red-original'
         },
         {
           area: 'cash_flow_review',
@@ -300,27 +293,6 @@ const tests: UnitTest[] = [
           id: 'declaration-preparation-item',
           method: 'POST',
           path: '/api/finance/declaration-preparation/declaration-preparation-item/confirm-item'
-        },
-        {
-          area: 'tax_handling',
-          expectedStatus: '未开票收入已确认',
-          id: 'declaration-unbilled-income',
-          method: 'POST',
-          path: '/api/finance/declaration-preparation/declaration-unbilled-income/unbilled-income'
-        },
-        {
-          area: 'tax_handling',
-          expectedStatus: '本期暂不计入已确认',
-          id: 'declaration-unbilled-defer',
-          method: 'POST',
-          path: '/api/finance/declaration-preparation/declaration-unbilled-defer/defer-unbilled-income'
-        },
-        {
-          area: 'tax_handling',
-          expectedStatus: '后续开票已处理',
-          id: 'declaration-subsequent-invoice',
-          method: 'POST',
-          path: '/api/finance/declaration-preparation/declaration-subsequent-invoice/subsequent-invoice'
         },
         {
           area: 'tax_handling',
@@ -483,7 +455,7 @@ const tests: UnitTest[] = [
       assertEqual(createdRecord?.accountingPeriod, '2026-06', 'created invoice source record should use target accounting period');
       assertEqual(createdRecord?.sourceNo, 'INV-IMPORT-202606-001', 'created invoice source record should keep submitted source number');
       assertEqual(createdRecord?.amount, '12800.00', 'created invoice source record should keep submitted amount');
-      assertEqual(createdRecord?.status, '导入待匹配', 'created invoice source record should use route success status');
+      assertEqual(createdRecord?.status, '已导入', 'created invoice source record should use route success status');
       assertEqual(createdRecord?.version, 1, 'created invoice source record should start at version 1');
       assertEqual(response.state.events[0]?.eventType, 'source_mutation_applied', 'created invoice source record should write applied event');
     }

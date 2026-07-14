@@ -1,99 +1,124 @@
 import {
   AuditOutlined,
   CheckCircleOutlined,
-  CheckSquareOutlined,
   FileSearchOutlined,
   FileTextOutlined,
   PercentageOutlined,
-  WalletOutlined
+  WalletOutlined,
+  PlusOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Alert, Button, Select, message } from 'antd';
+import { Alert, DatePicker, Input, InputNumber, Select, message } from 'antd';
+import type { UploadFile } from 'antd/es/upload/interface';
+import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DetailDrawerShell } from '../../components/DrawerShell';
-import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
+import { DrawerFormField, DrawerFormGrid, DrawerFormShell } from '../../components/DrawerForm';
+import { FileSlot } from '../../components/FileSlot';
+import { FilterBar, FilterField, FilterPanel } from '../../components/FilterControls';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { CompactCell } from '../../components/TableCell';
+import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { TagChip } from '../../components/TagChip';
+import { useSalaryManagementState } from '../salary/SalaryManagementState';
+import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { CorporateIncomeTaxSourceTable } from './CorporateIncomeTaxSourceTable';
+import { CorporateIncomeTaxAnnualSourceReviewPanel } from './CorporateIncomeTaxAnnualSourceReviewPanel';
+import { DeclarationCheckResultCell } from './DeclarationCheckResultCell';
+import { buildCorporateIncomeTaxAccountingSources } from './financeCorporateIncomeTaxModel';
+import { getPreparationItemCheckResult } from './declarationCheckResultModel';
+import { buildCapitalBookStampDutySourcesFromLedger } from './financeStampDutyLedgerBridge';
 import { useFinanceManagement } from './FinanceManagementState';
+import { PayrollIitEmployeeDetailPanel } from './PayrollIitEmployeeDetailPanel';
+import { StampDutySourceDetailTable } from './StampDutySourceDetailTable';
+import { StampDutySourceDetailDrawer } from './StampDutySourceDetailDrawer';
+import { VatUnbilledIncomeDetailTable } from './VatUnbilledIncomeDetailTable';
 import {
   applyDeclarationPreparationSourceState,
-  buildConfirmedDeclarationPreparationItem,
-  canConfirmDeclarationPreparationItem,
-  declarationPreparationItemStatusTone,
   declarationPreparationStatusTone,
   getDeclarationPreparationAccountingPeriod,
-  getDeclarationPreparationSubsequentInvoiceCandidates,
   getDeclarationPreparationUnbilledIncomeCandidates,
   getDeclarationPreparationProgress,
   isDeclarationPreparationReady,
-  isDeclarationPreparationItemManuallyConfirmable,
-  type FinanceDeclarationUnbilledIncomeCandidate,
+  type FinanceCorporateIncomeTaxAnnualSourceReview,
   type FinanceDeclarationPreparationItem,
   type FinanceDeclarationPreparationRecord,
   type FinanceDeclarationPreparationStatus,
-  type FinanceDeclarationPreparationTaxType
+  type FinanceDeclarationPreparationTaxType,
+  type FinanceUnbilledIncomeExclusionReason
 } from './financeDeclarationPreparationData';
-import { financeToday, formatMoney, invoiceDeclarationStatusTone } from './financeUtils';
+import {
+  buildManualDocumentStampDutySource,
+  validateStampDutyDocumentAmounts,
+  type FinanceStampDutySourceRecord
+} from './financeStampDutyModel';
+import type {
+  CustomerContractAmountTaxMode
+} from '../customers/customerData';
+import { getActiveFinanceTaxPolicyProfile, type FinanceStampDutyTaxItem } from './financeTaxPolicyModel';
+import { financeToday, formatMoney } from './financeUtils';
 
 type FilterOptionValue = '全部';
 
 type DeclarationPreparationFilters = {
-  keyword: string;
   period: FilterOptionValue | string;
   status: FilterOptionValue | FinanceDeclarationPreparationStatus;
   taxType: FilterOptionValue | FinanceDeclarationPreparationTaxType;
 };
 
 const defaultFilters: DeclarationPreparationFilters = {
-  keyword: '',
   period: '全部',
   status: '全部',
   taxType: '全部'
 };
 
+type StampDutyDocumentForm = {
+  amount?: number;
+  amountTaxMode: CustomerContractAmountTaxMode;
+  counterparty: string;
+  counterpartyTaxId: string;
+  documentName: string;
+  documentNo: string;
+  files: RelatedFileRecord[];
+  signedAt: string;
+  taxItem: FinanceStampDutyTaxItem;
+  vatAmount?: number;
+};
+
+const defaultStampDutyDocumentForm: StampDutyDocumentForm = {
+  amount: undefined,
+  amountTaxMode: '价税分列',
+  counterparty: '',
+  counterpartyTaxId: '',
+  documentName: '',
+  documentNo: '',
+  files: [],
+  signedAt: financeToday,
+  taxItem: '买卖合同',
+  vatAmount: undefined
+};
+
 const declarationPreparationTaxTypeTone = {
+  个人所得税: 'purple',
   增值税及附加: 'green',
   企业所得税: 'amber',
   印花税: 'gray'
-} as const;
-
-const declarationPreparationHandlingTone = {
-  待准备结果确认: 'amber',
-  可进入税务办理: 'blue',
-  已进入税务办理: 'green',
-  未进入办理: 'gray',
-  待税务办理: 'blue',
-  已归档: 'green'
 } as const;
 
 function uniqueOptions<T extends string>(records: FinanceDeclarationPreparationRecord[], selector: (record: FinanceDeclarationPreparationRecord) => T) {
   return Array.from(new Set(records.map(selector)));
 }
 
-function getSearchText(record: FinanceDeclarationPreparationRecord) {
-  return [
-    record.preparationNo,
-    record.title,
-    record.period,
-    record.taxType,
-    record.status,
-    record.items.map((item) => `${item.title} ${item.type} ${item.status} ${item.sourceModule}`).join(' ')
-  ].join(' ');
-}
-
 function matchesFilters(record: FinanceDeclarationPreparationRecord, filters: DeclarationPreparationFilters) {
-  const keyword = filters.keyword.trim().toLowerCase();
-
   if (filters.period !== '全部' && record.period !== filters.period) {
     return false;
   }
@@ -106,13 +131,13 @@ function matchesFilters(record: FinanceDeclarationPreparationRecord, filters: De
     return false;
   }
 
-  return !keyword || getSearchText(record).toLowerCase().includes(keyword);
+  return true;
 }
 
 function getPreparationRowProgressText(record: FinanceDeclarationPreparationRecord) {
   const progress = getDeclarationPreparationProgress(record);
 
-  return `${progress.processedCount}/${progress.actionableCount} 项`;
+  return `${progress.totalCount - progress.pendingCount}/${progress.totalCount} 项`;
 }
 
 function formatPercent(value: number) {
@@ -124,14 +149,28 @@ function getCorporateIncomeTaxEligibilityText(summary: FinanceDeclarationPrepara
     return '-';
   }
 
-  return summary.smallLowProfitEligible ? '按小型微利口径预估' : '按普通企业口径';
+  return summary.smallLowProfitEligible ? '符合' : '不符合';
 }
 
 function getPreparationBasisCell(record: FinanceDeclarationPreparationRecord) {
+  if (record.taxType === '印花税') {
+    return {
+      primary: formatMoney(record.stampDutySummary?.taxableBasis ?? 0),
+      secondary: '计税依据'
+    };
+  }
+
+  if (record.taxType === '个人所得税') {
+    return {
+      primary: formatMoney(record.iitSummary?.currentIncomeAmount ?? 0),
+      secondary: '本月计税工资'
+    };
+  }
+
   if (record.taxType === '企业所得税') {
     return {
-      primary: formatMoney(record.citSummary?.profitBeforeTaxAmount ?? 0),
-      secondary: '利润总额'
+      primary: formatMoney(record.citSummary?.cumulativeProfitBeforeTaxAmount ?? 0),
+      secondary: record.declarationScenario === '年度汇算' ? '全年利润总额' : '本年累计利润'
     };
   }
 
@@ -141,43 +180,39 @@ function getPreparationBasisCell(record: FinanceDeclarationPreparationRecord) {
   };
 }
 
-function getPreparationSourceCell(record: FinanceDeclarationPreparationRecord) {
-  if (record.taxType === '企业所得税') {
-    return {
-      primary: formatMoney(record.citSummary?.operatingRevenueAmount ?? 0),
-      secondary: '经营收入'
-    };
-  }
-
-  return {
-    primary: formatMoney(record.vatSummary.outputBlueNetAmount),
-    secondary: `含税 ${formatMoney(record.vatSummary.outputBlueTaxIncludedAmount)}`
-  };
-}
-
-function getPreparationAdjustmentCell(record: FinanceDeclarationPreparationRecord) {
-  if (record.taxType === '企业所得税') {
-    const summary = record.citSummary;
-    const netAdjustmentAmount = (summary?.taxAdjustmentIncreaseAmount ?? 0) - (summary?.taxAdjustmentDecreaseAmount ?? 0);
-
-    return {
-      primary: formatMoney(netAdjustmentAmount),
-      secondary: `弥补亏损 ${formatMoney(summary?.priorLossDeductionAmount ?? 0)}`
-    };
-  }
-
-  return {
-    primary: formatMoney(record.vatSummary.redInvoiceNetAmount),
-    secondary: `未开票 ${formatMoney(record.vatSummary.unbilledIncomeNetAmount)}`
-  };
-}
-
 function getPreparationEstimatedTaxAmount(record: FinanceDeclarationPreparationRecord) {
+  if (record.taxType === '印花税') {
+    return record.stampDutySummary?.estimatedPayableAmount ?? 0;
+  }
+
+  if (record.taxType === '个人所得税') {
+    return record.iitSummary?.payableAmount ?? 0;
+  }
+
   if (record.taxType === '企业所得税') {
-    return record.citSummary?.estimatedCorporateIncomeTaxAmount ?? 0;
+    return (record.citSummary?.currentPeriodPayableAmount ?? 0) || (record.citSummary?.overpaidTaxAmount ?? 0);
   }
 
   return record.vatSummary.estimatedTotalTaxAmount;
+}
+
+function getPreparationScopeSummary(record: FinanceDeclarationPreparationRecord) {
+  if (record.taxType === '个人所得税') {
+    return { label: '申报人员', value: record.iitSummary?.participantSummary ?? '待生成' };
+  }
+
+  if (record.taxType === '印花税') {
+    return { label: '税源数量', value: `${record.stampDutySummary?.sourceCount ?? 0} 条` };
+  }
+
+  if (record.taxType === '企业所得税') {
+    return {
+      label: record.declarationScenario === '年度汇算' ? '全年利润总额' : '本年累计利润总额',
+      value: formatMoney(record.citSummary?.cumulativeProfitBeforeTaxAmount ?? 0)
+    };
+  }
+
+  return { label: '申报周期', value: record.vatSummary.filingCycle };
 }
 
 function getCorporateIncomeTaxNetAdjustmentAmount(summary: FinanceDeclarationPreparationRecord['citSummary']) {
@@ -185,114 +220,133 @@ function getCorporateIncomeTaxNetAdjustmentAmount(summary: FinanceDeclarationPre
 }
 
 function getPreparationResultItems(record: FinanceDeclarationPreparationRecord) {
+  if (record.taxType === '印花税') {
+    const summary = record.stampDutySummary;
+
+    return [
+      { label: '税源数量', value: `${summary?.sourceCount ?? 0} 条` },
+      { label: '计税依据', value: formatMoney(summary?.taxableBasis ?? 0) },
+      { label: '减免前税额', value: formatMoney(summary?.taxBeforeReduction ?? 0) },
+      { label: '六税两费减征', value: formatMoney(summary?.reductionAmount ?? 0) },
+      { label: '预计应纳税额', value: formatMoney(summary?.estimatedPayableAmount ?? 0) },
+      { label: '待处理税源', value: `${(summary?.pendingCount ?? 0) + (summary?.waitingSettlementCount ?? 0)} 条` }
+    ];
+  }
+
+  if (record.taxType === '个人所得税') {
+    const summary = record.iitSummary;
+
+    return [
+      { label: '申报人员', value: summary?.participantSummary ?? '待生成' },
+      { label: '本月计税工资', value: formatMoney(summary?.currentIncomeAmount ?? 0) },
+      { label: '基本减除费用', value: formatMoney(summary?.currentBasicDeductionAmount ?? 0) },
+      { label: '社保公积金个人部分', value: formatMoney(summary?.currentSpecialDeductionAmount ?? 0) },
+      { label: '专项附加扣除', value: formatMoney(summary?.currentAdditionalDeductionAmount ?? 0) },
+      { label: '其他依法扣除', value: formatMoney(summary?.currentOtherDeductionAmount ?? 0) },
+      { label: '本月应纳税所得额', value: formatMoney(summary?.currentTaxableIncomeAmount ?? 0) },
+      { label: '预计个税', value: formatMoney(summary?.payableAmount ?? 0) }
+    ];
+  }
+
   if (record.taxType === '企业所得税') {
     const summary = record.citSummary;
     const netAdjustmentAmount = getCorporateIncomeTaxNetAdjustmentAmount(summary);
 
+    const isAnnual = record.declarationScenario === '年度汇算';
     return [
-      { label: '申报期间', value: record.period },
-      { label: '准备状态', value: <StatusTag toneMap={declarationPreparationStatusTone} value={record.status} /> },
-      { label: '利润总额', value: formatMoney(summary?.profitBeforeTaxAmount ?? 0) },
-      { label: '纳税调整', value: formatMoney(netAdjustmentAmount) },
-      { label: '弥补亏损', value: formatMoney(summary?.priorLossDeductionAmount ?? 0) },
-      { label: '应纳税所得额', value: formatMoney(summary?.taxableIncomeAmount ?? 0) },
+      { label: '数据口径', value: summary?.reportingBasis ?? '-' },
+      { label: isAnnual ? '全年利润总额' : '本年累计利润总额', value: formatMoney(summary?.cumulativeProfitBeforeTaxAmount ?? 0) },
+      { label: isAnnual ? '年度纳税调整' : '累计纳税调整', value: formatMoney(netAdjustmentAmount) },
+      { label: '弥补以前年度亏损', value: formatMoney(summary?.priorLossDeductionAmount ?? 0) },
+      { label: isAnnual ? '年度应纳税所得额' : '累计实际利润额', value: formatMoney(summary?.cumulativeTaxableIncomeAmount ?? 0) },
       { label: '小型微利资格', value: getCorporateIncomeTaxEligibilityText(summary) },
-      { label: '有效预缴率', value: formatPercent(summary?.effectiveTaxRate ?? summary?.taxRate ?? 0) },
-      { label: '预计企业所得税', value: formatMoney(summary?.estimatedCorporateIncomeTaxAmount ?? 0) }
+      { label: '法定税额', value: formatMoney(summary?.statutoryIncomeTaxAmount ?? 0) },
+      { label: '减免所得税额', value: formatMoney(summary?.incomeTaxReliefAmount ?? 0) },
+      { label: '累计应纳所得税额', value: formatMoney(summary?.cumulativeIncomeTaxPayableAmount ?? 0) },
+      { label: '本年实际已缴', value: formatMoney(summary?.taxPaidYearToDateAmount ?? 0) },
+      { label: isAnnual ? '年度应补' : '本季应预缴', value: formatMoney(summary?.currentPeriodPayableAmount ?? 0) },
+      ...(isAnnual ? [{ label: '年度多缴', value: formatMoney(summary?.overpaidTaxAmount ?? 0) }] : []),
+      { label: '优惠后有效税率', value: formatPercent(summary?.effectiveTaxRate ?? 0) }
     ];
   }
 
   return [
-    { label: '申报期间', value: record.period },
-    { label: '准备状态', value: <StatusTag toneMap={declarationPreparationStatusTone} value={record.status} /> },
-    { label: '销项蓝票不含税', value: formatMoney(record.vatSummary.outputBlueNetAmount) },
-    { label: '销项蓝票含税', value: formatMoney(record.vatSummary.outputBlueTaxIncludedAmount) },
-    { label: '红票冲减', value: formatMoney(record.vatSummary.redInvoiceNetAmount) },
-    { label: '未开票收入', value: formatMoney(record.vatSummary.unbilledIncomeNetAmount) },
-    { label: '前期未开票冲抵', value: formatMoney(record.vatSummary.priorUnbilledOffsetNetAmount) },
     { label: '申报销售额', value: formatMoney(record.vatSummary.declaredNetSalesAmount) },
-    { label: '免税阈值', value: formatMoney(record.vatSummary.quarterlyExemptionThreshold) },
+    { label: '计税结果', value: record.vatSummary.taxOutcome },
+    { label: '适用征收率', value: record.vatSummary.appliedTaxRate },
+    { label: '应缴增值税', value: formatMoney(record.vatSummary.estimatedVatAfterExemption) },
     {
-      label: '免税判断',
-      value: record.vatSummary.isBelowQuarterlyExemptionThreshold ? '季度30万以下' : '超过季度30万'
+      label: '城市维护建设税',
+      value: formatMoney(record.vatSummary.surchargeBreakdown.urbanMaintenanceTaxAfterReduction)
     },
-    { label: '预计增值税', value: formatMoney(record.vatSummary.estimatedVatAfterExemption) },
-    { label: '预计附加税', value: formatMoney(record.vatSummary.estimatedSurcharge) },
-    { label: '预计税费', value: formatMoney(record.vatSummary.estimatedTotalTaxAmount) }
+    {
+      label: '教育费附加',
+      value: formatMoney(record.vatSummary.surchargeBreakdown.educationSurchargeAfterReduction)
+    },
+    {
+      label: '地方教育附加',
+      value: formatMoney(record.vatSummary.surchargeBreakdown.localEducationSurchargeAfterReduction)
+    },
+    { label: '附加税减征', value: formatMoney(record.vatSummary.surchargeBreakdown.reductionAmount) },
+    { label: '本次应缴合计', value: formatMoney(record.vatSummary.estimatedTotalTaxAmount) }
   ];
 }
 
-function getPreparationItemActionLabel(item: FinanceDeclarationPreparationItem) {
-  const labelMap: Partial<Record<FinanceDeclarationPreparationItem['type'], string>> = {
-    前期未开票后续开票: '确认冲抵',
-    申报口径确认: '确认申报口径',
-    纳税调整确认: '确认调整',
-    优惠资格确认: '确认资格',
-    预缴口径确认: '确认预缴口径'
-  };
-
-  return labelMap[item.type] ?? '确认';
-}
-
-function getPreparationItemBlockedLabel(item: FinanceDeclarationPreparationItem) {
-  if (item.type === '申报口径确认' || item.type === '预缴口径确认') {
-    return '先确认前置项';
-  }
-
-  return '待前置处理';
+function getVatDeclarationLineItems(record: FinanceDeclarationPreparationRecord) {
+  return [
+    { label: '增值税专用发票', value: formatMoney(record.vatSummary.specialInvoiceSalesAmount) },
+    { label: '其他发票及未开票', value: formatMoney(record.vatSummary.otherInvoiceAndUnbilledSalesAmount) },
+    { label: '货物及劳务', value: formatMoney(record.vatSummary.goodsLaborSalesAmount) },
+    { label: '服务、不动产和无形资产', value: formatMoney(record.vatSummary.serviceSalesAmount) },
+    { label: '红票冲减', value: formatMoney(record.vatSummary.redInvoiceNetAmount) },
+    { label: '前期未开票冲抵', value: formatMoney(record.vatSummary.priorUnbilledOffsetNetAmount) },
+    { label: '免税销售额', value: formatMoney(record.vatSummary.exemptSalesAmount) },
+    { label: '减按 1% 销售额', value: formatMoney(record.vatSummary.reducedRateSalesAmount) },
+    { label: '法定征收率销售额', value: formatMoney(record.vatSummary.legalRateSalesAmount) },
+    { label: '季度免税限额', value: formatMoney(record.vatSummary.exemptionThreshold) },
+    {
+      label: '限额判断',
+      value: record.vatSummary.isBelowExemptionThreshold ? '未超过限额' : '超过限额'
+    },
+    { label: '附加税计税依据', value: formatMoney(record.vatSummary.estimatedVatAfterExemption) }
+  ];
 }
 
 function getVisiblePreparationItems(record: FinanceDeclarationPreparationRecord) {
-  if (record.taxType !== '企业所得税') {
-    return record.items;
+  if (record.taxType === '企业所得税') {
+    return record.items.filter((item) => item.type !== '利润数据同步');
   }
 
-  return record.items.filter((item) => item.type !== '利润数据确认');
+  if (record.taxType === '增值税及附加') {
+    return record.items.filter((item) => item.type !== '申报测算');
+  }
+
+  return record.items;
 }
 
-function getDeclarationHandlingStatus(record: FinanceDeclarationPreparationRecord) {
-  if (record.status === '已进入税务办理') {
-    return '已进入税务办理';
+function formatPreparationItemValue(item: FinanceDeclarationPreparationItem) {
+  if (item.type === '季度账务完整性检查') {
+    return item.amount > 0 ? `${item.amount.toLocaleString('zh-CN')} 张` : '无待记账';
   }
 
-  if (record.status === '可申报') {
-    return '可进入税务办理';
+  if (item.type === '历史申报连续性检查') {
+    return item.amount > 0 ? `${item.amount.toLocaleString('zh-CN')} 个季度` : '申报连续';
   }
 
-  return '待准备结果确认';
+  if (
+    item.type === '年度结账检查'
+    || item.type === '年度报表检查'
+    || item.type === '第四季度预缴检查'
+    || item.type === '优惠资格判定'
+  ) {
+    return '-';
+  }
+
+  return formatMoney(item.amount);
 }
 
-function getDeclarationReceiptStatus(record: FinanceDeclarationPreparationRecord) {
-  if (record.status === '已进入税务办理') {
-    return '已归档';
-  }
-
-  if (record.status === '可申报') {
-    return '待税务办理';
-  }
-
-  return '未进入办理';
-}
-
-function getPreparationHandlingItems(record: FinanceDeclarationPreparationRecord) {
-  return [
-    {
-      label: '申报周期',
-      value: record.periodType === '季度' ? `${record.period} 季度` : record.period
-    },
-    {
-      label: '内部准备',
-      value: <StatusTag toneMap={declarationPreparationStatusTone} value={record.status} />
-    },
-    {
-      label: '外部办理',
-      value: <StatusTag toneMap={declarationPreparationHandlingTone} value={getDeclarationHandlingStatus(record)} />
-    },
-    {
-      label: '回执归档',
-      value: <StatusTag toneMap={declarationPreparationHandlingTone} value={getDeclarationReceiptStatus(record)} />
-    }
-  ];
+function getPreparationBlockingItems(record: FinanceDeclarationPreparationRecord) {
+  return getVisiblePreparationItems(record).filter((item) => item.status === '待确认');
 }
 
 function DrawerTitle({ record }: { record: FinanceDeclarationPreparationRecord }) {
@@ -300,7 +354,7 @@ function DrawerTitle({ record }: { record: FinanceDeclarationPreparationRecord }
     <DetailDrawerTitle
       status={record.status}
       statusToneMap={declarationPreparationStatusTone}
-      subtitle={`${record.preparationNo} / ${record.period}`}
+      subtitle={record.preparationNo}
       title={record.title}
     />
   );
@@ -309,20 +363,60 @@ function DrawerTitle({ record }: { record: FinanceDeclarationPreparationRecord }
 export function FinanceDeclarationPreparationPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const {
+    accountingPeriodLocks,
+    accountingVoucherRows,
+    addManualStampDutySource,
     declarationPreparationRows,
     financeRows,
     getAccountingPeriodGuard,
+    invoiceBusinessAllocationRows,
     invoiceRows,
-    updateDeclarationPreparationRecord,
-    updateFinanceTransactionsByNo
+    manualStampDutySourceRows,
+    receivablePayableRows,
+    saveStampDutySourceResolution,
+    stampDutySourceResolutionRows,
+    taxMatterRows,
+    updateDeclarationPreparationRecord
   } = useFinanceManagement();
+  const { contractRows, customerRows } = useCustomerManagementState();
+  const { peopleRows } = usePeopleOrganizationState();
+  const { salaryPaymentRecords } = useSalaryManagementState();
   const [filters, setFilters] = useState<DeclarationPreparationFilters>(defaultFilters);
   const [activeRecordId, setActiveRecordId] = useState<string>();
-  const [unbilledDrawerRecordId, setUnbilledDrawerRecordId] = useState<string>();
-  const [selectedUnbilledTransactionNos, setSelectedUnbilledTransactionNos] = useState<string[]>([]);
+  const [stampDutyDocumentForm, setStampDutyDocumentForm] = useState<StampDutyDocumentForm>(defaultStampDutyDocumentForm);
+  const [stampDutyDocumentDrawerOpen, setStampDutyDocumentDrawerOpen] = useState(false);
+  const [activeStampDutySource, setActiveStampDutySource] = useState<FinanceStampDutySourceRecord>();
+  const corporateIncomeTaxAccountingSources = useMemo(
+    () => buildCorporateIncomeTaxAccountingSources(
+      declarationPreparationRows,
+      peopleRows,
+      accountingVoucherRows,
+      accountingPeriodLocks
+    ),
+    [accountingPeriodLocks, accountingVoucherRows, declarationPreparationRows, peopleRows]
+  );
+  const capitalBookStampDutySources = useMemo(
+    () => buildCapitalBookStampDutySourcesFromLedger(declarationPreparationRows, accountingVoucherRows),
+    [accountingVoucherRows, declarationPreparationRows]
+  );
   const displayDeclarationPreparationRows = useMemo(
-    () => applyDeclarationPreparationSourceState(declarationPreparationRows, invoiceRows, financeRows),
-    [declarationPreparationRows, financeRows, invoiceRows]
+    () => applyDeclarationPreparationSourceState(
+      declarationPreparationRows,
+      invoiceRows,
+      financeRows,
+      receivablePayableRows,
+      invoiceBusinessAllocationRows,
+      taxMatterRows,
+      salaryPaymentRecords,
+      corporateIncomeTaxAccountingSources,
+      accountingPeriodLocks,
+      contractRows,
+      customerRows,
+      manualStampDutySourceRows,
+      stampDutySourceResolutionRows,
+      capitalBookStampDutySources
+    ),
+    [accountingPeriodLocks, capitalBookStampDutySources, contractRows, corporateIncomeTaxAccountingSources, customerRows, declarationPreparationRows, financeRows, invoiceBusinessAllocationRows, invoiceRows, manualStampDutySourceRows, receivablePayableRows, salaryPaymentRecords, stampDutySourceResolutionRows, taxMatterRows]
   );
 
   const filteredRows = useMemo(
@@ -333,23 +427,13 @@ export function FinanceDeclarationPreparationPage() {
     () => displayDeclarationPreparationRows.find((record) => record.id === activeRecordId),
     [activeRecordId, displayDeclarationPreparationRows]
   );
-  const unbilledDrawerRecord = useMemo(
-    () => displayDeclarationPreparationRows.find((record) => record.id === unbilledDrawerRecordId),
-    [displayDeclarationPreparationRows, unbilledDrawerRecordId]
-  );
-  const unbilledIncomeCandidates = useMemo(
+  const activeUnbilledIncomeCandidates = useMemo(
     () =>
-      unbilledDrawerRecord
-        ? getDeclarationPreparationUnbilledIncomeCandidates(unbilledDrawerRecord, invoiceRows, financeRows)
+      activeRecord?.taxType === '增值税及附加'
+        ? getDeclarationPreparationUnbilledIncomeCandidates(activeRecord, invoiceRows, receivablePayableRows, invoiceBusinessAllocationRows)
         : [],
-    [financeRows, invoiceRows, unbilledDrawerRecord]
+    [activeRecord, invoiceBusinessAllocationRows, invoiceRows, receivablePayableRows]
   );
-  const selectedUnbilledRows = useMemo(() => {
-    const selectedSet = new Set(selectedUnbilledTransactionNos);
-
-    return unbilledIncomeCandidates.filter((candidate) => selectedSet.has(candidate.record.transactionNo));
-  }, [selectedUnbilledTransactionNos, unbilledIncomeCandidates]);
-  const selectedUnbilledAmount = selectedUnbilledRows.reduce((total, candidate) => total + candidate.netAmount, 0);
   const periodOptions = ['全部', ...uniqueOptions(displayDeclarationPreparationRows, (record) => record.period)];
   const taxTypeOptions = ['全部', ...uniqueOptions(displayDeclarationPreparationRows, (record) => record.taxType)];
   const statusOptions = ['全部', ...uniqueOptions(displayDeclarationPreparationRows, (record) => record.status)];
@@ -369,289 +453,193 @@ export function FinanceDeclarationPreparationPage() {
     activeRecordPeriodGuard && !activeRecordPeriodGuard.allowed
       ? `${activeRecordPeriodGuard.reason} 当前申报准备仅用于回看，不再调整申报口径。`
       : undefined;
-  const unbilledDrawerAccountingPeriod = unbilledDrawerRecord
-    ? getDeclarationPreparationAccountingPeriod(unbilledDrawerRecord.period)
-    : undefined;
-  const unbilledDrawerPeriodGuard = unbilledDrawerRecord
-    ? getAccountingPeriodGuard(unbilledDrawerAccountingPeriod, '调整未开票收入申报口径')
-    : undefined;
-  const unbilledDrawerReadbackNotice =
-    unbilledDrawerPeriodGuard && !unbilledDrawerPeriodGuard.allowed
-      ? `${unbilledDrawerPeriodGuard.reason} 当前未开票收入确认仅用于回看。`
-      : undefined;
 
   function updatePreparation(recordId: string, updater: (record: FinanceDeclarationPreparationRecord) => FinanceDeclarationPreparationRecord) {
     return updateDeclarationPreparationRecord(recordId, updater);
   }
 
-  function handleProcessItem(record: FinanceDeclarationPreparationRecord, item: FinanceDeclarationPreparationItem) {
-    const periodGuard = getAccountingPeriodGuard(getDeclarationPreparationAccountingPeriod(record.period), '确认申报准备项');
-
-    if (!periodGuard.allowed) {
-      void messageApi.warning(periodGuard.reason);
+  function handleUnbilledIncomeInclusionChange(businessRecordId: string, included: boolean) {
+    if (!activeRecord || activeRecord.status !== '准备中' || activeRecordReadbackNotice) {
       return;
     }
 
-    if (item.type === '前期未开票后续开票') {
-      const candidates = getDeclarationPreparationSubsequentInvoiceCandidates(record, invoiceRows, financeRows);
-      const transactionNos = Array.from(new Set(candidates.map((candidate) => candidate.record.transactionNo)));
+    updatePreparation(activeRecord.id, (currentRecord) => {
+      const currentExclusions = currentRecord.unbilledIncomeExclusions ?? [];
 
-      const transactionsUpdated = updateFinanceTransactionsByNo(transactionNos, (financeRecord) => ({
-        ...financeRecord,
-        invoiceDeclarationStatus: '后续开票已处理',
-        operationRecords: [
-          ...financeRecord.operationRecords,
-          {
-            action: '确认后续开票',
-            actor: '李明',
-            id: `fin-op-subsequent-invoice-${financeRecord.transactionNo}-${Date.now()}`,
-            object: financeRecord.transactionNo,
-            summary: `${financeRecord.transactionNo} 的前期未开票收入后续开票已处理`,
-            time: `${financeToday} 14:25`
-          }
-        ],
-        updatedAt: `${financeToday} 14:25`
-      }));
+      if (included) {
+        const exclusion = currentExclusions.find((item) => item.businessRecordId === businessRecordId);
 
-      if (!transactionsUpdated) {
-        void messageApi.warning('当前会计期间已锁定，不能确认后续开票');
-        return;
+        return {
+          ...currentRecord,
+          operationRecords: exclusion?.reason
+            ? [{
+                action: '恢复系统纳入',
+                actor: '李明',
+                id: `declaration-prep-op-unbilled-include-${Date.now()}`,
+                object: currentRecord.preparationNo,
+                summary: `${businessRecordId} 恢复纳入本期未开票收入`,
+                time: `${financeToday} 15:00`
+              }, ...currentRecord.operationRecords]
+            : currentRecord.operationRecords,
+          status: '准备中',
+          unbilledIncomeExclusions: currentExclusions.filter((item) => item.businessRecordId !== businessRecordId),
+          updatedAt: financeToday
+        };
       }
-    }
 
-    if (!updatePreparation(record.id, (currentRecord) => ({
-      ...currentRecord,
-      items: record.items.map((currentItem) =>
-        currentItem.id === item.id ? buildConfirmedDeclarationPreparationItem(currentItem) : currentItem
-      ),
-      operationRecords: [
-        {
-          action: '确认准备项',
-          actor: '李明',
-          id: `declaration-prep-op-item-${Date.now()}`,
-          object: currentRecord.preparationNo,
-          summary: `${item.title} 已确认`,
-          time: `${financeToday} 14:20`
-        },
-        ...currentRecord.operationRecords
-      ],
-      updatedAt: financeToday
-    }))) {
-      void messageApi.warning('当前申报准备项不可调整');
-      return;
-    }
-
-    void messageApi.success('已确认准备项');
-  }
-
-  function handleOpenUnbilledIncomeDrawer(record: FinanceDeclarationPreparationRecord) {
-    setSelectedUnbilledTransactionNos(record.unbilledIncomeTransactionNos ?? []);
-    setUnbilledDrawerRecordId(record.id);
-  }
-
-  function handleConfirmUnbilledIncome() {
-    if (!unbilledDrawerRecord) {
-      return;
-    }
-
-    const periodGuard = getAccountingPeriodGuard(
-      getDeclarationPreparationAccountingPeriod(unbilledDrawerRecord.period),
-      '确认未开票收入申报口径'
-    );
-
-    if (!periodGuard.allowed) {
-      void messageApi.warning(periodGuard.reason);
-      return;
-    }
-
-    if (selectedUnbilledRows.length === 0) {
-      void messageApi.warning('请选择需要计入本期的未开票收入流水');
-      return;
-    }
-
-    const selectedTransactionNos = selectedUnbilledRows.map((candidate) => candidate.record.transactionNo);
-    const selectedTransactionNoSet = new Set(selectedTransactionNos);
-    const previousTransactionNos = unbilledDrawerRecord.unbilledIncomeTransactionNos ?? [];
-    const previousDeferredTransactionNos = unbilledDrawerRecord.deferredUnbilledIncomeTransactionNos ?? [];
-    const nextDeferredTransactionNos = previousDeferredTransactionNos.filter(
-      (transactionNo) => !selectedTransactionNoSet.has(transactionNo)
-    );
-    const nextDeferredTransactionNoSet = new Set(nextDeferredTransactionNos);
-    const affectedTransactionNos = Array.from(new Set([...previousTransactionNos, ...previousDeferredTransactionNos, ...selectedTransactionNos]));
-
-    const transactionsUpdated = updateFinanceTransactionsByNo(affectedTransactionNos, (record) => {
-      const isSelected = selectedTransactionNoSet.has(record.transactionNo);
-      const isDeferred = nextDeferredTransactionNoSet.has(record.transactionNo);
-      const belongsToCurrentPreparation = record.invoiceDeclarationPreparationNo === unbilledDrawerRecord.preparationNo;
-
-      if (!isSelected && !isDeferred && !belongsToCurrentPreparation) {
-        return record;
+      if (currentExclusions.some((item) => item.businessRecordId === businessRecordId)) {
+        return currentRecord;
       }
 
       return {
-        ...record,
-        invoiceDeclarationPeriod: isSelected || isDeferred ? unbilledDrawerRecord.period : undefined,
-        invoiceDeclarationPreparationNo: isSelected || isDeferred ? unbilledDrawerRecord.preparationNo : undefined,
-        invoiceDeclarationStatus: isSelected ? '未开票已申报' : isDeferred ? '本期暂不计入' : undefined,
-        operationRecords: [
-          ...record.operationRecords,
+        ...currentRecord,
+        status: '准备中',
+        unbilledIncomeExclusions: [
+          ...currentExclusions,
           {
-            action: isSelected ? '确认未开票申报' : isDeferred ? '确认本期暂不计入' : '取消未开票申报',
-            actor: '李明',
-            id: `fin-op-unbilled-declare-${record.transactionNo}-${Date.now()}`,
-            object: record.transactionNo,
-            summary: isSelected
-              ? `${record.transactionNo} 已计入 ${unbilledDrawerRecord.period} 未开票收入`
-              : isDeferred
-                ? `${record.transactionNo} 本期暂不计入未开票收入`
-              : `${record.transactionNo} 从 ${unbilledDrawerRecord.period} 未开票收入中移除`,
-            time: `${financeToday} 14:30`
+            businessRecordId,
+            excludedAt: `${financeToday} 15:00`,
+            excludedBy: '李明'
           }
         ],
-        updatedAt: `${financeToday} 14:30`
+        updatedAt: financeToday
       };
     });
-
-    if (!transactionsUpdated) {
-      void messageApi.warning('当前会计期间已锁定，不能确认未开票收入申报口径');
-      return;
-    }
-
-    if (!updatePreparation(unbilledDrawerRecord.id, (currentRecord) => ({
-      ...currentRecord,
-      items: unbilledDrawerRecord.items.map((currentItem) =>
-        currentItem.type === '未开票收入确认'
-          ? {
-              ...buildConfirmedDeclarationPreparationItem({
-                ...currentItem,
-                amount: selectedUnbilledAmount
-              }),
-              result: `${selectedUnbilledRows.length} 条未开票收入已计入本期`
-            }
-          : currentItem
-      ),
-      operationRecords: [
-        {
-          action: '确认未开票收入',
-          actor: '李明',
-          id: `declaration-prep-op-unbilled-${Date.now()}`,
-          object: currentRecord.preparationNo,
-          summary: `${selectedUnbilledRows.length} 条流水计入 ${currentRecord.period} 未开票收入，金额 ${formatMoney(selectedUnbilledAmount)}`,
-          time: `${financeToday} 14:30`
-        },
-        ...currentRecord.operationRecords
-      ],
-      deferredUnbilledIncomeTransactionNos: nextDeferredTransactionNos,
-      unbilledIncomeTransactionNos: selectedTransactionNos,
-      updatedAt: financeToday
-    }))) {
-      void messageApi.warning('当前未开票收入申报口径不可调整');
-      return;
-    }
-
-    setUnbilledDrawerRecordId(undefined);
-    setSelectedUnbilledTransactionNos([]);
-    void messageApi.success('未开票收入已确认');
   }
 
-  function handleDeferUnbilledIncome() {
-    if (!unbilledDrawerRecord) {
+  function handleUnbilledIncomeReasonChange(
+    businessRecordId: string,
+    reason: FinanceUnbilledIncomeExclusionReason
+  ) {
+    if (!activeRecord || activeRecord.status !== '准备中' || activeRecordReadbackNotice) {
       return;
     }
 
-    const periodGuard = getAccountingPeriodGuard(
-      getDeclarationPreparationAccountingPeriod(unbilledDrawerRecord.period),
-      '确认未开票收入申报口径'
-    );
+    updatePreparation(activeRecord.id, (currentRecord) => {
+      const currentExclusions = currentRecord.unbilledIncomeExclusions ?? [];
+      const previousExclusion = currentExclusions.find((item) => item.businessRecordId === businessRecordId);
 
-    if (!periodGuard.allowed) {
-      void messageApi.warning(periodGuard.reason);
-      return;
-    }
-
-    if (selectedUnbilledRows.length === 0) {
-      void messageApi.warning('请选择本期暂不计入的未开票收入流水');
-      return;
-    }
-
-    const selectedTransactionNos = selectedUnbilledRows.map((candidate) => candidate.record.transactionNo);
-    const selectedTransactionNoSet = new Set(selectedTransactionNos);
-    const previousIncludedTransactionNos = unbilledDrawerRecord.unbilledIncomeTransactionNos ?? [];
-    const previousDeferredTransactionNos = unbilledDrawerRecord.deferredUnbilledIncomeTransactionNos ?? [];
-    const nextIncludedTransactionNos = previousIncludedTransactionNos.filter(
-      (transactionNo) => !selectedTransactionNoSet.has(transactionNo)
-    );
-    const nextDeferredTransactionNos = Array.from(new Set([...previousDeferredTransactionNos, ...selectedTransactionNos]));
-    const includedTransactionNoSet = new Set(nextIncludedTransactionNos);
-    const deferredTransactionNoSet = new Set(nextDeferredTransactionNos);
-    const affectedTransactionNos = Array.from(new Set([...previousIncludedTransactionNos, ...previousDeferredTransactionNos, ...selectedTransactionNos]));
-    const nextIncludedRows = unbilledIncomeCandidates.filter((candidate) => includedTransactionNoSet.has(candidate.record.transactionNo));
-    const nextIncludedAmount = nextIncludedRows.reduce((total, candidate) => total + candidate.netAmount, 0);
-
-    const transactionsUpdated = updateFinanceTransactionsByNo(affectedTransactionNos, (record) => {
-      const isIncluded = includedTransactionNoSet.has(record.transactionNo);
-      const isDeferred = deferredTransactionNoSet.has(record.transactionNo);
+      if (previousExclusion?.reason === reason) {
+        return currentRecord;
+      }
 
       return {
-        ...record,
-        invoiceDeclarationPeriod: isIncluded || isDeferred ? unbilledDrawerRecord.period : undefined,
-        invoiceDeclarationPreparationNo: isIncluded || isDeferred ? unbilledDrawerRecord.preparationNo : undefined,
-        invoiceDeclarationStatus: isIncluded ? '未开票已申报' : isDeferred ? '本期暂不计入' : undefined,
-        operationRecords: [
-          ...record.operationRecords,
+        ...currentRecord,
+        operationRecords: [{
+          action: '排除未开票事项',
+          actor: '李明',
+          id: `declaration-prep-op-unbilled-exclude-${Date.now()}`,
+          object: currentRecord.preparationNo,
+          summary: `${businessRecordId} 排除原因：${reason}`,
+          time: `${financeToday} 15:00`
+        }, ...currentRecord.operationRecords],
+        status: '准备中',
+        unbilledIncomeExclusions: [
+          ...currentExclusions.filter((item) => item.businessRecordId !== businessRecordId),
           {
-            action: isIncluded ? '确认未开票申报' : isDeferred ? '确认本期暂不计入' : '取消未开票申报',
-            actor: '李明',
-            id: `fin-op-unbilled-defer-${record.transactionNo}-${Date.now()}`,
-            object: record.transactionNo,
-            summary: isDeferred ? `${record.transactionNo} 本期暂不计入未开票收入` : `${record.transactionNo} 更新未开票收入申报口径`,
-            time: `${financeToday} 14:35`
+            businessRecordId,
+            excludedAt: `${financeToday} 15:00`,
+            excludedBy: '李明',
+            reason
           }
         ],
-        updatedAt: `${financeToday} 14:35`
+        updatedAt: financeToday
       };
     });
+  }
 
-    if (!transactionsUpdated) {
-      void messageApi.warning('当前会计期间已锁定，不能确认未开票收入申报口径');
+  function updateStampDutyDocumentForm(patch: Partial<StampDutyDocumentForm>) {
+    setStampDutyDocumentForm((current) => ({ ...current, ...patch }));
+  }
+
+  function openStampDutyDocumentDrawer() {
+    setStampDutyDocumentForm(defaultStampDutyDocumentForm);
+    setStampDutyDocumentDrawerOpen(true);
+  }
+
+  function closeStampDutyDocumentDrawer() {
+    setStampDutyDocumentDrawerOpen(false);
+  }
+
+  function addStampDutyDocumentFile(file: UploadFile) {
+    setStampDutyDocumentForm((current) => ({
+      ...current,
+      files: [
+        ...current.files.filter((currentFile) => currentFile.name !== file.name),
+        {
+          id: String(file.uid),
+          name: file.name,
+          status: '已选择',
+          type: '应税凭证',
+          updatedAt: financeToday
+        }
+      ]
+    }));
+  }
+
+  function saveStampDutyDocument() {
+    const source = buildManualDocumentStampDutySource({
+      amountTaxMode: stampDutyDocumentForm.amountTaxMode,
+      counterparty: stampDutyDocumentForm.counterparty,
+      counterpartyTaxId: stampDutyDocumentForm.counterpartyTaxId,
+      documentName: stampDutyDocumentForm.documentName,
+      documentNo: stampDutyDocumentForm.documentNo || undefined,
+      evidenceFiles: stampDutyDocumentForm.files,
+      id: `manual-${Date.now()}`,
+      signedAt: stampDutyDocumentForm.signedAt,
+      sourceNo: `STAMP-MANUAL-${Date.now()}`,
+      sourceVersion: 'V1.0',
+      statedAmount: stampDutyDocumentForm.amount,
+      statedVatAmount: stampDutyDocumentForm.amountTaxMode === '价税分列' ? stampDutyDocumentForm.vatAmount : undefined,
+      taxItem: stampDutyDocumentForm.taxItem
+    });
+
+    if (!addManualStampDutySource(source)) {
+      void messageApi.warning('该应税凭证无法补录，请检查重复来源或期间状态');
       return;
     }
 
-    if (!updatePreparation(unbilledDrawerRecord.id, (currentRecord) => ({
+    closeStampDutyDocumentDrawer();
+    void messageApi.success('应税凭证已补录');
+  }
+
+  function saveStampDutyResolution(resolution: Parameters<typeof saveStampDutySourceResolution>[0]) {
+    if (!saveStampDutySourceResolution(resolution)) {
+      void messageApi.warning('当前期间已锁定，无法修改税源处理结果');
+      return;
+    }
+
+    setActiveStampDutySource(undefined);
+    void messageApi.success('印花税税源处理结果已保存');
+  }
+
+  function saveCorporateIncomeTaxAnnualSourceReview(review: FinanceCorporateIncomeTaxAnnualSourceReview) {
+    if (!activeRecord || activeRecord.declarationScenario !== '年度汇算' || activeRecord.status !== '准备中') {
+      return;
+    }
+
+    if (!updatePreparation(activeRecord.id, (currentRecord) => ({
       ...currentRecord,
-      deferredUnbilledIncomeTransactionNos: nextDeferredTransactionNos,
-      items: unbilledDrawerRecord.items.map((currentItem) =>
-        currentItem.type === '未开票收入确认'
-          ? {
-              ...buildConfirmedDeclarationPreparationItem({
-                ...currentItem,
-                amount: nextIncludedAmount
-              }),
-              result: `${nextIncludedRows.length} 条计入本期，${nextDeferredTransactionNos.length} 条本期暂不计入`
-            }
-          : currentItem
-      ),
+      citAnnualSourceReview: review,
       operationRecords: [
         {
-          action: '确认本期暂不计入',
+          action: '核对年度税务资料',
           actor: '李明',
-          id: `declaration-prep-op-unbilled-defer-${Date.now()}`,
+          id: `declaration-prep-op-cit-annual-source-${Date.now()}`,
           object: currentRecord.preparationNo,
-          summary: `${selectedUnbilledRows.length} 条流水本期暂不计入未开票收入`,
-          time: `${financeToday} 14:35`
+          summary: `已核对 ${review.adjustments.length} 项纳税调整及以前年度亏损`,
+          time: `${financeToday} 15:00`
         },
         ...currentRecord.operationRecords
       ],
-      unbilledIncomeTransactionNos: nextIncludedTransactionNos,
+      status: '准备中',
       updatedAt: financeToday
     }))) {
-      void messageApi.warning('当前未开票收入申报口径不可调整');
+      void messageApi.warning('当前年度汇算资料不可调整');
       return;
     }
 
-    setUnbilledDrawerRecordId(undefined);
-    setSelectedUnbilledTransactionNos([]);
-    void messageApi.success('已标记本期暂不计入');
+    void messageApi.success('年度税务资料已保存');
   }
 
   function handleConfirmPreparation(record: FinanceDeclarationPreparationRecord) {
@@ -671,18 +659,35 @@ export function FinanceDeclarationPreparationPage() {
       ...currentRecord,
       confirmedSourceSnapshotKey: record.sourceSnapshotKey,
       confirmedCitSummary: record.taxType === '企业所得税' ? record.citSummary : currentRecord.confirmedCitSummary,
+      confirmedCitAnnualSettlement: record.declarationScenario === '年度汇算' ? record.citAnnualSettlement : currentRecord.confirmedCitAnnualSettlement,
+      confirmedCitAnnualSourceReview: record.declarationScenario === '年度汇算' ? record.citAnnualSourceReview : currentRecord.confirmedCitAnnualSourceReview,
+      confirmedIitEmployeeRows: record.taxType === '个人所得税' ? record.iitEmployeeRows : currentRecord.confirmedIitEmployeeRows,
+      confirmedIitSummary: record.taxType === '个人所得税' ? record.iitSummary : currentRecord.confirmedIitSummary,
+      confirmedUnbilledIncomeDeclarations:
+        record.taxType === '增值税及附加'
+          ? record.unbilledIncomeDeclarations
+          : currentRecord.confirmedUnbilledIncomeDeclarations,
       confirmedVatSummary: record.taxType === '增值税及附加' ? record.vatSummary : currentRecord.confirmedVatSummary,
+      confirmedStampDutySources: record.taxType === '印花税' ? record.stampDutySources : currentRecord.confirmedStampDutySources,
+      confirmedStampDutySummary: record.taxType === '印花税' ? record.stampDutySummary : currentRecord.confirmedStampDutySummary,
       citSummary: record.citSummary ?? currentRecord.citSummary,
+      iitEmployeeRows: record.iitEmployeeRows ?? currentRecord.iitEmployeeRows,
+      iitSummary: record.iitSummary ?? currentRecord.iitSummary,
       items: record.items,
+      stampDutySources: record.stampDutySources ?? currentRecord.stampDutySources,
+      stampDutySummary: record.stampDutySummary ?? currentRecord.stampDutySummary,
       status: '可申报',
       vatSummary: record.vatSummary,
       operationRecords: [
         {
-          action: '确认准备结果',
+          action: record.taxType === '个人所得税' ? '确认申报数据' : '确认准备结果',
           actor: '李明',
           id: `declaration-prep-op-confirm-${Date.now()}`,
           object: currentRecord.preparationNo,
-          summary: `${currentRecord.period} ${currentRecord.taxType} 准备结果已确认`,
+          summary:
+            record.taxType === '个人所得税'
+              ? `${currentRecord.period} 个人所得税申报数据已确认`
+              : `${currentRecord.period} ${currentRecord.taxType} 准备结果已确认`,
           time: `${financeToday} 15:00`
         },
         ...currentRecord.operationRecords
@@ -693,7 +698,7 @@ export function FinanceDeclarationPreparationPage() {
       return;
     }
 
-    void messageApi.success('准备结果已确认');
+    void messageApi.success(record.taxType === '个人所得税' ? '申报数据已确认' : '准备结果已确认');
   }
 
   const columns: TableColumnsType<FinanceDeclarationPreparationRecord> = [
@@ -719,6 +724,11 @@ export function FinanceDeclarationPreparationPage() {
       width: 136
     },
     {
+      dataIndex: 'declarationScenario',
+      title: '申报类型',
+      width: 112
+    },
+    {
       key: 'basis',
       render: (_, record) => {
         const cell = getPreparationBasisCell(record);
@@ -727,26 +737,6 @@ export function FinanceDeclarationPreparationPage() {
       },
       title: '申报基础',
       width: 136
-    },
-    {
-      key: 'sourceAmount',
-      render: (_, record) => {
-        const cell = getPreparationSourceCell(record);
-
-        return <CompactCell primary={cell.primary} secondary={cell.secondary} />;
-      },
-      title: '来源数据',
-      width: 168
-    },
-    {
-      key: 'adjustment',
-      render: (_, record) => {
-        const cell = getPreparationAdjustmentCell(record);
-
-        return <CompactCell primary={cell.primary} secondary={cell.secondary} />;
-      },
-      title: '调整项',
-      width: 150
     },
     {
       key: 'estimatedTaxAmount',
@@ -759,9 +749,9 @@ export function FinanceDeclarationPreparationPage() {
       render: (_, record) => {
         const progress = getDeclarationPreparationProgress(record);
 
-        return <CompactCell primary={getPreparationRowProgressText(record)} secondary={progress.pendingCount > 0 ? `${progress.pendingCount} 项待确认` : '已确认'} />;
+        return <CompactCell primary={getPreparationRowProgressText(record)} secondary={progress.pendingCount > 0 ? `${progress.pendingCount} 项阻断` : '检查通过'} />;
       },
-      title: '准备项',
+      title: '检查进度',
       width: 118
     },
     {
@@ -769,11 +759,6 @@ export function FinanceDeclarationPreparationPage() {
       render: (status: FinanceDeclarationPreparationStatus) => <StatusTag toneMap={declarationPreparationStatusTone} value={status} />,
       title: '准备状态',
       width: 112
-    },
-    {
-      dataIndex: 'updatedAt',
-      title: '最近更新',
-      width: 110
     }
   ];
 
@@ -790,110 +775,59 @@ export function FinanceDeclarationPreparationPage() {
       width: 190
     },
     {
-      dataIndex: 'period',
-      title: '期间',
-      width: 96
-    },
-    {
       dataIndex: 'amount',
-      render: (amount: number) => formatMoney(amount),
-      title: '金额',
+      render: (_amount: number, item) => formatPreparationItemValue(item),
+      title: '数值',
       width: 128
     },
     {
-      dataIndex: 'status',
-      render: (status: FinanceDeclarationPreparationItem['status']) => <StatusTag toneMap={declarationPreparationItemStatusTone} value={status} />,
-      title: '确认状态',
-      width: 104
-    },
-    {
       dataIndex: 'result',
-      title: '处理结果',
-      width: 210
-    },
-    {
-      key: 'action',
-      render: (_, item) =>
-        activeRecordReadbackNotice && item.status === '待确认' ? (
-          <StatusTag tone="gray" value="只读回看" variant="compact" />
-        ) : activeRecord && item.type === '未开票收入确认' && canConfirmDeclarationPreparationItem(activeRecord, item) ? (
-          <Button
-            size="small"
-            type="link"
-            onClick={(event) => {
-              event.stopPropagation();
-              handleOpenUnbilledIncomeDrawer(activeRecord);
-            }}
-          >
-            选择流水
-          </Button>
-        ) : activeRecord && canConfirmDeclarationPreparationItem(activeRecord, item) ? (
-          <Button
-            size="small"
-            type="link"
-            onClick={(event) => {
-              event.stopPropagation();
-              handleProcessItem(activeRecord, item);
-            }}
-          >
-            {getPreparationItemActionLabel(item)}
-          </Button>
-        ) : activeRecord && item.status === '待确认' && isDeclarationPreparationItemManuallyConfirmable(item) ? (
-          <StatusTag tone="gray" value={getPreparationItemBlockedLabel(item)} variant="compact" />
-        ) : (
-          '-'
-        ),
-      title: '操作',
-      width: 124
-    }
-  ];
+      render: (_result: string, item) => {
+        const presentation = getPreparationItemCheckResult(item);
 
-  const unbilledIncomeColumns: TableColumnsType<FinanceDeclarationUnbilledIncomeCandidate> = [
-    {
-      dataIndex: ['record', 'transactionNo'],
-      render: (_transactionNo: string, candidate) => (
-        <CompactCell primary={candidate.record.transactionNo} secondary={candidate.record.occurredAt} />
-      ),
-      title: '流水',
-      width: 170
-    },
-    {
-      dataIndex: ['record', 'counterparty'],
-      render: (_counterparty: string, candidate) => (
-        <CompactCell primary={candidate.record.counterparty} secondary={candidate.record.sourceTitle} />
-      ),
-      title: '收款对象',
-      width: 190
-    },
-    {
-      dataIndex: ['record', 'amount'],
-      render: (_amount: number, candidate) => formatMoney(candidate.record.amount),
-      title: '含税收款',
-      width: 136
-    },
-    {
-      dataIndex: 'netAmount',
-      render: (netAmount: number) => formatMoney(netAmount),
-      title: '申报金额',
-      width: 136
-    },
-    {
-      dataIndex: 'invoiceDeclarationStatus',
-      render: (status: FinanceDeclarationUnbilledIncomeCandidate['invoiceDeclarationStatus']) => (
-        <StatusTag toneMap={invoiceDeclarationStatusTone} value={status} />
-      ),
-      title: '发票/申报',
-      width: 132
+        return (
+          <DeclarationCheckResultCell
+            {...presentation}
+            tag={item.status === '待确认' ? { tone: 'amber', value: '待完成' } : undefined}
+          />
+        );
+      },
+      title: '核对结果',
+      width: 300
     }
   ];
 
   const activeProgress = activeRecord ? getDeclarationPreparationProgress(activeRecord) : undefined;
+  const activeBlockingItems = activeRecord ? getPreparationBlockingItems(activeRecord) : [];
   const canConfirmActiveRecord = Boolean(
     activeRecord &&
     activeRecord.status === '准备中' &&
     isDeclarationPreparationReady(activeRecord) &&
     !activeRecordReadbackNotice
   );
+  const stampDutyAmountError = validateStampDutyDocumentAmounts({
+    amount: stampDutyDocumentForm.amount,
+    amountTaxMode: stampDutyDocumentForm.amountTaxMode,
+    vatAmount: stampDutyDocumentForm.vatAmount
+  });
+  const canSaveStampDutyDocument = Boolean(
+    stampDutyDocumentForm.documentName.trim() &&
+      stampDutyDocumentForm.counterparty.trim() &&
+      stampDutyDocumentForm.counterpartyTaxId.trim() &&
+      /^\d{4}-\d{2}-\d{2}$/.test(stampDutyDocumentForm.signedAt) &&
+      stampDutyDocumentForm.files.length > 0 &&
+      !stampDutyAmountError
+  );
+  const stampDutyTaxItemOptions = getActiveFinanceTaxPolicyProfile(stampDutyDocumentForm.signedAt.slice(0, 7)).stampDuty.items
+    .filter((item) => item.item !== '营业账簿')
+    .map((item) => ({ label: item.item, value: item.item }));
+  const activeStampDutyResolution = activeStampDutySource
+    ? stampDutySourceResolutionRows.find(
+        (resolution) =>
+          resolution.sourceId === activeStampDutySource.sourceId &&
+          resolution.sourceVersion === activeStampDutySource.sourceVersion
+      )
+    : undefined;
 
   return (
     <ManagementPageScaffold
@@ -925,13 +859,6 @@ export function FinanceDeclarationPreparationPage() {
                 onChange={(status) => setFilters((current) => ({ ...current, status }))}
               />
             </FilterField>
-            <KeywordFilter
-              data-testid="finance-declaration-preparation-keyword-input"
-              placeholder="期间 / 税种 / 准备项"
-              value={filters.keyword}
-              width="wide"
-              onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}
-            />
           </FilterBar>
         </FilterPanel>
       }
@@ -940,7 +867,7 @@ export function FinanceDeclarationPreparationPage() {
           <MetricCard icon={<FileSearchOutlined />} label="准备事项" value={`${displayDeclarationPreparationRows.length} 条`} />
           <MetricCard icon={<AuditOutlined />} label="准备中" value={`${preparingRows.length} 条`} />
           <MetricCard icon={<CheckCircleOutlined />} label="可申报" value={`${readyRows.length} 条`} />
-          <MetricCard icon={<FileTextOutlined />} label="待确认项" value={`${pendingItemCount} 项`} />
+          <MetricCard icon={<FileTextOutlined />} label="阻断事项" value={`${pendingItemCount} 项`} />
         </MetricGrid>
       }
       pageId="tax-declaration-preparation"
@@ -950,6 +877,9 @@ export function FinanceDeclarationPreparationPage() {
         columns={columns}
         count={{ value: filteredRows.length, unit: '条申报准备' }}
         dataSource={filteredRows}
+        primaryAction={filters.taxType === '印花税'
+          ? { icon: <PlusOutlined />, label: '补录应税凭证', onClick: openStampDutyDocumentDrawer }
+          : undefined}
         rowKey="id"
         rowTestIdPrefix="finance-declaration-preparation-table-row"
         tableTestId="finance-declaration-preparation-table"
@@ -966,7 +896,11 @@ export function FinanceDeclarationPreparationPage() {
             ? {
                 disabled: !canConfirmActiveRecord,
                 icon: <CheckCircleOutlined />,
-                label: '确认准备结果',
+                label: activeRecord.taxType === '个人所得税'
+                  ? '确认申报数据'
+                  : activeRecord.declarationScenario === '年度汇算'
+                    ? '确认汇算准备'
+                    : '确认准备结果',
                 testId: 'finance-declaration-preparation-confirm-button',
                 onClick: () => handleConfirmPreparation(activeRecord)
               }
@@ -983,17 +917,27 @@ export function FinanceDeclarationPreparationPage() {
               items={[
                 {
                   icon: <FileTextOutlined />,
-                  key: 'taxType',
-                  label: '税种',
-                  value: activeRecord.taxType
+                  key: 'scope',
+                  ...getPreparationScopeSummary(activeRecord)
                 },
                 {
                   icon: <PercentageOutlined />,
                   key: 'basis',
-                  label: activeRecord.taxType === '企业所得税' ? '应纳税所得额' : '不含税销售额',
+                  label:
+                    activeRecord.taxType === '个人所得税'
+                      ? '本月计税工资'
+                      : activeRecord.taxType === '印花税'
+                        ? '计税依据'
+                      : activeRecord.taxType === '企业所得税'
+                        ? activeRecord.declarationScenario === '年度汇算' ? '年度应纳税所得额' : '累计实际利润额'
+                        : '不含税销售额',
                   value:
-                    activeRecord.taxType === '企业所得税'
-                      ? formatMoney(activeRecord.citSummary?.taxableIncomeAmount ?? 0)
+                    activeRecord.taxType === '个人所得税'
+                      ? formatMoney(activeRecord.iitSummary?.currentIncomeAmount ?? 0)
+                      : activeRecord.taxType === '印花税'
+                        ? formatMoney(activeRecord.stampDutySummary?.taxableBasis ?? 0)
+                      : activeRecord.taxType === '企业所得税'
+                      ? formatMoney(activeRecord.citSummary?.cumulativeTaxableIncomeAmount ?? 0)
                       : formatMoney(activeRecord.vatSummary.declaredNetSalesAmount)
                 },
                 {
@@ -1005,8 +949,8 @@ export function FinanceDeclarationPreparationPage() {
                 {
                   icon: <AuditOutlined />,
                   key: 'progress',
-                  label: '准备项',
-                  value: activeProgress ? `${activeProgress.processedCount}/${activeProgress.actionableCount} 项` : '-'
+                  label: '检查进度',
+                  value: activeProgress ? `${activeProgress.totalCount - activeProgress.pendingCount}/${activeProgress.totalCount} 项` : '-'
                 }
               ]}
             />
@@ -1032,50 +976,127 @@ export function FinanceDeclarationPreparationPage() {
                       </DetailSection>
 
                       {activeRecord.taxType === '企业所得税' ? (
+                        <DetailSection icon={<PercentageOutlined />} title="纳税调整">
+                          <DetailInfoGrid
+                            columns={3}
+                            items={[
+                              { label: '调增金额', value: formatMoney(activeRecord.citSummary?.taxAdjustmentIncreaseAmount ?? 0) },
+                              { label: '调减金额', value: formatMoney(activeRecord.citSummary?.taxAdjustmentDecreaseAmount ?? 0) },
+                              { label: '净调整额', value: formatMoney(getCorporateIncomeTaxNetAdjustmentAmount(activeRecord.citSummary)) }
+                            ]}
+                          />
+                        </DetailSection>
+                      ) : null}
+
+                      {activeRecord.declarationScenario === '年度汇算' && activeRecord.citAnnualSettlement ? (
+                        <DetailSection icon={<AuditOutlined />} title="年度汇算前置">
+                          <DetailInfoGrid
+                            columns={3}
+                            items={[
+                              { label: '12 月结账', value: activeRecord.citAnnualSettlement.yearEndClosed ? '已完成' : '待完成' },
+                              { label: '年度财务报表', value: activeRecord.citAnnualSettlement.annualFinancialStatementsReady ? '可出具' : '待完成' },
+                              { label: '第四季度预缴', value: activeRecord.citAnnualSettlement.q4PrepaymentReady ? '已完成' : '待完成' },
+                              { label: '纳税调整资料', value: activeRecord.citAnnualSettlement.adjustmentSourceReady ? '已核对' : '待核对' },
+                              { label: '以前年度亏损', value: activeRecord.citAnnualSettlement.priorLossSourceReady ? '已核对' : '待核对' }
+                            ]}
+                          />
+                        </DetailSection>
+                      ) : null}
+
+                      {activeBlockingItems.length > 0 ? (
+                        <DetailSection
+                          extra={<TagChip label={`${activeBlockingItems.length} 项`} tone="amber" />}
+                          icon={<AuditOutlined />}
+                          title="阻断事项"
+                        >
+                          <CompactDetailTable<FinanceDeclarationPreparationItem>
+                            columns={itemColumns}
+                            dataSource={activeBlockingItems}
+                            rowKey="id"
+                            scrollX={620}
+                          />
+                        </DetailSection>
+                      ) : null}
+
+                      {activeRecord.taxType !== '印花税' && activeRecord.taxType !== '个人所得税' ? (
+                        <DetailSection
+                          extra={activeProgress ? <TagChip label={`${activeProgress.totalCount - activeProgress.pendingCount}/${activeProgress.totalCount} 项`} tone={activeProgress.pendingCount > 0 ? 'amber' : 'green'} /> : null}
+                          icon={<AuditOutlined />}
+                          title="核对结果"
+                        >
+                          <CompactDetailTable<FinanceDeclarationPreparationItem>
+                            columns={itemColumns}
+                            dataSource={getVisiblePreparationItems(activeRecord).filter((item) => item.status !== '待确认')}
+                            rowKey="id"
+                            scrollX={620}
+                          />
+                        </DetailSection>
+                      ) : null}
+                    </>
+                  ),
+                  key: 'overview',
+                  label: '申报概览'
+                },
+                {
+                  children: (
+                    <>
+                      {activeRecord.taxType === '个人所得税' ? (
+                        <DetailSection icon={<FileTextOutlined />} title="员工明细">
+                          <PayrollIitEmployeeDetailPanel
+                            payableAmount={activeRecord.iitSummary?.payableAmount ?? 0}
+                            records={activeRecord.iitEmployeeRows ?? []}
+                            summary={activeRecord.iitSummary}
+                          />
+                        </DetailSection>
+                      ) : null}
+                      {activeRecord.taxType === '增值税及附加' ? (
+                        <>
+                          <DetailSection icon={<PercentageOutlined />} title="申报栏次">
+                            <DetailInfoGrid columns={4} items={getVatDeclarationLineItems(activeRecord)} />
+                          </DetailSection>
+                          <DetailSection icon={<FileTextOutlined />} title="未开票应税事项">
+                            <VatUnbilledIncomeDetailTable
+                              editable={activeRecord.status === '准备中' && !activeRecordReadbackNotice}
+                              records={activeUnbilledIncomeCandidates}
+                              onInclusionChange={handleUnbilledIncomeInclusionChange}
+                              onReasonChange={handleUnbilledIncomeReasonChange}
+                            />
+                          </DetailSection>
+                        </>
+                      ) : null}
+                      {activeRecord.taxType === '企业所得税' ? (
                         <DetailSection icon={<FileTextOutlined />} title="数据来源">
                           <CorporateIncomeTaxSourceTable record={activeRecord} />
                         </DetailSection>
                       ) : null}
-
-                      <DetailSection icon={<AuditOutlined />} title="税务办理">
-                        <DetailInfoGrid
-                          columns={4}
-                          items={getPreparationHandlingItems(activeRecord)}
+                      {activeRecord.declarationScenario === '年度汇算' && activeRecord.citAnnualSettlement ? (
+                        <CorporateIncomeTaxAnnualSourceReviewPanel
+                          editable={activeRecord.status === '准备中' && !activeRecordReadbackNotice}
+                          profitBeforeTaxAmount={activeRecord.citSummary?.cumulativeProfitBeforeTaxAmount ?? 0}
+                          review={activeRecord.citAnnualSourceReview}
+                          onSave={saveCorporateIncomeTaxAnnualSourceReview}
                         />
-                      </DetailSection>
+                      ) : null}
+                      {activeRecord.taxType === '印花税' ? (
+                        <DetailSection icon={<FileTextOutlined />} title="税源明细">
+                          <StampDutySourceDetailTable
+                            records={activeRecord.stampDutySources ?? []}
+                            onRecordClick={setActiveStampDutySource}
+                          />
+                        </DetailSection>
+                      ) : null}
                     </>
                   ),
-                  key: 'summary',
-                  label: '准备结果'
+                  key: 'details',
+                  label: '申报明细'
                 },
                 {
                   children: (
-                    <DetailSection
-                      extra={
-                        activeProgress ? (
-                          <TagChip
-                            label={`${activeProgress.processedCount}/${activeProgress.actionableCount} 项`}
-                            tone={activeProgress.pendingCount > 0 ? 'amber' : 'green'}
-                          />
-                        ) : null
-                      }
-                      icon={<AuditOutlined />}
-                      title="准备项"
-                    >
-                      <CompactDetailTable<FinanceDeclarationPreparationItem>
-                        columns={itemColumns}
-                        dataSource={getVisiblePreparationItems(activeRecord)}
-                        rowKey="id"
-                        scrollX={860}
-                      />
-                    </DetailSection>
-                  ),
-                  key: 'items',
-                  label: '准备项'
-                },
-                {
-                  children: (
-                    <OperationRecordSection icon={<CheckCircleOutlined />} records={activeRecord.operationRecords} title="操作记录" />
+                    <OperationRecordSection
+                      icon={<CheckCircleOutlined />}
+                      records={activeRecord.operationRecords}
+                      title="操作记录"
+                    />
                   ),
                   key: 'operations',
                   label: '操作记录'
@@ -1088,97 +1109,124 @@ export function FinanceDeclarationPreparationPage() {
         ) : null}
       </DetailDrawerShell>
 
-      <DetailDrawerShell
-        bodyTestId="finance-declaration-preparation-unbilled-drawer"
-        className="finance-declaration-preparation-drawer"
-        closeAction={{
-          label: '关闭',
-          onClick: () => {
-            setUnbilledDrawerRecordId(undefined);
-            setSelectedUnbilledTransactionNos([]);
-          }
-        }}
-        open={Boolean(unbilledDrawerRecord)}
+      <DrawerFormShell
+        cancelAction={{ label: '取消', onClick: closeStampDutyDocumentDrawer }}
+        open={stampDutyDocumentDrawerOpen}
         primaryAction={{
-          disabled: selectedUnbilledRows.length === 0 || Boolean(unbilledDrawerReadbackNotice),
-          icon: <CheckSquareOutlined />,
-          label: '计入本期申报',
-          testId: 'finance-declaration-preparation-unbilled-confirm-button',
-          onClick: handleConfirmUnbilledIncome
+          disabled: !canSaveStampDutyDocument,
+          label: '保存凭证',
+          onClick: saveStampDutyDocument
         }}
-        secondaryAction={{
-          disabled: selectedUnbilledRows.length === 0 || Boolean(unbilledDrawerReadbackNotice),
-          label: '本期暂不计入',
-          testId: 'finance-declaration-preparation-unbilled-defer-button',
-          onClick: handleDeferUnbilledIncome
-        }}
-        title={
-          unbilledDrawerRecord ? (
-            <DetailDrawerTitle
-              status="待确认"
-              statusToneMap={declarationPreparationItemStatusTone}
-              subtitle={`${unbilledDrawerRecord.preparationNo} / ${unbilledDrawerRecord.period}`}
-              title="未开票收入确认"
-            />
-          ) : null
-        }
-        width={820}
-        onClose={() => {
-          setUnbilledDrawerRecordId(undefined);
-          setSelectedUnbilledTransactionNos([]);
-        }}
+        title={<DetailDrawerTitle title="补录应税凭证" subtitle="印花税申报准备" />}
+        width={760}
+        onClose={closeStampDutyDocumentDrawer}
       >
-        {unbilledDrawerRecord ? (
-          <div className="detail-tab-stack">
-            {unbilledDrawerReadbackNotice ? (
-              <Alert
-                className="finance-period-readback-alert"
-                message={unbilledDrawerReadbackNotice}
-                showIcon
-                type="info"
+        <DetailSection icon={<FileTextOutlined />} title="凭证信息">
+          <DrawerFormGrid>
+            <DrawerFormField label="凭证名称" required>
+              <Input
+                value={stampDutyDocumentForm.documentName}
+                onChange={(event) => updateStampDutyDocumentForm({ documentName: event.target.value })}
               />
+            </DrawerFormField>
+            <DrawerFormField label="凭证编号">
+              <Input
+                value={stampDutyDocumentForm.documentNo}
+                onChange={(event) => updateStampDutyDocumentForm({ documentNo: event.target.value })}
+              />
+            </DrawerFormField>
+            <DrawerFormField label="法定税目" required>
+              <Select
+                value={stampDutyDocumentForm.taxItem}
+                options={stampDutyTaxItemOptions}
+                onChange={(taxItem) => updateStampDutyDocumentForm({ taxItem })}
+              />
+            </DrawerFormField>
+            <DrawerFormField label="签署日期" required>
+              <DatePicker
+                inputReadOnly
+                style={{ width: '100%' }}
+                value={dayjs(stampDutyDocumentForm.signedAt)}
+                onChange={(_, dateString) => updateStampDutyDocumentForm({ signedAt: Array.isArray(dateString) ? dateString[0] ?? '' : dateString })}
+              />
+            </DrawerFormField>
+            <DrawerFormField label="对方名称" required>
+              <Input
+                value={stampDutyDocumentForm.counterparty}
+                onChange={(event) => updateStampDutyDocumentForm({ counterparty: event.target.value })}
+              />
+            </DrawerFormField>
+            <DrawerFormField label="对方纳税人识别号" required>
+              <Input
+                value={stampDutyDocumentForm.counterpartyTaxId}
+                onChange={(event) => updateStampDutyDocumentForm({ counterpartyTaxId: event.target.value })}
+              />
+            </DrawerFormField>
+            <DrawerFormField label="凭证金额">
+              <InputNumber
+                min={0.01}
+                placeholder="未列明金额可不填"
+                precision={2}
+                style={{ width: '100%' }}
+                value={stampDutyDocumentForm.amount}
+                onChange={(amount) => updateStampDutyDocumentForm({ amount: amount === null ? undefined : Number(amount) })}
+              />
+            </DrawerFormField>
+            <DrawerFormField label="价税方式" required>
+              <Select
+                value={stampDutyDocumentForm.amountTaxMode}
+                options={(
+                  ['价税分列', '含税未分列', '不涉及增值税'] satisfies CustomerContractAmountTaxMode[]
+                ).map((amountTaxMode) => ({ label: amountTaxMode, value: amountTaxMode }))}
+                onChange={(amountTaxMode) => updateStampDutyDocumentForm({ amountTaxMode, vatAmount: undefined })}
+              />
+            </DrawerFormField>
+            {stampDutyDocumentForm.amountTaxMode === '价税分列' ? (
+              <DrawerFormField label="单列增值税额">
+                <InputNumber
+                  min={0}
+                  precision={2}
+                  status={stampDutyAmountError ? 'error' : undefined}
+                  style={{ width: '100%' }}
+                  value={stampDutyDocumentForm.vatAmount}
+                  onChange={(vatAmount) => updateStampDutyDocumentForm({ vatAmount: vatAmount === null ? undefined : Number(vatAmount) })}
+                />
+              </DrawerFormField>
             ) : null}
-            <DetailSummaryCards
-              columns={3}
-              items={[
-                {
-                  icon: <FileSearchOutlined />,
-                  key: 'candidate',
-                  label: '可确认流水',
-                  value: `${unbilledIncomeCandidates.length} 条`
-                },
-                {
-                  icon: <CheckSquareOutlined />,
-                  key: 'selected',
-                  label: '本次选择',
-                  value: `${selectedUnbilledRows.length} 条`
-                },
-                {
-                  icon: <WalletOutlined />,
-                  key: 'amount',
-                  label: '申报金额',
-                  value: formatMoney(selectedUnbilledAmount)
-                }
-              ]}
-            />
-            <DetailSection icon={<FileSearchOutlined />} title="可确认流水">
-              <CompactDetailTable<FinanceDeclarationUnbilledIncomeCandidate>
-                columns={unbilledIncomeColumns}
-                dataSource={unbilledIncomeCandidates}
-                emptyText="暂无可确认的未开票收入流水"
-                rowKey={(candidate) => candidate.record.transactionNo}
-                rowSelection={{
-                  selectedRowKeys: selectedUnbilledTransactionNos,
-                  onChange: (selectedRowKeys) => {
-                    setSelectedUnbilledTransactionNos(selectedRowKeys.map(String));
-                  }
-                }}
-                scrollX={820}
-              />
-            </DetailSection>
-          </div>
-        ) : null}
-      </DetailDrawerShell>
+          </DrawerFormGrid>
+        </DetailSection>
+        <DetailSection icon={<FileSearchOutlined />} title="签署文件">
+          <FileSlot<RelatedFileRecord>
+            accept=".pdf,.jpg,.jpeg,.png"
+            description="上传真实签署凭证，支持 PDF/JPG/PNG。"
+            emptyText="至少上传 1 份签署文件"
+            files={stampDutyDocumentForm.files}
+            multiple
+            status={stampDutyDocumentForm.files.length > 0 ? '已选择' : '待补充'}
+            title="应税凭证文件 *"
+            uploadText="上传文件"
+            variant="list"
+            onRemove={(file) =>
+              setStampDutyDocumentForm((current) => ({
+                ...current,
+                files: current.files.filter((currentFile) => currentFile.id !== file.id)
+              }))
+            }
+            onSelect={addStampDutyDocumentFile}
+          />
+        </DetailSection>
+      </DrawerFormShell>
+
+      <StampDutySourceDetailDrawer
+        editable={Boolean(activeRecord?.status === '准备中' && !activeRecordReadbackNotice)}
+        record={activeStampDutySource}
+        resolution={activeStampDutyResolution}
+        onClose={() => setActiveStampDutySource(undefined)}
+        onDownloadFile={(fileName) => void messageApi.info(`已下载 ${fileName}`)}
+        onPreviewFile={(fileName) => void messageApi.info(`正在预览 ${fileName}`)}
+        onSave={saveStampDutyResolution}
+      />
+
     </ManagementPageScaffold>
   );
 }

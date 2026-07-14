@@ -137,9 +137,162 @@ const tests: UnitTest[] = [
       assertEqual(report.liabilityEquityTotal, 10_000, 'liability and equity total should come from balance-sheet ledger rows');
       assertEqual(report.profitTotal, 7_500, 'profit total should derive from profit-statement ledger rows');
       assertEqual(report.cashFlowReadiness, '可出具', 'period with no cash movement can issue a zero cash-flow statement');
+      assertEqual(report.balanceSheetReadiness, '可出具', 'balanced balance sheet should pass statement validation');
+      assertEqual(report.financialStatementReadiness, '可出具', 'all statement checks should pass for a formal-ready report');
       assertEqual(report.cashFlowOpeningBalance, 10_000, 'cash-flow statement should expose opening cash balance');
       assertEqual(report.cashFlowClosingBalance, 10_000, 'cash-flow statement should expose closing cash balance');
       assertEqual(report.reportBasis.includes('2 张已记账凭证'), true, 'statement basis should expose booked-voucher ledger source');
+      assertEqual(report.archive.status, '待结账预览', 'open period should remain a read-only statement preview');
+      assertEqual(
+        report.notes.some((note) => note.key === 'basis'),
+        true,
+        'statement preview should disclose its reporting basis'
+      );
+    }
+  },
+  {
+    name: 'builds only material receivable-payable, long-lived asset and booked adjustment notes',
+    run: () => {
+      const report = buildFinanceFinancialStatementReport({
+        periodSummary: createPeriodSummary({
+          bookedVoucherCount: 4,
+          creditTotal: 26_000,
+          debitTotal: 26_000
+        }),
+        subjectRows: [
+          createSubjectRow({
+            endingBalance: 12_000,
+            entries: [
+              createLedgerEntry({
+                debitAmount: 500,
+                id: 'later-adjustment-entry',
+                summary: '后续调整：冲销历史收入确认',
+                voucherId: 'voucher-later-adjustment',
+                voucherNo: 'VCH-202606-L001'
+              })
+            ],
+            reportItem: '货币资金',
+            statementTarget: '资产负债表',
+            subjectCode: '1002',
+            subjectName: '银行存款',
+            subjectType: '资产类'
+          }),
+          createSubjectRow({
+            endingBalance: 2_000,
+            reportItem: '应收账款',
+            statementTarget: '资产负债表',
+            subjectCode: '1122',
+            subjectName: '应收账款',
+            subjectType: '资产类'
+          }),
+          createSubjectRow({
+            endingBalance: 10_000,
+            reportItem: '固定资产',
+            statementTarget: '资产负债表',
+            subjectCode: '1601',
+            subjectName: '固定资产',
+            subjectType: '资产类'
+          }),
+          createSubjectRow({
+            balanceDirection: '贷方',
+            endingBalance: 3_000,
+            reportItem: '应付账款',
+            statementTarget: '资产负债表',
+            subjectCode: '2202',
+            subjectName: '应付账款',
+            subjectType: '负债类'
+          }),
+          createSubjectRow({
+            balanceDirection: '贷方',
+            endingBalance: 21_000,
+            reportItem: '实收资本',
+            statementTarget: '资产负债表',
+            subjectCode: '3001',
+            subjectName: '实收资本',
+            subjectType: '所有者权益类'
+          })
+        ]
+      });
+
+      const receivablePayableNote = report.notes.find((note) => note.key === 'receivables-payables');
+      const longLivedAssetNote = report.notes.find((note) => note.key === 'long-lived-assets');
+      const laterAdjustmentNote = report.notes.find((note) => note.key === 'later-adjustments');
+
+      assertEqual(receivablePayableNote?.items.length, 2, 'notes should only include material receivable-payable items');
+      assertEqual(longLivedAssetNote?.items[0]?.value, '10,000.00 元', 'fixed asset note should use closing balance');
+      assertEqual(laterAdjustmentNote?.items[0]?.value, '1 张 / 500.00 元', 'later adjustment note should count booked adjustment vouchers once');
+      assertEqual(laterAdjustmentNote?.items[1]?.value, 'VCH-202606-L001', 'later adjustment note should expose the voucher reference');
+    }
+  },
+  {
+    name: 'blocks financial statements when the balance sheet does not balance',
+    run: () => {
+      const report = buildFinanceFinancialStatementReport({
+        periodSummary: createPeriodSummary(),
+        subjectRows: [
+          createSubjectRow({
+            endingBalance: 10_000,
+            reportItem: '货币资金',
+            statementTarget: '资产负债表',
+            subjectCode: '1002',
+            subjectName: '银行存款',
+            subjectType: '资产类'
+          }),
+          createSubjectRow({
+            balanceDirection: '贷方',
+            endingBalance: 8_000,
+            reportItem: '实收资本',
+            statementTarget: '资产负债表',
+            subjectCode: '3001',
+            subjectName: '实收资本',
+            subjectType: '所有者权益类'
+          })
+        ]
+      });
+
+      assertEqual(report.balanceSheetDifference, 2_000, 'balance-sheet validation should expose the equality difference');
+      assertEqual(report.balanceSheetReadiness, '待处理', 'unbalanced balance sheet should not pass validation');
+      assertEqual(report.financialStatementReadiness, '待处理', 'unbalanced balance sheet should block formal statement readiness');
+      assertEqual(
+        report.financialStatementReadinessDetail.includes('资产合计与负债和所有者权益合计相差'),
+        true,
+        'statement readiness should explain the balance-sheet equality issue'
+      );
+    }
+  },
+  {
+    name: 'blocks financial statements when an asset report item has a credit balance',
+    run: () => {
+      const report = buildFinanceFinancialStatementReport({
+        periodSummary: createPeriodSummary(),
+        subjectRows: [
+          createSubjectRow({
+            endingBalance: -100,
+            reportItem: '货币资金',
+            statementTarget: '资产负债表',
+            subjectCode: '1002',
+            subjectName: '银行存款',
+            subjectType: '资产类'
+          }),
+          createSubjectRow({
+            balanceDirection: '贷方',
+            endingBalance: -100,
+            reportItem: '未分配利润',
+            statementTarget: '资产负债表',
+            subjectCode: '3103',
+            subjectName: '未分配利润',
+            subjectType: '所有者权益类'
+          })
+        ]
+      });
+
+      assertEqual(report.balanceSheetDifference, 0, 'negative equity can still preserve the balance-sheet equality');
+      assertEqual(report.balanceSheetReadiness, '待处理', 'negative asset item should require reclassification');
+      assertEqual(
+        report.balanceSheetReadinessDetail.includes('资产项目出现负数：货币资金'),
+        true,
+        'statement validation should name the invalid asset report item'
+      );
     }
   },
   {
@@ -353,6 +506,7 @@ const tests: UnitTest[] = [
       });
 
       assertEqual(report.mode, '正式报表', 'closed period should use formal statement mode');
+      assertEqual(report.archive.status, '快照缺失', 'closed period without snapshot must not be marked archived');
       assertEqual(
         report.reportNotice.includes('缺少结账报表快照'),
         true,
@@ -368,6 +522,7 @@ const tests: UnitTest[] = [
           financialStatementSnapshot: {
             accountingPeriod: '2026-06',
             assetTotal: 88_000,
+            balanceSheetDifference: 0,
             balanceSheetLines: [
               {
                 amount: 88_000,
@@ -377,12 +532,16 @@ const tests: UnitTest[] = [
                 sourceSubjectCount: 1
               }
             ],
+            balanceSheetReadiness: '可出具',
+            balanceSheetReadinessDetail: '资产负债表勾稽一致。',
             cashFlowLines: [],
             cashFlowMappingGaps: [],
             cashFlowNetAmount: 0,
             cashFlowReadiness: '可出具',
             cashFlowReadinessDetail: '结账时现金流量表已确认。',
             cashFlowYearToDateNetAmount: 0,
+            financialStatementReadiness: '可出具',
+            financialStatementReadinessDetail: '三张表校验已通过。',
             liabilityEquityTotal: 88_000,
             periodLabel: '2026-06 当月',
             profitLines: [
@@ -398,6 +557,8 @@ const tests: UnitTest[] = [
             reportBasis: '总账：1 张已记账凭证 / 88,000.00 元借方 / 88,000.00 元贷方',
             trialBalanceStatus: '平衡'
           },
+          lockedAt: '2026-06-30 18:00',
+          lockedBy: '李明',
           periodStatus: '已结账',
           readbackSource: '结账快照'
         }),
@@ -414,6 +575,8 @@ const tests: UnitTest[] = [
       });
 
       assertEqual(report.mode, '正式报表', 'closed period should still use formal statement mode');
+      assertEqual(report.archive.status, '已归档', 'closed period with a snapshot should be marked archived');
+      assertEqual(report.archive.archivedAt, '2026-06-30 18:00', 'archive should retain close time');
       assertEqual(report.assetTotal, 88_000, 'closed report should use close-time statement snapshot');
       assertEqual(report.profitTotal, 12_000, 'closed profit should use close-time statement snapshot');
       assertEqual(report.balanceSheetLines[0]?.amount, 88_000, 'live subject drift should not replace balance-sheet snapshot');

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { build } from 'vite';
+import { assertNaturalPersonPaymentAcceptanceEvidence } from './natural-person-payment-acceptance.mjs';
 
 const webRoot = fileURLToPath(new URL('..', import.meta.url));
 const outDir = join(webRoot, 'node_modules/.cache/startupmanage-web-unit-tests');
@@ -19,6 +20,8 @@ const bundledPersonTaskViewModelTestFile = join(outDir, 'personTaskViewModel.tes
 const bundledSalaryDomainTestFile = join(outDir, 'salaryDomain.test.mjs');
 const bundledFinanceSocialInsuranceModelTestFile = join(outDir, 'financeSocialInsuranceModel.test.mjs');
 const bundledFinanceTaxMatterModelTestFile = join(outDir, 'financeTaxMatterModel.test.mjs');
+const bundledFinanceStampDutyModelTestFile = join(outDir, 'financeStampDutyModel.test.mjs');
+const bundledFinanceStampDutyLedgerBridgeTestFile = join(outDir, 'financeStampDutyLedgerBridge.test.mjs');
 const bundledFinanceBusinessOverviewModelTestFile = join(outDir, 'financeBusinessOverviewModel.test.mjs');
 const bundledFinanceAccountingSubjectDataTestFile = join(outDir, 'financeAccountingSubjectData.test.mjs');
 const bundledFinanceLedgerInitializationModelTestFile = join(outDir, 'financeLedgerInitializationModel.test.mjs');
@@ -31,8 +34,13 @@ const bundledFinancePeriodCloseStageAuditMatrixTestFile = join(outDir, 'financeP
 const bundledFinancePeriodCloseSourceMutationMatrixTestFile = join(outDir, 'financePeriodCloseSourceMutationMatrix.test.mjs');
 const bundledFinanceCategoryAccountingMappingTestFile = join(outDir, 'financeCategoryAccountingMapping.test.mjs');
 const bundledFinanceReceivablesPayablesModelTestFile = join(outDir, 'financeReceivablesPayablesModel.test.mjs');
+const bundledFinanceNaturalPersonPaymentModelTestFile = join(outDir, 'financeNaturalPersonPaymentModel.test.mjs');
+const bundledPartTimeLaborFrontendWorkflowTestFile = join(outDir, 'partTimeLaborFrontendWorkflow.test.mjs');
+const bundledNaturalPersonPaymentFrontendWorkflowTestFile = join(outDir, 'naturalPersonPaymentFrontendWorkflow.test.mjs');
+const bundledSalaryFinanceFrontendWorkflowTestFile = join(outDir, 'salaryFinanceFrontendWorkflow.test.mjs');
+const bundledFinanceExpenseApprovalCommitModelTestFile = join(outDir, 'financeExpenseApprovalCommitModel.test.mjs');
 const bundledFinanceInvoiceImportModelTestFile = join(outDir, 'financeInvoiceImportModel.test.mjs');
-const bundledFinanceInvoiceMatchingModelTestFile = join(outDir, 'financeInvoiceMatchingModel.test.mjs');
+const bundledFinanceInvoiceAssociationModelTestFile = join(outDir, 'financeInvoiceAssociationModel.test.mjs');
 const bundledFinanceReviewModelTestFile = join(outDir, 'financeReviewModel.test.mjs');
 const bundledFinanceBankImportContractTestFile = join(outDir, 'financeBankImportContract.test.mjs');
 const bundledFinanceBankReconciliationModelTestFile = join(outDir, 'financeBankReconciliationModel.test.mjs');
@@ -112,6 +120,16 @@ const testModules = [
     runExport: 'runFinanceTaxMatterModelTests'
   },
   {
+    bundledFile: bundledFinanceStampDutyModelTestFile,
+    entry: 'src/features/finance/financeStampDutyModel.test.ts',
+    runExport: 'runFinanceStampDutyModelTests'
+  },
+  {
+    bundledFile: bundledFinanceStampDutyLedgerBridgeTestFile,
+    entry: 'src/features/finance/financeStampDutyLedgerBridge.test.ts',
+    runExport: 'runFinanceStampDutyLedgerBridgeTests'
+  },
+  {
     bundledFile: bundledFinanceBusinessOverviewModelTestFile,
     entry: 'src/features/finance/financeBusinessOverviewModel.test.ts',
     runExport: 'runFinanceBusinessOverviewModelTests'
@@ -172,14 +190,39 @@ const testModules = [
     runExport: 'runFinanceReceivablesPayablesModelTests'
   },
   {
+    bundledFile: bundledFinanceNaturalPersonPaymentModelTestFile,
+    entry: 'src/features/finance/financeNaturalPersonPaymentModel.test.ts',
+    runExport: 'runFinanceNaturalPersonPaymentModelTests'
+  },
+  {
+    bundledFile: bundledPartTimeLaborFrontendWorkflowTestFile,
+    entry: 'src/features/finance/partTimeLaborFrontendWorkflow.test.ts',
+    runExport: 'runPartTimeLaborFrontendWorkflowTests'
+  },
+  {
+    bundledFile: bundledNaturalPersonPaymentFrontendWorkflowTestFile,
+    entry: 'src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts',
+    runExport: 'runNaturalPersonPaymentFrontendWorkflowTests'
+  },
+  {
+    bundledFile: bundledSalaryFinanceFrontendWorkflowTestFile,
+    entry: 'src/features/finance/salaryFinanceFrontendWorkflow.test.ts',
+    runExport: 'runSalaryFinanceFrontendWorkflowTests'
+  },
+  {
+    bundledFile: bundledFinanceExpenseApprovalCommitModelTestFile,
+    entry: 'src/features/finance/financeExpenseApprovalCommitModel.test.ts',
+    runExport: 'runFinanceExpenseApprovalCommitModelTests'
+  },
+  {
     bundledFile: bundledFinanceInvoiceImportModelTestFile,
     entry: 'src/features/finance/financeInvoiceImportModel.test.ts',
     runExport: 'runFinanceInvoiceImportModelTests'
   },
   {
-    bundledFile: bundledFinanceInvoiceMatchingModelTestFile,
-    entry: 'src/features/finance/financeInvoiceMatchingModel.test.ts',
-    runExport: 'runFinanceInvoiceMatchingModelTests'
+    bundledFile: bundledFinanceInvoiceAssociationModelTestFile,
+    entry: 'src/features/finance/financeInvoiceAssociationModel.test.ts',
+    runExport: 'runFinanceInvoiceAssociationModelTests'
   },
   {
     bundledFile: bundledFinanceReviewModelTestFile,
@@ -262,6 +305,7 @@ for (const testModule of testModules) {
 }
 
 const allFailures = [];
+const testExecutionEvidence = [];
 let total = 0;
 let passed = 0;
 
@@ -278,6 +322,22 @@ for (const testModule of testModules) {
   total += result.total;
   passed += result.passed;
   allFailures.push(...result.failures.map((failure) => `${testModule.entry}: ${failure}`));
+  testExecutionEvidence.push({
+    entry: testModule.entry,
+    executedTestNames: result.executedTestNames ?? [],
+    passedTestNames: result.passedTestNames ?? []
+  });
+}
+
+let naturalPersonAcceptanceResult;
+
+try {
+  naturalPersonAcceptanceResult = assertNaturalPersonPaymentAcceptanceEvidence(
+    testModules.map((testModule) => testModule.entry),
+    testExecutionEvidence
+  );
+} catch (error) {
+  allFailures.push(`natural-person acceptance: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 if (allFailures.length > 0) {
@@ -288,4 +348,11 @@ if (allFailures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(`Unit tests passed: ${passed}/${total}`);
+  console.log(
+    `Natural-person acceptance ID coverage passed: ${naturalPersonAcceptanceResult.executableEvidenceCount}/${naturalPersonAcceptanceResult.total}`
+  );
+  console.log(`Natural-person named scenarios executed and passed: ${naturalPersonAcceptanceResult.executedScenarioCount}`);
+  console.log(
+    `Natural-person frontend-chain closure: ${naturalPersonAcceptanceResult.chainClosedIds.length}/${naturalPersonAcceptanceResult.total}`
+  );
 }

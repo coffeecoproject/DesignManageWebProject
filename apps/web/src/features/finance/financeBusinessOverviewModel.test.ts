@@ -52,6 +52,7 @@ function createAccrualRecord(overrides: Partial<FinanceReceivablePayableRecord> 
     sourceType: '合同应收',
     taxBasis: {
       basisSource: '来源单据',
+      salesCategory: '服务、不动产和无形资产',
       taxAmount: 9.9,
       taxExcludedAmount: 990.1,
       taxIncludedAmount: 1000,

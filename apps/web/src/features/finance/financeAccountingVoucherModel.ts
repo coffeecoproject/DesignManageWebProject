@@ -14,7 +14,7 @@ import {
   getBankReconciliationLinksForTransaction,
   type FinanceBankReconciliationLinkRecord
 } from './financeBankReconciliationModel';
-import type { FinanceInvoiceRecord } from './financeInvoiceData';
+import type { FinanceInvoiceBusinessAllocation, FinanceInvoiceRecord } from './financeInvoiceData';
 import type {
   FinanceReceivablePayableRecord
 } from './financeReceivablesPayablesData';
@@ -35,10 +35,17 @@ import type {
   FinanceTaxMatterType
 } from './financeTaxFilingData';
 import {
-  getMissingTaxMatterReceiptTypes,
-  getTaxMatterRequiredReceiptTypes
+  getTaxMatterAccountingDelta,
+  getTaxMatterAccountingStatus,
+  getTaxMatterEvidenceStatus,
+  isSocialInsuranceTaxMatter
 } from './financeTaxMatterModel';
 import type { LedgerOpeningAdjustmentVoucherRecord } from './financeLedgerInitializationModel';
+import {
+  getFinanceMonthEndMatterVoucherLines,
+  isFinanceMonthEndMatterVoucherReady,
+  type FinanceMonthEndMatterRecord
+} from './financeMonthEndModel';
 import { getAccountingPeriodFromBusinessPeriod } from './financeUtils';
 
 export type AccountingVoucherSourceType =
@@ -46,6 +53,7 @@ export type AccountingVoucherSourceType =
   | '收付款'
   | '票税事实'
   | '税费事项'
+  | '月末事项'
   | '期初调整'
   | '冲销事项'
   | '后续调整';
@@ -63,12 +71,14 @@ export type AccountingVoucherIssueCode =
   | 'unbalanced_entries'
   | 'tax_amount_missing'
   | 'tax_basis_pending'
-  | 'bank_reconciliation_pending'
+  | 'tax_payment_allocation_missing'
+  | 'vat_liability_mismatch'
   | 'bank_reconciliation_source_missing'
   | 'bank_amount_mismatch'
   | 'period_mismatch'
   | 'reversal_required'
   | 'tax_matter_pending'
+  | 'tax_handling_date_missing'
   | 'tax_receipt_missing';
 
 export type AccountingVoucherSubjectSnapshot = {
@@ -92,7 +102,7 @@ export type AccountingVoucherSourceRef = {
   module: string;
   recordId: string;
   recordNo: string;
-  role: '主来源' | '发票依据' | '申报依据' | '缴款依据' | '银行依据' | '冲销依据' | '调整依据';
+  role: '主来源' | '发票依据' | '申报依据' | '资金结算依据' | '银行依据' | '冲销依据' | '调整依据';
 };
 
 export type AccountingVoucherInvoiceRef = {
@@ -124,7 +134,7 @@ export type AccountingVoucherRecord = {
   issueReasons: AccountingVoucherIssueCode[];
   kind: AccountingVoucherKind;
   lines: AccountingVoucherLine[];
-  sourceModule: '应收应付' | '收支流水' | '发票台账' | '税务办理' | '银行对账' | '账套初始化' | '会计凭证';
+  sourceModule: '应收应付' | '收支流水' | '发票台账' | '税务办理' | '银行对账' | '月末事项' | '账套初始化' | '会计凭证';
   sourceNo: string;
   sourceRefs: AccountingVoucherSourceRef[];
   sourceTitle: string;
@@ -258,7 +268,10 @@ export type AccountingPeriodCloseCashFlowMappingGapSnapshot = {
 export type AccountingPeriodCloseFinancialStatementSnapshot = {
   accountingPeriod: string;
   assetTotal: number;
+  balanceSheetDifference: number;
   balanceSheetLines: AccountingPeriodCloseFinancialStatementLineSnapshot[];
+  balanceSheetReadiness: string;
+  balanceSheetReadinessDetail: string;
   cashFlowClosingBalance?: number;
   cashFlowLines: AccountingPeriodCloseCashFlowLineSnapshot[];
   cashFlowMappingGaps: AccountingPeriodCloseCashFlowMappingGapSnapshot[];
@@ -271,6 +284,8 @@ export type AccountingPeriodCloseFinancialStatementSnapshot = {
   cashFlowYearToDateNetAmount?: number;
   cashFlowYearToDateOpeningBalance?: number;
   cashFlowYearToDateReconciliationDifference?: number;
+  financialStatementReadiness: string;
+  financialStatementReadinessDetail: string;
   liabilityEquityTotal: number;
   periodLabel: string;
   profitLines: AccountingPeriodCloseFinancialStatementLineSnapshot[];
@@ -306,8 +321,17 @@ export type AccountingPeriodLockRecord = {
   closeSummarySnapshot?: AccountingPeriodCloseSummarySnapshot;
   lockedAt?: string;
   lockedBy?: string;
+  reopenedAt?: string;
+  reopenedBy?: string;
+  reopenReason?: string;
   reason?: string;
   status: AccountingPeriodLockStatus;
+};
+
+export type AccountingPeriodReopenInput = {
+  reason: string;
+  reopenedAt: string;
+  reopenedBy: string;
 };
 
 export type AccountingPeriodOpenGuard = {
@@ -367,7 +391,6 @@ export const closedAccountingPeriodErrorCode = 'CLOSED_ACCOUNTING_PERIOD';
 export const accountingVoucherIssueLabels: Record<AccountingVoucherIssueCode, string> = {
   amount_invalid: '金额无效',
   bank_amount_mismatch: '银行金额不一致',
-  bank_reconciliation_pending: '银行对账未完成',
   bank_reconciliation_source_missing: '缺少银行对账依据',
   missing_accounting_subject: '缺少会计科目',
   missing_original_evidence: '缺少原始凭证',
@@ -376,8 +399,11 @@ export const accountingVoucherIssueLabels: Record<AccountingVoucherIssueCode, st
   reversal_required: '需冲销处理',
   tax_amount_missing: '发票税额缺失',
   tax_basis_pending: '税额依据待确认',
+  tax_handling_date_missing: '税务办理日期缺失',
   tax_matter_pending: '税费办理未完成',
+  tax_payment_allocation_missing: '税费缴款分项缺失',
   tax_receipt_missing: '税费回执缺失',
+  vat_liability_mismatch: '增值税申报额与账面负债不一致',
   unbalanced_entries: '借贷不平'
 };
 
@@ -623,51 +649,57 @@ function createInvoiceRef(invoice: FinanceInvoiceRecord): AccountingVoucherInvoi
   };
 }
 
-function summarizeInvoices(invoiceRows: FinanceInvoiceRecord[]) {
-  return invoiceRows.reduce(
-    (summary, invoice) => ({
-      taxAmount: roundMoney(summary.taxAmount + invoice.taxAmount),
-      taxExcludedAmount: roundMoney(summary.taxExcludedAmount + invoice.taxExcludedAmount),
-      taxIncludedAmount: roundMoney(summary.taxIncludedAmount + invoice.taxIncludedAmount)
+function summarizeInvoiceAllocations(allocations: FinanceInvoiceBusinessAllocation[]) {
+  return allocations.reduce(
+    (summary, allocation) => ({
+      taxAmount: roundMoney(summary.taxAmount + allocation.taxAmount),
+      taxExcludedAmount: roundMoney(summary.taxExcludedAmount + allocation.taxExcludedAmount),
+      taxIncludedAmount: roundMoney(summary.taxIncludedAmount + allocation.taxIncludedAmount)
     }),
-    {
-      taxAmount: 0,
-      taxExcludedAmount: 0,
-      taxIncludedAmount: 0
-    }
+    { taxAmount: 0, taxExcludedAmount: 0, taxIncludedAmount: 0 }
   );
 }
 
 function getReceivablePayableInvoiceRows(
   record: FinanceReceivablePayableRecord,
-  invoiceRows: FinanceInvoiceRecord[]
+  invoiceRows: FinanceInvoiceRecord[],
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[]
 ) {
   const expectedDirection: FinanceInvoiceRecord['direction'] = record.direction === '应收' ? '销项' : '进项';
+  const relatedInvoiceIds = new Set(
+    invoiceBusinessAllocationRows
+      .filter((allocation) => (
+        allocation.status === '有效' &&
+        allocation.targetType === '应收应付' &&
+        allocation.targetId === record.id &&
+        allocation.taxIncludedAmount > moneyTolerance
+      ))
+      .map((allocation) => allocation.invoiceId)
+  );
 
   return invoiceRows.filter((invoice) => (
     invoice.direction === expectedDirection &&
-    invoice.counterparty === record.counterparty &&
-    invoice.matchedBusinessRefs.some((businessRef) =>
-      businessRef.recordId === record.id ||
-      businessRef.recordNo === record.documentNo ||
-      businessRef.sourceNo === record.sourceNo
-    )
+    invoice.invoiceStatus === '正常' &&
+    relatedInvoiceIds.has(invoice.id)
   ));
 }
 
 function getReceivablePayableInvoiceIssueReasons(
   record: FinanceReceivablePayableRecord,
-  invoiceRows: FinanceInvoiceRecord[]
+  invoiceRows: FinanceInvoiceRecord[],
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[]
 ) {
   const issues: AccountingVoucherIssueCode[] = [];
   const normalInvoices = invoiceRows.filter((invoice) => invoice.invoiceStatus === '正常' && invoice.invoiceColor === '蓝票');
-  const redInvoicesWithoutOrigin = invoiceRows.filter((invoice) => invoice.invoiceColor === '红票' && !invoice.originalInvoiceId);
-  const invoiceSummary = summarizeInvoices(normalInvoices);
-  const taxBasis = resolveFinanceAccrualTaxBasis(record, invoiceRows);
-
-  if (redInvoicesWithoutOrigin.length > 0) {
-    addIssue(issues, 'reversal_required');
-  }
+  const invoiceSummary = summarizeInvoiceAllocations(
+    invoiceBusinessAllocationRows.filter((allocation) => (
+      allocation.status === '有效' &&
+      allocation.targetType === '应收应付' &&
+      allocation.targetId === record.id &&
+      allocation.taxIncludedAmount > moneyTolerance
+    ))
+  );
+  const taxBasis = resolveFinanceAccrualTaxBasis(record, invoiceRows, invoiceBusinessAllocationRows);
 
   if (taxBasis.basisSource === '待确认') {
     addIssue(issues, 'tax_basis_pending');
@@ -740,12 +772,18 @@ function getTransactionIssueReasons(
     addIssue(issues, 'bank_amount_mismatch');
   }
 
-  if (record.reconciliationStatus === '未对账') {
-    addIssue(issues, 'bank_reconciliation_pending');
-  }
-
   if (record.reconciliationStatus === '已对账' && bankReconciliationLinks.length === 0) {
     addIssue(issues, 'bank_reconciliation_source_missing');
+  }
+
+  if (
+    record.sourceType === '税费事项' &&
+    (record.sourceTitle.includes('增值税') || record.sourceNo.includes('VAT')) &&
+    (!record.taxPaymentAllocations || Math.abs(
+      record.taxPaymentAllocations.reduce((total, allocation) => total + allocation.amount, 0) - record.amount
+    ) > moneyTolerance)
+  ) {
+    addIssue(issues, 'tax_payment_allocation_missing');
   }
 
   return issues;
@@ -764,28 +802,48 @@ function getTaxMatterIssueReasons(record: FinanceTaxMatterRecord) {
     addIssue(issues, 'missing_source_document');
   }
 
-  if (record.processStatus !== '已完成') {
+  const declarationReady = ['申报成功', '零申报', '无申报义务'].includes(record.declarationStatus);
+  const socialSourceReady = record.sourceItems.every((item) => ['已确认', '不适用'].includes(item.status));
+
+  if (
+    record.dataStatus !== '已确认' ||
+    (isSocialInsuranceTaxMatter(record.matterType) ? !socialSourceReady : !declarationReady)
+  ) {
     addIssue(issues, 'tax_matter_pending');
     return issues;
   }
 
-  const requiredReceiptTypes = getTaxMatterRequiredReceiptTypes(record);
-  const missingReceiptTypes = getMissingTaxMatterReceiptTypes(record.files, requiredReceiptTypes);
+  if (
+    !['社保缴纳', '公积金缴纳'].includes(record.matterType) && !record.declarationDate
+  ) {
+    addIssue(issues, 'tax_handling_date_missing');
+  }
 
-  if (missingReceiptTypes.length > 0 || !hasOriginalEvidence(record.files)) {
+  if (getTaxMatterEvidenceStatus(record) === '待补回执') {
     addIssue(issues, 'tax_receipt_missing');
   }
 
   return issues;
 }
 
-function getUnresolvedRedInvoiceIssueReasons(invoice: FinanceInvoiceRecord, invoiceRows: FinanceInvoiceRecord[]) {
+function getRedInvoiceIssueReasons(
+  invoice: FinanceInvoiceRecord,
+  invoiceRows: FinanceInvoiceRecord[],
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[]
+) {
   const issues: AccountingVoucherIssueCode[] = [];
   const originalInvoice = invoice.originalInvoiceId
     ? invoiceRows.find((candidate) => candidate.id === invoice.originalInvoiceId)
     : undefined;
+  const allocatedAmount = invoiceBusinessAllocationRows
+    .filter((allocation) => allocation.status === '有效' && allocation.invoiceId === invoice.id)
+    .reduce((total, allocation) => total + Math.abs(allocation.taxIncludedAmount), 0);
 
   if (invoice.invoiceColor === '红票' && !originalInvoice) {
+    addIssue(issues, 'reversal_required');
+  }
+
+  if (invoice.invoiceColor === '红票' && allocatedAmount + moneyTolerance < Math.abs(invoice.taxIncludedAmount)) {
     addIssue(issues, 'reversal_required');
   }
 
@@ -817,24 +875,6 @@ function finalizeAccountingVoucher(
     issueReasons,
     status: issueReasons.length > 0 ? '需处理' : '待记账'
   };
-}
-
-function finalizeTransactionVoucher(
-  record: AccountingVoucherRecordDraft,
-  sourceIssues: AccountingVoucherIssueCode[]
-): AccountingVoucherRecord {
-  const finalized = finalizeAccountingVoucher(record, sourceIssues);
-  const onlyWaitingForBankReconciliation = finalized.issueReasons.length === 1 &&
-    finalized.issueReasons[0] === 'bank_reconciliation_pending';
-
-  if (onlyWaitingForBankReconciliation) {
-    return {
-      ...finalized,
-      status: '待生成'
-    };
-  }
-
-  return finalized;
 }
 
 function finalizeTaxMatterVoucher(
@@ -871,6 +911,10 @@ function getPayableLiabilitySubjectCode(record: FinanceReceivablePayableRecord) 
 }
 
 function getCashReceiptCreditSubjectCode(record: FinanceTransactionRecord) {
+  if (record.sourceType === '税费事项' && record.category === '税费退还') {
+    return getTaxPaymentDebitSubjectCode(record);
+  }
+
   return getFinanceCategoryAccountingSubjectCode(record.category, 'cashCredit') ?? '';
 }
 
@@ -918,7 +962,7 @@ const taxMatterAccountingSubjectMappings: Record<FinanceTaxMatterType, { credit:
   公积金缴纳: { credit: '2211.04', debit: '5602.02' },
   其他税费: { credit: '2221.99', debit: '5403' },
   印花税: { credit: '2221.05', debit: '5403' },
-  增值税及附加: { credit: '2221.01', debit: '5403' },
+  增值税及附加: { credit: '2221.04', debit: '5403' },
   社保缴纳: { credit: '2211.03', debit: '5602.02' }
 };
 
@@ -955,15 +999,13 @@ function getTaxMatterVoucherPeriodCode(record: FinanceTaxMatterRecord) {
 }
 
 function shouldBuildTaxMatterVoucher(record: FinanceTaxMatterRecord) {
-  if (record.dataStatus !== '已确认') {
+  const accountingStatus = getTaxMatterAccountingStatus(record);
+
+  if (accountingStatus === '无需生成') {
     return false;
   }
 
-  if (record.payableAmount > moneyTolerance) {
-    return true;
-  }
-
-  return !['零申报', '无需申报'].includes(record.declarationStatus) && record.paymentStatus !== '无需缴纳';
+  return accountingStatus === '待确认' || Math.abs(getTaxMatterAccountingDelta(record)) > moneyTolerance;
 }
 
 function getVoucherKindForTransactionDirection(direction: FinanceTransactionDirection): AccountingVoucherKind {
@@ -1027,14 +1069,69 @@ function createReceivableLines(
   return lines;
 }
 
+function createSalaryPayableLines(record: FinanceReceivablePayableRecord) {
+  const settlement = record.salarySettlement;
+
+  if (!settlement) {
+    return [];
+  }
+
+  const creditLines = [
+    {
+      amount: settlement.employeeNetPayableAmount,
+      id: 'employee-net-payable',
+      subjectCode: '2211.01',
+      summary: `${record.sourceTitle} 员工实发`
+    },
+    {
+      amount: settlement.withheldPersonalIncomeTaxAmount,
+      id: 'withheld-iit',
+      subjectCode: '2221.03',
+      summary: `${record.sourceTitle} 代扣个人所得税`
+    },
+    {
+      amount: settlement.employeeSocialInsuranceAmount,
+      id: 'employee-social-insurance',
+      subjectCode: '2211.03',
+      summary: `${record.sourceTitle} 个人社保`
+    },
+    {
+      amount: settlement.employeeHousingFundAmount,
+      id: 'employee-housing-fund',
+      subjectCode: '2211.04',
+      summary: `${record.sourceTitle} 个人公积金`
+    }
+  ].filter((line) => line.amount > moneyTolerance);
+
+  return [
+    createVoucherLine({
+      amount: settlement.employeeGrossPayableAmount,
+      auxiliary: record.sourceNo,
+      id: `${record.id}-debit-salary-expense`,
+      side: '借方',
+      subjectCode: getPayableExpenseSubjectCode(record),
+      summary: `${record.sourceTitle} 工资费用`
+    }),
+    ...creditLines.map((line) => createVoucherLine({
+      amount: line.amount,
+      auxiliary: record.counterparty,
+      id: `${record.id}-credit-${line.id}`,
+      side: '贷方',
+      subjectCode: line.subjectCode,
+      summary: line.summary
+    }))
+  ];
+}
+
 export function buildAccountingVoucherFromReceivablePayable(
   record: FinanceReceivablePayableRecord,
   index: number,
-  invoiceRows: FinanceInvoiceRecord[] = []
+  invoiceRows: FinanceInvoiceRecord[] = [],
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[] = []
 ): AccountingVoucherRecord | undefined {
-  const relatedInvoices = getReceivablePayableInvoiceRows(record, invoiceRows);
+  const relatedInvoices = getReceivablePayableInvoiceRows(record, invoiceRows, invoiceBusinessAllocationRows);
   const invoiceRefs = relatedInvoices.map(createInvoiceRef);
-  const taxBasis = resolveFinanceAccrualTaxBasis(record, relatedInvoices);
+  const taxBasis = resolveFinanceAccrualTaxBasis(record, relatedInvoices, invoiceBusinessAllocationRows);
 
   if (!isFinanceReceivablePayableConfirmed(record) || isFinanceReceivablePayableVoided(record)) {
     return undefined;
@@ -1044,7 +1141,7 @@ export function buildAccountingVoucherFromReceivablePayable(
   const sourceSummaryPrefix = record.sourceType.endsWith('确认') ? record.sourceType : `${record.sourceType}确认`;
   const common = {
     accountingPeriod: record.accountingPeriod,
-    amount: record.amount,
+    amount: record.salarySettlement?.employeeGrossPayableAmount ?? record.amount,
     businessType: '权责凭证' as const,
     counterparty: record.counterparty,
     id: `voucher-business-${record.id}`,
@@ -1066,7 +1163,7 @@ export function buildAccountingVoucherFromReceivablePayable(
   const sourceIssues = [
     ...getReceivablePayableReadinessIssueReasons(record, taxBasis),
     ...getReceivablePayableIssueReasons(record),
-    ...getReceivablePayableInvoiceIssueReasons(record, relatedInvoices)
+    ...getReceivablePayableInvoiceIssueReasons(record, relatedInvoices, invoiceBusinessAllocationRows)
   ];
 
   if (shouldKeepAccrualUpstream(sourceIssues)) {
@@ -1078,6 +1175,16 @@ export function buildAccountingVoucherFromReceivablePayable(
       {
         ...common,
         lines: createReceivableLines(record, taxBasis)
+      },
+      sourceIssues
+    );
+  }
+
+  if (record.sourceType === '薪酬发放' && record.salarySettlement) {
+    return finalizeReceivablePayableVoucher(
+      {
+        ...common,
+        lines: createSalaryPayableLines(record)
       },
       sourceIssues
     );
@@ -1112,7 +1219,8 @@ export function buildAccountingVoucherFromReceivablePayable(
 export function buildAccountingVoucherFromTransaction(
   record: FinanceTransactionRecord,
   index: number,
-  bankReconciliationRows: FinanceBankReconciliationLinkRecord[] = []
+  bankReconciliationRows: FinanceBankReconciliationLinkRecord[] = [],
+  originTransaction?: FinanceTransactionRecord
 ): AccountingVoucherRecord | undefined {
   if (record.status !== '已入账') {
     return undefined;
@@ -1128,9 +1236,17 @@ export function buildAccountingVoucherFromTransaction(
   ];
   const voucherNo = `VCH-${record.accountingPeriod.replace('-', '')}-${isAdjustment ? 'A' : 'C'}${String(index + 1).padStart(3, '0')}`;
   const bankSubjectCode = '1002';
+  const naturalPersonPayment = record.naturalPersonPayment;
+  const reversedNaturalPersonPayment = record.adjustmentContext?.mode === '冲正'
+    && originTransaction?.naturalPersonPayment?.incomeType === '劳务报酬'
+    ? originTransaction.naturalPersonPayment
+    : undefined;
+  const voucherAmount = reversedNaturalPersonPayment?.grossIncomeAmount
+    ?? naturalPersonPayment?.grossIncomeAmount
+    ?? record.amount;
   const common = {
     accountingPeriod: record.accountingPeriod,
-    amount: record.amount,
+    amount: voucherAmount,
     businessType: isAdjustment ? '调整凭证' as const : '资金凭证' as const,
     counterparty: record.counterparty,
     id: `voucher-cash-${record.id}`,
@@ -1138,7 +1254,12 @@ export function buildAccountingVoucherFromTransaction(
     kind: getVoucherKindForTransactionDirection(record.direction),
     sourceModule: '收支流水' as const,
     sourceNo: record.transactionNo,
-    sourceRefs,
+    sourceRefs: originTransaction
+      ? [
+          ...sourceRefs,
+          createSourceRef('收支流水', originTransaction.id, originTransaction.transactionNo, '冲销依据')
+        ]
+      : sourceRefs,
     sourceTitle: record.sourceTitle,
     sourceType: '收付款' as const,
     summary: isAdjustment
@@ -1149,8 +1270,43 @@ export function buildAccountingVoucherFromTransaction(
   };
   const sourceIssues = getTransactionIssueReasons(record, bankReconciliationLinks);
 
+  if (reversedNaturalPersonPayment && originTransaction) {
+    return finalizeAccountingVoucher(
+      {
+        ...common,
+        lines: [
+          createVoucherLine({
+            amount: reversedNaturalPersonPayment.netPaymentAmount,
+            auxiliary: record.publicAccountSnapshot.displayName,
+            id: `${record.id}-debit-bank-reversal`,
+            side: '借方',
+            subjectCode: bankSubjectCode,
+            summary: `${originTransaction.sourceTitle} 银行实付冲正`
+          }),
+          createVoucherLine({
+            amount: reversedNaturalPersonPayment.withheldTaxAmount,
+            auxiliary: originTransaction.counterparty,
+            id: `${record.id}-debit-labor-iit-reversal`,
+            side: '借方',
+            subjectCode: '2221.03',
+            summary: `${originTransaction.sourceTitle} 代扣个人所得税冲正`
+          }),
+          createVoucherLine({
+            amount: reversedNaturalPersonPayment.grossIncomeAmount,
+            auxiliary: originTransaction.counterparty,
+            id: `${record.id}-credit-labor-payable-reversal`,
+            side: '贷方',
+            subjectCode: getCashPaymentDebitSubjectCode(originTransaction),
+            summary: `${originTransaction.sourceTitle} 税前劳务应付冲正`
+          })
+        ]
+      },
+      sourceIssues
+    );
+  }
+
   if (record.direction === '收入') {
-    return finalizeTransactionVoucher(
+    return finalizeAccountingVoucher(
       {
         ...common,
         lines: [
@@ -1176,18 +1332,66 @@ export function buildAccountingVoucherFromTransaction(
     );
   }
 
-  return finalizeTransactionVoucher(
+  const taxPaymentDebitLines = record.taxPaymentAllocations?.map((allocation, allocationIndex) => (
+    createVoucherLine({
+      amount: allocation.amount,
+      auxiliary: allocation.taxType,
+      id: `${record.id}-debit-tax-${allocationIndex + 1}`,
+      side: '借方',
+      subjectCode: allocation.subjectCode,
+      summary: `${record.sourceTitle} ${allocation.taxType}`
+    })
+  ));
+
+  if (naturalPersonPayment?.incomeType === '劳务报酬') {
+    return finalizeAccountingVoucher(
+      {
+        ...common,
+        lines: [
+          createVoucherLine({
+            amount: naturalPersonPayment.grossIncomeAmount,
+            auxiliary: record.counterparty,
+            id: `${record.id}-debit-labor-payable`,
+            side: '借方',
+            subjectCode: getCashPaymentDebitSubjectCode(record),
+            summary: `${record.sourceTitle} 税前劳务结算`
+          }),
+          createVoucherLine({
+            amount: naturalPersonPayment.netPaymentAmount,
+            auxiliary: record.publicAccountSnapshot.displayName,
+            id: `${record.id}-credit-bank`,
+            side: '贷方',
+            subjectCode: bankSubjectCode,
+            summary: `${record.sourceTitle} 银行实付`
+          }),
+          createVoucherLine({
+            amount: naturalPersonPayment.withheldTaxAmount,
+            auxiliary: record.counterparty,
+            id: `${record.id}-credit-labor-iit`,
+            side: '贷方',
+            subjectCode: '2221.03',
+            summary: `${record.sourceTitle} 代扣个人所得税`
+          })
+        ]
+      },
+      sourceIssues
+    );
+  }
+
+  return finalizeAccountingVoucher(
     {
       ...common,
       lines: [
-        createVoucherLine({
-          amount: record.amount,
-          auxiliary: record.counterparty,
-          id: `${record.id}-debit`,
-          side: '借方',
-          subjectCode: getCashPaymentDebitSubjectCode(record),
-          summary: record.sourceTitle
-        }),
+        ...(taxPaymentDebitLines && taxPaymentDebitLines.length > 0
+          ? taxPaymentDebitLines
+          : [createVoucherLine({
+              amount: record.amount,
+              auxiliary: record.counterparty,
+              id: `${record.id}-debit`,
+              side: '借方',
+              subjectCode: getCashPaymentDebitSubjectCode(record),
+              summary: record.sourceTitle
+            })]),
         createVoucherLine({
           amount: record.amount,
           auxiliary: record.publicAccountSnapshot.displayName,
@@ -1202,19 +1406,87 @@ export function buildAccountingVoucherFromTransaction(
   );
 }
 
-function buildAccountingVoucherFromUnresolvedRedInvoice(
+function buildAccountingVoucherFromRedInvoice(
   invoice: FinanceInvoiceRecord,
   index: number,
-  invoiceRows: FinanceInvoiceRecord[]
+  invoiceRows: FinanceInvoiceRecord[],
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[],
+  receivablePayableRows: FinanceReceivablePayableRecord[]
 ): AccountingVoucherRecord | undefined {
-  const sourceIssues = getUnresolvedRedInvoiceIssueReasons(invoice, invoiceRows);
+  const sourceIssues = getRedInvoiceIssueReasons(invoice, invoiceRows, invoiceBusinessAllocationRows);
+  const originalInvoice = invoice.originalInvoiceId
+    ? invoiceRows.find((candidate) => candidate.id === invoice.originalInvoiceId)
+    : undefined;
+  const redAllocations = invoiceBusinessAllocationRows.filter(
+    (allocation) => allocation.status === '有效' && allocation.invoiceId === invoice.id && allocation.taxIncludedAmount < -moneyTolerance
+  );
+  const businessAllocations = redAllocations.filter((allocation) => allocation.targetType === '应收应付');
+  const targetById = new Map(receivablePayableRows.map((record) => [record.id, record]));
+  const targetRows = businessAllocations.map((allocation) => ({ allocation, record: targetById.get(allocation.targetId) }));
 
-  if (sourceIssues.length === 0) {
-    return undefined;
+  if (targetRows.some((row) => !row.record) || businessAllocations.length !== redAllocations.length) {
+    addIssue(sourceIssues, 'reversal_required');
   }
 
   const voucherNo = `VCH-${invoice.accountingPeriod.replace('-', '')}-I${String(index + 1).padStart(3, '0')}`;
   const invoiceAmount = Math.abs(invoice.taxIncludedAmount || invoice.totalAmount);
+  const lines = targetRows.flatMap(({ allocation, record }) => {
+    if (!record) {
+      return [];
+    }
+
+    const grossAmount = Math.abs(allocation.taxIncludedAmount);
+    const netAmount = Math.abs(allocation.taxExcludedAmount);
+    const taxAmount = Math.abs(allocation.taxAmount);
+
+    if (record.direction === '应收') {
+      return [
+        createVoucherLine({
+          amount: netAmount,
+          auxiliary: record.sourceNo,
+          id: `${invoice.id}-${allocation.id}-debit-income`,
+          side: '借方',
+          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'accrualRevenue') ?? '',
+          summary: `红冲 ${record.sourceTitle}`
+        }),
+        ...(taxAmount > moneyTolerance ? [createVoucherLine({
+          amount: taxAmount,
+          auxiliary: record.sourceNo,
+          id: `${invoice.id}-${allocation.id}-debit-tax`,
+          side: '借方' as const,
+          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'outputVatPayable') ?? '',
+          summary: `红冲 ${record.sourceTitle} 税额`
+        })] : []),
+        createVoucherLine({
+          amount: grossAmount,
+          auxiliary: record.counterparty,
+          id: `${invoice.id}-${allocation.id}-credit-receivable`,
+          side: '贷方',
+          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'accrualReceivable') ?? '',
+          summary: `红冲 ${record.sourceTitle}`
+        })
+      ];
+    }
+
+    return [
+      createVoucherLine({
+        amount: grossAmount,
+        auxiliary: record.counterparty,
+        id: `${invoice.id}-${allocation.id}-debit-payable`,
+        side: '借方',
+        subjectCode: getPayableLiabilitySubjectCode(record),
+        summary: `红冲 ${record.sourceTitle}`
+      }),
+      createVoucherLine({
+        amount: grossAmount,
+        auxiliary: record.sourceNo,
+        id: `${invoice.id}-${allocation.id}-credit-expense`,
+        side: '贷方',
+        subjectCode: getPayableExpenseSubjectCode(record),
+        summary: `红冲 ${record.sourceTitle}`
+      })
+    ];
+  });
 
   return finalizeAccountingVoucher(
     {
@@ -1223,15 +1495,19 @@ function buildAccountingVoucherFromUnresolvedRedInvoice(
       businessType: '调整凭证',
       counterparty: invoice.counterparty,
       id: `voucher-invoice-${invoice.id}`,
-      invoiceRefs: [createInvoiceRef(invoice)],
+      invoiceRefs: [createInvoiceRef(invoice), ...(originalInvoice ? [createInvoiceRef(originalInvoice)] : [])],
       kind: '转账凭证',
-      lines: [],
+      lines,
       sourceModule: '发票台账',
       sourceNo: invoice.invoiceNo,
-      sourceRefs: [createSourceRef('发票台账', invoice.id, invoice.invoiceNo, '主来源')],
+      sourceRefs: [
+        createSourceRef('发票台账', invoice.id, invoice.invoiceNo, '主来源'),
+        ...(originalInvoice ? [createSourceRef('发票台账', originalInvoice.id, originalInvoice.invoiceNo, '冲销依据')] : []),
+        ...targetRows.flatMap(({ record }) => record ? [createSourceRef('应收应付', record.id, record.documentNo, '调整依据')] : [])
+      ],
       sourceTitle: `${invoice.counterparty} ${invoice.invoiceColor}`,
       sourceType: '票税事实',
-      summary: `红字发票待处理：${invoice.invoiceNo}`,
+      summary: sourceIssues.length > 0 ? `红字发票待处理：${invoice.invoiceNo}` : `红字发票冲减：${invoice.invoiceNo}`,
       voucherDate: invoice.invoiceDate,
       voucherNo
     },
@@ -1247,39 +1523,122 @@ export function buildAccountingVoucherFromTaxMatter(record: FinanceTaxMatterReco
   const voucherNo = `VCH-${getTaxMatterVoucherPeriodCode(record)}-T${String(index + 1).padStart(3, '0')}`;
   const voucherDate = getTaxMatterVoucherDate(record);
   const accountingPeriod = getTaxMatterAccountingPeriod(record);
+  const accountingDelta = getTaxMatterAccountingDelta(record);
+  const voucherAmount = Math.abs(accountingDelta);
+  const voucherId = record.declarationVersion > 1
+    ? `voucher-tax-${record.id}-v${record.declarationVersion}`
+    : `voucher-tax-${record.id}`;
   const sourceRefs: AccountingVoucherSourceRef[] = [
     createSourceRef('税务办理', record.id, record.matterNo, '主来源'),
     ...record.sourceItems.map((sourceItem) => (
       createSourceRef(sourceItem.sourceModule, sourceItem.id, sourceItem.name, '申报依据')
     )),
     ...record.linkedTransactionNos.map((transactionNo) => (
-      createSourceRef('收支流水', transactionNo, transactionNo, '缴款依据')
+      createSourceRef('收支流水', transactionNo, transactionNo, '资金结算依据')
     ))
   ];
+  const taxMatterIssues = getTaxMatterIssueReasons(record);
+
+  if (record.matterType === '增值税及附加') {
+    const settlement = record.vatSettlement;
+
+    if (!settlement) {
+      addIssue(taxMatterIssues, 'tax_basis_pending');
+    } else if (Math.abs(settlement.declaredVatAmount - settlement.sourceRecognizedVatAmount) > moneyTolerance) {
+      addIssue(taxMatterIssues, 'vat_liability_mismatch');
+    }
+
+    const surcharge = settlement?.surcharge;
+    const previousSurcharge = record.declarationHistory.at(-1)?.filedVatSurcharge;
+    const surchargeAmount = voucherAmount;
+
+    if (surchargeAmount <= moneyTolerance && taxMatterIssues.length === 0) {
+      return undefined;
+    }
+
+    const surchargeDeltaLines = surcharge
+      ? [
+          {
+            amount: roundMoney(surcharge.urbanMaintenanceTaxAfterReduction - (previousSurcharge?.urbanMaintenanceTaxAfterReduction ?? 0)),
+            code: '2221.04',
+            name: '城市维护建设税'
+          },
+          {
+            amount: roundMoney(surcharge.educationSurchargeAfterReduction - (previousSurcharge?.educationSurchargeAfterReduction ?? 0)),
+            code: '2221.06',
+            name: '教育费附加'
+          },
+          {
+            amount: roundMoney(surcharge.localEducationSurchargeAfterReduction - (previousSurcharge?.localEducationSurchargeAfterReduction ?? 0)),
+            code: '2221.07',
+            name: '地方教育附加'
+          }
+        ].filter((line) => Math.abs(line.amount) > moneyTolerance)
+      : [];
+
+    return finalizeTaxMatterVoucher(
+      {
+        accountingPeriod,
+        amount: surchargeAmount,
+        businessType: '税费凭证',
+        counterparty: getTaxMatterCounterparty(record.matterType),
+        id: voucherId,
+        invoiceRefs: [],
+        kind: '转账凭证',
+        lines: [
+          createVoucherLine({
+            amount: surchargeAmount,
+            auxiliary: record.period,
+            id: `${record.id}-debit-surcharge`,
+            side: accountingDelta >= 0 ? '借方' : '贷方',
+            subjectCode: '5403',
+            summary: `${record.title} 附加税${record.declarationVersion > 1 ? '调整' : '计提'}`
+          }),
+          ...surchargeDeltaLines.map((line) => createVoucherLine({
+            amount: Math.abs(line.amount),
+            auxiliary: line.name,
+            id: `${record.id}-credit-${line.code}`,
+            side: line.amount >= 0 ? '贷方' : '借方',
+            subjectCode: line.code,
+            summary: `${record.title} ${line.name}`
+          }))
+        ],
+        sourceModule: '税务办理',
+        sourceNo: record.matterNo,
+        sourceRefs,
+        sourceTitle: record.title,
+        sourceType: '税费事项',
+        summary: `附加税${record.declarationVersion > 1 ? '更正调整' : '计提'}：${record.title}`,
+        voucherDate,
+        voucherNo
+      },
+      taxMatterIssues
+    );
+  }
 
   return finalizeTaxMatterVoucher(
     {
       accountingPeriod,
-      amount: record.payableAmount,
+      amount: voucherAmount,
       businessType: '税费凭证',
       counterparty: getTaxMatterCounterparty(record.matterType),
-      id: `voucher-tax-${record.id}`,
+      id: voucherId,
       invoiceRefs: [],
       kind: '转账凭证',
       lines: [
         createVoucherLine({
-          amount: record.payableAmount,
+          amount: voucherAmount,
           auxiliary: record.period,
           id: `${record.id}-debit`,
-          side: '借方',
+          side: accountingDelta >= 0 ? '借方' : '贷方',
           subjectCode: getTaxMatterDebitSubjectCode(record.matterType),
           summary: record.title
         }),
         createVoucherLine({
-          amount: record.payableAmount,
+          amount: voucherAmount,
           auxiliary: record.matterType,
           id: `${record.id}-credit`,
-          side: '贷方',
+          side: accountingDelta >= 0 ? '贷方' : '借方',
           subjectCode: getTaxMatterCreditSubjectCode(record.matterType),
           summary: record.title
         })
@@ -1289,11 +1648,11 @@ export function buildAccountingVoucherFromTaxMatter(record: FinanceTaxMatterReco
       sourceRefs,
       sourceTitle: record.title,
       sourceType: '税费事项',
-      summary: `${record.matterType}确认：${record.title}`,
+      summary: `${record.matterType}${record.declarationVersion > 1 ? '更正调整' : '确认'}：${record.title}`,
       voucherDate,
       voucherNo
     },
-    getTaxMatterIssueReasons(record)
+    taxMatterIssues
   );
 }
 
@@ -1381,6 +1740,54 @@ export function buildAccountingVoucherFromLaterPeriodAdjustment(
   });
 }
 
+export function buildAccountingVoucherFromMonthEndMatter(
+  record: FinanceMonthEndMatterRecord,
+  index: number
+): AccountingVoucherRecord | undefined {
+  if (!isFinanceMonthEndMatterVoucherReady(record)) {
+    return undefined;
+  }
+
+  const voucherNo = `VCH-${record.accountingPeriod.replace('-', '')}-M${String(index + 1).padStart(3, '0')}`;
+
+  return finalizeAccountingVoucher({
+    accountingPeriod: record.accountingPeriod,
+    amount: record.amount,
+    businessType: '调整凭证',
+    counterparty: record.sourceTitle,
+    id: `voucher-month-end-${record.id}`,
+    invoiceRefs: [],
+    kind: '转账凭证',
+    lines: getFinanceMonthEndMatterVoucherLines(record).map((line, lineIndex) =>
+      createVoucherLine({
+        ...line,
+        id: `${record.id}-month-end-${lineIndex + 1}`
+      })
+    ),
+    sourceModule: '月末事项',
+    sourceNo: record.sourceNo,
+    sourceRefs: [
+      createSourceRef('月末事项', record.id, record.sourceNo, '主来源'),
+      createSourceRef(record.sourceModule, record.id, record.sourceNo, '调整依据')
+    ],
+    sourceTitle: record.sourceTitle,
+    sourceType: '月末事项',
+    summary: `${record.type}：${record.sourceTitle}`,
+    voucherDate: record.voucherDate,
+    voucherNo
+  });
+}
+
+export type AccountingVoucherBuildOptions = {
+  accountingPeriodStart?: string;
+  invoiceBusinessAllocationRows?: FinanceInvoiceBusinessAllocation[];
+  monthEndMatterRows?: FinanceMonthEndMatterRecord[];
+};
+
+function isAccountingVoucherInsideScope(record: Pick<AccountingVoucherRecord, 'accountingPeriod'>, accountingPeriodStart?: string) {
+  return !accountingPeriodStart || record.accountingPeriod >= accountingPeriodStart;
+}
+
 export function buildAccountingVouchers(
   receivablePayableRows: FinanceReceivablePayableRecord[],
   financeRows: FinanceTransactionRecord[],
@@ -1388,34 +1795,50 @@ export function buildAccountingVouchers(
   taxMatterRows: FinanceTaxMatterRecord[] = [],
   bankReconciliationRows: FinanceBankReconciliationLinkRecord[] = [],
   openingAdjustmentRows: LedgerOpeningAdjustmentVoucherRecord[] = [],
-  laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = []
+  laterPeriodAdjustmentRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = [],
+  options: AccountingVoucherBuildOptions = {}
 ): AccountingVoucherRecord[] {
-  const usedInvoiceIds = new Set<string>();
+  const accountingPeriodStart = options.accountingPeriodStart;
+  const invoiceBusinessAllocationRows = options.invoiceBusinessAllocationRows ?? [];
   const businessVouchers = receivablePayableRows
     .map((record, index) => {
-      const voucher = buildAccountingVoucherFromReceivablePayable(record, index, invoiceRows);
-
-      voucher?.invoiceRefs.forEach((invoice) => usedInvoiceIds.add(invoice.id));
-
-      return voucher;
+      return buildAccountingVoucherFromReceivablePayable(record, index, invoiceRows, invoiceBusinessAllocationRows);
     })
-    .filter((record): record is AccountingVoucherRecord => Boolean(record));
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
+  const transactionByNo = new Map(financeRows.map((record) => [record.transactionNo, record]));
   const cashVouchers = financeRows
-    .map((record, index) => buildAccountingVoucherFromTransaction(record, index, bankReconciliationRows))
-    .filter((record): record is AccountingVoucherRecord => Boolean(record));
-  const unresolvedInvoiceVouchers = invoiceRows
-    .filter((invoice) => invoice.invoiceColor === '红票' && !usedInvoiceIds.has(invoice.id))
-    .map((invoice, index) => buildAccountingVoucherFromUnresolvedRedInvoice(invoice, index, invoiceRows))
-    .filter((record): record is AccountingVoucherRecord => Boolean(record));
+    .map((record, index) => buildAccountingVoucherFromTransaction(
+      record,
+      index,
+      bankReconciliationRows,
+      record.adjustmentContext?.originTransactionNo
+        ? transactionByNo.get(record.adjustmentContext.originTransactionNo)
+        : undefined
+    ))
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
+  const redInvoiceVouchers = invoiceRows
+    .filter((invoice) => invoice.invoiceColor === '红票')
+    .map((invoice, index) => buildAccountingVoucherFromRedInvoice(invoice, index, invoiceRows, invoiceBusinessAllocationRows, receivablePayableRows))
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
   const taxMatterVouchers = taxMatterRows
     .map((record, index) => buildAccountingVoucherFromTaxMatter(record, index))
-    .filter((record): record is AccountingVoucherRecord => Boolean(record));
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
   const openingAdjustmentVouchers = openingAdjustmentRows
     .map((record, index) => buildAccountingVoucherFromOpeningAdjustment(record, index))
-    .filter((record): record is AccountingVoucherRecord => Boolean(record));
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
   const laterPeriodAdjustmentVouchers = laterPeriodAdjustmentRows
     .map((record, index) => buildAccountingVoucherFromLaterPeriodAdjustment(record, index))
-    .filter((record): record is AccountingVoucherRecord => Boolean(record));
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
+  const monthEndMatterVouchers = (options.monthEndMatterRows ?? [])
+    .map((record, index) => buildAccountingVoucherFromMonthEndMatter(record, index))
+    .filter((record): record is AccountingVoucherRecord => Boolean(record))
+    .filter((record) => isAccountingVoucherInsideScope(record, accountingPeriodStart));
 
   return [
     ...businessVouchers,
@@ -1423,7 +1846,8 @@ export function buildAccountingVouchers(
     ...taxMatterVouchers,
     ...openingAdjustmentVouchers,
     ...laterPeriodAdjustmentVouchers,
-    ...unresolvedInvoiceVouchers
+    ...monthEndMatterVouchers,
+    ...redInvoiceVouchers
   ].sort((left, right) => right.voucherDate.localeCompare(left.voucherDate));
 }
 
@@ -1641,6 +2065,26 @@ export function applyAccountingPeriodCloseLock(
     nextLock,
     ...periodLocks.filter((periodLock) => periodLock.accountingPeriod !== nextLock.accountingPeriod)
   ];
+}
+
+export function reopenAccountingPeriodLock(
+  periodLocks: AccountingPeriodLockRecord[],
+  accountingPeriod: string,
+  input: AccountingPeriodReopenInput
+) {
+  return periodLocks.map((periodLock) => {
+    if (periodLock.accountingPeriod !== accountingPeriod || periodLock.status !== '已结账') {
+      return periodLock;
+    }
+
+    return {
+      ...periodLock,
+      reopenReason: input.reason,
+      reopenedAt: input.reopenedAt,
+      reopenedBy: input.reopenedBy,
+      status: '已反结账' as const
+    };
+  });
 }
 
 export function getAccountingPeriodClosedReason(accountingPeriod: string, actionLabel = '修改') {

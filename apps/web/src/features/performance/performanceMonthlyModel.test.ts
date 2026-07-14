@@ -3,6 +3,7 @@ import type { PeopleMember } from '../people/peopleTypes';
 import { performanceRulePresets } from './performanceMockData';
 import { performanceSignatureEmployees, signatureRuleOptions } from './performanceSignatureArchiveData';
 import {
+  buildPerformanceSalarySettlementReference,
   buildPerformanceMonthlyRecords,
   getPerformanceMonthlyEmploymentScope
 } from './performanceMonthlyModel';
@@ -141,6 +142,7 @@ function createDrawingRecord(overrides: Partial<PerformanceDrawingTaskMonthlyRec
     events: [],
     excessQualityRatio: 0.9,
     id: 'monthly-drawing-202606-test',
+    salarySettlementReference: 'performance-result:monthly-drawing-202606-test:monthly-prepay:v1',
     monthlyAmount: 0,
     performanceMonth: '2026-06',
     position: '空间设计师',
@@ -166,6 +168,7 @@ function createCategoryRecord(overrides: Partial<PerformanceMonthlyCategoryRecor
     employeeName: '绩效测试人员',
     events: [],
     id: 'monthly-duty-202606-test',
+    salarySettlementReference: 'performance-result:monthly-duty-202606-test:monthly-prepay:v1',
     monthlyAmount: 1200,
     note: '岗位职责考核按周期评价结果进入员工绩效汇总',
     performanceMonth: '2026-06',
@@ -183,6 +186,21 @@ function createCategoryRecord(overrides: Partial<PerformanceMonthlyCategoryRecor
 }
 
 const tests: UnitTest[] = [
+  {
+    name: 'builds stable salary settlement references for confirmed performance results',
+    run() {
+      assertEqual(
+        buildPerformanceSalarySettlementReference('monthly-duty-202606-test', 'monthly-prepay'),
+        'performance-result:monthly-duty-202606-test:monthly-prepay:v1',
+        'the same performance result identity should produce a stable salary reference'
+      );
+      assertEqual(
+        buildPerformanceSalarySettlementReference('monthly-duty-202606-test', 'quarterly-review', 'review-2'),
+        'performance-result:monthly-duty-202606-test:quarterly-review:review-2',
+        'quarterly review revisions should have an explicit stable identity'
+      );
+    }
+  },
   {
     name: 'calculates performance employment scope from actual workdays',
     run() {

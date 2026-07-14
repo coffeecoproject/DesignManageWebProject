@@ -332,7 +332,7 @@ export const financePeriodCloseStageAuditMatrix: readonly FinancePeriodCloseStag
   },
   {
     blockers: [
-      '反结账只有本地 contract skeleton，缺真实高权限流程',
+      '反结账已具备前端 mock 顺序修复抽屉和原因记录，缺真实高权限流程',
       '后续期间调整缺真实持久化来源事实、权限、事务和候选凭证查询 API',
       '缺操作原因、事件、权限和后续期间已结账影响的真实验证'
     ],
@@ -349,7 +349,7 @@ export const financePeriodCloseStageAuditMatrix: readonly FinancePeriodCloseStag
     formalCompletion: 'not_formally_complete',
     gateClasses: ['automated_gate', 'evidence_gate', 'manual_approval_gate'],
     id: 'phase_6_reopen_and_later_adjustment',
-    nextAction: '当前本地契约轮次保留后续期间调整优先和反结账异常定位；真实反结账权限、事件和审批边界留作后续接入。',
+    nextAction: '当前前端保留后续期间调整优先和跳月锁反结账修复；真实反结账权限、事件、审批和并发事务边界留作后续接入。',
     order: 6,
     stage: '阶段 6：反结账和后续期间调整',
     status: 'local_contract_partial'

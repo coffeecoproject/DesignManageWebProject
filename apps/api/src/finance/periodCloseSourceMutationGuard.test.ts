@@ -52,14 +52,14 @@ const tests: UnitTest[] = [
   {
     name: 'registers every period-affecting source area with a user-facing module label',
     run: () => {
-      assertEqual(guardedFinanceSourceMutationAreas.length, 10, 'guarded source area count should stay explicit');
+      assertEqual(guardedFinanceSourceMutationAreas.length, 9, 'guarded source area count should stay explicit');
 
       for (const area of guardedFinanceSourceMutationAreas) {
         assertEqual(typeof financeSourceMutationAreaLabels[area], 'string', `${area} should have a source module label`);
         assertEqual(financeSourceMutationAreaLabels[area].length > 0, true, `${area} label should not be empty`);
       }
 
-      assertEqual(financeSourceMutationAreaLabels.invoice_ledger, '发票台账', 'invoice import should stay separated from invoice matching');
+      assertEqual(financeSourceMutationAreaLabels.invoice_ledger, '发票台账', 'invoice import and association should stay under the ledger boundary');
     }
   },
   {
@@ -69,13 +69,13 @@ const tests: UnitTest[] = [
         periods: accountingPeriods,
         request: createGuardRequest({
           accountingPeriods: ['2026-06', '2026-07', '2026-06'],
-          sourceArea: 'invoice_matching'
+          sourceArea: 'invoice_ledger'
         })
       });
 
       assertEqual(result.allowed, true, 'open and reopened periods should allow mutation');
       assertEqual(result.checkedAccountingPeriods.join(','), '2026-06,2026-07', 'periods should be normalized and deduplicated');
-      assertEqual(result.sourceModule, '发票匹配', 'source module should come from area definition');
+      assertEqual(result.sourceModule, '发票台账', 'source module should come from area definition');
     }
   },
   {
@@ -115,8 +115,8 @@ const tests: UnitTest[] = [
         periods: accountingPeriods,
         request: createGuardRequest({
           accountingPeriods: ['2026-05', '2026-06'],
-          operation: '调整发票归属期间',
-          sourceArea: 'invoice_matching',
+          operation: '保存发票关联',
+          sourceArea: 'invoice_ledger',
           sourceId: 'inv-001'
         })
       });
@@ -124,8 +124,8 @@ const tests: UnitTest[] = [
         periods: accountingPeriods,
         request: createGuardRequest({
           accountingPeriods: ['2026-06', '2026-07'],
-          operation: '调整发票归属期间',
-          sourceArea: 'invoice_matching',
+          operation: '保存发票关联',
+          sourceArea: 'invoice_ledger',
           sourceId: 'inv-002'
         })
       });

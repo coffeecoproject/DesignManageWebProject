@@ -25,6 +25,28 @@ export type MyWorkExpensePaperStatus = '无需提交' | '待提交' | '已收到
 export type MyWorkExpensePaymentMethod = '微信' | '支付宝' | '银行卡' | '现金';
 export type MyWorkCollectionMethod = '银行转账' | '微信' | '支付宝' | '现金';
 export type MyWorkExpenseCollectionFilterValue = '全部';
+export type MyWorkExpenseAuthenticityConclusion = '真实' | '不真实';
+export type MyWorkExpenseVoucherComplianceConclusion =
+  | '发票'
+  | '财政票据或其他合法凭证'
+  | '小额零星收款凭证'
+  | '暂缺合规凭证'
+  | '无法核验材料';
+export type MyWorkExpenseEvidenceStatus = '合规' | '待补凭证' | '不合规';
+export type MyWorkExpenseOverStandardNature = '未超标' | '业务必要超标' | '个人消费超标' | '混合性质超标';
+
+export type MyWorkExpenseReviewResult = {
+  businessReimbursementAmount: number;
+  employeeBorneAmount: number;
+  evidenceStatus: MyWorkExpenseEvidenceStatus;
+  exceptionReason?: string;
+  expenseAuthenticity: MyWorkExpenseAuthenticityConclusion;
+  overStandardNature: MyWorkExpenseOverStandardNature;
+  reviewedAt: string;
+  reviewerName: string;
+  salaryTaxableAmount: number;
+  voucherCompliance: MyWorkExpenseVoucherComplianceConclusion;
+};
 
 export type MyWorkExpenseCollectionRecord = {
   amount: number;
@@ -32,6 +54,7 @@ export type MyWorkExpenseCollectionRecord = {
   code: string;
   collectionMethod?: MyWorkCollectionMethod;
   customerName?: string;
+  expenseReviewResult?: MyWorkExpenseReviewResult;
   files: RelatedFileRecord[];
   id: string;
   kind: MyWorkExpenseCollectionKind;
@@ -46,6 +69,7 @@ export type MyWorkExpenseCollectionRecord = {
   relatedReceivableNo?: string;
   relatedTarget?: string;
   status: MyWorkExpenseCollectionStatus;
+  submitterId?: string;
   title: string;
   transferFiles?: RelatedFileRecord[];
   updatedAt: string;
@@ -509,6 +533,7 @@ export function createMyWorkExpenseCollectionRecordFromForm(
     code,
     collectionMethod: form.kind === '代收登记' ? form.collectionMethod : undefined,
     customerName: form.kind === '代收登记' ? form.customerName : undefined,
+    expenseReviewResult: undefined,
     files: form.files,
     id: `expense-collection-${form.occurredAt.replaceAll('-', '')}-${String(sequence).padStart(3, '0')}`,
     kind: form.kind,
@@ -551,6 +576,7 @@ export function resubmitMyWorkExpenseCollectionRecordFromForm(
     category: form.kind === '费用报销' ? form.category : '客户回款',
     collectionMethod: form.kind === '代收登记' ? form.collectionMethod : undefined,
     customerName: form.kind === '代收登记' ? form.customerName : undefined,
+    expenseReviewResult: undefined,
     files: form.files,
     kind: form.kind,
     note: form.note,

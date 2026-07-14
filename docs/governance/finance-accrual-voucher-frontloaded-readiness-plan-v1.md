@@ -116,7 +116,7 @@ source type is invoice-applicable and whose tax basis is not `不涉及发票`.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeInvoiceMatchingModel.ts:24`
+- `apps/web/src/features/finance/financeInvoiceAssociationModel.ts`
 
 This is directionally correct, but after the hard cut, invoice matching should
 become one of the upstream evidence/settlement tasks that determines whether
