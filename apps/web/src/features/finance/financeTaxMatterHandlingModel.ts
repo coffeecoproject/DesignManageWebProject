@@ -21,7 +21,9 @@ export type TaxMatterEditorMode =
   | 'declaration-result'
   | 'declaration-receipt'
   | 'payment-result'
+  | 'refund-application'
   | 'refund-result'
+  | 'offset-result'
   | 'revision';
 
 export type TaxMatterFormValue = Pick<

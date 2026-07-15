@@ -3,7 +3,8 @@ import {
   FileProtectOutlined,
   FileSearchOutlined,
   PlusOutlined,
-  SaveOutlined
+  SaveOutlined,
+  WalletOutlined
 } from '@ant-design/icons';
 import { Button, Input, InputNumber, Select, Space } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -87,6 +88,7 @@ export function StampDutySourceDetailDrawer({
   onClose,
   onDownloadFile,
   onPreviewFile,
+  onRegisterSettlement,
   onSave
 }: {
   editable: boolean;
@@ -95,6 +97,7 @@ export function StampDutySourceDetailDrawer({
   onClose: () => void;
   onDownloadFile: (fileName: string) => void;
   onPreviewFile: (fileName: string) => void;
+  onRegisterSettlement?: (record: FinanceStampDutySourceRecord) => void;
   onSave: (resolution: FinanceStampDutySourceResolution) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -177,9 +180,11 @@ export function StampDutySourceDetailDrawer({
       open={Boolean(record)}
       primaryAction={editing
         ? { disabled: Boolean(resolutionError), icon: <SaveOutlined />, label: '保存处理结果', onClick: saveResolution }
-        : editable
-          ? { icon: <FileSearchOutlined />, label: '处理税源', onClick: () => setEditing(true) }
-          : undefined}
+        : record.resolutionStatus === '待后续结算' && onRegisterSettlement
+          ? { icon: <WalletOutlined />, label: '登记实际结算', onClick: () => onRegisterSettlement(record) }
+          : editable
+            ? { icon: <FileSearchOutlined />, label: '处理税源', onClick: () => setEditing(true) }
+            : undefined}
       title={
         <DetailDrawerTitle
           status={record.resolutionStatus}

@@ -76,6 +76,8 @@ export type FinanceDeclarationPreparationItemType =
   | '申报测算'
   | '利润数据同步'
   | '纳税调整测算'
+  | '季度亏损核对'
+  | '所得税抵免核对'
   | '优惠资格判定'
   | '季度账务完整性检查'
   | '历史申报连续性检查'
@@ -188,7 +190,7 @@ export type FinanceCorporateIncomeTaxPreparationSummary = {
   unclosedAccountingPeriods: string[];
 };
 
-export type FinanceCorporateIncomeTaxAnnualAdjustment = {
+export type FinanceCorporateIncomeTaxAdjustment = {
   accountingAmount: number;
   adjustmentAmount: number;
   deductibleAmount: number;
@@ -201,7 +203,7 @@ export type FinanceCorporateIncomeTaxAnnualAdjustment = {
 };
 
 export type FinanceCorporateIncomeTaxAnnualSourceReview = {
-  adjustments: FinanceCorporateIncomeTaxAnnualAdjustment[];
+  adjustments: FinanceCorporateIncomeTaxAdjustment[];
   adjustmentReviewCompleted: boolean;
   priorLossDeductionAmount: number;
   priorLossReviewCompleted: boolean;
@@ -210,8 +212,21 @@ export type FinanceCorporateIncomeTaxAnnualSourceReview = {
   reviewedBy?: string;
 };
 
+export type FinanceCorporateIncomeTaxQuarterSourceReview = {
+  adjustments: FinanceCorporateIncomeTaxAdjustment[];
+  adjustmentReviewCompleted: boolean;
+  priorLossDeductionAmount: number;
+  priorLossReviewCompleted: boolean;
+  priorLossSourceNo?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  taxCreditAmount: number;
+  taxCreditReviewCompleted: boolean;
+  taxCreditSourceNo?: string;
+};
+
 export type FinanceCorporateIncomeTaxAnnualSettlement = {
-  adjustments: FinanceCorporateIncomeTaxAnnualAdjustment[];
+  adjustments: FinanceCorporateIncomeTaxAdjustment[];
   adjustmentSourceReady: boolean;
   annualFinancialStatementsReady: boolean;
   priorLossSourceReady: boolean;
@@ -234,6 +249,7 @@ export type FinanceDeclarationPreparationRecord = {
   confirmedCitSummary?: FinanceCorporateIncomeTaxPreparationSummary;
   confirmedCitAnnualSettlement?: FinanceCorporateIncomeTaxAnnualSettlement;
   confirmedCitAnnualSourceReview?: FinanceCorporateIncomeTaxAnnualSourceReview;
+  confirmedCitQuarterSourceReview?: FinanceCorporateIncomeTaxQuarterSourceReview;
   confirmedIitEmployeeRows?: PayrollIitDeclarationEmployeeRow[];
   confirmedIitSummary?: PayrollIitDeclarationSummary;
   confirmedUnbilledIncomeDeclarations?: FinanceDeclaredUnbilledIncomeFact[];
@@ -258,6 +274,7 @@ export type FinanceDeclarationPreparationRecord = {
   citSummary?: FinanceCorporateIncomeTaxPreparationSummary;
   citAnnualSettlement?: FinanceCorporateIncomeTaxAnnualSettlement;
   citAnnualSourceReview?: FinanceCorporateIncomeTaxAnnualSourceReview;
+  citQuarterSourceReview?: FinanceCorporateIncomeTaxQuarterSourceReview;
   iitEmployeeRows?: PayrollIitDeclarationEmployeeRow[];
   iitSummary?: PayrollIitDeclarationSummary;
   unbilledIncomeDeclarations?: FinanceDeclaredUnbilledIncomeFact[];
@@ -588,8 +605,36 @@ function getMissingCorporateIncomeTaxPriorQuarterPeriods(
       matter.matterType === '企业所得税' &&
       matter.period === priorPeriod &&
       matter.declarationScenario === '季度预缴' &&
-      ['申报成功', '零申报', '无申报义务'].includes(matter.declarationStatus)
+      ['申报成功', '零申报'].includes(matter.declarationStatus)
     )
+  );
+}
+
+function isCorporateIncomeTaxQuarterAdjustmentReady(review?: FinanceCorporateIncomeTaxQuarterSourceReview) {
+  return Boolean(
+    review?.adjustmentReviewCompleted &&
+      review.adjustments.every(
+        (adjustment) =>
+          adjustment.status === '已归集' &&
+          adjustment.item.trim() &&
+          adjustment.sourceModule.trim() &&
+          adjustment.sourceNo.trim() &&
+          adjustment.adjustmentAmount > 0
+      )
+  );
+}
+
+function isCorporateIncomeTaxQuarterPriorLossReady(review?: FinanceCorporateIncomeTaxQuarterSourceReview) {
+  return Boolean(
+    review?.priorLossReviewCompleted &&
+      (review.priorLossDeductionAmount === 0 || Boolean(review.priorLossSourceNo?.trim()))
+  );
+}
+
+function isCorporateIncomeTaxQuarterTaxCreditReady(review?: FinanceCorporateIncomeTaxQuarterSourceReview) {
+  return Boolean(
+    review?.taxCreditReviewCompleted &&
+      (review.taxCreditAmount === 0 || Boolean(review.taxCreditSourceNo?.trim()))
   );
 }
 
@@ -726,7 +771,7 @@ export function buildCorporateIncomeTaxSourceRows(record: FinanceDeclarationPrep
       id: `${record.id}-cit-source-adjustment`,
       name: isAnnualSettlement ? '年度纳税调整' : '纳税调整',
       result: `调增 ${roundMoney(summary.taxAdjustmentIncreaseAmount).toLocaleString('zh-CN')} 元 / 调减 ${roundMoney(summary.taxAdjustmentDecreaseAmount).toLocaleString('zh-CN')} 元`,
-      sourceModule: isAnnualSettlement ? '年度税务资料' : '申报准备',
+      sourceModule: isAnnualSettlement ? '年度税务资料' : '季度税务资料',
       sourcePeriod: cumulativePeriod,
       status: getCorporateIncomeTaxItemSourceStatus(
         record,
@@ -740,15 +785,31 @@ export function buildCorporateIncomeTaxSourceRows(record: FinanceDeclarationPrep
       name: '弥补亏损',
       result: isAnnualSettlement
         ? annualSettlement?.priorLossSourceReady ? '以前年度亏损已核对' : '以前年度亏损尚未核对'
-        : '以前年度可弥补亏损抵减',
-      sourceModule: isAnnualSettlement ? '年度税务资料' : '历史亏损台账',
+        : record.citQuarterSourceReview?.priorLossReviewCompleted
+          ? `来源 ${record.citQuarterSourceReview.priorLossSourceNo ?? '本期核对为零'}`
+          : '以前年度可弥补亏损尚未核对',
+      sourceModule: isAnnualSettlement ? '年度税务资料' : '季度税务资料',
       sourcePeriod: cumulativePeriod,
       status: isAnnualSettlement
         ? annualSettlement?.priorLossSourceReady ? '已同步' : '待确认'
-        : '已同步',
+        : getCorporateIncomeTaxItemSourceStatus(record, '季度亏损核对'),
       value: summary.priorLossDeductionAmount,
       valueKind: 'amount'
     },
+    ...(!isAnnualSettlement
+      ? [{
+          id: `${record.id}-cit-source-tax-credit`,
+          name: '抵免所得税额',
+          result: record.citQuarterSourceReview?.taxCreditReviewCompleted
+            ? `来源 ${record.citQuarterSourceReview.taxCreditSourceNo ?? '本期核对为零'}`
+            : '本年累计抵免所得税额尚未核对',
+          sourceModule: '季度税务资料',
+          sourcePeriod: cumulativePeriod,
+          status: getCorporateIncomeTaxItemSourceStatus(record, '所得税抵免核对'),
+          value: summary.taxCreditAmount,
+          valueKind: 'amount' as const
+        }]
+      : []),
     {
       id: `${record.id}-cit-source-paid-tax`,
       name: '本年实际已缴税额',
@@ -853,6 +914,7 @@ function createCorporateIncomeTaxItems(
   period: string,
   suffix: string,
   summary: FinanceCorporateIncomeTaxPreparationSummary,
+  sourceReview?: FinanceCorporateIncomeTaxQuarterSourceReview,
   status: 'preparing' | 'completed' = 'preparing'
 ): FinanceDeclarationPreparationItem[] {
   const netAdjustmentAmount = roundMoney(summary.taxAdjustmentIncreaseAmount - summary.taxAdjustmentDecreaseAmount);
@@ -862,6 +924,9 @@ function createCorporateIncomeTaxItems(
     ? '符合小型微利企业条件'
     : '按普通企业口径';
   const prepaymentResult = `累计应纳税额 ${formatDeclarationAmount(summary.cumulativeIncomeTaxPayableAmount)}，本年实际已缴 ${formatDeclarationAmount(summary.taxPaidYearToDateAmount)}，本期应补 ${formatDeclarationAmount(summary.currentPeriodPayableAmount)}`;
+  const adjustmentReady = isCorporateIncomeTaxQuarterAdjustmentReady(sourceReview);
+  const priorLossReady = isCorporateIncomeTaxQuarterPriorLossReady(sourceReview);
+  const taxCreditReady = isCorporateIncomeTaxQuarterTaxCreditReady(sourceReview);
 
   return [
     {
@@ -911,10 +976,36 @@ function createCorporateIncomeTaxItems(
       id: `declaration-prep-item-${suffix}-adjustment`,
       period,
       result: `${adjustmentResult}，净调整 ${formatDeclarationAmount(netAdjustmentAmount)}`,
-      sourceModule: '申报准备',
-      status: completed ? '已确认' : '无需确认',
+      sourceModule: '季度税务资料',
+      status: completed || adjustmentReady ? '已确认' : '待确认',
       title: '纳税调整',
       type: '纳税调整测算',
+      updatedAt: completed ? '2026-04-10' : financeToday
+    },
+    {
+      amount: summary.priorLossDeductionAmount,
+      id: `declaration-prep-item-${suffix}-prior-loss`,
+      period,
+      result: priorLossReady
+        ? `以前年度可弥补亏损 ${formatDeclarationAmount(summary.priorLossDeductionAmount)}`
+        : '等待核对以前年度可弥补亏损',
+      sourceModule: '季度税务资料',
+      status: completed || priorLossReady ? '已确认' : '待确认',
+      title: '以前年度亏损',
+      type: '季度亏损核对',
+      updatedAt: completed ? '2026-04-10' : financeToday
+    },
+    {
+      amount: summary.taxCreditAmount,
+      id: `declaration-prep-item-${suffix}-tax-credit`,
+      period,
+      result: taxCreditReady
+        ? `本年累计抵免所得税额 ${formatDeclarationAmount(summary.taxCreditAmount)}`
+        : '等待核对本年累计抵免所得税额',
+      sourceModule: '季度税务资料',
+      status: completed || taxCreditReady ? '已确认' : '待确认',
+      title: '所得税抵免',
+      type: '所得税抵免核对',
       updatedAt: completed ? '2026-04-10' : financeToday
     },
     {
@@ -964,6 +1055,7 @@ function buildCorporateIncomeTaxAnnualSettlement({
       matter.matterType === '企业所得税' &&
       matter.period === `${period}-Q4` &&
       matter.processStatus === '已完成' &&
+      ['申报成功', '零申报'].includes(matter.declarationStatus) &&
       (matter.paymentStatus === '已缴纳' || matter.paymentStatus === '无需缴纳')
   );
   const adjustments = sourceReview?.adjustments ?? [];
@@ -1062,6 +1154,53 @@ function createCorporateIncomeTaxAnnualItems(
   ];
 }
 
+const cit2026q2SourceReview: FinanceCorporateIncomeTaxQuarterSourceReview = {
+  adjustments: [
+    {
+      accountingAmount: 1200,
+      adjustmentAmount: 1200,
+      deductibleAmount: 0,
+      direction: '调增',
+      id: 'cit-q2-adjustment-entertainment-001',
+      item: '业务招待费超限额',
+      sourceModule: '费用台账',
+      sourceNo: 'EXP-2026Q2-ENTERTAINMENT',
+      status: '已归集'
+    },
+    {
+      accountingAmount: 700,
+      adjustmentAmount: 700,
+      deductibleAmount: 700,
+      direction: '调减',
+      id: 'cit-q2-adjustment-prior-001',
+      item: '前期已调增事项本期转回',
+      sourceModule: '税务办理',
+      sourceNo: 'CIT-ADJ-2026Q2-001',
+      status: '已归集'
+    }
+  ],
+  adjustmentReviewCompleted: true,
+  priorLossDeductionAmount: 5000,
+  priorLossReviewCompleted: true,
+  priorLossSourceNo: 'CIT-LOSS-LEDGER-2025',
+  reviewedAt: '2026-07-10T10:30:00+08:00',
+  reviewedBy: '李明',
+  taxCreditAmount: 0,
+  taxCreditReviewCompleted: true
+};
+
+const cit2026q1SourceReview: FinanceCorporateIncomeTaxQuarterSourceReview = {
+  adjustments: [],
+  adjustmentReviewCompleted: true,
+  priorLossDeductionAmount: 2000,
+  priorLossReviewCompleted: true,
+  priorLossSourceNo: 'CIT-LOSS-LEDGER-2025',
+  reviewedAt: '2026-04-10T09:50:00+08:00',
+  reviewedBy: '李明',
+  taxCreditAmount: 0,
+  taxCreditReviewCompleted: true
+};
+
 const cit2026q2Summary = calculateCorporateIncomeTaxSummary({
   accountingSourceReady: false,
   averageAssetAmount: 0,
@@ -1073,9 +1212,9 @@ const cit2026q2Summary = calculateCorporateIncomeTaxSummary({
   cumulativePayrollAndSocialInsuranceAmount: 0,
   cumulativeProfitBeforeTaxAmount: 0,
   cumulativeSalesExpenseAmount: 0,
-  industryRestrictionResult: '符合',
+  industryRestrictionResult: defaultCorporateIncomeTaxPolicy.industryRestrictionResult,
   missingPriorQuarterPeriods: [],
-  priorLossDeductionAmount: 5000,
+  priorLossDeductionAmount: cit2026q2SourceReview.priorLossDeductionAmount,
   priorQuarterFilingReady: true,
   reportingBasis: '本年累计',
   smallLowProfitAssetLimit: defaultCorporateIncomeTaxPolicy.smallLowProfitAssetLimit,
@@ -1084,7 +1223,7 @@ const cit2026q2Summary = calculateCorporateIncomeTaxSummary({
   statutoryTaxRate: defaultCorporateIncomeTaxPolicy.ordinaryEffectiveTaxRate,
   taxAdjustmentDecreaseAmount: 700,
   taxAdjustmentIncreaseAmount: 1200,
-  taxCreditAmount: 0,
+  taxCreditAmount: cit2026q2SourceReview.taxCreditAmount,
   taxPaidYearToDateAmount: 500,
   taxYear: '2026',
   unbookedVoucherCount: 0,
@@ -1102,9 +1241,9 @@ const cit2026q1Summary = calculateCorporateIncomeTaxSummary({
   cumulativePayrollAndSocialInsuranceAmount: 13800,
   cumulativeProfitBeforeTaxAmount: 12000,
   cumulativeSalesExpenseAmount: 12000,
-  industryRestrictionResult: '符合',
+  industryRestrictionResult: defaultCorporateIncomeTaxPolicy.industryRestrictionResult,
   missingPriorQuarterPeriods: [],
-  priorLossDeductionAmount: 2000,
+  priorLossDeductionAmount: cit2026q1SourceReview.priorLossDeductionAmount,
   priorQuarterFilingReady: true,
   reportingBasis: '本年累计',
   smallLowProfitAssetLimit: defaultCorporateIncomeTaxPolicy.smallLowProfitAssetLimit,
@@ -1137,7 +1276,7 @@ const cit2026AnnualSummary = calculateCorporateIncomeTaxSummary({
   cumulativePayrollAndSocialInsuranceAmount: 0,
   cumulativeProfitBeforeTaxAmount: 0,
   cumulativeSalesExpenseAmount: 0,
-  industryRestrictionResult: '符合',
+  industryRestrictionResult: defaultCorporateIncomeTaxPolicy.industryRestrictionResult,
   missingPriorQuarterPeriods: [],
   priorLossDeductionAmount: cit2026AnnualSourceReview.priorLossDeductionAmount,
   priorQuarterFilingReady: false,
@@ -1211,6 +1350,15 @@ const seedStampDutyOpenAmountSource = buildManualDocumentStampDutySource({
 });
 const seedStampDutyOpenAmountSettlementSource = buildStampDutySettlementEvent(seedStampDutyOpenAmountSource, {
   amount: 12000,
+  evidenceFiles: [
+    {
+      id: 'stamp-manual-open-lease-settlement-file-001',
+      name: '办公场地租赁结算单_202607.pdf',
+      status: '已上传',
+      type: '结算依据',
+      updatedAt: '2026-07-20'
+    }
+  ],
   id: 'SET-202607-001',
   settledAt: '2026-07-20'
 });
@@ -1538,6 +1686,7 @@ export const financeDeclarationPreparationRecords: FinanceDeclarationPreparation
     items: createVatItems('2026-Q2', '2026q2-vat')
   },
   {
+    citQuarterSourceReview: cit2026q2SourceReview,
     citSummary: cit2026q2Summary,
     declarationScenario: '季度预缴',
     id: 'declaration-prep-2026q2-cit',
@@ -1560,7 +1709,7 @@ export const financeDeclarationPreparationRecords: FinanceDeclarationPreparation
     title: '2026-Q2 企业所得税季度预缴',
     updatedAt: '2026-06-21',
     vatSummary: emptyVatSummary,
-    items: createCorporateIncomeTaxItems('2026-Q2', '2026q2-cit', cit2026q2Summary)
+    items: createCorporateIncomeTaxItems('2026-Q2', '2026q2-cit', cit2026q2Summary, cit2026q2SourceReview)
   },
   {
     citAnnualSettlement: cit2026AnnualSettlement,
@@ -1661,9 +1810,11 @@ export const financeDeclarationPreparationRecords: FinanceDeclarationPreparation
     }))
   },
   {
+    citQuarterSourceReview: cit2026q1SourceReview,
     citSummary: cit2026q1Summary,
     declarationScenario: '季度预缴',
     confirmedCitSummary: cit2026q1Summary,
+    confirmedCitQuarterSourceReview: cit2026q1SourceReview,
     confirmedSourceSnapshotKey: 'seed-confirmed-2026q1-cit',
     id: 'declaration-prep-2026q1-cit',
     operationRecords: [
@@ -1693,7 +1844,7 @@ export const financeDeclarationPreparationRecords: FinanceDeclarationPreparation
     title: '2026-Q1 企业所得税季度预缴',
     updatedAt: '2026-04-12',
     vatSummary: emptyVatSummary,
-    items: createCorporateIncomeTaxItems('2026-Q1', '2026q1-cit', cit2026q1Summary, 'completed')
+    items: createCorporateIncomeTaxItems('2026-Q1', '2026q1-cit', cit2026q1Summary, cit2026q1SourceReview, 'completed')
   }
 ];
 
@@ -2286,6 +2437,7 @@ export function applyDeclarationPreparationSourceState(
           ...record,
           citAnnualSettlement: record.confirmedCitAnnualSettlement ?? record.citAnnualSettlement,
           citAnnualSourceReview: record.confirmedCitAnnualSourceReview ?? record.citAnnualSourceReview,
+          citQuarterSourceReview: record.confirmedCitQuarterSourceReview ?? record.citQuarterSourceReview,
           citSummary: record.confirmedCitSummary ?? record.citSummary
         };
       }
@@ -2299,6 +2451,9 @@ export function applyDeclarationPreparationSourceState(
         ? {
             ...fallbackSummary,
             ...accountingSource,
+            industryRestrictionResult: getActiveFinanceTaxPolicyProfile(
+              getDeclarationPreparationAccountingPeriod(record.period) ?? financeToday.slice(0, 7)
+            ).corporateIncomeTax.industryRestrictionResult,
             missingPriorQuarterPeriods,
             priorQuarterFilingReady: missingPriorQuarterPeriods.length === 0
           }
@@ -2312,7 +2467,10 @@ export function applyDeclarationPreparationSourceState(
       const annualAdjustments = isAnnualSettlement
         ? record.citAnnualSourceReview?.adjustments ?? []
         : [];
-      const summaryWithAnnualAdjustments = isAnnualSettlement
+      const quarterlyAdjustments = !isAnnualSettlement
+        ? record.citQuarterSourceReview?.adjustments ?? []
+        : [];
+      const summaryWithReviewedTaxFacts = isAnnualSettlement
         ? {
             ...sourceSummary,
             priorLossDeductionAmount: record.citAnnualSourceReview?.priorLossDeductionAmount ?? 0,
@@ -2323,10 +2481,20 @@ export function applyDeclarationPreparationSourceState(
               .filter((adjustment) => adjustment.direction === '调增')
               .reduce((total, adjustment) => roundMoney(total + adjustment.adjustmentAmount), 0)
           }
-        : sourceSummary;
+        : {
+            ...sourceSummary,
+            priorLossDeductionAmount: record.citQuarterSourceReview?.priorLossDeductionAmount ?? 0,
+            taxAdjustmentDecreaseAmount: quarterlyAdjustments
+              .filter((adjustment) => adjustment.direction === '调减')
+              .reduce((total, adjustment) => roundMoney(total + adjustment.adjustmentAmount), 0),
+            taxAdjustmentIncreaseAmount: quarterlyAdjustments
+              .filter((adjustment) => adjustment.direction === '调增')
+              .reduce((total, adjustment) => roundMoney(total + adjustment.adjustmentAmount), 0),
+            taxCreditAmount: record.citQuarterSourceReview?.taxCreditAmount ?? 0
+          };
       const citSummary = recalculateCorporateIncomeTaxSummary(
-        summaryWithAnnualAdjustments,
-        getCorporateIncomeTaxPaidYearToDate(record, taxMatterRows, summaryWithAnnualAdjustments.taxPaidYearToDateAmount)
+        summaryWithReviewedTaxFacts,
+        getCorporateIncomeTaxPaidYearToDate(record, taxMatterRows, summaryWithReviewedTaxFacts.taxPaidYearToDateAmount)
       );
       const citAnnualSettlement = isAnnualSettlement
         ? buildCorporateIncomeTaxAnnualSettlement({
@@ -2371,14 +2539,20 @@ export function applyDeclarationPreparationSourceState(
         citAnnualSettlement?.priorLossSourceReady ?? '',
         record.citAnnualSourceReview?.priorLossDeductionAmount ?? '',
         record.citAnnualSourceReview?.priorLossSourceNo ?? '',
-        citAnnualSettlement?.adjustments.map((adjustment) => `${adjustment.id}:${adjustment.adjustmentAmount}:${adjustment.status}`).join('|') ?? ''
+        citAnnualSettlement?.adjustments.map((adjustment) => `${adjustment.id}:${adjustment.adjustmentAmount}:${adjustment.status}`).join('|') ?? '',
+        record.citQuarterSourceReview?.adjustmentReviewCompleted ?? '',
+        record.citQuarterSourceReview?.priorLossReviewCompleted ?? '',
+        record.citQuarterSourceReview?.priorLossSourceNo ?? '',
+        record.citQuarterSourceReview?.taxCreditReviewCompleted ?? '',
+        record.citQuarterSourceReview?.taxCreditSourceNo ?? '',
+        record.citQuarterSourceReview?.adjustments.map((adjustment) => `${adjustment.id}:${adjustment.adjustmentAmount}:${adjustment.status}:${adjustment.sourceNo}`).join('|') ?? ''
       ].join(':');
       const sourceChangedAfterConfirmation = Boolean(
         record.confirmedSourceSnapshotKey && record.confirmedSourceSnapshotKey !== sourceSnapshotKey
       );
       const generatedItems = citAnnualSettlement
         ? createCorporateIncomeTaxAnnualItems(record.period, record.id, citSummary, citAnnualSettlement)
-        : createCorporateIncomeTaxItems(record.period, record.id, citSummary);
+        : createCorporateIncomeTaxItems(record.period, record.id, citSummary, record.citQuarterSourceReview);
       const items = generatedItems.map((generatedItem): FinanceDeclarationPreparationItem => {
         const currentItem = record.items.find((item) => item.type === generatedItem.type);
 

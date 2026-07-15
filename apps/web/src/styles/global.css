@@ -3260,6 +3260,19 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.corporate-income-tax-adjustment-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.corporate-income-tax-review-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .annual-tax-adjustment-form-row {
   border-bottom: 1px solid #e6edf5;
   padding: 4px 0 16px;

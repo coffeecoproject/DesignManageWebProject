@@ -42,7 +42,7 @@ export type SocialInsuranceTaxMatterSummary = {
   totalAmount: number;
 };
 
-export type TaxMatterReceiptFileType = '申报回执' | '缴款回单' | '退税回单';
+export type TaxMatterReceiptFileType = '申报回执' | '缴款回单' | '退抵申请回执' | '退税申请回执' | '退税回单' | '抵缴确认单';
 
 export type TaxMatterDeclarationResultInput = {
   declarationDate: string;
@@ -63,8 +63,8 @@ export type TaxMatterDeclarationRevisionContext = {
 };
 
 export function getTaxMatterDeclarationResultValidationError(
-  record: Pick<FinanceTaxMatterRecord, 'matterType' | 'preparedPayableAmount'>,
-  input: Pick<TaxMatterDeclarationResultInput, 'declarationStatus' | 'settlementAmount' | 'settlementDirection' | 'vatBreakdown'>
+  record: Pick<FinanceTaxMatterRecord, 'declarationHistory' | 'declarationVersion' | 'matterType' | 'preparedPayableAmount' | 'preparedRefundableAmount' | 'preparedSettlementDirection'>,
+  input: Pick<TaxMatterDeclarationResultInput, 'declarationStatus' | 'differenceReason' | 'settlementAmount' | 'settlementDirection' | 'vatBreakdown'>
 ) {
   if (record.matterType === '增值税及附加') {
     if (input.declarationStatus === '零申报') {
@@ -77,16 +77,59 @@ export function getTaxMatterDeclarationResultValidationError(
       return '请按增值税、城建税及两项教育附加登记申报结果';
     }
 
-    const breakdownTotal = roundMoney(
-      input.vatBreakdown.declaredVatAmount +
-      input.vatBreakdown.urbanMaintenanceTaxAmount +
-      input.vatBreakdown.educationSurchargeAmount +
-      input.vatBreakdown.localEducationSurchargeAmount
-    );
+    const versionSettlement = getVatDeclarationVersionSettlement(record, input.vatBreakdown);
 
-    return input.settlementDirection === '应缴' && Math.abs(breakdownTotal - roundMoney(input.settlementAmount)) <= 0.01
+    return input.settlementDirection === versionSettlement.direction
+      && Math.abs(versionSettlement.amount - roundMoney(input.settlementAmount)) <= 0.01
       ? undefined
-      : '增值税及附加分项金额与办理金额不一致';
+      : '增值税及附加的补退差额与前后版本不一致';
+  }
+
+  if (record.matterType === '印花税') {
+    const expectedAmount = roundMoney(record.preparedPayableAmount);
+    const actualAmount = input.settlementDirection === '无需补退' ? 0 : roundMoney(input.settlementAmount);
+
+    if (expectedAmount <= 0.005) {
+      return input.declarationStatus === '零申报' && input.settlementDirection === '无需补退' && actualAmount === 0
+        ? undefined
+        : '印花税无应缴金额时应登记为零申报';
+    }
+
+    if (input.declarationStatus !== '申报成功') {
+      return '存在应纳印花税时不能登记为零申报';
+    }
+
+    return record.declarationVersion > 1
+      ? undefined
+      : Math.abs(actualAmount - expectedAmount) <= 0.01 || input.differenceReason?.trim()
+      ? undefined
+      : '印花税申报金额与准备结果不一致，请填写差异原因';
+  }
+
+  if (record.matterType === '企业所得税') {
+    if (record.declarationVersion > 1) {
+      return undefined;
+    }
+
+    const expectedDirection = record.preparedSettlementDirection ?? (
+      (record.preparedRefundableAmount ?? 0) > 0
+        ? '应退'
+        : record.preparedPayableAmount > 0
+          ? '应缴'
+          : '无需补退'
+    );
+    const expectedAmount = expectedDirection === '应退'
+      ? roundMoney(record.preparedRefundableAmount ?? 0)
+      : expectedDirection === '应缴'
+        ? roundMoney(record.preparedPayableAmount)
+        : 0;
+    const actualAmount = input.settlementDirection === '无需补退' ? 0 : roundMoney(input.settlementAmount);
+
+    return input.settlementDirection === expectedDirection && Math.abs(actualAmount - expectedAmount) <= 0.01
+      ? undefined
+      : input.differenceReason?.trim()
+        ? undefined
+        : '企业所得税申报补退结果与准备结果不一致，请填写差异原因';
   }
 
   if (record.matterType !== '个人所得税') {
@@ -162,6 +205,28 @@ function buildOfficialVatSettlement(
   };
 }
 
+export function getVatDeclarationVersionSettlement(
+  record: Pick<FinanceTaxMatterRecord, 'declarationHistory' | 'declarationVersion'>,
+  breakdown: FinanceVatOfficialSettlementBreakdown
+): { amount: number; direction: Exclude<FinanceTaxMatterSettlementDirection, '待确定'>; officialTotalAmount: number } {
+  const officialTotalAmount = roundMoney(
+    breakdown.declaredVatAmount
+      + breakdown.urbanMaintenanceTaxAmount
+      + breakdown.educationSurchargeAmount
+      + breakdown.localEducationSurchargeAmount
+  );
+  const priorOfficialTotalAmount = record.declarationVersion > 1
+    ? roundMoney(record.declarationHistory.at(-1)?.filedVatSettlement?.totalPayableAmount ?? 0)
+    : 0;
+  const versionDifference = roundMoney(officialTotalAmount - priorOfficialTotalAmount);
+
+  return versionDifference > 0.005
+    ? { amount: versionDifference, direction: '应缴', officialTotalAmount }
+    : versionDifference < -0.005
+      ? { amount: Math.abs(versionDifference), direction: '应退', officialTotalAmount }
+      : { amount: 0, direction: '无需补退', officialTotalAmount };
+}
+
 export type TaxMatterDeclarationReceiptInput = {
   declarationReceiptFile?: RelatedFileRecord;
   declarationReceiptNo?: string;
@@ -177,6 +242,21 @@ export type TaxMatterRefundResultInput = {
   amount: number;
   receiptFile: RelatedFileRecord;
   refundDate: string;
+};
+
+export type TaxMatterRefundApplicationInput = {
+  applicationDate: string;
+  method: '退税' | '抵缴';
+  receiptFile?: RelatedFileRecord;
+  receiptNo?: string;
+  targetMatterId?: string;
+};
+
+export type TaxMatterOffsetResultInput = {
+  amount: number;
+  offsetDate: string;
+  receiptFile?: RelatedFileRecord;
+  receiptNo?: string;
 };
 
 type TaxMatterReceiptRequirementSource = Pick<
@@ -237,25 +317,58 @@ export function getTaxMatterRequiredReceiptTypes(record: TaxMatterReceiptRequire
 }
 
 export function getTaxMatterOutstandingAmount(
-  record: Pick<FinanceTaxMatterRecord, 'paidAmount' | 'payableAmount' | 'refundableAmount' | 'refundedAmount'>
+  record: Pick<FinanceTaxMatterRecord, 'offsetReceivedAmount' | 'offsetReceivedBaselineAmount' | 'paidAmount' | 'payableAmount' | 'paymentBaselineAmount'>
 ) {
-  const officialNetPayable = record.payableAmount - (record.refundableAmount ?? 0);
-  const settledNetPayable = record.paidAmount - (record.refundedAmount ?? 0);
-  return roundMoney(Math.max(0, officialNetPayable - settledNetPayable));
+  return roundMoney(Math.max(
+    0,
+    record.payableAmount
+      - getTaxMatterCurrentVersionPaidAmount(record)
+      - getTaxMatterCurrentVersionOffsetReceivedAmount(record)
+  ));
+}
+
+export function getTaxMatterCurrentVersionPaidAmount(
+  record: Pick<FinanceTaxMatterRecord, 'paidAmount' | 'paymentBaselineAmount'>
+) {
+  return roundMoney(Math.max(0, record.paidAmount - (record.paymentBaselineAmount ?? 0)));
+}
+
+export function getTaxMatterCurrentVersionOffsetReceivedAmount(
+  record: Pick<FinanceTaxMatterRecord, 'offsetReceivedAmount' | 'offsetReceivedBaselineAmount'>
+) {
+  return roundMoney(Math.max(
+    0,
+    (record.offsetReceivedAmount ?? 0) - (record.offsetReceivedBaselineAmount ?? 0)
+  ));
 }
 
 export function getTaxMatterRefundOutstandingAmount(
-  record: Pick<FinanceTaxMatterRecord, 'paidAmount' | 'payableAmount' | 'refundableAmount' | 'refundedAmount'>
+  record: Pick<FinanceTaxMatterRecord, 'offsetAmount' | 'offsetBaselineAmount' | 'refundableAmount' | 'refundBaselineAmount' | 'refundedAmount'>
 ) {
-  const officialNetRefundable = (record.refundableAmount ?? 0) - record.payableAmount;
-  const settledNetRefundable = (record.refundedAmount ?? 0) - record.paidAmount;
-  return roundMoney(Math.max(0, officialNetRefundable - settledNetRefundable));
+  return roundMoney(Math.max(
+    0,
+    (record.refundableAmount ?? 0)
+      - getTaxMatterCurrentVersionRefundedAmount(record)
+      - getTaxMatterCurrentVersionOffsetAmount(record)
+  ));
+}
+
+export function getTaxMatterCurrentVersionRefundedAmount(
+  record: Pick<FinanceTaxMatterRecord, 'refundBaselineAmount' | 'refundedAmount'>
+) {
+  return roundMoney(Math.max(0, (record.refundedAmount ?? 0) - (record.refundBaselineAmount ?? 0)));
+}
+
+export function getTaxMatterCurrentVersionOffsetAmount(
+  record: Pick<FinanceTaxMatterRecord, 'offsetAmount' | 'offsetBaselineAmount'>
+) {
+  return roundMoney(Math.max(0, (record.offsetAmount ?? 0) - (record.offsetBaselineAmount ?? 0)));
 }
 
 export function getTaxMatterAccountingAmount(
   record: Pick<
     FinanceTaxMatterRecord,
-    'matterType' | 'payableAmount' | 'refundableAmount' | 'socialInsuranceSettlement' | 'vatSettlement'
+    'filedAccountingAmount' | 'matterType' | 'payableAmount' | 'refundableAmount' | 'socialInsuranceSettlement' | 'vatSettlement'
   >
 ) {
   if (record.matterType === '增值税及附加') {
@@ -274,6 +387,13 @@ export function getTaxMatterAccountingAmount(
 
   if (record.matterType === '个人所得税') {
     return 0;
+  }
+
+  if (
+    (record.matterType === '企业所得税' || record.matterType === '印花税')
+    && record.filedAccountingAmount !== undefined
+  ) {
+    return roundMoney(record.filedAccountingAmount);
   }
 
   if (isSocialInsuranceTaxMatter(record.matterType)) {
@@ -363,7 +483,7 @@ export function getTaxMatterSettlementDirection(
 export function deriveTaxMatterProcessStatus(
   record: Pick<
     FinanceTaxMatterRecord,
-    'dataStatus' | 'declarationReceiptFileId' | 'declarationReceiptNo' | 'declarationStatus' | 'matterType' | 'paidAmount' | 'payableAmount' | 'refundableAmount' | 'refundedAmount' | 'settlementDirection'
+    'dataStatus' | 'declarationReceiptFileId' | 'declarationReceiptNo' | 'declarationStatus' | 'matterType' | 'offsetAmount' | 'offsetBaselineAmount' | 'offsetReceivedAmount' | 'offsetReceivedBaselineAmount' | 'paidAmount' | 'payableAmount' | 'paymentBaselineAmount' | 'refundableAmount' | 'refundBaselineAmount' | 'refundedAmount' | 'refundStatus' | 'settlementDirection'
   >
 ): FinanceTaxMatterProcessStatus {
   if (record.dataStatus !== '已确认') {
@@ -388,12 +508,20 @@ export function deriveTaxMatterProcessStatus(
 
   const outstandingPayment = getTaxMatterOutstandingAmount(record);
   if (outstandingPayment > 0) {
-    return record.paidAmount > 0 ? '部分缴纳' : '待缴款';
+    return record.paidAmount - (record.paymentBaselineAmount ?? 0) > 0 ? '部分缴纳' : '待缴款';
   }
 
   const outstandingRefund = getTaxMatterRefundOutstandingAmount(record);
   if (outstandingRefund > 0) {
-    return (record.refundedAmount ?? 0) > 0 ? '部分退税' : '待退税';
+    if (record.refundStatus === '申请中') {
+      return '退抵处理中';
+    }
+
+    if (record.refundStatus === '部分到账') {
+      return '部分退抵';
+    }
+
+    return '待退抵处理';
   }
 
   return record.declarationReceiptFileId || record.declarationReceiptNo ? '已完成' : '待补回执';
@@ -407,10 +535,26 @@ export function recordTaxMatterDeclarationResult(
     return record;
   }
 
-  const settlementDirection = input.declarationStatus === '零申报' ? '无需补退' : input.settlementDirection;
-  const settlementAmount = settlementDirection === '无需补退' ? 0 : roundMoney(input.settlementAmount);
+  const nextVatSettlement = record.matterType === '增值税及附加' && input.vatBreakdown
+    ? buildOfficialVatSettlement(record, input.vatBreakdown)
+    : undefined;
+  const vatVersionSettlement = record.matterType === '增值税及附加' && input.vatBreakdown
+    ? getVatDeclarationVersionSettlement(record, input.vatBreakdown)
+    : undefined;
+  const settlementDirection = input.declarationStatus === '零申报'
+    ? '无需补退'
+    : vatVersionSettlement?.direction ?? input.settlementDirection;
+  const settlementAmount = settlementDirection === '无需补退'
+    ? 0
+    : vatVersionSettlement?.amount ?? roundMoney(input.settlementAmount);
   const payableAmount = settlementDirection === '应缴' ? settlementAmount : 0;
   const refundableAmount = settlementDirection === '应退' ? settlementAmount : 0;
+  const priorFiledAccountingAmount = record.declarationHistory.at(-1)?.filedAccountingAmount;
+  const currentSettlementAccountingAmount = payableAmount - refundableAmount;
+  const filedAccountingAmount = record.matterType === '企业所得税' || record.matterType === '印花税'
+    ? roundMoney((priorFiledAccountingAmount ?? 0) + currentSettlementAccountingAmount)
+    : record.filedAccountingAmount;
+  const currentVersionPaidAmount = getTaxMatterCurrentVersionPaidAmount(record);
   const declarationReceiptFileId = input.declarationReceiptFile?.id;
   const nextFiles = input.declarationReceiptFile
     ? [input.declarationReceiptFile, ...record.files]
@@ -423,22 +567,27 @@ export function recordTaxMatterDeclarationResult(
     declarationReceiptNo: input.declarationReceiptNo?.trim() || undefined,
     declarationStatus: input.declarationStatus,
     files: nextFiles,
+    filedAccountingAmount,
     payableAmount,
     refundableAmount,
-    refundStatus: refundableAmount > 0 ? '待退税' : '不适用',
+    refundApplicationDate: refundableAmount > 0 ? undefined : record.refundApplicationDate,
+    refundApplicationReceiptFileId: refundableAmount > 0 ? undefined : record.refundApplicationReceiptFileId,
+    refundApplicationReceiptNo: refundableAmount > 0 ? undefined : record.refundApplicationReceiptNo,
+    refundStatus: refundableAmount > 0 ? '待申请' : '不适用',
+    overpaymentMethod: refundableAmount > 0 ? undefined : record.overpaymentMethod,
     settlementDirection,
     paymentStatus: payableAmount <= 0
       ? '无需缴纳'
-      : record.paidAmount <= 0
+      : currentVersionPaidAmount <= 0
         ? '待缴纳'
-        : record.paidAmount < payableAmount
+        : currentVersionPaidAmount < payableAmount
           ? '部分缴纳'
           : '已缴纳',
     updatedAt: financeToday
   };
 
-  if (record.matterType === '增值税及附加' && input.vatBreakdown) {
-    nextRecord.vatSettlement = buildOfficialVatSettlement(record, input.vatBreakdown);
+  if (nextVatSettlement) {
+    nextRecord.vatSettlement = nextVatSettlement;
   }
 
   return {
@@ -505,14 +654,26 @@ export function recordTaxMatterRefundResult(
   record: FinanceTaxMatterRecord,
   input: TaxMatterRefundResultInput
 ): FinanceTaxMatterRecord {
+  const outstandingAmount = getTaxMatterRefundOutstandingAmount(record);
+
+  if (
+    !['申请中', '部分到账'].includes(record.refundStatus ?? '')
+    || input.amount <= 0
+    || input.amount - outstandingAmount > 0.01
+    || !input.refundDate
+    || input.receiptFile.status !== '已上传'
+  ) {
+    return record;
+  }
+
   const refundedAmount = roundMoney((record.refundedAmount ?? 0) + input.amount);
-  const refundableAmount = record.refundableAmount ?? 0;
+  const remainingAmount = roundMoney(outstandingAmount - input.amount);
   const nextRecord: FinanceTaxMatterRecord = {
     ...record,
     files: [input.receiptFile, ...record.files],
     refundedAmount,
     refundDate: input.refundDate,
-    refundStatus: refundedAmount < refundableAmount ? '部分退税' : '已退税',
+    refundStatus: remainingAmount > 0 ? '部分到账' : '已到账',
     updatedAt: financeToday
   };
 
@@ -521,11 +682,11 @@ export function recordTaxMatterRefundResult(
     processStatus: deriveTaxMatterProcessStatus(nextRecord),
     operationRecords: [
       {
-        action: '登记退税',
+        action: '登记退税到账',
         actor: '李明',
         id: `tax-op-refund-${record.id}-${Date.now()}`,
         object: record.matterNo,
-        summary: `登记退税 ${input.amount.toFixed(2)} 元`,
+        summary: `登记退税到账 ${input.amount.toFixed(2)} 元`,
         time: `${financeToday} 15:25`
       },
       ...record.operationRecords
@@ -533,17 +694,159 @@ export function recordTaxMatterRefundResult(
   };
 }
 
+export function recordTaxMatterRefundApplication(
+  record: FinanceTaxMatterRecord,
+  input: TaxMatterRefundApplicationInput
+): FinanceTaxMatterRecord {
+  if (
+    record.refundStatus !== '待申请'
+    || getTaxMatterRefundOutstandingAmount(record) <= 0
+    || !input.applicationDate
+    || (!input.receiptFile && !input.receiptNo?.trim())
+    || (input.method === '抵缴' && !input.targetMatterId)
+  ) {
+    return record;
+  }
+
+  const nextRecord: FinanceTaxMatterRecord = {
+    ...record,
+    files: input.receiptFile ? [input.receiptFile, ...record.files] : record.files,
+    refundApplicationDate: input.applicationDate,
+    refundApplicationReceiptFileId: input.receiptFile?.id,
+    refundApplicationReceiptNo: input.receiptNo?.trim() || undefined,
+    refundStatus: '申请中',
+    overpaymentMethod: input.method,
+    offsetTargetMatterId: input.method === '抵缴' ? input.targetMatterId : undefined,
+    updatedAt: financeToday
+  };
+
+  return {
+    ...nextRecord,
+    processStatus: deriveTaxMatterProcessStatus(nextRecord),
+    operationRecords: [
+      {
+        action: input.method === '抵缴' ? '登记抵缴申请' : '登记退税申请',
+        actor: '李明',
+        id: `tax-op-refund-application-${record.id}-${Date.now()}`,
+        object: record.matterNo,
+        summary: `${input.method === '抵缴' ? '申请抵缴' : '申请退税'} ${getTaxMatterRefundOutstandingAmount(record).toFixed(2)} 元`,
+        time: `${financeToday} 15:22`
+      },
+      ...record.operationRecords
+    ]
+  };
+}
+
+export function recordTaxMatterOffsetResult(
+  sourceRecord: FinanceTaxMatterRecord,
+  targetRecord: FinanceTaxMatterRecord,
+  input: TaxMatterOffsetResultInput
+): { sourceRecord: FinanceTaxMatterRecord; targetRecord: FinanceTaxMatterRecord } | undefined {
+  const sourceOutstandingAmount = getTaxMatterRefundOutstandingAmount(sourceRecord);
+  const targetOutstandingAmount = getTaxMatterOutstandingAmount(targetRecord);
+
+  if (
+    sourceRecord.overpaymentMethod !== '抵缴'
+    || !['申请中', '部分到账'].includes(sourceRecord.refundStatus ?? '')
+    || sourceRecord.offsetTargetMatterId !== targetRecord.id
+    || sourceRecord.matterType !== targetRecord.matterType
+    || input.amount <= 0
+    || input.amount - sourceOutstandingAmount > 0.01
+    || input.amount - targetOutstandingAmount > 0.01
+    || !input.offsetDate
+    || (!input.receiptFile && !input.receiptNo?.trim())
+  ) {
+    return undefined;
+  }
+
+  const offsetAmount = roundMoney((sourceRecord.offsetAmount ?? 0) + input.amount);
+  const offsetReceivedAmount = roundMoney((targetRecord.offsetReceivedAmount ?? 0) + input.amount);
+  const sourceRemainingAmount = roundMoney(sourceOutstandingAmount - input.amount);
+  const targetRemainingAmount = roundMoney(targetOutstandingAmount - input.amount);
+  const nextSourceRecord: FinanceTaxMatterRecord = {
+    ...sourceRecord,
+    files: input.receiptFile ? [input.receiptFile, ...sourceRecord.files] : sourceRecord.files,
+    offsetAmount,
+    offsetDate: input.offsetDate,
+    offsetReceiptFileId: input.receiptFile?.id,
+    offsetReceiptNo: input.receiptNo?.trim() || undefined,
+    offsetTargetMatterNo: targetRecord.matterNo,
+    refundStatus: sourceRemainingAmount > 0 ? '部分到账' : '已到账',
+    updatedAt: financeToday
+  };
+  const nextTargetRecord: FinanceTaxMatterRecord = {
+    ...targetRecord,
+    offsetReceivedAmount,
+    paymentStatus: targetRemainingAmount > 0 ? '部分缴纳' : '已缴纳',
+    updatedAt: financeToday,
+    operationRecords: [
+      {
+        action: '抵缴税款',
+        actor: '李明',
+        id: `tax-op-offset-received-${targetRecord.id}-${Date.now()}`,
+        object: targetRecord.matterNo,
+        summary: `使用 ${sourceRecord.matterNo} 多缴税款抵缴 ${input.amount.toFixed(2)} 元`,
+        time: `${financeToday} 15:26`
+      },
+      ...targetRecord.operationRecords
+    ]
+  };
+
+  return {
+    sourceRecord: {
+      ...nextSourceRecord,
+      processStatus: deriveTaxMatterProcessStatus(nextSourceRecord),
+      operationRecords: [
+        {
+          action: '登记抵缴结果',
+          actor: '李明',
+          id: `tax-op-offset-${sourceRecord.id}-${Date.now()}`,
+          object: sourceRecord.matterNo,
+          summary: `抵缴 ${targetRecord.matterNo} ${input.amount.toFixed(2)} 元`,
+          time: `${financeToday} 15:26`
+        },
+        ...sourceRecord.operationRecords
+      ]
+    },
+    targetRecord: {
+      ...nextTargetRecord,
+      processStatus: deriveTaxMatterProcessStatus(nextTargetRecord)
+    }
+  };
+}
+
 export function recordTaxMatterPaymentResult(
   record: FinanceTaxMatterRecord,
   input: TaxMatterPaymentResultInput
 ): FinanceTaxMatterRecord {
+  const outstandingAmount = getTaxMatterOutstandingAmount(record);
+  const declarationReady = ['申报成功', '零申报'].includes(record.declarationStatus)
+    || (
+      isSocialInsuranceTaxMatter(record.matterType)
+      && record.declarationStatus === '无申报义务'
+      && record.sourceItems.every((item) => ['已确认', '不适用'].includes(item.status))
+    );
+
+  if (
+    record.settlementDirection !== '应缴'
+    || !declarationReady
+    || !['待缴纳', '部分缴纳'].includes(record.paymentStatus)
+    || input.amount <= 0
+    || input.amount - outstandingAmount > 0.01
+    || !input.paymentDate
+    || input.receiptFile.status !== '已上传'
+  ) {
+    return record;
+  }
+
   const paidAmount = roundMoney(record.paidAmount + input.amount);
+  const currentVersionPaidAmount = paidAmount - (record.paymentBaselineAmount ?? 0);
   const nextRecord: FinanceTaxMatterRecord = {
     ...record,
     files: [input.receiptFile, ...record.files],
     paidAmount,
     paymentDate: input.paymentDate,
-    paymentStatus: paidAmount < record.payableAmount ? '部分缴纳' : '已缴纳',
+    paymentStatus: currentVersionPaidAmount < record.payableAmount ? '部分缴纳' : '已缴纳',
     updatedAt: financeToday
   };
 
@@ -564,6 +867,62 @@ export function recordTaxMatterPaymentResult(
   };
 }
 
+export function getTaxMatterDeclarationRevisionValidationError(
+  record: FinanceTaxMatterRecord,
+  action: '更正' | '作废',
+  allRecords: FinanceTaxMatterRecord[] = [record]
+) {
+  if (!['申报成功', '零申报'].includes(record.declarationStatus)) {
+    return '只能调整已完成申报的事项';
+  }
+
+  if (
+    action === '作废'
+    && (
+      record.paidAmount > 0
+      || (record.refundedAmount ?? 0) > 0
+      || Boolean(record.refundApplicationDate)
+    )
+  ) {
+    return '已有缴款、退税申请或退税到账记录，只能更正申报';
+  }
+
+  if (record.matterType !== '企业所得税' || record.declarationScenario !== '季度预缴') {
+    return undefined;
+  }
+
+  const matchedPeriod = record.period.match(/^(\d{4})-Q([1-4])$/);
+  if (!matchedPeriod) {
+    return '企业所得税季度期间格式不正确';
+  }
+
+  const taxYear = matchedPeriod[1];
+  const annualFiled = allRecords.some((candidate) =>
+    candidate.id !== record.id
+    && candidate.matterType === '企业所得税'
+    && candidate.declarationScenario === '年度汇算'
+    && candidate.period === taxYear
+    && ['申报成功', '零申报'].includes(candidate.declarationStatus)
+  );
+
+  if (annualFiled) {
+    return `${taxYear} 年度汇算已申报，不能再调整该年度季度预缴`;
+  }
+
+  const latestFiledQuarter = allRecords
+    .filter((candidate) =>
+      candidate.matterType === '企业所得税'
+      && candidate.declarationScenario === '季度预缴'
+      && candidate.period.startsWith(`${taxYear}-Q`)
+      && ['申报成功', '零申报'].includes(candidate.declarationStatus)
+    )
+    .sort((left, right) => right.period.localeCompare(left.period))[0];
+
+  return latestFiledQuarter && latestFiledQuarter.id !== record.id
+    ? `企业所得税季度预缴只能调整最近一期，当前为 ${latestFiledQuarter.period}`
+    : undefined;
+}
+
 export function startTaxMatterDeclarationRevision(
   record: FinanceTaxMatterRecord,
   action: '更正' | '作废',
@@ -581,6 +940,8 @@ export function startTaxMatterDeclarationRevision(
     filedAccountingAmount: getTaxMatterAccountingAmount(record),
     filedPayableAmount: record.payableAmount,
     filedRefundableAmount: record.refundableAmount,
+    paidAmountAtRevision: record.paidAmount,
+    refundedAmountAtRevision: record.refundedAmount,
     filedVatSettlement: record.vatSettlement,
     filedVatSurcharge: record.vatSettlement?.surcharge,
     id: context.historyId ?? `tax-declaration-history-${record.id}-${record.declarationVersion}`,
@@ -598,11 +959,25 @@ export function startTaxMatterDeclarationRevision(
     declarationReceiptNo: undefined,
     declarationStatus: '待申报',
     declarationVersion: record.declarationVersion + 1,
-    payableAmount: record.preparedPayableAmount,
+    filedAccountingAmount: undefined,
+    payableAmount: 0,
+    paymentBaselineAmount: record.paidAmount,
+    offsetReceivedBaselineAmount: record.offsetReceivedAmount ?? 0,
     refundableAmount: 0,
+    refundApplicationDate: undefined,
+    refundApplicationReceiptFileId: undefined,
+    refundApplicationReceiptNo: undefined,
+    refundBaselineAmount: record.refundedAmount ?? 0,
+    offsetBaselineAmount: record.offsetAmount ?? 0,
+    overpaymentMethod: undefined,
+    offsetDate: undefined,
+    offsetReceiptFileId: undefined,
+    offsetReceiptNo: undefined,
+    offsetTargetMatterId: undefined,
+    offsetTargetMatterNo: undefined,
     refundStatus: '不适用',
     settlementDirection: '待确定',
-    paymentStatus: record.paidAmount <= 0 ? '未开始' : '部分缴纳',
+    paymentStatus: '未开始',
     processStatus: '待申报',
     updatedAt: financeToday
   };
@@ -858,6 +1233,31 @@ function getDeclarationPreparationPayableAmount(
   return preparation.vatSummary.estimatedTotalTaxAmount;
 }
 
+function getDeclarationPreparationSettlement(
+  preparation: FinanceDeclarationPreparationRecord | undefined,
+  usePendingIitCorrection = false
+): {
+  amount: number;
+  direction: Exclude<FinanceTaxMatterSettlementDirection, '待确定'>;
+  payableAmount: number;
+  refundableAmount: number;
+} {
+  const payableAmount = roundMoney(getDeclarationPreparationPayableAmount(preparation, usePendingIitCorrection));
+  const refundableAmount = preparation?.taxType === '企业所得税'
+    ? roundMoney(preparation.citSummary?.overpaidTaxAmount ?? 0)
+    : 0;
+
+  if (refundableAmount > 0.005) {
+    return { amount: refundableAmount, direction: '应退', payableAmount: 0, refundableAmount };
+  }
+
+  if (payableAmount > 0.005) {
+    return { amount: payableAmount, direction: '应缴', payableAmount, refundableAmount: 0 };
+  }
+
+  return { amount: 0, direction: '无需补退', payableAmount: 0, refundableAmount: 0 };
+}
+
 function getDeclarationPreparationParticipantSummary(
   record: FinanceTaxMatterRecord,
   preparation: FinanceDeclarationPreparationRecord | undefined,
@@ -952,10 +1352,11 @@ export function applyDeclarationPreparationToTaxMatter(
     && record.declarationVersion > 1
     && preparation?.pendingIitCorrection
   );
-  const preparedPayableAmount = getDeclarationPreparationPayableAmount(
+  const preparedSettlement = getDeclarationPreparationSettlement(
     preparation,
     usePendingIitCorrection
   );
+  const preparedPayableAmount = preparedSettlement.payableAmount;
   const participantSummary = getDeclarationPreparationParticipantSummary(
     record,
     preparation,
@@ -974,10 +1375,11 @@ export function applyDeclarationPreparationToTaxMatter(
     return {
       ...record,
       dataStatus: '待复核',
-      paidAmount: 0,
       participantSummary,
       payableAmount: 0,
       preparedPayableAmount: 0,
+      preparedRefundableAmount: 0,
+      preparedSettlementDirection: '无需补退',
       paymentStatus: '未开始',
       processStatus: '数据待确认',
       refundableAmount: 0,
@@ -995,6 +1397,8 @@ export function applyDeclarationPreparationToTaxMatter(
       ? preparedPayableAmount
       : record.payableAmount,
     preparedPayableAmount,
+    preparedRefundableAmount: preparedSettlement.refundableAmount,
+    preparedSettlementDirection: preparedSettlement.direction,
     participantSummary,
     paymentStatus: record.paymentStatus === '未开始' ? '待缴纳' : record.paymentStatus,
     processStatus: record.processStatus === '数据待确认' ? '待申报' : record.processStatus,
@@ -1199,6 +1603,100 @@ function buildTaxMatterPaymentAllocations(
   });
 }
 
+function buildTaxMatterRefundAllocations(
+  record: FinanceTaxMatterRecord,
+  financeRows: FinanceTransactionRecord[],
+  amountToRegister: number
+): FinanceTaxPaymentAllocation[] | undefined {
+  if (record.matterType !== '增值税及附加' || !record.vatSettlement) {
+    return undefined;
+  }
+
+  const previousSettlement = record.declarationHistory.at(-1)?.filedVatSettlement;
+
+  if (!previousSettlement) {
+    return undefined;
+  }
+
+  const allocations = ([
+    {
+      amount: roundMoney(previousSettlement.declaredVatAmount - record.vatSettlement.declaredVatAmount),
+      subjectCode: '2221.01',
+      taxType: '增值税'
+    },
+    {
+      amount: roundMoney(
+        previousSettlement.surcharge.urbanMaintenanceTaxAfterReduction
+          - record.vatSettlement.surcharge.urbanMaintenanceTaxAfterReduction
+      ),
+      subjectCode: '2221.04',
+      taxType: '城市维护建设税'
+    },
+    {
+      amount: roundMoney(
+        previousSettlement.surcharge.educationSurchargeAfterReduction
+          - record.vatSettlement.surcharge.educationSurchargeAfterReduction
+      ),
+      subjectCode: '2221.06',
+      taxType: '教育费附加'
+    },
+    {
+      amount: roundMoney(
+        previousSettlement.surcharge.localEducationSurchargeAfterReduction
+          - record.vatSettlement.surcharge.localEducationSurchargeAfterReduction
+      ),
+      subjectCode: '2221.07',
+      taxType: '地方教育附加'
+    }
+  ] satisfies FinanceTaxPaymentAllocation[]).filter((allocation) => allocation.amount > 0.005);
+
+  const versionRefundAmount = roundMoney(allocations.reduce((total, allocation) => total + allocation.amount, 0));
+
+  if (Math.abs(versionRefundAmount - (record.refundableAmount ?? 0)) > 0.01) {
+    return undefined;
+  }
+
+  const linkedRows = financeRows.filter(
+    (row) => record.linkedTransactionNos.includes(row.transactionNo)
+      && row.direction === '收入'
+      && row.status !== '已作废'
+  );
+
+  if (linkedRows.some((row) => !row.taxPaymentAllocations)) {
+    return undefined;
+  }
+
+  const remainingAllocations = allocations
+    .map((allocation) => {
+      const allocatedAmount = linkedRows.reduce(
+        (total, row) => total + (row.taxPaymentAllocations ?? [])
+          .filter((item) => item.subjectCode === allocation.subjectCode)
+          .reduce((subtotal, item) => subtotal + item.amount, 0),
+        0
+      );
+
+      return {
+        ...allocation,
+        amount: roundMoney(allocation.amount - allocatedAmount)
+      };
+    })
+    .filter((allocation) => allocation.amount > 0.005);
+  let amountRemaining = amountToRegister;
+
+  const result = remainingAllocations.flatMap((allocation) => {
+    if (amountRemaining <= 0) {
+      return [];
+    }
+
+    const amount = roundMoney(Math.min(allocation.amount, amountRemaining));
+    amountRemaining = roundMoney(amountRemaining - amount);
+
+    return [{ ...allocation, amount }];
+  });
+
+  return amountRemaining <= 0.01 ? result : undefined;
+}
+
 export function getTaxMatterLinkedPaymentAmount(record: FinanceTaxMatterRecord, financeRows: FinanceTransactionRecord[]) {
   const linkedNos = new Set(record.linkedTransactionNos);
 
@@ -1287,14 +1785,14 @@ export function buildTaxMatterPaymentTransaction({
     currency: 'CNY',
     direction: '支出',
     files,
-    id: `fin-tax-${record.matterNo}-${Date.now()}`,
+    id: `fin-tax-${transactionNo}`,
     note: `${record.title}缴款回填`,
     occurredAt,
     operationRecords: [
       {
         action: '登记流水',
         actor: '李明',
-        id: `fin-op-tax-payment-${Date.now()}`,
+        id: `fin-op-tax-payment-${transactionNo}`,
         object: transactionNo,
         summary: `由 ${record.matterNo} 生成税费缴纳流水`,
         time: `${financeToday} 15:30`
@@ -1374,6 +1872,11 @@ export function buildTaxMatterRefundTransaction({
 
   const accountingPeriod = refundDate.slice(0, 7);
   const transactionNo = getNextFinanceTransactionNo(financeRows, accountingPeriod);
+  const taxPaymentAllocations = buildTaxMatterRefundAllocations(record, financeRows, refundAmount);
+
+  if (record.matterType === '增值税及附加' && !taxPaymentAllocations) {
+    return undefined;
+  }
 
   return {
     accountingPeriod,
@@ -1385,14 +1888,14 @@ export function buildTaxMatterRefundTransaction({
     currency: 'CNY',
     direction: '收入',
     files: [{ ...refundReceiptFile, type: '退税回单' }],
-    id: `fin-tax-refund-${record.matterNo}-${Date.now()}`,
+    id: `fin-tax-refund-${transactionNo}`,
     note: `${record.title}退税到账`,
     occurredAt: refundDate,
     operationRecords: [
       {
         action: '登记流水',
         actor: '李明',
-        id: `fin-op-tax-refund-${Date.now()}`,
+        id: `fin-op-tax-refund-${transactionNo}`,
         object: transactionNo,
         summary: `由 ${record.matterNo} 生成税费退还流水`,
         time: `${financeToday} 15:30`
@@ -1407,6 +1910,7 @@ export function buildTaxMatterRefundTransaction({
     sourceNo: record.matterNo,
     sourceTitle: record.title,
     sourceType: '税费事项',
+    taxPaymentAllocations,
     status: '待复核',
     transactionNo,
     updatedAt: `${financeToday} 15:30`,

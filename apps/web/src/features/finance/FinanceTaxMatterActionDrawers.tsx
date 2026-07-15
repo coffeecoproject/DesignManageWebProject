@@ -28,14 +28,20 @@ import {
 } from './financeTaxMatterHandlingModel';
 import {
   getMissingTaxMatterReceiptTypes,
+  getTaxMatterCurrentVersionOffsetAmount,
+  getTaxMatterCurrentVersionPaidAmount,
+  getTaxMatterCurrentVersionRefundedAmount,
   getTaxMatterDeclarationResultValidationError,
   getTaxMatterOutstandingAmount,
   getTaxMatterRefundOutstandingAmount,
   getTaxMatterRequiredReceiptTypes,
   getTaxMatterSettlementDirection,
+  getVatDeclarationVersionSettlement,
   type TaxMatterDeclarationReceiptInput,
   type TaxMatterDeclarationResultInput,
   type TaxMatterPaymentResultInput,
+  type TaxMatterOffsetResultInput,
+  type TaxMatterRefundApplicationInput,
   type TaxMatterRefundResultInput,
   type TaxMatterReceiptFileType
 } from './financeTaxMatterModel';
@@ -178,11 +184,22 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
   useEffect(() => {
     if (!record) return;
     const currentDirection = getTaxMatterSettlementDirection(record);
+    const preparedDirection = record.preparedSettlementDirection ?? (
+      (record.preparedRefundableAmount ?? 0) > 0
+        ? '应退'
+        : record.preparedPayableAmount > 0
+          ? '应缴'
+          : '无需补退'
+    );
     setDeclarationDate(record.declarationDate ?? financeToday);
     setDeclarationStatus(record.declarationStatus === '零申报' ? '零申报' : '申报成功');
-    setSettlementDirection(currentDirection === '待确定' ? '应缴' : currentDirection);
+    setSettlementDirection(currentDirection === '待确定' ? preparedDirection : currentDirection);
     setSettlementAmount(record.declarationStatus === '待申报'
-      ? record.preparedPayableAmount
+      ? preparedDirection === '应退'
+        ? record.preparedRefundableAmount ?? 0
+        : preparedDirection === '应缴'
+          ? record.preparedPayableAmount
+          : 0
       : currentDirection === '应退' ? record.refundableAmount ?? 0 : record.payableAmount);
     setReceiptNo(record.declarationReceiptNo ?? '');
     setDifferenceReason(record.declarationDifferenceReason ?? '');
@@ -209,18 +226,35 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
         urbanMaintenanceTaxAmount: 0
       }
     : vatBreakdown;
-  const vatSettlementAmount = Object.values(normalizedVatBreakdown).reduce((total, amount) => total + amount, 0);
+  const vatVersionSettlement = isVatMatter
+    ? getVatDeclarationVersionSettlement(record, normalizedVatBreakdown)
+    : undefined;
   const normalizedDirection = declarationStatus === '零申报'
     ? '无需补退'
     : isVatMatter
-      ? vatSettlementAmount > 0 ? '应缴' : '无需补退'
+      ? vatVersionSettlement?.direction ?? '无需补退'
       : settlementDirection;
   const normalizedAmount = declarationStatus === '零申报'
     ? 0
     : isVatMatter
-      ? vatSettlementAmount
+      ? vatVersionSettlement?.amount ?? 0
       : settlementDirection === '无需补退' ? 0 : settlementAmount;
-  const hasAmountDifference = Math.abs((normalizedDirection === '应缴' ? normalizedAmount : 0) - record.preparedPayableAmount) > 0.01;
+  const preparedDirection = record.preparedSettlementDirection ?? (
+    (record.preparedRefundableAmount ?? 0) > 0
+      ? '应退'
+      : record.preparedPayableAmount > 0
+        ? '应缴'
+        : '无需补退'
+  );
+  const preparedAmount = preparedDirection === '应退'
+    ? record.preparedRefundableAmount ?? 0
+    : preparedDirection === '应缴'
+      ? record.preparedPayableAmount
+      : 0;
+  const hasAmountDifference = record.declarationVersion === 1 && (
+    normalizedDirection !== preparedDirection
+      || Math.abs(normalizedAmount - preparedAmount) > 0.01
+  );
   const declarationResultError = getTaxMatterDeclarationResultValidationError(record, {
     declarationStatus,
     settlementAmount: normalizedAmount,
@@ -266,7 +300,10 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
         <DetailInfoGrid columns={3} items={[
           { label: '税种', value: record.matterType },
           { label: '所属期间', value: record.period },
-          { label: '系统测算金额', value: formatMoney(record.preparedPayableAmount) }
+          {
+            label: '准备结果',
+            value: `${preparedDirection} ${formatMoney(preparedAmount)}`
+          }
         ]} />
       </DetailSection>
       <DetailSection icon={<FileProtectOutlined />} title="申报结果">
@@ -279,15 +316,17 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
           </DrawerFormField>
           {declarationStatus !== '零申报' && !isVatMatter ? (
             <DrawerFormField label="补退方向" required>
-              <Select options={[
-                { label: '应缴', value: '应缴' },
-                { label: '无需补退', value: '无需补退' },
-                { label: '应退', value: '应退' }
-              ]} value={settlementDirection} onChange={setSettlementDirection} />
+              <Select options={record.matterType === '个人所得税'
+                ? [{ label: '应缴', value: '应缴' }, { label: '无需补退', value: '无需补退' }]
+                : [
+                    { label: '应缴', value: '应缴' },
+                    { label: '无需补退', value: '无需补退' },
+                    { label: '应退', value: '应退' }
+                  ]} value={settlementDirection} onChange={setSettlementDirection} />
             </DrawerFormField>
           ) : null}
           {!isVatMatter ? (
-            <DrawerFormField label="办理金额" required>
+            <DrawerFormField label={record.declarationVersion > 1 ? '本次更正补退金额' : '申报补退金额'} required>
               <InputNumber disabled={declarationStatus === '零申报' || settlementDirection === '无需补退'} min={0} precision={2} style={{ width: '100%' }} value={normalizedAmount} onChange={(value) => setSettlementAmount(Number(value ?? 0))} />
             </DrawerFormField>
           ) : null}
@@ -310,8 +349,13 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
               <InputNumber min={0} precision={2} style={{ width: '100%' }} value={vatBreakdown.localEducationSurchargeAmount} onChange={(value) => setVatBreakdown((current) => ({ ...current, localEducationSurchargeAmount: Number(value ?? 0) }))} />
             </DrawerFormField>
             <DrawerFormField label="合计">
-              <InputNumber disabled precision={2} style={{ width: '100%' }} value={normalizedAmount} />
+              <InputNumber disabled precision={2} style={{ width: '100%' }} value={vatVersionSettlement?.officialTotalAmount ?? 0} />
             </DrawerFormField>
+            {record.declarationVersion > 1 ? (
+              <DrawerFormField label="本次更正结果">
+                <Input disabled value={`${normalizedDirection} ${formatMoney(normalizedAmount)}`} />
+              </DrawerFormField>
+            ) : null}
           </DrawerFormGrid>
         ) : null}
         {hasAmountDifference ? (
@@ -405,6 +449,7 @@ export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, re
 
   if (!record) return null;
   const outstandingAmount = getTaxMatterOutstandingAmount(record);
+  const currentVersionPaidAmount = getTaxMatterCurrentVersionPaidAmount(record);
   const formError = amount <= 0
     ? '缴款金额必须大于 0'
     : amount - outstandingAmount > 0.01
@@ -425,14 +470,14 @@ export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, re
         testId: 'finance-tax-payment-result-save',
         onClick: () => receiptFile && !formError && onSave(record, { amount, paymentDate, receiptFile })
       }}
-      title={<DetailDrawerTitle status={record.paidAmount > 0 ? '部分缴纳' : '待缴款'} statusTone={record.paidAmount > 0 ? 'blue' : 'amber'} subtitle={`${record.matterNo} / ${record.period}`} title="登记缴款" />}
+      title={<DetailDrawerTitle status={currentVersionPaidAmount > 0 ? '部分缴纳' : '待缴款'} statusTone={currentVersionPaidAmount > 0 ? 'blue' : 'amber'} subtitle={`${record.matterNo} / ${record.period}`} title="登记缴款" />}
       width={760}
       onClose={onClose}
     >
       <DetailSection icon={<WalletOutlined />} title="缴款信息">
         <DetailInfoGrid columns={3} items={[
-          { label: '官方应缴', value: formatMoney(record.payableAmount) },
-          { label: '已缴金额', value: formatMoney(record.paidAmount) },
+          { label: '本版应缴', value: formatMoney(record.payableAmount) },
+          { label: '本版已缴', value: formatMoney(currentVersionPaidAmount) },
           { label: '待缴金额', value: formatMoney(outstandingAmount) }
         ]} />
         <DrawerFormGrid>
@@ -467,6 +512,7 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
 
   if (!record) return null;
   const outstandingAmount = getTaxMatterRefundOutstandingAmount(record);
+  const currentVersionRefundedAmount = getTaxMatterCurrentVersionRefundedAmount(record);
   const formError = amount <= 0
     ? '退税金额必须大于 0'
     : amount - outstandingAmount > 0.01
@@ -482,18 +528,18 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
       open
       primaryAction={{
         disabled: Boolean(formError),
-        label: '登记退税',
+        label: '登记退税到账',
         testId: 'finance-tax-refund-result-save',
         onClick: () => receiptFile && !formError && onSave(record, { amount, receiptFile, refundDate })
       }}
-      title={<DetailDrawerTitle status={(record.refundedAmount ?? 0) > 0 ? '部分退税' : '待退税'} statusTone={(record.refundedAmount ?? 0) > 0 ? 'blue' : 'amber'} subtitle={`${record.matterNo} / ${record.period}`} title="登记退税" />}
+      title={<DetailDrawerTitle status={(record.refundedAmount ?? 0) > (record.refundBaselineAmount ?? 0) ? '部分到账' : '处理中'} statusTone="blue" subtitle={`${record.matterNo} / ${record.period}`} title="登记退税到账" />}
       width={760}
       onClose={onClose}
     >
       <DetailSection icon={<WalletOutlined />} title="退税信息">
         <DetailInfoGrid columns={4} items={[
-          { label: '应退金额', value: formatMoney(record.refundableAmount ?? 0) },
-          { label: '已退金额', value: formatMoney(record.refundedAmount ?? 0) },
+          { label: '本版应退', value: formatMoney(record.refundableAmount ?? 0) },
+          { label: '本版已退', value: formatMoney(currentVersionRefundedAmount) },
           { label: '待退金额', value: formatMoney(outstandingAmount) },
           { label: '到账账户', value: defaultAccountName }
         ]} />
@@ -511,7 +557,161 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
   );
 }
 
-export function TaxDeclarationRevisionDrawer({ onClose, onSave, record }: CommonDrawerProps & {
+export function TaxRefundApplicationDrawer({ offsetCandidates, onClose, onSave, record }: CommonDrawerProps & {
+  offsetCandidates: FinanceTaxMatterRecord[];
+  onSave: (record: FinanceTaxMatterRecord, input: TaxMatterRefundApplicationInput) => void;
+}) {
+  const [applicationDate, setApplicationDate] = useState(financeToday);
+  const [method, setMethod] = useState<TaxMatterRefundApplicationInput['method']>('退税');
+  const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
+  const [receiptNo, setReceiptNo] = useState('');
+  const [targetMatterId, setTargetMatterId] = useState<string>();
+
+  useEffect(() => {
+    setApplicationDate(financeToday);
+    setMethod('退税');
+    setReceiptFile(undefined);
+    setReceiptNo('');
+    setTargetMatterId(undefined);
+  }, [record]);
+
+  if (!record) return null;
+  const outstandingAmount = getTaxMatterRefundOutstandingAmount(record);
+  const formError = !applicationDate
+    ? '请选择申请日期'
+    : method === '抵缴' && !targetMatterId
+      ? '请选择抵缴事项'
+      : !receiptFile && !receiptNo.trim()
+        ? '请上传退抵申请回执或填写回执号'
+        : undefined;
+
+  return (
+    <DrawerShell
+      bodyTestId="finance-tax-refund-application-drawer"
+      cancelAction={{ label: '取消', onClick: onClose }}
+      className="finance-tax-drawer"
+      contentLayout="detail"
+      open
+      primaryAction={{
+        disabled: Boolean(formError),
+        label: `保存${method}申请`,
+        testId: 'finance-tax-refund-application-save',
+        onClick: () => !formError && onSave(record, { applicationDate, method, receiptFile, receiptNo, targetMatterId })
+      }}
+      title={<DetailDrawerTitle status="待处理" statusTone="amber" subtitle={`${record.matterNo} / ${record.period}`} title="登记多缴税款处理" />}
+      width={760}
+      onClose={onClose}
+    >
+      <DetailSection icon={<WalletOutlined />} title="处理申请">
+        <DetailInfoGrid columns={3} items={[
+          { label: '本版多缴', value: formatMoney(record.refundableAmount ?? 0) },
+          { label: '已处理', value: formatMoney(getTaxMatterCurrentVersionRefundedAmount(record) + getTaxMatterCurrentVersionOffsetAmount(record)) },
+          { label: '待处理', value: formatMoney(outstandingAmount) }
+        ]} />
+        <DrawerFormGrid>
+          <DrawerFormField label="处理方式" required>
+            <Select options={[{ label: '申请退税', value: '退税' }, { label: '抵缴后续税款', value: '抵缴' }]} value={method} onChange={(value) => {
+              setMethod(value);
+              setTargetMatterId(undefined);
+            }} />
+          </DrawerFormField>
+          <DrawerFormField label="申请日期" required>
+            <DatePicker inputReadOnly style={{ width: '100%' }} value={dayjs(applicationDate)} onChange={(value) => setApplicationDate(value?.format('YYYY-MM-DD') ?? '')} />
+          </DrawerFormField>
+          {method === '抵缴' ? (
+            <DrawerFormField label="抵缴事项" required>
+              <Select
+                options={offsetCandidates.map((candidate) => ({
+                  label: `${candidate.matterNo} / ${candidate.period} / 待缴 ${formatMoney(getTaxMatterOutstandingAmount(candidate))}`,
+                  value: candidate.id
+                }))}
+                placeholder="选择同税种待缴事项"
+                value={targetMatterId}
+                onChange={setTargetMatterId}
+              />
+            </DrawerFormField>
+          ) : null}
+          <DrawerFormField label="申请回执号">
+            <Input value={receiptNo} onChange={(event) => setReceiptNo(event.target.value)} />
+          </DrawerFormField>
+        </DrawerFormGrid>
+      </DetailSection>
+      <ReceiptUploadSection file={receiptFile} title="退抵申请回执" onChange={setReceiptFile} />
+    </DrawerShell>
+  );
+}
+
+export function TaxOffsetResultDrawer({ onClose, onSave, record, targetRecord }: CommonDrawerProps & {
+  onSave: (record: FinanceTaxMatterRecord, targetRecord: FinanceTaxMatterRecord, input: TaxMatterOffsetResultInput) => void;
+  targetRecord?: FinanceTaxMatterRecord;
+}) {
+  const [amount, setAmount] = useState(0);
+  const [offsetDate, setOffsetDate] = useState(financeToday);
+  const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
+  const [receiptNo, setReceiptNo] = useState('');
+
+  useEffect(() => {
+    if (!record || !targetRecord) return;
+    setAmount(Math.min(getTaxMatterRefundOutstandingAmount(record), getTaxMatterOutstandingAmount(targetRecord)));
+    setOffsetDate(financeToday);
+    setReceiptFile(undefined);
+    setReceiptNo('');
+  }, [record, targetRecord]);
+
+  if (!record || !targetRecord) return null;
+  const maximumAmount = Math.min(getTaxMatterRefundOutstandingAmount(record), getTaxMatterOutstandingAmount(targetRecord));
+  const formError = amount <= 0
+    ? '抵缴金额必须大于 0'
+    : amount - maximumAmount > 0.01
+      ? '抵缴金额不能超过双方待处理金额'
+      : !offsetDate
+        ? '请选择抵缴确认日期'
+        : !receiptFile && !receiptNo.trim()
+          ? '请上传抵缴确认单或填写凭证号'
+          : undefined;
+
+  return (
+    <DrawerShell
+      bodyTestId="finance-tax-offset-result-drawer"
+      cancelAction={{ label: '取消', onClick: onClose }}
+      className="finance-tax-drawer"
+      contentLayout="detail"
+      open
+      primaryAction={{
+        disabled: Boolean(formError),
+        label: '保存抵缴结果',
+        testId: 'finance-tax-offset-result-save',
+        onClick: () => !formError && onSave(record, targetRecord, { amount, offsetDate, receiptFile, receiptNo })
+      }}
+      title={<DetailDrawerTitle status="处理中" statusTone="blue" subtitle={`${record.matterNo} / ${record.period}`} title="登记抵缴结果" />}
+      width={760}
+      onClose={onClose}
+    >
+      <DetailSection icon={<WalletOutlined />} title="抵缴信息">
+        <DetailInfoGrid columns={3} items={[
+          { label: '多缴事项', value: record.matterNo },
+          { label: '抵缴事项', value: targetRecord.matterNo },
+          { label: '可抵缴金额', value: formatMoney(maximumAmount) }
+        ]} />
+        <DrawerFormGrid>
+          <DrawerFormField label="确认日期" required>
+            <DatePicker inputReadOnly style={{ width: '100%' }} value={dayjs(offsetDate)} onChange={(value) => setOffsetDate(value?.format('YYYY-MM-DD') ?? '')} />
+          </DrawerFormField>
+          <DrawerFormField label="抵缴金额" required>
+            <InputNumber min={0} precision={2} style={{ width: '100%' }} value={amount} onChange={(value) => setAmount(Number(value ?? 0))} />
+          </DrawerFormField>
+          <DrawerFormField label="确认凭证号">
+            <Input value={receiptNo} onChange={(event) => setReceiptNo(event.target.value)} />
+          </DrawerFormField>
+        </DrawerFormGrid>
+      </DetailSection>
+      <ReceiptUploadSection file={receiptFile} title="抵缴确认单" onChange={setReceiptFile} />
+    </DrawerShell>
+  );
+}
+
+export function TaxDeclarationRevisionDrawer({ canVoid, onClose, onSave, record }: CommonDrawerProps & {
+  canVoid: boolean;
   onSave: (record: FinanceTaxMatterRecord, action: '更正' | '作废', reason: string) => void;
 }) {
   const [action, setAction] = useState<'更正' | '作废'>('更正');
@@ -523,8 +723,6 @@ export function TaxDeclarationRevisionDrawer({ onClose, onSave, record }: Common
   }, [record]);
 
   if (!record) return null;
-  const canVoid = record.paidAmount <= 0 && (record.refundedAmount ?? 0) <= 0;
-
   return (
     <DrawerShell
       bodyTestId="finance-tax-revision-drawer"
@@ -545,8 +743,13 @@ export function TaxDeclarationRevisionDrawer({ onClose, onSave, record }: Common
       <DetailSection icon={<FileProtectOutlined />} title="当前申报">
         <DetailInfoGrid columns={3} items={[
           { label: '申报结果', value: record.declarationStatus },
-          { label: '官方应缴', value: formatMoney(record.payableAmount) },
-          { label: '已缴金额', value: formatMoney(record.paidAmount) }
+          {
+            label: getTaxMatterSettlementDirection(record) === '应退' ? '本版应退' : '本版应缴',
+            value: formatMoney(getTaxMatterSettlementDirection(record) === '应退'
+              ? record.refundableAmount ?? 0
+              : record.payableAmount)
+          },
+          { label: '累计已缴', value: formatMoney(record.paidAmount) }
         ]} />
       </DetailSection>
       <DetailSection icon={<AuditOutlined />} title="调整内容">

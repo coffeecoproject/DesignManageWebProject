@@ -59,10 +59,8 @@ function getQuarterRange(year: string, quarter: number) {
   };
 }
 
-function getQuarterAccountingPeriods(year: string, quarter: number) {
-  const startMonth = (quarter - 1) * 3 + 1;
-
-  return Array.from({ length: 3 }, (_, index) => `${year}-${String(startMonth + index).padStart(2, '0')}`);
+function getYearToDateAccountingPeriods(year: string, quarter: number) {
+  return Array.from({ length: quarter * 3 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`);
 }
 
 function getLedgerRangeStart(requestedStartDate: string, endDate: string) {
@@ -157,7 +155,7 @@ export function buildCorporateIncomeTaxAccountingSource({
   const periodEndRange = getQuarterRange(year, quarter);
   const coveredAccountingPeriods = /^\d{4}$/.test(period)
     ? Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`)
-    : getQuarterAccountingPeriods(year, quarter);
+    : getYearToDateAccountingPeriods(year, quarter);
   const closedAccountingPeriods = new Set(
     periodLocks
       .filter((record) => record.status === '已结账')

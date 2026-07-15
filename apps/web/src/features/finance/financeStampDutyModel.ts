@@ -87,6 +87,14 @@ export type FinanceStampDutyManualDocumentInput = {
   taxItem: FinanceStampDutyTaxItem;
 };
 
+export type FinanceStampDutySettlementInput = {
+  amount: number;
+  evidenceFiles: RelatedFileRecord[];
+  id: string;
+  settledAt: string;
+  statedVatAmount?: number;
+};
+
 export type FinanceStampDutyCapitalBookInput = {
   capitalReserveEndingBalance: number;
   historicalTaxedMaximumBasis?: number;
@@ -123,13 +131,6 @@ function getQuarterPeriod(date: string) {
   const quarter = Math.ceil(month / 3);
 
   return `${year}-Q${quarter}`;
-}
-
-function getNextMonthPeriod(date: string) {
-  const [yearText, monthText] = date.split('-');
-  const currentDate = new Date(Number(yearText), Number(monthText), 1);
-
-  return `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function resolveDeclarationScenario(policy: FinanceStampDutyPolicy, sourceType: FinanceStampDutySourceType) {
@@ -398,25 +399,51 @@ export function buildCapitalBookStampDutySource(
 
 export function buildStampDutySettlementEvent(
   source: FinanceStampDutySourceRecord,
-  settlement: { amount: number; id: string; settledAt: string }
+  settlement: FinanceStampDutySettlementInput
 ): FinanceStampDutySourceRecord {
   if (source.resolutionStatus !== '待后续结算') {
     throw new Error('只有待后续结算的应税凭证可以登记结算事件');
   }
 
+  if (source.signedAt && settlement.settledAt < source.signedAt) {
+    throw new Error('实际结算日期不能早于应税凭证书立日期');
+  }
+
+  const amountError = validateStampDutyDocumentAmounts({
+    amount: settlement.amount,
+    amountTaxMode: source.amountTaxMode,
+    vatAmount: settlement.statedVatAmount
+  });
+
+  if (amountError) {
+    throw new Error(amountError);
+  }
+
+  if (source.amountTaxMode === '价税分列' && settlement.statedVatAmount === undefined) {
+    throw new Error('价税分列的实际结算必须登记单列增值税额');
+  }
+
+  if (settlement.evidenceFiles.length === 0) {
+    throw new Error('实际结算必须上传结算依据');
+  }
+
   const policy = getActiveFinanceTaxPolicyProfile(settlement.settledAt.slice(0, 7)).stampDuty;
-  const taxableBasis = roundMoney(settlement.amount);
+  const taxableBasis = calculateTaxableBasis(
+    settlement.amount,
+    source.amountTaxMode,
+    settlement.statedVatAmount
+  );
   const amounts = calculateAmounts(taxableBasis, source.taxItem, policy);
-  const nextPeriod = getNextMonthPeriod(settlement.settledAt);
   const declarationScenario = resolveDeclarationScenario(policy, source.sourceType);
 
   return withSnapshot({
     ...source,
     declarationScenario,
     estimatedPayableAmount: amounts.estimatedPayableAmount,
+    evidenceFiles: settlement.evidenceFiles,
     id: `${source.id}-settlement-${settlement.id}`,
     legalTaxRate: amounts.legalTaxRate,
-    obligationPeriod: declarationScenario === '季度申报' ? getQuarterPeriod(`${nextPeriod}-01`) : nextPeriod,
+    obligationPeriod: resolveObligationPeriod(settlement.settledAt, declarationScenario),
     reductionAmount: amounts.reductionAmount,
     resolutionStatus: '可申报',
     settlementDate: settlement.settledAt,
@@ -424,6 +451,7 @@ export function buildStampDutySettlementEvent(
     sourceNo: `${source.sourceNo}-${settlement.id}`,
     sourceVersion: `${source.sourceVersion}-settlement-${settlement.id}`,
     statedAmount: settlement.amount,
+    statedVatAmount: settlement.statedVatAmount,
     taxBeforeReduction: amounts.taxBeforeReduction,
     taxableBasis
   });

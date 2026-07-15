@@ -172,7 +172,7 @@ export const taxPolicyRules: TaxPolicyRule[] = [
       {
         basis: '季度预缴结果和年度最终申报结果',
         name: '年度汇算',
-        result: '当前系统不处理年度汇算；后续作为独立流程扩展'
+        result: '年度结账、正式报表和第四季度预缴完成后，核对年度调整与亏损弥补并形成汇算准备'
       }
     ],
     declarationCycle: '季度 / 年度',
@@ -181,7 +181,7 @@ export const taxPolicyRules: TaxPolicyRule[] = [
     id: 'tax-policy-cit',
     metrics: [
       { label: '预缴周期', value: '季度' },
-      { label: '优惠资格', value: '待确认' },
+      { label: '优惠资格', value: '按申报期判定' },
       { label: '确认方式', value: '申报准备' }
     ],
     officialChannel: '湖北省电子税务局',
@@ -196,13 +196,13 @@ export const taxPolicyRules: TaxPolicyRule[] = [
       { label: '所得额条件', value: `年度应纳税所得额不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitTaxableIncomeLimit.toLocaleString('zh-CN')} 元` },
       { label: '从业人数条件', value: `从业人数不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitEmployeeLimit} 人` },
       { label: '资产条件', value: `资产总额不超过 ${activeCorporateIncomeTaxPolicy.smallLowProfitAssetLimit.toLocaleString('zh-CN')} 元` },
-      { label: '行业条件', value: '非国家限制和禁止行业' },
-      { label: '当前范围', value: '季度预缴准备' },
-      { label: '数据来源', value: '经营数据、薪酬社保、申报准备' },
-      { label: '内部确认', value: '在申报准备确认利润、调整、亏损和优惠资格' },
+      { label: '行业条件', value: activeCorporateIncomeTaxPolicy.industryRestrictionResult === '符合' ? '非国家限制和禁止行业' : '属于国家限制和禁止行业' },
+      { label: '当前范围', value: '季度预缴 / 年度汇算' },
+      { label: '数据来源', value: '总账、财务报表、季度或年度税务资料、税务办理' },
+      { label: '内部确认', value: '在申报准备核对账务完整性、纳税调整、亏损弥补和抵免事项' },
       { label: '外部办理', value: '在税务办理完成申报、缴款和回执归档' }
     ],
-    primaryStatement: '季度预缴 / 申报准备确认后进入税务办理',
+    primaryStatement: '季度预缴与年度汇算 / 申报准备确认后进入税务办理',
     region: activeTaxPolicyProfile.region,
     status: '随事项确认',
     taxpayerScope: '公司主体',
@@ -211,7 +211,7 @@ export const taxPolicyRules: TaxPolicyRule[] = [
     versionRecords: [
       {
         changedAt: '2026-06-21',
-        changeSummary: '企业所得税季度预缴拆分为申报准备内部确认和税务办理外部申报缴款，年度汇算后续单独扩展',
+        changeSummary: '企业所得税按本年累计口径完成季度预缴和年度汇算准备，并保留税务资料来源核对',
         id: 'tax-policy-cit-v1',
         version: 'V1'
       }

@@ -43,6 +43,7 @@ export type FinanceVatDeclarationPolicy = {
 };
 
 export type FinanceCorporateIncomeTaxPolicy = {
+  industryRestrictionResult: '符合' | '不符合';
   ordinaryEffectiveTaxRate: number;
   smallLowProfitAssetLimit: number;
   smallLowProfitEffectiveTaxRate: number;
@@ -152,6 +153,7 @@ export const financeTaxPolicyProfiles: FinanceTaxPolicyProfile[] = [
   {
     companySubject: '公司主体',
     corporateIncomeTax: {
+      industryRestrictionResult: '符合',
       ordinaryEffectiveTaxRate: 0.25,
       smallLowProfitAssetLimit: 50000000,
       smallLowProfitEffectiveTaxRate: 0.05,

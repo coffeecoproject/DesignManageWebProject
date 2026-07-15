@@ -1306,6 +1306,17 @@ export function buildAccountingVoucherFromTransaction(
     );
   }
 
+  const taxSettlementLines = record.taxPaymentAllocations?.map((allocation, allocationIndex) => (
+    createVoucherLine({
+      amount: allocation.amount,
+      auxiliary: allocation.taxType,
+      id: `${record.id}-${record.direction === '收入' ? 'credit' : 'debit'}-tax-${allocationIndex + 1}`,
+      side: record.direction === '收入' ? '贷方' : '借方',
+      subjectCode: allocation.subjectCode,
+      summary: `${record.sourceTitle} ${allocation.taxType}`
+    })
+  ));
+
   if (record.direction === '收入') {
     return finalizeAccountingVoucher(
       {
@@ -1319,30 +1330,25 @@ export function buildAccountingVoucherFromTransaction(
             subjectCode: bankSubjectCode,
             summary: record.sourceTitle
           }),
-          createVoucherLine({
-            amount: record.amount,
-            auxiliary: record.counterparty,
-            id: `${record.id}-credit`,
-            side: '贷方',
-            subjectCode: getCashReceiptCreditSubjectCode(record),
-            summary: record.sourceTitle
-          })
+          ...(taxSettlementLines?.length
+            ? taxSettlementLines
+            : [
+                createVoucherLine({
+                  amount: record.amount,
+                  auxiliary: record.counterparty,
+                  id: `${record.id}-credit`,
+                  side: '贷方',
+                  subjectCode: getCashReceiptCreditSubjectCode(record),
+                  summary: record.sourceTitle
+                })
+              ])
         ]
       },
       sourceIssues
     );
   }
 
-  const taxPaymentDebitLines = record.taxPaymentAllocations?.map((allocation, allocationIndex) => (
-    createVoucherLine({
-      amount: allocation.amount,
-      auxiliary: allocation.taxType,
-      id: `${record.id}-debit-tax-${allocationIndex + 1}`,
-      side: '借方',
-      subjectCode: allocation.subjectCode,
-      summary: `${record.sourceTitle} ${allocation.taxType}`
-    })
-  ));
+  const taxPaymentDebitLines = taxSettlementLines;
 
   if (naturalPersonPayment?.incomeType === '劳务报酬') {
     return finalizeAccountingVoucher(

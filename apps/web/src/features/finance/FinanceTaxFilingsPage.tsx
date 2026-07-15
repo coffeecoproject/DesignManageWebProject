@@ -44,7 +44,9 @@ import {
   TaxDeclarationResultDrawer,
   TaxDeclarationRevisionDrawer,
   TaxMatterReceiptDrawer,
+  TaxOffsetResultDrawer,
   TaxPaymentResultDrawer,
+  TaxRefundApplicationDrawer,
   TaxRefundResultDrawer
 } from './FinanceTaxMatterActionDrawers';
 import { FinanceTaxMatterDetailDrawer } from './FinanceTaxMatterDetailDrawer';
@@ -76,19 +78,26 @@ import {
   findDeclarationPreparationForTaxMatter,
   getTaxMatterDeclarationPreparationSnapshot,
   getTaxMatterDeclarationResultValidationError,
+  getTaxMatterDeclarationRevisionValidationError,
+  getTaxMatterCurrentVersionPaidAmount,
+  getTaxMatterCurrentVersionRefundedAmount,
   getTaxMatterEvidenceStatus,
   getTaxMatterOutstandingAmount,
   getTaxMatterRefundOutstandingAmount,
   getTaxMatterSettlementDirection,
   recordTaxMatterDeclarationResult,
+  recordTaxMatterOffsetResult,
   recordTaxMatterPaymentResult,
+  recordTaxMatterRefundApplication,
   recordTaxMatterRefundResult,
   startTaxMatterDeclarationRevision,
   supplementTaxMatterDeclarationReceipt,
   type SocialInsuranceTaxMatterSummary,
   type TaxMatterDeclarationReceiptInput,
   type TaxMatterDeclarationResultInput,
+  type TaxMatterOffsetResultInput,
   type TaxMatterPaymentResultInput,
+  type TaxMatterRefundApplicationInput,
   type TaxMatterRefundResultInput
 } from './financeTaxMatterModel';
 import {
@@ -254,8 +263,9 @@ const socialInsuranceProcessStatusOrder: Record<FinanceTaxMatterProcessStatus, n
   待申报: 1,
   待缴款: 1,
   部分缴纳: 2,
-  待退税: 1,
-  部分退税: 2,
+  待退抵处理: 1,
+  退抵处理中: 2,
+  部分退抵: 2,
   待补回执: 2,
   已完成: 3
 };
@@ -289,6 +299,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     accountingPeriodLocks,
     accountingVoucherRows,
     commitTaxMatterDeclarationResult,
+    commitTaxMatterOffset,
     commitTaxMatterPayment,
     commitTaxMatterRefund,
     declarationPreparationRows,
@@ -398,6 +409,20 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       : undefined,
     [displayTaxMatterRows, editorState]
   );
+  const offsetCandidates = useMemo(
+    () => activeEditorRecord
+      ? displayTaxMatterRows.filter((record) =>
+          record.id !== activeEditorRecord.id
+          && record.matterType === activeEditorRecord.matterType
+          && getTaxMatterOutstandingAmount(record) > 0
+          && ['申报成功', '零申报'].includes(record.declarationStatus)
+        )
+      : [],
+    [activeEditorRecord, displayTaxMatterRows]
+  );
+  const activeOffsetTargetRecord = activeEditorRecord?.offsetTargetMatterId
+    ? displayTaxMatterRows.find((record) => record.id === activeEditorRecord.offsetTargetMatterId)
+    : undefined;
 
   const activeSocialInsuranceSummary = activeRecord ? getTaxMatterSocialSummary(activeRecord) : undefined;
   const activeSocialInsuranceEmployeeRows = activeRecord ? getTaxMatterSocialEmployeeRows(activeRecord) : [];
@@ -465,9 +490,22 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const canRecordPaymentResult = Boolean(activeRecord)
     && !isSocialInsuranceModule
     && (activeRecord?.processStatus === '待缴款' || activeRecord?.processStatus === '部分缴纳');
+  const canSubmitRefundApplication = Boolean(activeRecord)
+    && !isSocialInsuranceModule
+    && activeRecord?.processStatus === '待退抵处理';
   const canRecordRefundResult = Boolean(activeRecord)
     && !isSocialInsuranceModule
-    && (activeRecord?.processStatus === '待退税' || activeRecord?.processStatus === '部分退税');
+    && (activeRecord?.processStatus === '退抵处理中' || activeRecord?.processStatus === '部分退抵');
+  const canAdjustDeclaration = Boolean(
+    activeRecord
+    && !isSocialInsuranceModule
+    && !getTaxMatterDeclarationRevisionValidationError(activeRecord, '更正', displayTaxMatterRows)
+  );
+  const canVoidDeclaration = Boolean(
+    activeRecord
+    && !isSocialInsuranceModule
+    && !getTaxMatterDeclarationRevisionValidationError(activeRecord, '作废', displayTaxMatterRows)
+  );
   const canUploadSocialReceipt = Boolean(activeRecord)
     && isSocialInsuranceModule
     && activeRecord?.processStatus !== '数据待确认'
@@ -481,8 +519,9 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const pendingPaymentRows = displayTaxMatterRows.filter((record) =>
     record.processStatus === '待缴款'
     || record.processStatus === '部分缴纳'
-    || record.processStatus === '待退税'
-    || record.processStatus === '部分退税'
+    || record.processStatus === '待退抵处理'
+    || record.processStatus === '退抵处理中'
+    || record.processStatus === '部分退抵'
   );
   const pendingReceiptRows = displayTaxMatterRows.filter((record) =>
     isSocialInsuranceModule
@@ -677,15 +716,53 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     setActiveScope(nextRecord.processStatus === '已完成' ? 'completed' : 'pending');
     closeEditor();
     void messageApi.success(
-      nextRecord.processStatus === '部分退税'
+      nextRecord.processStatus === '部分退抵'
         ? '已登记部分退税，并生成待复核收入流水'
         : '退税到账已登记，并生成待复核收入流水'
     );
   }
 
+  function saveRefundApplication(record: FinanceTaxMatterRecord, input: TaxMatterRefundApplicationInput) {
+    const nextRecord = recordTaxMatterRefundApplication(record, input);
+
+    if (nextRecord === record || !updateTaxMatterRecord(record.id, () => nextRecord)) {
+      void messageApi.warning('退税申请信息不完整或事项状态已变化');
+      return;
+    }
+
+    setActiveRecordId(record.id);
+    setActiveScope('pending');
+    closeEditor();
+    void messageApi.success(input.method === '抵缴'
+      ? '抵缴申请已登记，待税务机关确认抵缴结果'
+      : '退税申请已登记，待税务机关处理及退税到账');
+  }
+
+  function saveOffsetResult(
+    record: FinanceTaxMatterRecord,
+    targetRecord: FinanceTaxMatterRecord,
+    input: TaxMatterOffsetResultInput
+  ) {
+    const result = recordTaxMatterOffsetResult(record, targetRecord, input);
+
+    if (!result || !commitTaxMatterOffset(record.id, targetRecord.id, result.sourceRecord, result.targetRecord)) {
+      void messageApi.warning('抵缴信息不完整或关联事项状态已变化');
+      return;
+    }
+
+    setActiveRecordId(record.id);
+    setActiveScope(result.sourceRecord.processStatus === '已完成' ? 'completed' : 'pending');
+    closeEditor();
+    void messageApi.success(result.sourceRecord.processStatus === '部分退抵'
+      ? '已登记部分抵缴'
+      : '抵缴结果已登记');
+  }
+
   function saveDeclarationRevision(record: FinanceTaxMatterRecord, action: '更正' | '作废', reason: string) {
-    if (action === '作废' && (record.paidAmount > 0 || (record.refundedAmount ?? 0) > 0)) {
-      void messageApi.warning('已有缴款或退税记录的申报不能作废，请发起更正');
+    const validationError = getTaxMatterDeclarationRevisionValidationError(record, action, displayTaxMatterRows);
+
+    if (validationError) {
+      void messageApi.warning(validationError);
       return;
     }
 
@@ -861,10 +938,10 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
               : record.declarationStatus === '待申报'
                 ? '系统测算'
                 : getTaxMatterSettlementDirection(record) === '应退'
-                  ? `应退 · 已退 ${formatMoney(record.refundedAmount ?? 0)}`
+                  ? `应退 · 本版已退 ${formatMoney(getTaxMatterCurrentVersionRefundedAmount(record))}`
                   : getTaxMatterSettlementDirection(record) === '无需补退'
                     ? '无需补退'
-                    : `应缴 · 已缴 ${formatMoney(record.paidAmount)}`
+                    : `应缴 · 本版已缴 ${formatMoney(getTaxMatterCurrentVersionPaidAmount(record))}`
           }
         />
       ),
@@ -882,12 +959,12 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       render: (_, record) => (
         <CompactCell
           primary={record.declarationDueDate}
-          secondary={getTaxMatterSettlementDirection(record) === '无需补退'
-            ? '无需资金处理'
-            : `${getTaxMatterSettlementDirection(record) === '应退' ? '退税' : '缴款'} ${record.paymentDueDate}`}
+          secondary={getTaxMatterSettlementDirection(record) === '应缴'
+            ? `缴款 ${record.paymentDueDate}`
+            : '申报截止'}
         />
       ),
-      title: '截止日期',
+      title: '办理期限',
       width: 132
     }
   ];
@@ -992,10 +1069,12 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       )}
 
       <FinanceTaxMatterDetailDrawer
+        canAdjustDeclaration={canAdjustDeclaration}
         canOpenOfficialPlatform={canOpenOfficialPlatform}
         canRecordDeclarationResult={canRecordDeclarationResult}
         canRecordPaymentResult={canRecordPaymentResult}
         canRecordRefundResult={canRecordRefundResult}
+        canSubmitRefundApplication={canSubmitRefundApplication}
         canSupplementDeclarationReceipt={canSupplementDeclarationReceipt}
         canUploadSocialReceipt={canUploadSocialReceipt}
         declarationDetailPreparation={activeDeclarationDetailPreparation}
@@ -1054,7 +1133,20 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         onClose={closeEditor}
         onSave={saveRefundResult}
       />
+      <TaxRefundApplicationDrawer
+        offsetCandidates={offsetCandidates}
+        record={editorState?.mode === 'refund-application' ? activeEditorRecord : undefined}
+        onClose={closeEditor}
+        onSave={saveRefundApplication}
+      />
+      <TaxOffsetResultDrawer
+        record={editorState?.mode === 'offset-result' ? activeEditorRecord : undefined}
+        targetRecord={editorState?.mode === 'offset-result' ? activeOffsetTargetRecord : undefined}
+        onClose={closeEditor}
+        onSave={saveOffsetResult}
+      />
       <TaxDeclarationRevisionDrawer
+        canVoid={canVoidDeclaration}
         record={editorState?.mode === 'revision' ? activeEditorRecord : undefined}
         onClose={closeEditor}
         onSave={saveDeclarationRevision}

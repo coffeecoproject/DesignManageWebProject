@@ -1,13 +1,17 @@
-import { AuditOutlined, DeleteOutlined, FileTextOutlined, PlusOutlined } from '@ant-design/icons';
+import { AuditOutlined, FileTextOutlined, PlusOutlined } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Button, Checkbox, Input, InputNumber, Select } from 'antd';
+import { Button, Checkbox, Input, InputNumber } from 'antd';
 import { useState } from 'react';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection } from '../../components/Detail';
 import { DrawerFormField, DrawerFormGrid, DrawerFormShell } from '../../components/DrawerForm';
 import { CompactCell } from '../../components/TableCell';
 import {
-  type FinanceCorporateIncomeTaxAnnualAdjustment,
+  CorporateIncomeTaxAdjustmentEditor,
+  isCorporateIncomeTaxAdjustmentComplete
+} from './CorporateIncomeTaxAdjustmentEditor';
+import {
+  type FinanceCorporateIncomeTaxAdjustment,
   type FinanceCorporateIncomeTaxAnnualSourceReview
 } from './financeDeclarationPreparationData';
 import { formatMoney } from './financeUtils';
@@ -20,17 +24,12 @@ type AnnualSourceReviewPanelProps = {
 };
 
 type AnnualSourceReviewForm = {
-  adjustments: FinanceCorporateIncomeTaxAnnualAdjustment[];
+  adjustments: FinanceCorporateIncomeTaxAdjustment[];
   adjustmentReviewCompleted: boolean;
   priorLossDeductionAmount: number;
   priorLossReviewCompleted: boolean;
   priorLossSourceNo: string;
 };
-
-const sourceModuleOptions = ['总账', '费用台账', '资产台账', '薪酬明细', '税务办理', '其他税务资料'].map((value) => ({
-  label: value,
-  value
-}));
 
 function createForm(review?: FinanceCorporateIncomeTaxAnnualSourceReview): AnnualSourceReviewForm {
   return {
@@ -42,32 +41,26 @@ function createForm(review?: FinanceCorporateIncomeTaxAnnualSourceReview): Annua
   };
 }
 
-function createAdjustment(): FinanceCorporateIncomeTaxAnnualAdjustment {
+function normalizeForm(form: AnnualSourceReviewForm) {
   return {
-    accountingAmount: 0,
-    adjustmentAmount: 0,
-    deductibleAmount: 0,
-    direction: '调增',
-    id: `cit-annual-adjustment-${Date.now()}`,
-    item: '',
-    sourceModule: '总账',
-    sourceNo: '',
-    status: '待归集'
+    adjustments: form.adjustments.map((row) => ({
+      accountingAmount: row.accountingAmount,
+      adjustmentAmount: row.adjustmentAmount,
+      deductibleAmount: row.deductibleAmount,
+      direction: row.direction,
+      id: row.id,
+      item: row.item,
+      sourceModule: row.sourceModule,
+      sourceNo: row.sourceNo
+    })),
+    adjustmentReviewCompleted: form.adjustmentReviewCompleted,
+    priorLossDeductionAmount: form.priorLossDeductionAmount,
+    priorLossReviewCompleted: form.priorLossReviewCompleted,
+    priorLossSourceNo: form.priorLossSourceNo.trim()
   };
 }
 
-function isAdjustmentComplete(row: FinanceCorporateIncomeTaxAnnualAdjustment) {
-  return Boolean(
-    row.item.trim() &&
-      row.sourceModule.trim() &&
-      row.sourceNo.trim() &&
-      row.adjustmentAmount > 0 &&
-      row.accountingAmount >= 0 &&
-      row.deductibleAmount >= 0
-  );
-}
-
-const columns: TableColumnsType<FinanceCorporateIncomeTaxAnnualAdjustment> = [
+const columns: TableColumnsType<FinanceCorporateIncomeTaxAdjustment> = [
   {
     dataIndex: 'item',
     render: (_value: string, row) => <CompactCell primary={row.item} secondary={`${row.sourceModule} / ${row.sourceNo}`} />,
@@ -95,24 +88,18 @@ export function CorporateIncomeTaxAnnualSourceReviewPanel({ editable, profitBefo
   const maximumPriorLossDeduction = Math.max(0, profitBeforeTaxAmount + formNetAdjustmentAmount);
   const canSave = form.adjustmentReviewCompleted &&
     form.priorLossReviewCompleted &&
-    form.adjustments.every(isAdjustmentComplete) &&
+    form.adjustments.every(isCorporateIncomeTaxAdjustmentComplete) &&
     form.priorLossDeductionAmount <= maximumPriorLossDeduction &&
     (form.priorLossDeductionAmount === 0 || Boolean(form.priorLossSourceNo.trim()));
+  const isDirty = JSON.stringify(normalizeForm(form)) !== JSON.stringify(normalizeForm(createForm(review)));
 
   function openReview() {
     setForm(createForm(review));
     setOpen(true);
   }
 
-  function updateAdjustment(id: string, patch: Partial<FinanceCorporateIncomeTaxAnnualAdjustment>) {
-    setForm((current) => ({
-      ...current,
-      adjustments: current.adjustments.map((row) => (row.id === id ? { ...row, ...patch } : row))
-    }));
-  }
-
   function saveReview() {
-    if (!canSave) {
+    if (!canSave || !isDirty) {
       return;
     }
 
@@ -145,7 +132,7 @@ export function CorporateIncomeTaxAnnualSourceReviewPanel({ editable, profitBefo
           ]}
         />
         {(review?.adjustments.length ?? 0) > 0 ? (
-          <CompactDetailTable<FinanceCorporateIncomeTaxAnnualAdjustment>
+          <CompactDetailTable<FinanceCorporateIncomeTaxAdjustment>
             className="detail-section-table"
             columns={columns}
             dataSource={review?.adjustments ?? []}
@@ -158,47 +145,17 @@ export function CorporateIncomeTaxAnnualSourceReviewPanel({ editable, profitBefo
       <DrawerFormShell
         cancelAction={{ label: '取消', onClick: () => setOpen(false) }}
         open={open}
-        primaryAction={{ disabled: !canSave, label: '保存核对结果', onClick: saveReview }}
+        primaryAction={{ disabled: !canSave || !isDirty, label: '保存核对结果', onClick: saveReview }}
         title={<DetailDrawerTitle title="核对年度税务资料" subtitle="企业所得税年度汇算" />}
         width={920}
         onClose={() => setOpen(false)}
       >
-        <DetailSection
-          extra={<Button icon={<PlusOutlined />} onClick={() => setForm((current) => ({ ...current, adjustments: [...current.adjustments, createAdjustment()] }))}>新增调整事项</Button>}
-          icon={<FileTextOutlined />}
-          title="纳税调整"
-        >
-          {form.adjustments.map((row, index) => (
-            <div className="annual-tax-adjustment-form-row" key={row.id}>
-              <div className="annual-tax-adjustment-form-row-header">
-                <strong>{`调整事项 ${index + 1}`}</strong>
-                <Button danger icon={<DeleteOutlined />} type="text" onClick={() => setForm((current) => ({ ...current, adjustments: current.adjustments.filter((item) => item.id !== row.id) }))}>删除</Button>
-              </div>
-              <DrawerFormGrid>
-                <DrawerFormField label="事项名称" required wide>
-                  <Input value={row.item} onChange={(event) => updateAdjustment(row.id, { item: event.target.value })} />
-                </DrawerFormField>
-                <DrawerFormField label="账载金额" required>
-                  <InputNumber min={0} precision={2} value={row.accountingAmount} onChange={(value) => updateAdjustment(row.id, { accountingAmount: value ?? 0 })} />
-                </DrawerFormField>
-                <DrawerFormField label="税收金额" required>
-                  <InputNumber min={0} precision={2} value={row.deductibleAmount} onChange={(value) => updateAdjustment(row.id, { deductibleAmount: value ?? 0 })} />
-                </DrawerFormField>
-                <DrawerFormField label="调整方向" required>
-                  <Select options={['调增', '调减'].map((value) => ({ label: value, value }))} value={row.direction} onChange={(direction) => updateAdjustment(row.id, { direction })} />
-                </DrawerFormField>
-                <DrawerFormField label="调整金额" required>
-                  <InputNumber min={0} precision={2} value={row.adjustmentAmount} onChange={(value) => updateAdjustment(row.id, { adjustmentAmount: value ?? 0 })} />
-                </DrawerFormField>
-                <DrawerFormField label="来源模块" required>
-                  <Select options={sourceModuleOptions} value={row.sourceModule} onChange={(sourceModule) => updateAdjustment(row.id, { sourceModule })} />
-                </DrawerFormField>
-                <DrawerFormField label="来源单号" required>
-                  <Input value={row.sourceNo} onChange={(event) => updateAdjustment(row.id, { sourceNo: event.target.value })} />
-                </DrawerFormField>
-              </DrawerFormGrid>
-            </div>
-          ))}
+        <DetailSection icon={<FileTextOutlined />} title="纳税调整">
+          <CorporateIncomeTaxAdjustmentEditor
+            adjustments={form.adjustments}
+            scope="annual"
+            onChange={(adjustments) => setForm((current) => ({ ...current, adjustments }))}
+          />
           <Checkbox checked={form.adjustmentReviewCompleted} onChange={(event) => setForm((current) => ({ ...current, adjustmentReviewCompleted: event.target.checked }))}>
             年度纳税调整已核对
           </Checkbox>

@@ -33,6 +33,7 @@ import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { CorporateIncomeTaxSourceTable } from './CorporateIncomeTaxSourceTable';
 import { CorporateIncomeTaxAnnualSourceReviewPanel } from './CorporateIncomeTaxAnnualSourceReviewPanel';
+import { CorporateIncomeTaxQuarterSourceReviewPanel } from './CorporateIncomeTaxQuarterSourceReviewPanel';
 import { DeclarationCheckResultCell } from './DeclarationCheckResultCell';
 import { buildCorporateIncomeTaxAccountingSources } from './financeCorporateIncomeTaxModel';
 import { getPreparationItemCheckResult } from './declarationCheckResultModel';
@@ -41,6 +42,7 @@ import { useFinanceManagement } from './FinanceManagementState';
 import { PayrollIitEmployeeDetailPanel } from './PayrollIitEmployeeDetailPanel';
 import { StampDutySourceDetailTable } from './StampDutySourceDetailTable';
 import { StampDutySourceDetailDrawer } from './StampDutySourceDetailDrawer';
+import { StampDutySettlementDrawer } from './StampDutySettlementDrawer';
 import { VatUnbilledIncomeDetailTable } from './VatUnbilledIncomeDetailTable';
 import {
   applyDeclarationPreparationSourceState,
@@ -50,6 +52,7 @@ import {
   getDeclarationPreparationProgress,
   isDeclarationPreparationReady,
   type FinanceCorporateIncomeTaxAnnualSourceReview,
+  type FinanceCorporateIncomeTaxQuarterSourceReview,
   type FinanceDeclarationPreparationItem,
   type FinanceDeclarationPreparationRecord,
   type FinanceDeclarationPreparationStatus,
@@ -58,7 +61,9 @@ import {
 } from './financeDeclarationPreparationData';
 import {
   buildManualDocumentStampDutySource,
+  buildStampDutySettlementEvent,
   validateStampDutyDocumentAmounts,
+  type FinanceStampDutySettlementInput,
   type FinanceStampDutySourceRecord
 } from './financeStampDutyModel';
 import type {
@@ -366,6 +371,7 @@ export function FinanceDeclarationPreparationPage() {
     accountingPeriodLocks,
     accountingVoucherRows,
     addManualStampDutySource,
+    addStampDutySettlementSource,
     declarationPreparationRows,
     financeRows,
     getAccountingPeriodGuard,
@@ -386,6 +392,7 @@ export function FinanceDeclarationPreparationPage() {
   const [stampDutyDocumentForm, setStampDutyDocumentForm] = useState<StampDutyDocumentForm>(defaultStampDutyDocumentForm);
   const [stampDutyDocumentDrawerOpen, setStampDutyDocumentDrawerOpen] = useState(false);
   const [activeStampDutySource, setActiveStampDutySource] = useState<FinanceStampDutySourceRecord>();
+  const [stampDutySettlementSource, setStampDutySettlementSource] = useState<FinanceStampDutySourceRecord>();
   const corporateIncomeTaxAccountingSources = useMemo(
     () => buildCorporateIncomeTaxAccountingSources(
       declarationPreparationRows,
@@ -619,6 +626,31 @@ export function FinanceDeclarationPreparationPage() {
     void messageApi.success('印花税税源处理结果已保存');
   }
 
+  function openStampDutySettlement(record: FinanceStampDutySourceRecord) {
+    setActiveStampDutySource(undefined);
+    setStampDutySettlementSource(record);
+  }
+
+  function saveStampDutySettlement(input: FinanceStampDutySettlementInput) {
+    if (!stampDutySettlementSource) {
+      return;
+    }
+
+    try {
+      const settlementSource = buildStampDutySettlementEvent(stampDutySettlementSource, input);
+
+      if (!addStampDutySettlementSource(settlementSource)) {
+        void messageApi.warning('该结算事项无法登记，请检查重复单号或所属期间状态');
+        return;
+      }
+
+      setStampDutySettlementSource(undefined);
+      void messageApi.success('实际结算已登记，并进入对应申报期间');
+    } catch (error) {
+      void messageApi.warning(error instanceof Error ? error.message : '实际结算登记失败');
+    }
+  }
+
   function saveCorporateIncomeTaxAnnualSourceReview(review: FinanceCorporateIncomeTaxAnnualSourceReview) {
     if (!activeRecord || activeRecord.declarationScenario !== '年度汇算' || activeRecord.status !== '准备中') {
       return;
@@ -648,6 +680,35 @@ export function FinanceDeclarationPreparationPage() {
     void messageApi.success('年度税务资料已保存');
   }
 
+  function saveCorporateIncomeTaxQuarterSourceReview(review: FinanceCorporateIncomeTaxQuarterSourceReview) {
+    if (!activeRecord || activeRecord.declarationScenario !== '季度预缴' || activeRecord.status !== '准备中') {
+      return;
+    }
+
+    if (!updatePreparation(activeRecord.id, (currentRecord) => ({
+      ...currentRecord,
+      citQuarterSourceReview: review,
+      operationRecords: [
+        {
+          action: '核对季度税务资料',
+          actor: '李明',
+          id: `declaration-prep-op-cit-quarter-source-${Date.now()}`,
+          object: currentRecord.preparationNo,
+          summary: `已核对 ${review.adjustments.length} 项纳税调整、亏损弥补及所得税抵免`,
+          time: `${financeToday} 15:00`
+        },
+        ...currentRecord.operationRecords
+      ],
+      status: '准备中',
+      updatedAt: financeToday
+    }))) {
+      void messageApi.warning('当前季度税务资料不可调整');
+      return;
+    }
+
+    void messageApi.success('季度税务资料已保存');
+  }
+
   function handleConfirmPreparation(record: FinanceDeclarationPreparationRecord) {
     const periodGuard = getAccountingPeriodGuard(getDeclarationPreparationAccountingPeriod(record.period), '确认申报准备结果');
 
@@ -667,6 +728,7 @@ export function FinanceDeclarationPreparationPage() {
       confirmedCitSummary: record.taxType === '企业所得税' ? record.citSummary : currentRecord.confirmedCitSummary,
       confirmedCitAnnualSettlement: record.declarationScenario === '年度汇算' ? record.citAnnualSettlement : currentRecord.confirmedCitAnnualSettlement,
       confirmedCitAnnualSourceReview: record.declarationScenario === '年度汇算' ? record.citAnnualSourceReview : currentRecord.confirmedCitAnnualSourceReview,
+      confirmedCitQuarterSourceReview: record.declarationScenario === '季度预缴' ? record.citQuarterSourceReview : currentRecord.confirmedCitQuarterSourceReview,
       confirmedIitEmployeeRows: record.taxType === '个人所得税' ? record.iitEmployeeRows : currentRecord.confirmedIitEmployeeRows,
       confirmedIitSummary: record.taxType === '个人所得税' ? record.iitSummary : currentRecord.confirmedIitSummary,
       confirmedUnbilledIncomeDeclarations:
@@ -1083,6 +1145,15 @@ export function FinanceDeclarationPreparationPage() {
                           onSave={saveCorporateIncomeTaxAnnualSourceReview}
                         />
                       ) : null}
+                      {activeRecord.declarationScenario === '季度预缴' ? (
+                        <CorporateIncomeTaxQuarterSourceReviewPanel
+                          editable={activeRecord.status === '准备中' && !activeRecordReadbackNotice}
+                          period={activeRecord.period}
+                          profitBeforeTaxAmount={activeRecord.citSummary?.cumulativeProfitBeforeTaxAmount ?? 0}
+                          review={activeRecord.citQuarterSourceReview}
+                          onSave={saveCorporateIncomeTaxQuarterSourceReview}
+                        />
+                      ) : null}
                       {activeRecord.taxType === '印花税' ? (
                         <DetailSection icon={<FileTextOutlined />} title="税源明细">
                           <StampDutySourceDetailTable
@@ -1230,7 +1301,14 @@ export function FinanceDeclarationPreparationPage() {
         onClose={() => setActiveStampDutySource(undefined)}
         onDownloadFile={(fileName) => void messageApi.info(`已下载 ${fileName}`)}
         onPreviewFile={(fileName) => void messageApi.info(`正在预览 ${fileName}`)}
+        onRegisterSettlement={openStampDutySettlement}
         onSave={saveStampDutyResolution}
+      />
+
+      <StampDutySettlementDrawer
+        record={stampDutySettlementSource}
+        onClose={() => setStampDutySettlementSource(undefined)}
+        onSave={saveStampDutySettlement}
       />
 
     </ManagementPageScaffold>

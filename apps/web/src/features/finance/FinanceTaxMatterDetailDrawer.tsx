@@ -91,7 +91,17 @@ const declarationHistoryColumns: TableColumnsType<FinanceTaxMatterDeclarationHis
     title: '申报结果',
     width: 112
   },
-  { dataIndex: 'filedPayableAmount', render: (amount: number) => formatMoney(amount), title: '官方应缴', width: 128 },
+  {
+    key: 'settlement',
+    render: (_, record) => {
+      const refundableAmount = record.filedRefundableAmount ?? 0;
+      const direction = refundableAmount > 0 ? '应退' : record.filedPayableAmount > 0 ? '应缴' : '无需补退';
+      const amount = refundableAmount > 0 ? refundableAmount : record.filedPayableAmount;
+      return <CompactCell primary={direction} secondary={formatMoney(amount)} />;
+    },
+    title: '补退结果',
+    width: 136
+  },
   {
     dataIndex: 'reason',
     render: (reason: string, record) => <CompactCell primary={reason} secondary={`${record.operatedBy} / ${record.operatedAt}`} />,
@@ -101,10 +111,12 @@ const declarationHistoryColumns: TableColumnsType<FinanceTaxMatterDeclarationHis
 ];
 
 export type FinanceTaxMatterDetailDrawerProps = {
+  canAdjustDeclaration: boolean;
   canOpenOfficialPlatform: boolean;
   canRecordDeclarationResult: boolean;
   canRecordPaymentResult: boolean;
   canRecordRefundResult: boolean;
+  canSubmitRefundApplication: boolean;
   canSupplementDeclarationReceipt: boolean;
   canUploadSocialReceipt: boolean;
   declarationDetailPreparation?: FinanceDeclarationPreparationRecord;
@@ -129,10 +141,12 @@ export type FinanceTaxMatterDetailDrawerProps = {
 
 export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawerProps) {
   const {
+    canAdjustDeclaration,
     canOpenOfficialPlatform,
     canRecordDeclarationResult,
     canRecordPaymentResult,
     canRecordRefundResult,
+    canSubmitRefundApplication,
     canSupplementDeclarationReceipt,
     canUploadSocialReceipt,
     declarationDetailPreparation,
@@ -160,9 +174,11 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
       closeAction={{ label: '关闭', onClick: onClose }}
       open={Boolean(record)}
       primaryAction={getPrimaryAction({
+        canAdjustDeclaration,
         canRecordDeclarationResult,
         canRecordPaymentResult,
         canRecordRefundResult,
+        canSubmitRefundApplication,
         canSupplementDeclarationReceipt,
         canUploadSocialReceipt,
         isSocialInsuranceModule,
@@ -223,8 +239,17 @@ function renderProcessStatus(record: FinanceTaxMatterRecord, moduleScope: TaxMat
   return <StatusTag tone={taxMatterProcessStatusTone[record.processStatus]} value={getTaxMatterProcessStatusLabel(record.processStatus, moduleScope)} />;
 }
 
+function getPreparedSettlement(record: FinanceTaxMatterRecord) {
+  const direction = record.preparedSettlementDirection
+    ?? ((record.preparedRefundableAmount ?? 0) > 0 ? '应退' : record.preparedPayableAmount > 0 ? '应缴' : '无需补退');
+  const amount = direction === '应退' ? record.preparedRefundableAmount ?? 0 : record.preparedPayableAmount;
+
+  return { amount, direction };
+}
+
 function getSummaryItems(record: FinanceTaxMatterRecord, moduleScope: TaxMatterModuleScope) {
   const social = moduleScope === 'social';
+  const preparedSettlement = getPreparedSettlement(record);
   return [
     {
       icon: social ? <ProfileOutlined /> : <FileProtectOutlined />,
@@ -246,25 +271,29 @@ function getSummaryItems(record: FinanceTaxMatterRecord, moduleScope: TaxMatterM
       value: record.processStatus === '数据待确认'
         ? '待确认'
         : record.declarationStatus === '待申报'
-          ? formatMoney(record.preparedPayableAmount)
+          ? formatMoney(preparedSettlement.amount)
           : formatMoney(getTaxMatterSettlementDirection(record) === '应退' ? record.refundableAmount ?? 0 : record.payableAmount)
     }
   ];
 }
 
 function getPrimaryAction({
+  canAdjustDeclaration,
   canRecordDeclarationResult,
   canRecordPaymentResult,
   canRecordRefundResult,
+  canSubmitRefundApplication,
   canSupplementDeclarationReceipt,
   canUploadSocialReceipt,
   isSocialInsuranceModule,
   onOpenAction,
   record
 }: Pick<FinanceTaxMatterDetailDrawerProps,
+  | 'canAdjustDeclaration'
   | 'canRecordDeclarationResult'
   | 'canRecordPaymentResult'
   | 'canRecordRefundResult'
+  | 'canSubmitRefundApplication'
   | 'canSupplementDeclarationReceipt'
   | 'canUploadSocialReceipt'
   | 'record'
@@ -274,8 +303,11 @@ function getPrimaryAction({
   if (canRecordDeclarationResult) return { icon: <FileProtectOutlined />, label: '登记申报结果', testId: 'finance-tax-declaration-result-button', onClick: () => onOpenAction('declaration-result') };
   if (canSupplementDeclarationReceipt) return { icon: <FileProtectOutlined />, label: '补充申报回执', testId: 'finance-tax-declaration-receipt-button', onClick: () => onOpenAction('declaration-receipt') };
   if (canRecordPaymentResult) return { icon: <WalletOutlined />, label: '登记缴款', testId: 'finance-tax-payment-result-button', onClick: () => onOpenAction('payment-result') };
-  if (canRecordRefundResult) return { icon: <WalletOutlined />, label: '登记退税', testId: 'finance-tax-refund-result-button', onClick: () => onOpenAction('refund-result') };
-  if (!isSocialInsuranceModule && record && !['待申报', '已作废'].includes(record.declarationStatus)) {
+  if (canSubmitRefundApplication) return { icon: <FileProtectOutlined />, label: '处理多缴税款', testId: 'finance-tax-refund-application-button', onClick: () => onOpenAction('refund-application') };
+  if (canRecordRefundResult) return record?.overpaymentMethod === '抵缴'
+    ? { icon: <WalletOutlined />, label: '登记抵缴结果', testId: 'finance-tax-offset-result-button', onClick: () => onOpenAction('offset-result') }
+    : { icon: <WalletOutlined />, label: '登记退税到账', testId: 'finance-tax-refund-result-button', onClick: () => onOpenAction('refund-result') };
+  if (!isSocialInsuranceModule && canAdjustDeclaration && record) {
     return { icon: <FileProtectOutlined />, label: '调整申报', testId: 'finance-tax-revision-button', onClick: () => onOpenAction('revision') };
   }
   return undefined;
@@ -404,6 +436,8 @@ function TaxMatterOverviewPanel({
 
 function getTaxMatterInfoItems(record: FinanceTaxMatterRecord, platform: string) {
   const direction = getTaxMatterSettlementDirection(record);
+  const preparedSettlement = getPreparedSettlement(record);
+  const overpaymentMethod = record.overpaymentMethod;
   return [
     { label: '事项编号', value: record.matterNo },
     { label: '办理平台', value: platform },
@@ -411,12 +445,20 @@ function getTaxMatterInfoItems(record: FinanceTaxMatterRecord, platform: string)
     {
       label: record.declarationStatus === '待申报' ? '系统测算金额' : '办理金额',
       value: formatMoney(record.declarationStatus === '待申报'
-        ? record.preparedPayableAmount
+        ? preparedSettlement.amount
         : direction === '应退' ? record.refundableAmount ?? 0 : record.payableAmount)
     },
     ...(direction !== '无需补退' ? [{ label: direction === '应退' ? '退税办理期限' : '缴款截止日', value: record.paymentDueDate }] : []),
     ...(record.declarationDate ? [{ label: '实际申报日期', value: record.declarationDate }] : []),
     ...(record.declarationReceiptNo ? [{ label: '申报凭证号', value: record.declarationReceiptNo }] : []),
+    ...(overpaymentMethod ? [{ label: '多缴处理方式', value: overpaymentMethod }] : []),
+    ...(record.refundApplicationDate ? [{ label: overpaymentMethod === '抵缴' ? '抵缴申请日期' : '退税申请日期', value: record.refundApplicationDate }] : []),
+    ...(record.refundApplicationReceiptNo ? [{ label: overpaymentMethod === '抵缴' ? '抵缴申请回执号' : '退税申请回执号', value: record.refundApplicationReceiptNo }] : []),
+    ...(record.offsetTargetMatterNo ? [{ label: '抵缴目标事项', value: record.offsetTargetMatterNo }] : []),
+    ...(record.offsetDate ? [{ label: '抵缴确认日期', value: record.offsetDate }] : []),
+    ...((record.offsetAmount ?? 0) > 0 ? [{ label: '已抵缴金额', value: formatMoney(record.offsetAmount ?? 0) }] : []),
+    ...(record.refundDate ? [{ label: '退税到账日期', value: record.refundDate }] : []),
+    ...((record.refundedAmount ?? 0) > 0 ? [{ label: '已退税金额', value: formatMoney(record.refundedAmount ?? 0) }] : []),
     ...(record.paymentDate ? [{ label: '实际缴款日期', value: record.paymentDate }] : []),
     ...(record.declarationDifferenceReason ? [{ label: '差异说明', value: record.declarationDifferenceReason }] : [])
   ];

@@ -3,7 +3,10 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { build } from 'vite';
+import { assertCorporateIncomeTaxAcceptanceEvidence } from './corporate-income-tax-acceptance.mjs';
 import { assertNaturalPersonPaymentAcceptanceEvidence } from './natural-person-payment-acceptance.mjs';
+import { assertStampDutyAcceptanceEvidence } from './stamp-duty-acceptance.mjs';
+import { assertTaxHandlingSettlementAcceptanceEvidence } from './tax-handling-settlement-acceptance.mjs';
 
 const webRoot = fileURLToPath(new URL('..', import.meta.url));
 const outDir = join(webRoot, 'node_modules/.cache/startupmanage-web-unit-tests');
@@ -45,6 +48,7 @@ const bundledFinanceReviewModelTestFile = join(outDir, 'financeReviewModel.test.
 const bundledFinanceBankImportContractTestFile = join(outDir, 'financeBankImportContract.test.mjs');
 const bundledFinanceBankReconciliationModelTestFile = join(outDir, 'financeBankReconciliationModel.test.mjs');
 const bundledFinanceTransactionAdjustmentModelTestFile = join(outDir, 'financeTransactionAdjustmentModel.test.mjs');
+const bundledTaxAccountingFrontendWorkflowTestFile = join(outDir, 'taxAccountingFrontendWorkflow.test.mjs');
 const bundledMyWorkModelTestFile = join(outDir, 'myWorkModel.test.mjs');
 const bundledMyWorkExpenseCollectionModelTestFile = join(outDir, 'myWorkExpenseCollectionModel.test.mjs');
 const bundledMyWorkExpenseReviewModelTestFile = join(outDir, 'myWorkExpenseReviewModel.test.mjs');
@@ -245,6 +249,11 @@ const testModules = [
     runExport: 'runFinanceTransactionAdjustmentModelTests'
   },
   {
+    bundledFile: bundledTaxAccountingFrontendWorkflowTestFile,
+    entry: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts',
+    runExport: 'runTaxAccountingFrontendWorkflowTests'
+  },
+  {
     bundledFile: bundledMyWorkModelTestFile,
     entry: 'src/features/my-work/myWorkModel.test.ts',
     runExport: 'runMyWorkModelTests'
@@ -330,6 +339,18 @@ for (const testModule of testModules) {
 }
 
 let naturalPersonAcceptanceResult;
+let corporateIncomeTaxAcceptanceResult;
+let stampDutyAcceptanceResult;
+let taxHandlingSettlementAcceptanceResult;
+
+try {
+  corporateIncomeTaxAcceptanceResult = assertCorporateIncomeTaxAcceptanceEvidence(
+    testModules.map((testModule) => testModule.entry),
+    testExecutionEvidence
+  );
+} catch (error) {
+  allFailures.push(`corporate-income-tax acceptance: ${error instanceof Error ? error.message : String(error)}`);
+}
 
 try {
   naturalPersonAcceptanceResult = assertNaturalPersonPaymentAcceptanceEvidence(
@@ -338,6 +359,24 @@ try {
   );
 } catch (error) {
   allFailures.push(`natural-person acceptance: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+try {
+  stampDutyAcceptanceResult = assertStampDutyAcceptanceEvidence(
+    testModules.map((testModule) => testModule.entry),
+    testExecutionEvidence
+  );
+} catch (error) {
+  allFailures.push(`stamp-duty acceptance: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+try {
+  taxHandlingSettlementAcceptanceResult = assertTaxHandlingSettlementAcceptanceEvidence(
+    testModules.map((testModule) => testModule.entry),
+    testExecutionEvidence
+  );
+} catch (error) {
+  allFailures.push(`tax-handling settlement acceptance: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 if (allFailures.length > 0) {
@@ -349,7 +388,14 @@ if (allFailures.length > 0) {
 } else {
   console.log(`Unit tests passed: ${passed}/${total}`);
   console.log(
+    `Corporate-income-tax acceptance: ${corporateIncomeTaxAcceptanceResult.passed}/${corporateIncomeTaxAcceptanceResult.total}`
+  );
+  console.log(
     `Natural-person acceptance ID coverage passed: ${naturalPersonAcceptanceResult.executableEvidenceCount}/${naturalPersonAcceptanceResult.total}`
+  );
+  console.log(`Stamp-duty acceptance: ${stampDutyAcceptanceResult.passed}/${stampDutyAcceptanceResult.total}`);
+  console.log(
+    `Tax-handling settlement acceptance: ${taxHandlingSettlementAcceptanceResult.passed}/${taxHandlingSettlementAcceptanceResult.total}`
   );
   console.log(`Natural-person named scenarios executed and passed: ${naturalPersonAcceptanceResult.executedScenarioCount}`);
   console.log(

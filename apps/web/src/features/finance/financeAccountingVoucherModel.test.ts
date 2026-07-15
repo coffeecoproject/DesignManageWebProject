@@ -13,8 +13,11 @@ import { financeReceivablePayableRecords, type FinanceReceivablePayableRecord } 
 import { buildSalaryReceivablePayableRecord } from './financeSalarySettlementModel';
 import { financeTaxMatterRecords, type FinanceTaxMatterRecord } from './financeTaxFilingData';
 import {
+  buildTaxMatterPaymentTransaction,
   buildTaxMatterRefundTransaction,
   recordTaxMatterDeclarationResult,
+  recordTaxMatterPaymentResult,
+  recordTaxMatterRefundApplication,
   recordTaxMatterRefundResult,
   startTaxMatterDeclarationRevision
 } from './financeTaxMatterModel';
@@ -29,6 +32,7 @@ import {
   buildAccountingVoucherMetrics,
   buildAccountingVoucherFromReceivablePayable,
   buildAccountingVoucherFromTaxMatter,
+  buildAccountingVoucherFromTransaction,
   buildAccountingVouchers,
   buildAccountingVoucherFromLaterPeriodAdjustment,
   canBookAccountingVoucher,
@@ -794,7 +798,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates tax accrual vouchers from completed tax matters without duplicating payment cash facts',
+    name: 'CIT-13 creates tax accrual vouchers from completed tax matters without duplicating payment cash facts',
     run: () => {
       const vouchers = buildAccountingVouchersForTest([], financeTransactionRecords, [], financeTaxMatterRecords);
       const vatVoucher = getVoucherBySourceNo(vouchers, 'TAX-2026Q1-VAT');
@@ -862,7 +866,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'posts reviewed tax refunds against the tax liability instead of operating income',
+    name: 'CIT-14 posts reviewed tax refunds against the tax liability instead of operating income',
     run: () => {
       const sourceMatter = getTaxMatterByNo('TAX-2025-CIT-ANNUAL');
       const refundReceipt = {
@@ -909,6 +913,88 @@ const tests: UnitTest[] = [
         voucher.lines.some((line) => line.subjectCode === '5051'),
         false,
         'tax refund must not be recognized as other operating income'
+      );
+    }
+  },
+  {
+    name: 'VAT-15 posts a corrected VAT refund against each reduced tax liability',
+    run: () => {
+      const original = getTaxMatterByNo('TAX-2026Q1-VAT');
+      const revision = startTaxMatterDeclarationRevision(original, '更正', '更正后调减增值税及附加');
+      const corrected = recordTaxMatterDeclarationResult(revision, {
+        declarationDate: '2026-05-10',
+        declarationReceiptNo: 'VAT-Q1-REVISION-002',
+        declarationStatus: '申报成功',
+        settlementAmount: 66.51,
+        settlementDirection: '应退',
+        vatBreakdown: {
+          declaredVatAmount: 376,
+          educationSurchargeAmount: 6,
+          localEducationSurchargeAmount: 4,
+          urbanMaintenanceTaxAmount: 14
+        }
+      });
+      const applied = recordTaxMatterRefundApplication(corrected, {
+        applicationDate: '2026-05-11',
+        method: '退税',
+        receiptNo: 'VAT-Q1-REFUND-APPLICATION-001'
+      });
+      const receiptFile = {
+        id: 'vat-q1-refund-accounting-receipt',
+        name: '2026-Q1_增值税及附加退税回单.pdf',
+        status: '已上传' as const,
+        type: '退税回单',
+        updatedAt: '2026-05-15'
+      };
+      const refunded = recordTaxMatterRefundResult(applied, {
+        amount: 66.51,
+        receiptFile,
+        refundDate: '2026-05-15'
+      });
+      const pendingTransaction = buildTaxMatterRefundTransaction({
+        financeRows: [],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: refunded,
+        refundAmount: 66.51,
+        refundDate: '2026-05-15',
+        refundReceiptFile: receiptFile
+      });
+
+      if (!pendingTransaction) {
+        throw new Error('expected itemized VAT refund transaction');
+      }
+
+      const reviewedTransaction: FinanceTransactionRecord = {
+        ...pendingTransaction,
+        reconciliationStatus: '已对账',
+        reconciledAt: '2026-05-16',
+        status: '已入账'
+      };
+      const voucher = getVoucherBySourceNo(
+        buildAccountingVouchersForTest([], [reviewedTransaction]),
+        reviewedTransaction.transactionNo
+      );
+
+      assertEqual(getLineSubjectCode(voucher, '借方'), '1002', 'VAT refund should debit bank deposit');
+      assertEqual(
+        voucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '2221.01' && line.amount === 64.1),
+        true,
+        'VAT refund should credit VAT payable by the corrected amount'
+      );
+      assertEqual(
+        voucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '2221.04' && line.amount === 1.41),
+        true,
+        'VAT refund should credit urban maintenance tax payable separately'
+      );
+      assertEqual(
+        voucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '2221.06' && line.amount === 0.6),
+        true,
+        'VAT refund should credit education surcharge payable separately'
+      );
+      assertEqual(
+        voucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '2221.07' && line.amount === 0.4),
+        true,
+        'VAT refund should credit local education surcharge payable separately'
       );
     }
   },
@@ -1061,7 +1147,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates a versioned difference voucher for a corrected tax declaration',
+    name: 'CIT-15 creates a versioned difference voucher for a corrected tax declaration',
     run: () => {
       const original = getTaxMatterByNo('TAX-2026Q1-CIT');
       const revision = startTaxMatterDeclarationRevision(original, '更正', '补充纳税调整后更正申报');
@@ -1069,7 +1155,7 @@ const tests: UnitTest[] = [
         declarationDate: '2026-04-18',
         declarationReceiptNo: 'CIT-Q1-REVISION-002',
         declarationStatus: '申报成功',
-        settlementAmount: original.payableAmount + 100,
+        settlementAmount: 100,
         settlementDirection: '应缴'
       });
       const voucher = buildAccountingVoucherFromTaxMatter(corrected, 0);
@@ -1816,7 +1902,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'builds stamp duty accrual with tax and surcharge expense and dedicated liability',
+    name: 'ST-13 builds stamp duty accrual with tax and surcharge expense and dedicated liability',
     run: () => {
       const seed = financeTaxMatterRecords.find((record) => record.matterType === '印花税');
 
@@ -1842,6 +1928,105 @@ const tests: UnitTest[] = [
       assertEqual(voucher.lines[0]?.subjectCode, '5403', 'stamp duty debit subject');
       assertEqual(voucher.lines[1]?.subjectCode, '2221.05', 'stamp duty credit subject');
       assertEqual(voucher.amount, 14.26, 'stamp duty voucher amount');
+    }
+  },
+  {
+    name: 'ST-16 builds only the stamp-duty correction difference without overwriting the original accrual',
+    run: () => {
+      const seed = financeTaxMatterRecords.find((record) => record.matterType === '印花税');
+
+      if (!seed) {
+        throw new Error('expected stamp duty tax matter seed');
+      }
+
+      const original: FinanceTaxMatterRecord = {
+        ...seed,
+        dataStatus: '已确认',
+        declarationDate: '2026-07-10',
+        declarationReceiptNo: 'STAMP-ORIGINAL-001',
+        declarationStatus: '申报成功',
+        filedAccountingAmount: 10,
+        paidAmount: 10,
+        payableAmount: 10,
+        paymentStatus: '已缴纳',
+        preparedPayableAmount: 10,
+        processStatus: '已完成',
+        settlementDirection: '应缴',
+        sourceItems: seed.sourceItems.map((item) => ({ ...item, status: '已确认' }))
+      };
+      const revision = startTaxMatterDeclarationRevision(original, '更正', '补充协议调减计税依据');
+      const corrected = recordTaxMatterDeclarationResult(revision, {
+        declarationDate: '2026-08-08',
+        declarationReceiptNo: 'STAMP-REVISION-002',
+        declarationStatus: '申报成功',
+        differenceReason: '补充协议调减后应退 2 元',
+        settlementAmount: 2,
+        settlementDirection: '应退'
+      });
+      const voucher = buildAccountingVoucherFromTaxMatter(corrected, 0);
+
+      if (!voucher) {
+        throw new Error('expected stamp duty correction voucher');
+      }
+
+      assertEqual(voucher.amount, 2, 'correction voucher contains only the difference');
+      assertEqual(voucher.lines[0]?.subjectCode, '5403', 'correction reverses tax and surcharge expense');
+      assertEqual(voucher.lines[0]?.side, '贷方', 'expense correction direction');
+      assertEqual(voucher.lines[1]?.subjectCode, '2221.05', 'correction reverses stamp duty liability');
+      assertEqual(voucher.lines[1]?.side, '借方', 'liability correction direction');
+    }
+  },
+  {
+    name: 'ST-17 posts reviewed stamp-duty payment against the dedicated liability and bank account',
+    run: () => {
+      const seed = financeTaxMatterRecords.find((record) => record.matterType === '印花税');
+
+      if (!seed) {
+        throw new Error('expected stamp duty tax matter seed');
+      }
+
+      const filed: FinanceTaxMatterRecord = {
+        ...seed,
+        dataStatus: '已确认',
+        declarationStatus: '申报成功',
+        filedAccountingAmount: 10,
+        payableAmount: 10,
+        paymentStatus: '待缴纳',
+        preparedPayableAmount: 10,
+        processStatus: '待缴款',
+        settlementDirection: '应缴',
+        sourceItems: seed.sourceItems.map((item) => ({ ...item, status: '已确认' }))
+      };
+      const paid = recordTaxMatterPaymentResult(filed, {
+        amount: 10,
+        paymentDate: '2026-07-12',
+        receiptFile: {
+          id: 'stamp-payment-receipt-accounting',
+          name: '印花税缴款回单.pdf',
+          status: '已上传',
+          type: '缴款回单',
+          updatedAt: '2026-07-12'
+        }
+      });
+      const transaction = buildTaxMatterPaymentTransaction({
+        financeRows: financeTransactionRecords,
+        publicAccountRef: getFinanceSeedPublicAccountRef(),
+        record: paid
+      });
+
+      if (!transaction) {
+        throw new Error('expected stamp duty payment transaction');
+      }
+
+      const voucher = buildAccountingVoucherFromTransaction({ ...transaction, status: '已入账' }, 0);
+
+      if (!voucher) {
+        throw new Error('expected stamp duty payment voucher');
+      }
+
+      assertEqual(voucher.lines[0]?.subjectCode, '2221.05', 'payment debits stamp duty liability');
+      assertEqual(voucher.lines[1]?.subjectCode, '1002', 'payment credits bank deposit');
+      assertEqual(voucher.amount, 10, 'payment voucher amount');
     }
   },
   {

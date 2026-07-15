@@ -5,13 +5,14 @@ import { getFinanceVatSurchargeSummary, type FinanceVatSurchargeSummary } from '
 
 export type FinanceTaxMatterType = '个人所得税' | '社保缴纳' | '公积金缴纳' | '增值税及附加' | '企业所得税' | '印花税' | '其他税费';
 export type FinanceTaxMatterPeriodType = '月度' | '季度' | '年度' | '按次';
-export type FinanceTaxMatterProcessStatus = '数据待确认' | '待申报' | '待缴款' | '部分缴纳' | '待退税' | '部分退税' | '待补回执' | '已完成';
+export type FinanceTaxMatterProcessStatus = '数据待确认' | '待申报' | '待缴款' | '部分缴纳' | '待退抵处理' | '退抵处理中' | '部分退抵' | '待补回执' | '已完成';
 export type FinanceTaxMatterAccountingStatus = '无需生成' | '待确认' | '可生成';
 export type FinanceTaxMatterEvidenceStatus = '无需回执' | '待补回执' | '已齐全';
 export type FinanceTaxMatterDataStatus = '待准备' | '待复核' | '已确认';
 export type FinanceTaxMatterDeclarationStatus = '待申报' | '申报成功' | '零申报' | '无申报义务' | '已作废';
 export type FinanceTaxMatterPaymentStatus = '未开始' | '无需缴纳' | '待缴纳' | '部分缴纳' | '已缴纳';
-export type FinanceTaxMatterRefundStatus = '不适用' | '待退税' | '部分退税' | '已退税';
+export type FinanceTaxMatterRefundStatus = '不适用' | '待申请' | '申请中' | '部分到账' | '已到账';
+export type FinanceTaxMatterOverpaymentMethod = '退税' | '抵缴';
 export type FinanceTaxMatterSettlementDirection = '待确定' | '应缴' | '无需补退' | '应退';
 export type FinanceTaxMatterSourceStatus = '待准备' | '待复核' | '已确认' | '不适用';
 export type FinanceTaxMatterDeclarationScenario = '月度扣缴' | '季度申报' | '季度预缴' | '年度汇算' | '按次申报';
@@ -25,6 +26,8 @@ export type FinanceTaxMatterDeclarationHistoryRecord = {
   filedAccountingAmount?: number;
   filedPayableAmount: number;
   filedRefundableAmount?: number;
+  paidAmountAtRevision?: number;
+  refundedAmountAtRevision?: number;
   filedVatSettlement?: FinanceVatTaxSettlementSnapshot;
   filedVatSurcharge?: FinanceVatSurchargeSummary;
   id: string;
@@ -76,6 +79,7 @@ export type FinanceTaxMatterRecord = {
   declarationStatus: FinanceTaxMatterDeclarationStatus;
   declarationVersion: number;
   files: RelatedFileRecord[];
+  filedAccountingAmount?: number;
   id: string;
   linkedTransactionNos: string[];
   matterNo: string;
@@ -83,16 +87,33 @@ export type FinanceTaxMatterRecord = {
   operationRecords: OperationRecord[];
   owner: string;
   paidAmount: number;
+  offsetReceivedAmount?: number;
+  offsetReceivedBaselineAmount?: number;
+  paymentBaselineAmount?: number;
   participantSummary: string;
   payableAmount: number;
   preparedPayableAmount: number;
+  preparedRefundableAmount?: number;
+  preparedSettlementDirection?: Exclude<FinanceTaxMatterSettlementDirection, '待确定'>;
   paymentDate?: string;
   paymentDueDate: string;
   paymentStatus: FinanceTaxMatterPaymentStatus;
   refundableAmount?: number;
+  refundApplicationDate?: string;
+  refundApplicationReceiptFileId?: string;
+  refundApplicationReceiptNo?: string;
+  refundBaselineAmount?: number;
   refundDate?: string;
   refundedAmount?: number;
   refundStatus?: FinanceTaxMatterRefundStatus;
+  overpaymentMethod?: FinanceTaxMatterOverpaymentMethod;
+  offsetAmount?: number;
+  offsetBaselineAmount?: number;
+  offsetDate?: string;
+  offsetReceiptFileId?: string;
+  offsetReceiptNo?: string;
+  offsetTargetMatterId?: string;
+  offsetTargetMatterNo?: string;
   period: string;
   periodType: FinanceTaxMatterPeriodType;
   processStatus: FinanceTaxMatterProcessStatus;
@@ -125,8 +146,9 @@ export const taxMatterProcessStatusTone = {
   待申报: 'blue',
   待缴款: 'amber',
   部分缴纳: 'blue',
-  待退税: 'amber',
-  部分退税: 'blue',
+  待退抵处理: 'amber',
+  退抵处理中: 'blue',
+  部分退抵: 'blue',
   待补回执: 'amber',
   已完成: 'green'
 } as const satisfies Record<FinanceTaxMatterProcessStatus, StatusTagTone>;
@@ -685,12 +707,28 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     declarationScenario: '年度汇算',
     declarationStatus: '申报成功',
     declarationVersion: 1,
-    files: [],
+    files: [
+      {
+        id: 'tax-file-2025-cit-refund-application',
+        name: '2025_企业所得税汇算退税申请回执.pdf',
+        status: '已上传',
+        type: '退税申请回执',
+        updatedAt: '2026-05-29'
+      }
+    ],
     id: 'tax-matter-2025-cit-annual-refund',
     linkedTransactionNos: [],
     matterNo: 'TAX-2025-CIT-ANNUAL',
     matterType: '企业所得税',
     operationRecords: [
+      {
+        action: '登记退税申请',
+        actor: '李明',
+        id: 'tax-op-2025-cit-refund-application',
+        object: 'TAX-2025-CIT-ANNUAL',
+        summary: '登记年度汇算退税申请 1,200.00 元',
+        time: '2026-05-29 09:20'
+      },
       {
         action: '登记申报结果',
         actor: '李明',
@@ -709,10 +747,13 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     paymentStatus: '无需缴纳',
     period: '2025',
     periodType: '年度',
-    processStatus: '待退税',
+    processStatus: '退抵处理中',
     refundableAmount: 1200,
+    refundApplicationDate: '2026-05-29',
+    refundApplicationReceiptFileId: 'tax-file-2025-cit-refund-application',
+    refundApplicationReceiptNo: 'CIT-REFUND-2025-0001',
     refundedAmount: 0,
-    refundStatus: '待退税',
+    refundStatus: '申请中',
     settlementDirection: '应退',
     sourceItems: [
       {

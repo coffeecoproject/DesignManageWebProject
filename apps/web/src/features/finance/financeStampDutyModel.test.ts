@@ -13,6 +13,16 @@ import {
 
 type UnitTest = { name: string; run: () => void };
 
+function createSettlementEvidence(id: string, updatedAt: string) {
+  return [{
+    id: `evidence-${id}`,
+    name: `${id}.pdf`,
+    status: '已上传',
+    type: '结算依据',
+    updatedAt
+  }];
+}
+
 function assertEqual<T>(actual: T, expected: T, message: string) {
   if (actual !== expected) {
     throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
@@ -31,7 +41,7 @@ function assertThrows(run: () => void, message: string) {
 
 const tests: UnitTest[] = [
   {
-    name: 'fixed construction contract subtracts separately stated VAT and applies reduction',
+    name: 'ST-01 fixed construction contract subtracts separately stated VAT and applies reduction',
     run: () => {
       const contract = customerContractRecords.find((record) => record.id === 'contract-nova-start')!;
       const customer = customerRecords.find((record) => record.id === contract.customerId)!;
@@ -46,7 +56,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'uncertain consulting contract remains pending instead of guessing a tax item',
+    name: 'ST-02 uncertain consulting contract remains pending instead of guessing a tax item',
     run: () => {
       const contract = customerContractRecords.find((record) => record.id === 'contract-starry-framework')!;
       const customer = customerRecords.find((record) => record.id === contract.customerId)!;
@@ -58,13 +68,13 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'ordinary borrowing remains pending because only qualified financial-institution loans are taxable',
+    name: 'ST-03 ordinary borrowing remains pending because only qualified financial-institution loans are taxable',
     run: () => {
       assertEqual(resolveStampDutyTaxItem('借款'), '待确认', 'ordinary loan must not be auto-taxed');
     }
   },
   {
-    name: 'pending source can be resolved into multiple legal tax items without changing source facts',
+    name: 'ST-04 pending source can be resolved into multiple legal tax items without changing source facts',
     run: () => {
       const contract = customerContractRecords.find((record) => record.id === 'contract-starry-framework')!;
       const customer = customerRecords.find((record) => record.id === contract.customerId)!;
@@ -94,7 +104,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'pending source can be concluded as non-taxable with an auditable reason',
+    name: 'ST-05 pending source can be concluded as non-taxable with an auditable reason',
     run: () => {
       const contract = customerContractRecords.find((record) => record.id === 'contract-starry-framework')!;
       const customer = customerRecords.find((record) => record.id === contract.customerId)!;
@@ -116,7 +126,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'tax item allocations must cover the complete source basis including decrease offsets',
+    name: 'ST-06 tax item allocations must cover the complete source basis including decrease offsets',
     run: () => {
       const contract = customerContractRecords.find((record) => record.id === 'contract-starry-framework')!;
       const customer = customerRecords.find((record) => record.id === contract.customerId)!;
@@ -148,7 +158,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'open amount document creates a later settlement event without overwriting the original',
+    name: 'ST-07 open amount document creates a later settlement event without overwriting the original',
     run: () => {
       const source = buildManualDocumentStampDutySource({
         amountTaxMode: '含税未分列',
@@ -164,6 +174,7 @@ const tests: UnitTest[] = [
       });
       const settlement = buildStampDutySettlementEvent(source, {
         amount: 12000,
+        evidenceFiles: createSettlementEvidence('SET-001', '2026-07-20'),
         id: 'SET-001',
         settledAt: '2026-07-20'
       });
@@ -171,13 +182,84 @@ const tests: UnitTest[] = [
       assertEqual(source.resolutionStatus, '待后续结算', 'open amount source resolution');
       assertEqual(source.taxableBasis, 0, 'open amount first filing basis');
       assertEqual(settlement.resolutionStatus, '可申报', 'settlement event resolution');
-      assertEqual(settlement.obligationPeriod, '2026-Q3', 'settlement enters next filing quarter');
+      assertEqual(settlement.obligationPeriod, '2026-Q3', 'settlement enters its filing quarter');
       assertEqual(settlement.taxableBasis, 12000, 'settlement event basis');
       assertEqual(settlement.sourceId === source.sourceId, false, 'settlement source must be independent');
     }
   },
   {
-    name: 'capital book taxes only the increase over historical taxed maximum basis',
+    name: 'ST-08 quarter-end settlement stays in the quarter where the amount becomes determined',
+    run: () => {
+      const source = buildManualDocumentStampDutySource({
+        amountTaxMode: '含税未分列',
+        counterparty: '武汉光谷商业管理有限公司',
+        counterpartyTaxId: '91420100MA4LEASE01',
+        documentName: '无固定金额租赁协议',
+        evidenceFiles: createSettlementEvidence('OPEN-LEASE', '2026-06-18'),
+        id: 'manual-quarter-end-lease',
+        signedAt: '2026-06-18',
+        sourceNo: 'STAMP-MANUAL-QE',
+        sourceVersion: 'V1.0',
+        taxItem: '租赁合同'
+      });
+      const settlement = buildStampDutySettlementEvent(source, {
+        amount: 18000,
+        evidenceFiles: createSettlementEvidence('SET-Q3-END', '2026-09-30'),
+        id: 'SET-Q3-END',
+        settledAt: '2026-09-30'
+      });
+
+      assertEqual(settlement.obligationPeriod, '2026-Q3', 'September settlement belongs to Q3');
+    }
+  },
+  {
+    name: 'ST-08A price-tax separated settlement excludes stated VAT and requires settlement evidence',
+    run: () => {
+      const source = buildManualDocumentStampDutySource({
+        amountTaxMode: '价税分列',
+        counterparty: '武汉材料有限公司',
+        counterpartyTaxId: '91420100MATERIAL01',
+        documentName: '无固定金额采购协议',
+        evidenceFiles: createSettlementEvidence('OPEN-PURCHASE', '2026-06-20'),
+        id: 'manual-open-purchase',
+        signedAt: '2026-06-20',
+        sourceNo: 'STAMP-MANUAL-PURCHASE',
+        sourceVersion: 'V1.0',
+        taxItem: '买卖合同'
+      });
+      const settlement = buildStampDutySettlementEvent(source, {
+        amount: 10300,
+        evidenceFiles: createSettlementEvidence('SET-PURCHASE', '2026-08-15'),
+        id: 'SET-PURCHASE',
+        settledAt: '2026-08-15',
+        statedVatAmount: 300
+      });
+
+      assertEqual(settlement.taxableBasis, 10000, 'settlement basis excludes separately stated VAT');
+      assertThrows(
+        () => buildStampDutySettlementEvent(source, {
+          amount: 10300,
+          evidenceFiles: createSettlementEvidence('SET-BEFORE-SIGNED', '2026-06-19'),
+          id: 'SET-BEFORE-SIGNED',
+          settledAt: '2026-06-19',
+          statedVatAmount: 300
+        }),
+        'settlement before document execution must be rejected'
+      );
+      assertThrows(
+        () => buildStampDutySettlementEvent(source, {
+          amount: 10300,
+          evidenceFiles: [],
+          id: 'SET-PURCHASE-NO-EVIDENCE',
+          settledAt: '2026-08-15',
+          statedVatAmount: 300
+        }),
+        'settlement without evidence must be rejected'
+      );
+    }
+  },
+  {
+    name: 'ST-14 capital book taxes only the increase over historical taxed maximum basis',
     run: () => {
       const source = buildCapitalBookStampDutySource({
         capitalReserveEndingBalance: 50000,
@@ -194,7 +276,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'capital book blocks calculation when historical taxed basis is missing',
+    name: 'ST-15 capital book blocks calculation when historical taxed basis is missing',
     run: () => {
       const source = buildCapitalBookStampDutySource({
         capitalReserveEndingBalance: 50000,
@@ -222,14 +304,18 @@ const tests: UnitTest[] = [
 
 export function runFinanceStampDutyModelTests() {
   const failures: string[] = [];
+  const executedTestNames: string[] = [];
+  const passedTestNames: string[] = [];
 
   tests.forEach((test) => {
+    executedTestNames.push(test.name);
     try {
       test.run();
+      passedTestNames.push(test.name);
     } catch (error) {
       failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
 
-  return { failures, passed: tests.length - failures.length, total: tests.length };
+  return { executedTestNames, failures, passed: tests.length - failures.length, passedTestNames, total: tests.length };
 }

@@ -108,6 +108,7 @@ import {
 
 type FinanceManagementStateValue = {
   addManualStampDutySource: (record: FinanceStampDutySourceRecord) => boolean;
+  addStampDutySettlementSource: (record: FinanceStampDutySourceRecord) => boolean;
   saveStampDutySourceResolution: (resolution: FinanceStampDutySourceResolution) => boolean;
   addAccountingVoucherLaterPeriodAdjustment: (record: AccountingVoucherLaterPeriodAdjustmentRecord) => boolean;
   addFinanceTransaction: (record: FinanceTransactionRecord) => boolean;
@@ -160,6 +161,12 @@ type FinanceManagementStateValue = {
     recordId: string,
     nextRecord: FinanceTaxMatterRecord,
     transaction: FinanceTransactionRecord
+  ) => boolean;
+  commitTaxMatterOffset: (
+    sourceRecordId: string,
+    targetRecordId: string,
+    nextSourceRecord: FinanceTaxMatterRecord,
+    nextTargetRecord: FinanceTaxMatterRecord
   ) => boolean;
   declarationPreparationRows: FinanceDeclarationPreparationRecord[];
   invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[];
@@ -386,6 +393,24 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         const accountingPeriod = getAccountingPeriodFromBusinessPeriod(record.obligationPeriod);
 
         if (!guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, '补录印花税应税凭证').allowed) {
+          return false;
+        }
+
+        setManualStampDutySourceRows((currentRows) => [...currentRows, record]);
+        return true;
+      },
+      addStampDutySettlementSource(record) {
+        const duplicate = manualStampDutySourceRows.some(
+          (currentRecord) => currentRecord.id === record.id || currentRecord.sourceNo === record.sourceNo
+        );
+
+        if (duplicate || !record.settlementDate || record.resolutionStatus !== '可申报') {
+          return false;
+        }
+
+        const accountingPeriod = getAccountingPeriodFromBusinessPeriod(record.obligationPeriod);
+
+        if (!guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, '登记印花税实际结算').allowed) {
           return false;
         }
 
@@ -621,6 +646,29 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
             ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
             : [nextRecord, ...currentRows]
         );
+        return true;
+      },
+      commitTaxMatterOffset(sourceRecordId, targetRecordId, nextSourceRecord, nextTargetRecord) {
+        const sourceRecord = effectiveTaxMatterRows.find((record) => record.id === sourceRecordId);
+        const targetRecord = effectiveTaxMatterRows.find((record) => record.id === targetRecordId);
+
+        if (
+          !sourceRecord
+          || !targetRecord
+          || sourceRecord.id === targetRecord.id
+          || sourceRecord.matterType !== targetRecord.matterType
+          || nextSourceRecord.id !== sourceRecord.id
+          || nextTargetRecord.id !== targetRecord.id
+          || nextSourceRecord.offsetTargetMatterId !== targetRecord.id
+        ) {
+          return false;
+        }
+
+        setTaxMatterRows((currentRows) => currentRows.map((record) => {
+          if (record.id === sourceRecordId) return nextSourceRecord;
+          if (record.id === targetRecordId) return nextTargetRecord;
+          return record;
+        }));
         return true;
       },
       importInvoiceBatch(batch, records) {
