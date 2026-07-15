@@ -33,7 +33,7 @@ import {
   type PayrollIitDeclarationEmployeeRow,
   type PayrollIitDeclarationSummary
 } from './financePayrollIitDeclarationModel';
-import { isFinanceTaxBasisResolved } from './financeTaxBasisModel';
+import { isFinanceTaxBasisResolved, resolveFinanceAccrualTaxBasis } from './financeTaxBasisModel';
 import {
   getActiveFinanceTaxPolicyProfile,
   getFinanceVatDeclarationOutcome,
@@ -142,6 +142,7 @@ export type FinanceVatPreparationSummary = {
   reducedRateSalesAmount: number;
   specialInvoiceSalesAmount: number;
   serviceSalesAmount: number;
+  sourceRecognizedVatAmount: number;
   surchargeBreakdown: ReturnType<typeof getFinanceVatSurchargeSummary>;
   taxOutcome: FinanceVatDeclarationOutcome;
   taxOutcomeReason?: string;
@@ -273,6 +274,48 @@ export type FinanceDeclaredUnbilledIncomeFact = {
   vatTreatment: FinanceVatInvoiceTreatment;
 };
 
+export function finalizeDeclarationPreparationAfterFiling(
+  preparation: FinanceDeclarationPreparationRecord,
+  taxMatter: Pick<FinanceTaxMatterRecord, 'declarationStatus' | 'declarationVersion' | 'matterNo'>,
+  actor: string,
+  operatedAt: string
+): FinanceDeclarationPreparationRecord {
+  if (
+    !['申报成功', '零申报'].includes(taxMatter.declarationStatus) ||
+    preparation.status === '已进入税务办理'
+  ) {
+    return preparation;
+  }
+
+  return {
+    ...preparation,
+    confirmedCitSummary: preparation.confirmedCitSummary ?? preparation.citSummary,
+    confirmedCitAnnualSettlement: preparation.confirmedCitAnnualSettlement ?? preparation.citAnnualSettlement,
+    confirmedCitAnnualSourceReview: preparation.confirmedCitAnnualSourceReview ?? preparation.citAnnualSourceReview,
+    confirmedIitEmployeeRows: preparation.confirmedIitEmployeeRows ?? preparation.iitEmployeeRows,
+    confirmedIitSummary: preparation.confirmedIitSummary ?? preparation.iitSummary,
+    confirmedSourceSnapshotKey: preparation.confirmedSourceSnapshotKey ?? preparation.sourceSnapshotKey,
+    confirmedStampDutySources: preparation.confirmedStampDutySources ?? preparation.stampDutySources,
+    confirmedStampDutySummary: preparation.confirmedStampDutySummary ?? preparation.stampDutySummary,
+    confirmedUnbilledIncomeDeclarations:
+      preparation.confirmedUnbilledIncomeDeclarations ?? preparation.unbilledIncomeDeclarations,
+    confirmedVatSummary: preparation.confirmedVatSummary ?? preparation.vatSummary,
+    operationRecords: [
+      {
+        action: '进入税务办理',
+        actor,
+        id: `declaration-prep-op-filed-${preparation.id}-v${taxMatter.declarationVersion}`,
+        object: preparation.preparationNo,
+        summary: `${taxMatter.matterNo} 已登记${taxMatter.declarationStatus}`,
+        time: operatedAt
+      },
+      ...preparation.operationRecords
+    ],
+    status: '已进入税务办理',
+    updatedAt: operatedAt.slice(0, 10)
+  };
+}
+
 export const financeUnbilledIncomeExclusionReasons = [
   '尚未发生纳税义务',
   '已开票',
@@ -365,6 +408,7 @@ const emptyVatSummary: FinanceVatPreparationSummary = {
   reducedRateSalesAmount: 0,
   specialInvoiceSalesAmount: 0,
   serviceSalesAmount: 0,
+  sourceRecognizedVatAmount: 0,
   surchargeBreakdown: getFinanceVatSurchargeSummary({ accountingPeriod: '2026-06', vatPayableAmount: 0 }),
   taxOutcome: '待申报判定',
   taxableSalesAmount: 0,
@@ -769,7 +813,7 @@ function createVatItems(period: string, suffix: string): FinanceDeclarationPrepa
       id: `declaration-prep-item-${suffix}-unbilled`,
       period,
       result: '待确认未开票收入',
-      sourceModule: '收支流水',
+      sourceModule: '应收应付',
       status: '待确认',
       title: '未开票收入',
       type: '未开票收入核对',
@@ -1316,6 +1360,7 @@ const q1VatPreparationSummary: FinanceVatPreparationSummary = {
   otherInvoiceAndUnbilledSalesAmount: 990.1,
   reducedRateSalesAmount: 44009.9,
   serviceSalesAmount: 45000,
+  sourceRecognizedVatAmount: 440.1,
   specialInvoiceSalesAmount: 44009.9,
   surchargeBreakdown: q1VatSurchargeBreakdown,
   taxOutcome: '混合口径',
@@ -1862,11 +1907,27 @@ export function getDeclarationPreparationUnbilledIncomeCandidates(
   record: FinanceDeclarationPreparationRecord,
   invoices: FinanceInvoiceRecord[],
   receivablePayableRows: FinanceReceivablePayableRecord[],
-  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[] = []
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[] = [],
+  allPreparationRecords: FinanceDeclarationPreparationRecord[] = []
 ): FinanceDeclarationUnbilledIncomeCandidate[] {
   const periodInvoiceIds = new Set(getPreparationPeriodInvoices(record, invoices).map((invoice) => invoice.id));
+  const previouslyDeclaredBusinessRecordIds = new Set(
+    allPreparationRecords
+      .filter(
+        (preparation) =>
+          preparation.id !== record.id &&
+          preparation.taxType === '增值税及附加' &&
+          preparation.period < record.period &&
+          preparation.status === '已进入税务办理'
+      )
+      .flatMap((preparation) => (
+        preparation.confirmedUnbilledIncomeDeclarations ?? preparation.unbilledIncomeDeclarations ?? []
+      ))
+      .map((fact) => fact.businessRecordId)
+  );
 
   return getPreparationPeriodReceivables(record, receivablePayableRows)
+    .filter((businessRecord) => !previouslyDeclaredBusinessRecordIds.has(businessRecord.id))
     .flatMap((businessRecord): FinanceDeclarationUnbilledIncomeCandidate[] => {
       const allocatedTax = invoiceBusinessAllocationRows
         .filter(
@@ -1927,6 +1988,49 @@ export function getDeclarationPreparationUnbilledIncomeCandidates(
         left.obligationDate.localeCompare(right.obligationDate) ||
         left.businessRecord.documentNo.localeCompare(right.businessRecord.documentNo)
     );
+}
+
+function getSourceRecognizedVatAmount(
+  record: FinanceDeclarationPreparationRecord,
+  invoices: FinanceInvoiceRecord[],
+  receivablePayableRows: FinanceReceivablePayableRecord[],
+  invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[]
+) {
+  const recognizedBusinessVat = sumMoney(
+    getPreparationPeriodReceivables(record, receivablePayableRows),
+    (businessRecord) => {
+      const eligibleInvoiceIds = new Set(
+        invoiceBusinessAllocationRows
+          .filter(
+            (allocation) =>
+              allocation.status === '有效' &&
+              allocation.targetType === '应收应付' &&
+              allocation.targetId === businessRecord.id &&
+              allocation.taxIncludedAmount > 0.01
+          )
+          .map((allocation) => allocation.invoiceId)
+      );
+      const eligibleInvoices = invoices.filter(
+        (invoice) =>
+          eligibleInvoiceIds.has(invoice.id) &&
+          invoice.accountingPeriod <= businessRecord.accountingPeriod
+      );
+
+      return resolveFinanceAccrualTaxBasis(
+        businessRecord,
+        eligibleInvoices,
+        invoiceBusinessAllocationRows
+      ).taxAmount;
+    }
+  );
+  const redInvoiceVat = sumMoney(
+    getPreparationPeriodInvoices(record, invoices).filter(
+      (invoice) => invoice.direction === '销项' && invoice.invoiceStatus === '红冲'
+    ),
+    (invoice) => invoice.taxAmount
+  );
+
+  return roundMoney(recognizedBusinessVat + redInvoiceVat);
 }
 
 export function getDeclarationPreparationSubsequentInvoiceCandidates(
@@ -2346,7 +2450,8 @@ export function applyDeclarationPreparationSourceState(
       record,
       invoices,
       receivablePayableRows,
-      invoiceBusinessAllocationRows
+      invoiceBusinessAllocationRows,
+      records
     );
     const subsequentInvoiceCandidates = getDeclarationPreparationSubsequentInvoiceCandidates(
       record,
@@ -2589,6 +2694,12 @@ export function applyDeclarationPreparationSourceState(
         reducedRateSalesAmount: treatmentAmounts['减按1%'],
         specialInvoiceSalesAmount,
         serviceSalesAmount,
+        sourceRecognizedVatAmount: getSourceRecognizedVatAmount(
+          record,
+          invoices,
+          receivablePayableRows,
+          invoiceBusinessAllocationRows
+        ),
         surchargeBreakdown,
         taxOutcome,
         taxableSalesAmount,

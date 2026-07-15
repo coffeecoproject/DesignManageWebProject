@@ -25,6 +25,7 @@ export type FinanceTaxMatterDeclarationHistoryRecord = {
   filedAccountingAmount?: number;
   filedPayableAmount: number;
   filedRefundableAmount?: number;
+  filedVatSettlement?: FinanceVatTaxSettlementSnapshot;
   filedVatSurcharge?: FinanceVatSurchargeSummary;
   id: string;
   operatedAt: string;
@@ -43,9 +44,17 @@ export type FinanceTaxMatterSourceItem = {
 
 export type FinanceVatTaxSettlementSnapshot = {
   declaredVatAmount: number;
+  officialBreakdown?: FinanceVatOfficialSettlementBreakdown;
   sourceRecognizedVatAmount: number;
   surcharge: FinanceVatSurchargeSummary;
   totalPayableAmount: number;
+};
+
+export type FinanceVatOfficialSettlementBreakdown = {
+  declaredVatAmount: number;
+  educationSurchargeAmount: number;
+  localEducationSurchargeAmount: number;
+  urbanMaintenanceTaxAmount: number;
 };
 
 export type FinanceSocialInsuranceSettlementSnapshot = {

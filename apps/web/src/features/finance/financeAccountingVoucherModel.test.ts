@@ -27,6 +27,7 @@ import {
   applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
   buildAccountingVoucherMetrics,
+  buildAccountingVoucherFromReceivablePayable,
   buildAccountingVoucherFromTaxMatter,
   buildAccountingVouchers,
   buildAccountingVoucherFromLaterPeriodAdjustment,
@@ -937,7 +938,35 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'blocks surcharge accrual when declared VAT differs from source-recognized liability',
+    name: 'VAT-06 prevents a later-period invoice from rewriting the original accrual voucher',
+    run: () => {
+      const sourceRecord = financeReceivablePayableRecords.find((record) => record.id === 'ar-202603-001');
+
+      if (!sourceRecord) {
+        throw new Error('missing prior unbilled receivable fixture');
+      }
+
+      const voucher = buildAccountingVoucherFromReceivablePayable(
+        sourceRecord,
+        0,
+        financeInvoiceRecords,
+        financeInvoiceBusinessAllocations
+      );
+
+      if (!voucher) {
+        throw new Error('expected prior accrual voucher');
+      }
+
+      assertEqual(
+        voucher.invoiceRefs.some((invoice) => invoice.accountingPeriod > sourceRecord.accountingPeriod),
+        false,
+        'a later invoice must be handled in its own period instead of rewriting the prior accrual'
+      );
+      assertEqual(voucher.taxBasis?.taxAmount, 0, 'the prior exempt unbilled accrual should retain its original VAT basis');
+    }
+  },
+  {
+    name: 'VAT-12 creates a balanced VAT adjustment when declaration and accounting source differ',
     run: () => {
       const sourceMatter = createTaxMatter();
       const taxMatter = createTaxMatter({
@@ -953,11 +982,16 @@ const tests: UnitTest[] = [
         throw new Error('expected VAT surcharge voucher to exist');
       }
 
-      assertEqual(voucher.status, '需处理', 'VAT liability mismatch should block surcharge voucher booking');
-      assertIncludes(
-        voucher.issueReasons,
-        'vat_liability_mismatch' satisfies AccountingVoucherIssueCode,
-        'VAT liability mismatch should be visible on the voucher'
+      assertEqual(voucher.status, '待记账', 'a complete VAT declaration difference should create a reviewable adjustment voucher');
+      assertEqual(
+        voucher.lines.some((line) => line.subjectCode === '2221.01' && line.side === '贷方' && line.amount === 100),
+        true,
+        'additional declared VAT should credit VAT payable'
+      );
+      assertEqual(
+        voucher.lines.some((line) => line.subjectCode === '5001' && line.side === '借方' && line.amount === 100),
+        true,
+        'additional declared VAT should reduce tax-inclusive operating revenue'
       );
     }
   },
@@ -1705,7 +1739,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates issue row for red invoice without original blue invoice',
+    name: 'VAT-07A blocks a red invoice that has no original blue-invoice relationship',
     run: () => {
       const vouchers = buildAccountingVouchersForTest([], [], financeInvoiceRecords);
       const redInvoiceVoucher = getVoucherBySourceNo(vouchers, '254420000000610004');
@@ -1717,7 +1751,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'builds a ready-to-book adjustment voucher from linked red invoice allocations',
+    name: 'VAT-07B builds a ready-to-book adjustment voucher from linked red-invoice allocations',
     run: () => {
       const originalInvoice = financeInvoiceRecords.find((invoice) => invoice.id === 'invoice-out-202606-009');
       const redInvoice = financeInvoiceRecords.find((invoice) => invoice.id === 'invoice-out-202606-004');

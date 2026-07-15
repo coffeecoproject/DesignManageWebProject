@@ -11,6 +11,7 @@ import {
   buildCorporateIncomeTaxSourceRows,
   ensurePayrollIitDeclarationPreparationRecords,
   financeDeclarationPreparationRecords,
+  finalizeDeclarationPreparationAfterFiling,
   getDeclarationPreparationProgress,
   getDeclarationPreparationUnbilledIncomeCandidates,
   isDeclarationPreparationReady,
@@ -638,7 +639,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'uses shared VAT policy in declaration preparation measurement',
+    name: 'VAT-01 uses the period-effective VAT policy in declaration preparation',
     run: () => {
       const vatPolicy = getActiveFinanceTaxPolicyProfile().vatDeclaration;
       const preparationRows = applyDeclarationPreparationSourceState(financeDeclarationPreparationRecords, [], [], []);
@@ -655,7 +656,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'separates a taxed later invoice from the prior exempt unbilled offset',
+    name: 'VAT-07 offsets prior exempt unbilled income when the later invoice is declared',
     run: () => {
       const preparationRows = applyDeclarationPreparationSourceState(
         financeDeclarationPreparationRecords,
@@ -684,7 +685,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'derives unbilled taxable facts from confirmed receivables instead of cash receipts',
+    name: 'VAT-02 derives unbilled taxable facts from confirmed receivables instead of cash receipts',
     run: () => {
       const preparation = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
 
@@ -699,8 +700,10 @@ const tests: UnitTest[] = [
         financeInvoiceBusinessAllocations
       );
       const unpaidReceivable = candidates.find((candidate) => candidate.businessRecord.id === 'ar-202606-007');
+      const unbilledPreparationItem = preparation.items.find((item) => item.type === '未开票收入核对');
 
       assertEqual(Boolean(unpaidReceivable), true, 'an unpaid but confirmed receivable should still be an unbilled taxable fact');
+      assertEqual(unbilledPreparationItem?.sourceModule, '应收应付', 'the UI source label must match the accrual source used by the domain model');
       assertEqual(unpaidReceivable?.businessRecord.settlementStatus, '未结清', 'cash settlement must not control VAT recognition');
       assertEqual(unpaidReceivable?.taxBasisResolved, true, 'the receivable tax basis should be ready for automatic inclusion');
       assertEqual(unpaidReceivable?.selectedForInclusion, true, 'a resolved system candidate should be selected by default');
@@ -708,7 +711,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'requires a reason when finance excludes a system-selected unbilled income candidate',
+    name: 'VAT-03 requires evidence when finance excludes a system-selected unbilled income candidate',
     run: () => {
       const source = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
 
@@ -785,7 +788,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'uses the policy effective for the accounting period and keeps special-invoice sales taxable below the exemption threshold',
+    name: 'VAT-04 keeps special-invoice sales taxable below the exemption threshold',
     run: () => {
       const policy = getFinanceTaxPolicyProfileForPeriod('2026-06');
       const preparation = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
@@ -850,7 +853,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'keeps an archived declaration result as historical evidence when local source facts later change',
+    name: 'VAT-08 keeps an archived declaration snapshot immutable after local source changes',
     run: () => {
       const archivedPreparation = financeDeclarationPreparationRecords.find(
         (record) => record.preparationNo === 'PREP-2026Q1-VAT'
@@ -1327,6 +1330,45 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'VAT-11 records the official VAT and surcharge breakdown without losing the accounting-source baseline',
+    run: () => {
+      const source = financeTaxMatterRecords.find(
+        (record) => record.matterType === '增值税及附加' && Boolean(record.vatSettlement)
+      );
+
+      if (!source?.vatSettlement) {
+        throw new Error('missing VAT settlement fixture');
+      }
+
+      const result = recordTaxMatterDeclarationResult({
+        ...source,
+        declarationStatus: '待申报',
+        declarationReceiptFileId: undefined,
+        declarationReceiptNo: undefined,
+        paymentStatus: '待缴纳',
+        processStatus: '待申报'
+      }, {
+        declarationDate: '2026-04-15',
+        declarationReceiptNo: 'VAT-Q1-OFFICIAL-001',
+        declarationStatus: '申报成功',
+        differenceReason: '电子税务局回执尾差',
+        settlementAmount: 470,
+        settlementDirection: '应缴',
+        vatBreakdown: {
+          declaredVatAmount: 440.1,
+          educationSurchargeAmount: 8.8,
+          localEducationSurchargeAmount: 5.9,
+          urbanMaintenanceTaxAmount: 15.2
+        }
+      });
+
+      assertEqual(result.payableAmount, 470, 'the official itemized total should become the payment basis');
+      assertEqual(result.vatSettlement?.declaredVatAmount, 440.1, 'the official VAT amount should be retained');
+      assertEqual(result.vatSettlement?.sourceRecognizedVatAmount, source.vatSettlement.sourceRecognizedVatAmount, 'the independent accounting baseline must not be overwritten');
+      assertEqual(result.vatSettlement?.surcharge.totalAfterReduction, 29.9, 'the official surcharge components should reconcile to their total');
+    }
+  },
+  {
     name: 'keeps zero filing as a declared result rather than inferring it from amount alone',
     run: () => {
       const source = createTaxMatter({
@@ -1687,7 +1729,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'keeps VAT and surcharge payment allocations aligned with the declaration settlement',
+    name: 'VAT-13 keeps VAT and surcharge payment allocations aligned with the declaration settlement',
     run: () => {
       const sourceMatter = financeTaxMatterRecords.find((record) => record.matterNo === 'TAX-2026Q1-VAT');
 
@@ -1794,6 +1836,101 @@ const tests: UnitTest[] = [
       });
 
       assertEqual(transaction, undefined, 'tax payment flow should wait until payment voucher is available');
+    }
+  },
+  {
+    name: 'VAT-05 excludes a business fact already archived as unbilled income in a prior filing',
+    run: () => {
+      const sourcePreparation = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+      const sourceReceivable = financeReceivablePayableRecords.find((record) => record.id === 'ar-202606-007');
+
+      if (!sourcePreparation || !sourceReceivable) {
+        throw new Error('missing VAT preparation or receivable fixture');
+      }
+
+      const businessRecordId = 'ar-vat-prior-unbilled';
+      const priorPreparation = {
+        ...sourcePreparation,
+        confirmedUnbilledIncomeDeclarations: [{
+          businessRecordId,
+          netAmount: 4800,
+          salesCategory: sourceReceivable.taxBasis.salesCategory,
+          vatTreatment: '免税' as const
+        }],
+        id: 'vat-prior-archived',
+        period: '2026-Q2',
+        status: '已进入税务办理' as const
+      };
+      const currentPreparation = {
+        ...sourcePreparation,
+        id: 'vat-current-q3',
+        period: '2026-Q3',
+        preparationNo: 'PREP-2026Q3-VAT',
+        status: '准备中' as const
+      };
+      const currentReceivable = {
+        ...sourceReceivable,
+        accountingPeriod: '2026-07',
+        confirmDate: '2026-07-10',
+        id: businessRecordId
+      };
+      const candidates = getDeclarationPreparationUnbilledIncomeCandidates(
+        currentPreparation,
+        [],
+        [currentReceivable],
+        [],
+        [priorPreparation, currentPreparation]
+      );
+
+      assertEqual(candidates.length, 0, 'a prior archived unbilled fact must not enter a later filing again');
+    }
+  },
+  {
+    name: 'VAT-09 archives the confirmed preparation after a successful filing result',
+    run: () => {
+      const source = financeDeclarationPreparationRecords.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!source) {
+        throw new Error('missing Q2 VAT preparation fixture');
+      }
+
+      const archived = finalizeDeclarationPreparationAfterFiling(
+        { ...source, status: '可申报' },
+        createTaxMatter({
+          declarationStatus: '申报成功',
+          declarationVersion: 1,
+          matterNo: 'TAX-2026Q2-VAT'
+        }),
+        '李明',
+        '2026-07-15 15:10'
+      );
+
+      assertEqual(archived.status, '已进入税务办理', 'successful filing should archive the preparation snapshot');
+      assertEqual(
+        archived.confirmedUnbilledIncomeDeclarations === archived.unbilledIncomeDeclarations,
+        true,
+        'the archived preparation should retain its confirmed unbilled-income facts'
+      );
+    }
+  },
+  {
+    name: 'VAT-10 keeps source-recognized VAT independent from the declaration calculation',
+    run: () => {
+      const preparedRows = applyDeclarationPreparationSourceState(
+        financeDeclarationPreparationRecords,
+        financeInvoiceRecords,
+        financeTransactionRecords,
+        financeReceivablePayableRecords,
+        financeInvoiceBusinessAllocations
+      );
+      const q2VatPreparation = preparedRows.find((record) => record.preparationNo === 'PREP-2026Q2-VAT');
+
+      if (!q2VatPreparation) {
+        throw new Error('missing Q2 VAT preparation fixture');
+      }
+
+      assertEqual(q2VatPreparation.vatSummary.estimatedVatAfterExemption, 9.9, 'the declaration should include the later-invoice VAT');
+      assertEqual(q2VatPreparation.vatSummary.sourceRecognizedVatAmount, 0, 'the accounting source should not copy the declaration result');
     }
   },
   {

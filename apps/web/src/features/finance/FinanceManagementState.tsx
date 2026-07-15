@@ -38,6 +38,7 @@ import {
   financeStampDutyInitialSourceResolutions,
   financeDeclarationPreparationRecords,
   ensurePayrollIitDeclarationPreparationRecords,
+  finalizeDeclarationPreparationAfterFiling,
   type FinanceDeclarationPreparationRecord
 } from './financeDeclarationPreparationData';
 import type {
@@ -567,8 +568,13 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
             && (!nextRecord.declarationScenario || record.declarationScenario === nextRecord.declarationScenario)
         );
         const nextPreparation = preparation
-          ? finalizePayrollIitCorrectionPreparation(
-              preparation,
+          ? finalizeDeclarationPreparationAfterFiling(
+              finalizePayrollIitCorrectionPreparation(
+                preparation,
+                nextRecord,
+                currentFinanceActor,
+                `${financeToday} 15:10`
+              ),
               nextRecord,
               currentFinanceActor,
               `${financeToday} 15:10`

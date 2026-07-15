@@ -21,9 +21,11 @@ import type {
   FinanceTaxMatterRecord,
   FinanceTaxMatterSettlementDirection,
   FinanceTaxMatterSourceItem,
-  FinanceTaxMatterType
+  FinanceTaxMatterType,
+  FinanceVatOfficialSettlementBreakdown
 } from './financeTaxFilingData';
-import { financeToday, getDefaultFinanceReviewDueAt } from './financeUtils';
+import { getFinanceVatSurchargeSummary } from './financeTaxPolicyModel';
+import { financeToday, getAccountingPeriodFromBusinessPeriod, getDefaultFinanceReviewDueAt } from './financeUtils';
 
 export type SocialInsuranceTaxMatterSummary = {
   category: SocialInsuranceCategory;
@@ -50,6 +52,7 @@ export type TaxMatterDeclarationResultInput = {
   differenceReason?: string;
   settlementAmount: number;
   settlementDirection: Exclude<FinanceTaxMatterSettlementDirection, '待确定'>;
+  vatBreakdown?: FinanceVatOfficialSettlementBreakdown;
 };
 
 export type TaxMatterDeclarationRevisionContext = {
@@ -61,8 +64,31 @@ export type TaxMatterDeclarationRevisionContext = {
 
 export function getTaxMatterDeclarationResultValidationError(
   record: Pick<FinanceTaxMatterRecord, 'matterType' | 'preparedPayableAmount'>,
-  input: Pick<TaxMatterDeclarationResultInput, 'declarationStatus' | 'settlementAmount' | 'settlementDirection'>
+  input: Pick<TaxMatterDeclarationResultInput, 'declarationStatus' | 'settlementAmount' | 'settlementDirection' | 'vatBreakdown'>
 ) {
+  if (record.matterType === '增值税及附加') {
+    if (input.declarationStatus === '零申报') {
+      return input.settlementDirection === '无需补退' && roundMoney(input.settlementAmount) === 0
+        ? undefined
+        : '零申报不应产生增值税及附加税额';
+    }
+
+    if (!input.vatBreakdown) {
+      return '请按增值税、城建税及两项教育附加登记申报结果';
+    }
+
+    const breakdownTotal = roundMoney(
+      input.vatBreakdown.declaredVatAmount +
+      input.vatBreakdown.urbanMaintenanceTaxAmount +
+      input.vatBreakdown.educationSurchargeAmount +
+      input.vatBreakdown.localEducationSurchargeAmount
+    );
+
+    return input.settlementDirection === '应缴' && Math.abs(breakdownTotal - roundMoney(input.settlementAmount)) <= 0.01
+      ? undefined
+      : '增值税及附加分项金额与办理金额不一致';
+  }
+
   if (record.matterType !== '个人所得税') {
     return undefined;
   }
@@ -83,6 +109,57 @@ export function getTaxMatterDeclarationResultValidationError(
   return Math.abs(actualAmount - expectedAmount) <= 0.01
     ? undefined
     : '个人所得税申报金额与人员明细不一致，请先更正工资或劳务来源';
+}
+
+function buildOfficialVatSettlement(
+  record: FinanceTaxMatterRecord,
+  breakdown: FinanceVatOfficialSettlementBreakdown
+) {
+  const sourceSettlement = record.vatSettlement;
+
+  if (!sourceSettlement) {
+    return undefined;
+  }
+
+  const policySurcharge = getFinanceVatSurchargeSummary({
+    accountingPeriod: getAccountingPeriodFromBusinessPeriod(record.period) ?? financeToday.slice(0, 7),
+    qualifiesForMicroTaxFeeReduction: sourceSettlement.surcharge.reductionAmount > 0,
+    vatPayableAmount: breakdown.declaredVatAmount
+  });
+  const surcharge = {
+    ...policySurcharge,
+    educationSurchargeAfterReduction: breakdown.educationSurchargeAmount,
+    educationSurchargeReduction: roundMoney(
+      policySurcharge.educationSurchargeBeforeReduction - breakdown.educationSurchargeAmount
+    ),
+    localEducationSurchargeAfterReduction: breakdown.localEducationSurchargeAmount,
+    localEducationSurchargeReduction: roundMoney(
+      policySurcharge.localEducationSurchargeBeforeReduction - breakdown.localEducationSurchargeAmount
+    ),
+    reductionAmount: roundMoney(
+      policySurcharge.totalBeforeReduction -
+      breakdown.urbanMaintenanceTaxAmount -
+      breakdown.educationSurchargeAmount -
+      breakdown.localEducationSurchargeAmount
+    ),
+    totalAfterReduction: roundMoney(
+      breakdown.urbanMaintenanceTaxAmount +
+      breakdown.educationSurchargeAmount +
+      breakdown.localEducationSurchargeAmount
+    ),
+    urbanMaintenanceTaxAfterReduction: breakdown.urbanMaintenanceTaxAmount,
+    urbanMaintenanceTaxReduction: roundMoney(
+      policySurcharge.urbanMaintenanceTaxBeforeReduction - breakdown.urbanMaintenanceTaxAmount
+    )
+  };
+
+  return {
+    ...sourceSettlement,
+    declaredVatAmount: breakdown.declaredVatAmount,
+    officialBreakdown: breakdown,
+    surcharge,
+    totalPayableAmount: roundMoney(breakdown.declaredVatAmount + surcharge.totalAfterReduction)
+  };
 }
 
 export type TaxMatterDeclarationReceiptInput = {
@@ -182,7 +259,17 @@ export function getTaxMatterAccountingAmount(
   >
 ) {
   if (record.matterType === '增值税及附加') {
-    return roundMoney(record.vatSettlement?.surcharge.totalAfterReduction ?? 0);
+    const settlement = record.vatSettlement;
+
+    if (!settlement) {
+      return 0;
+    }
+
+    return roundMoney(
+      settlement.declaredVatAmount -
+      settlement.sourceRecognizedVatAmount +
+      settlement.surcharge.totalAfterReduction
+    );
   }
 
   if (record.matterType === '个人所得税') {
@@ -350,6 +437,10 @@ export function recordTaxMatterDeclarationResult(
     updatedAt: financeToday
   };
 
+  if (record.matterType === '增值税及附加' && input.vatBreakdown) {
+    nextRecord.vatSettlement = buildOfficialVatSettlement(record, input.vatBreakdown);
+  }
+
   return {
     ...nextRecord,
     processStatus: deriveTaxMatterProcessStatus(nextRecord),
@@ -490,6 +581,7 @@ export function startTaxMatterDeclarationRevision(
     filedAccountingAmount: getTaxMatterAccountingAmount(record),
     filedPayableAmount: record.payableAmount,
     filedRefundableAmount: record.refundableAmount,
+    filedVatSettlement: record.vatSettlement,
     filedVatSurcharge: record.vatSettlement?.surcharge,
     id: context.historyId ?? `tax-declaration-history-${record.id}-${record.declarationVersion}`,
     operatedAt,
@@ -794,7 +886,13 @@ function getVatSettlementSnapshot(preparation: FinanceDeclarationPreparationReco
 
   return {
     declaredVatAmount,
-    sourceRecognizedVatAmount: declaredVatAmount,
+    officialBreakdown: {
+      declaredVatAmount,
+      educationSurchargeAmount: surcharge.educationSurchargeAfterReduction,
+      localEducationSurchargeAmount: surcharge.localEducationSurchargeAfterReduction,
+      urbanMaintenanceTaxAmount: surcharge.urbanMaintenanceTaxAfterReduction
+    },
+    sourceRecognizedVatAmount: preparation.vatSummary.sourceRecognizedVatAmount,
     surcharge,
     totalPayableAmount: preparation.vatSummary.estimatedTotalTaxAmount
   };

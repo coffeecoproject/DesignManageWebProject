@@ -433,7 +433,8 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       activeDeclarationDetailPreparation,
       invoiceRows,
       receivablePayableRows,
-      invoiceBusinessAllocationRows
+      invoiceBusinessAllocationRows,
+      displayDeclarationPreparationRows
     )
       .filter((candidate) => declarationByBusinessRecordId.has(candidate.businessRecord.id))
       .map((candidate) => ({
@@ -444,6 +445,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       }));
   }, [
     activeDeclarationDetailPreparation,
+    displayDeclarationPreparationRows,
     invoiceBusinessAllocationRows,
     invoiceRows,
     receivablePayableRows

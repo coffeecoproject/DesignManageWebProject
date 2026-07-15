@@ -430,9 +430,15 @@ export function FinanceDeclarationPreparationPage() {
   const activeUnbilledIncomeCandidates = useMemo(
     () =>
       activeRecord?.taxType === '增值税及附加'
-        ? getDeclarationPreparationUnbilledIncomeCandidates(activeRecord, invoiceRows, receivablePayableRows, invoiceBusinessAllocationRows)
+        ? getDeclarationPreparationUnbilledIncomeCandidates(
+            activeRecord,
+            invoiceRows,
+            receivablePayableRows,
+            invoiceBusinessAllocationRows,
+            displayDeclarationPreparationRows
+          )
         : [],
-    [activeRecord, invoiceBusinessAllocationRows, invoiceRows, receivablePayableRows]
+    [activeRecord, displayDeclarationPreparationRows, invoiceBusinessAllocationRows, invoiceRows, receivablePayableRows]
   );
   const periodOptions = ['全部', ...uniqueOptions(displayDeclarationPreparationRows, (record) => record.period)];
   const taxTypeOptions = ['全部', ...uniqueOptions(displayDeclarationPreparationRows, (record) => record.taxType)];

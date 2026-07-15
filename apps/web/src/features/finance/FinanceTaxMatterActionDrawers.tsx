@@ -168,6 +168,12 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
   const [receiptNo, setReceiptNo] = useState('');
   const [differenceReason, setDifferenceReason] = useState('');
   const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
+  const [vatBreakdown, setVatBreakdown] = useState({
+    declaredVatAmount: 0,
+    educationSurchargeAmount: 0,
+    localEducationSurchargeAmount: 0,
+    urbanMaintenanceTaxAmount: 0
+  });
 
   useEffect(() => {
     if (!record) return;
@@ -183,17 +189,43 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
     setReceiptFile(record.declarationReceiptFileId
       ? record.files.find((file) => file.id === record.declarationReceiptFileId)
       : undefined);
+    const settlement = record.vatSettlement;
+    setVatBreakdown(settlement?.officialBreakdown ?? {
+      declaredVatAmount: settlement?.declaredVatAmount ?? 0,
+      educationSurchargeAmount: settlement?.surcharge.educationSurchargeAfterReduction ?? 0,
+      localEducationSurchargeAmount: settlement?.surcharge.localEducationSurchargeAfterReduction ?? 0,
+      urbanMaintenanceTaxAmount: settlement?.surcharge.urbanMaintenanceTaxAfterReduction ?? 0
+    });
   }, [record]);
 
   if (!record) return null;
 
-  const normalizedDirection = declarationStatus === '零申报' ? '无需补退' : settlementDirection;
-  const normalizedAmount = declarationStatus === '零申报' || settlementDirection === '无需补退' ? 0 : settlementAmount;
+  const isVatMatter = record.matterType === '增值税及附加';
+  const normalizedVatBreakdown = declarationStatus === '零申报'
+    ? {
+        declaredVatAmount: 0,
+        educationSurchargeAmount: 0,
+        localEducationSurchargeAmount: 0,
+        urbanMaintenanceTaxAmount: 0
+      }
+    : vatBreakdown;
+  const vatSettlementAmount = Object.values(normalizedVatBreakdown).reduce((total, amount) => total + amount, 0);
+  const normalizedDirection = declarationStatus === '零申报'
+    ? '无需补退'
+    : isVatMatter
+      ? vatSettlementAmount > 0 ? '应缴' : '无需补退'
+      : settlementDirection;
+  const normalizedAmount = declarationStatus === '零申报'
+    ? 0
+    : isVatMatter
+      ? vatSettlementAmount
+      : settlementDirection === '无需补退' ? 0 : settlementAmount;
   const hasAmountDifference = Math.abs((normalizedDirection === '应缴' ? normalizedAmount : 0) - record.preparedPayableAmount) > 0.01;
   const declarationResultError = getTaxMatterDeclarationResultValidationError(record, {
     declarationStatus,
     settlementAmount: normalizedAmount,
-    settlementDirection: normalizedDirection
+    settlementDirection: normalizedDirection,
+    vatBreakdown: isVatMatter ? normalizedVatBreakdown : undefined
   });
   const formError = !declarationDate
     ? '请选择实际申报日期'
@@ -222,7 +254,8 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
           declarationStatus,
           differenceReason,
           settlementAmount: normalizedAmount,
-          settlementDirection: normalizedDirection
+          settlementDirection: normalizedDirection,
+          vatBreakdown: isVatMatter ? normalizedVatBreakdown : undefined
         })
       }}
       title={<DetailDrawerTitle status="待登记" statusTone="blue" subtitle={`${record.matterNo} / 第 ${record.declarationVersion} 版`} title="登记申报结果" />}
@@ -244,7 +277,7 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
           <DrawerFormField label="实际申报日期" required>
             <DatePicker inputReadOnly style={{ width: '100%' }} value={dayjs(declarationDate)} onChange={(value) => setDeclarationDate(value?.format('YYYY-MM-DD') ?? '')} />
           </DrawerFormField>
-          {declarationStatus !== '零申报' ? (
+          {declarationStatus !== '零申报' && !isVatMatter ? (
             <DrawerFormField label="补退方向" required>
               <Select options={[
                 { label: '应缴', value: '应缴' },
@@ -253,13 +286,34 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
               ]} value={settlementDirection} onChange={setSettlementDirection} />
             </DrawerFormField>
           ) : null}
-          <DrawerFormField label="办理金额" required>
-            <InputNumber disabled={declarationStatus === '零申报' || settlementDirection === '无需补退'} min={0} precision={2} style={{ width: '100%' }} value={normalizedAmount} onChange={(value) => setSettlementAmount(Number(value ?? 0))} />
-          </DrawerFormField>
+          {!isVatMatter ? (
+            <DrawerFormField label="办理金额" required>
+              <InputNumber disabled={declarationStatus === '零申报' || settlementDirection === '无需补退'} min={0} precision={2} style={{ width: '100%' }} value={normalizedAmount} onChange={(value) => setSettlementAmount(Number(value ?? 0))} />
+            </DrawerFormField>
+          ) : null}
           <DrawerFormField label="申报回执号">
             <Input value={receiptNo} onChange={(event) => setReceiptNo(event.target.value)} />
           </DrawerFormField>
         </DrawerFormGrid>
+        {isVatMatter && declarationStatus !== '零申报' ? (
+          <DrawerFormGrid>
+            <DrawerFormField label="增值税" required>
+              <InputNumber min={0} precision={2} style={{ width: '100%' }} value={vatBreakdown.declaredVatAmount} onChange={(value) => setVatBreakdown((current) => ({ ...current, declaredVatAmount: Number(value ?? 0) }))} />
+            </DrawerFormField>
+            <DrawerFormField label="城市维护建设税" required>
+              <InputNumber min={0} precision={2} style={{ width: '100%' }} value={vatBreakdown.urbanMaintenanceTaxAmount} onChange={(value) => setVatBreakdown((current) => ({ ...current, urbanMaintenanceTaxAmount: Number(value ?? 0) }))} />
+            </DrawerFormField>
+            <DrawerFormField label="教育费附加" required>
+              <InputNumber min={0} precision={2} style={{ width: '100%' }} value={vatBreakdown.educationSurchargeAmount} onChange={(value) => setVatBreakdown((current) => ({ ...current, educationSurchargeAmount: Number(value ?? 0) }))} />
+            </DrawerFormField>
+            <DrawerFormField label="地方教育附加" required>
+              <InputNumber min={0} precision={2} style={{ width: '100%' }} value={vatBreakdown.localEducationSurchargeAmount} onChange={(value) => setVatBreakdown((current) => ({ ...current, localEducationSurchargeAmount: Number(value ?? 0) }))} />
+            </DrawerFormField>
+            <DrawerFormField label="合计">
+              <InputNumber disabled precision={2} style={{ width: '100%' }} value={normalizedAmount} />
+            </DrawerFormField>
+          </DrawerFormGrid>
+        ) : null}
         {hasAmountDifference ? (
           <DrawerFormField label="差异说明" required>
             <Input.TextArea rows={3} value={differenceReason} onChange={(event) => setDifferenceReason(event.target.value)} />

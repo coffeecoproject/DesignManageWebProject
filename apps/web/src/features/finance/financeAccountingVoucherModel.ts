@@ -680,6 +680,7 @@ function getReceivablePayableInvoiceRows(
   return invoiceRows.filter((invoice) => (
     invoice.direction === expectedDirection &&
     invoice.invoiceStatus === '正常' &&
+    invoice.accountingPeriod <= record.accountingPeriod &&
     relatedInvoiceIds.has(invoice.id)
   ));
 }
@@ -1544,17 +1545,18 @@ export function buildAccountingVoucherFromTaxMatter(record: FinanceTaxMatterReco
 
     if (!settlement) {
       addIssue(taxMatterIssues, 'tax_basis_pending');
-    } else if (Math.abs(settlement.declaredVatAmount - settlement.sourceRecognizedVatAmount) > moneyTolerance) {
-      addIssue(taxMatterIssues, 'vat_liability_mismatch');
     }
 
     const surcharge = settlement?.surcharge;
-    const previousSurcharge = record.declarationHistory.at(-1)?.filedVatSurcharge;
-    const surchargeAmount = voucherAmount;
-
-    if (surchargeAmount <= moneyTolerance && taxMatterIssues.length === 0) {
-      return undefined;
-    }
+    const previousSettlement = record.declarationHistory.at(-1)?.filedVatSettlement;
+    const previousSurcharge = previousSettlement?.surcharge ?? record.declarationHistory.at(-1)?.filedVatSurcharge;
+    const vatAdjustmentAmount = settlement
+      ? roundMoney(settlement.declaredVatAmount - settlement.sourceRecognizedVatAmount)
+      : 0;
+    const previousVatAdjustmentAmount = previousSettlement
+      ? roundMoney(previousSettlement.declaredVatAmount - previousSettlement.sourceRecognizedVatAmount)
+      : 0;
+    const vatAdjustmentDelta = roundMoney(vatAdjustmentAmount - previousVatAdjustmentAmount);
 
     const surchargeDeltaLines = surcharge
       ? [
@@ -1575,40 +1577,76 @@ export function buildAccountingVoucherFromTaxMatter(record: FinanceTaxMatterReco
           }
         ].filter((line) => Math.abs(line.amount) > moneyTolerance)
       : [];
+    const lines: AccountingVoucherLine[] = [];
+
+    if (Math.abs(vatAdjustmentDelta) > moneyTolerance) {
+      lines.push(
+        createVoucherLine({
+          amount: Math.abs(vatAdjustmentDelta),
+          auxiliary: record.period,
+          id: `${record.id}-vat-adjustment-debit`,
+          side: '借方',
+          subjectCode: vatAdjustmentDelta > 0 ? '5001' : '2221.01',
+          summary: `${record.title} 增值税申报差额调整`
+        }),
+        createVoucherLine({
+          amount: Math.abs(vatAdjustmentDelta),
+          auxiliary: record.period,
+          id: `${record.id}-vat-adjustment-credit`,
+          side: '贷方',
+          subjectCode: vatAdjustmentDelta > 0 ? '2221.01' : '5301',
+          summary: `${record.title} 增值税申报差额调整`
+        })
+      );
+    }
+
+    surchargeDeltaLines.forEach((line) => {
+      lines.push(
+        createVoucherLine({
+          amount: Math.abs(line.amount),
+          auxiliary: record.period,
+          id: `${record.id}-surcharge-expense-${line.code}`,
+          side: line.amount >= 0 ? '借方' : '贷方',
+          subjectCode: '5403',
+          summary: `${record.title} ${line.name}`
+        }),
+        createVoucherLine({
+          amount: Math.abs(line.amount),
+          auxiliary: line.name,
+          id: `${record.id}-surcharge-liability-${line.code}`,
+          side: line.amount >= 0 ? '贷方' : '借方',
+          subjectCode: line.code,
+          summary: `${record.title} ${line.name}`
+        })
+      );
+    });
+
+    const vatVoucherAmount = roundMoney(
+      lines
+        .filter((line) => line.side === '借方')
+        .reduce((total, line) => total + line.amount, 0)
+    );
+
+    if (vatVoucherAmount <= moneyTolerance && taxMatterIssues.length === 0) {
+      return undefined;
+    }
 
     return finalizeTaxMatterVoucher(
       {
         accountingPeriod,
-        amount: surchargeAmount,
+        amount: vatVoucherAmount,
         businessType: '税费凭证',
         counterparty: getTaxMatterCounterparty(record.matterType),
         id: voucherId,
         invoiceRefs: [],
         kind: '转账凭证',
-        lines: [
-          createVoucherLine({
-            amount: surchargeAmount,
-            auxiliary: record.period,
-            id: `${record.id}-debit-surcharge`,
-            side: accountingDelta >= 0 ? '借方' : '贷方',
-            subjectCode: '5403',
-            summary: `${record.title} 附加税${record.declarationVersion > 1 ? '调整' : '计提'}`
-          }),
-          ...surchargeDeltaLines.map((line) => createVoucherLine({
-            amount: Math.abs(line.amount),
-            auxiliary: line.name,
-            id: `${record.id}-credit-${line.code}`,
-            side: line.amount >= 0 ? '贷方' : '借方',
-            subjectCode: line.code,
-            summary: `${record.title} ${line.name}`
-          }))
-        ],
+        lines,
         sourceModule: '税务办理',
         sourceNo: record.matterNo,
         sourceRefs,
         sourceTitle: record.title,
         sourceType: '税费事项',
-        summary: `附加税${record.declarationVersion > 1 ? '更正调整' : '计提'}：${record.title}`,
+        summary: `增值税及附加${record.declarationVersion > 1 ? '更正调整' : '确认'}：${record.title}`,
         voucherDate,
         voucherNo
       },
