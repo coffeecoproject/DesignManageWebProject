@@ -2,6 +2,8 @@ import type { StatusTagTone } from '../../components/Detail';
 import type { DateRangeFilterValue, DateScopeFilterValue } from '../../components/DateFilterFields';
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { PeopleMember } from '../people/peopleTypes';
+import { getLatestPublishedPerformanceSummary } from '../performance/performanceResultConsumerModel';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import { isTaskHourBefore, taskManagementNow, type StoreTaskRecord, type StoreTaskStatus } from './TaskManagementState';
 import type { TaskDetailTableRow } from './components/TaskDetailTable';
 
@@ -32,6 +34,8 @@ export type PersonTaskSummary = {
   member: PeopleMember;
   overdueTasks: StoreTaskRecord[];
   pendingAcceptanceTasks: StoreTaskRecord[];
+  performancePeriod?: string;
+  performanceScore: number | null;
   rejectionCount: number;
   rejectedTasks: StoreTaskRecord[];
 };
@@ -123,11 +127,13 @@ export function getPersonTaskDispatchSummary(
     involvedTasks,
     now = taskManagementNow,
     overdueTasks,
+    performanceScore,
     rejectedTasks
   }: {
     involvedTasks: StoreTaskRecord[];
     now?: string;
     overdueTasks?: StoreTaskRecord[];
+    performanceScore?: number | null;
     rejectedTasks?: StoreTaskRecord[];
   }
 ): PersonTaskDispatchSummary {
@@ -177,9 +183,9 @@ export function getPersonTaskDispatchSummary(
     };
   }
 
-  if (member.workEvaluationSummary.score < 80) {
+  if (performanceScore !== null && performanceScore !== undefined && performanceScore < 80) {
     return {
-      reason: `绩效 ${member.workEvaluationSummary.score} 分`,
+      reason: `绩效 ${performanceScore} 分`,
       state: '需关注'
     };
   }
@@ -194,11 +200,13 @@ export function buildPersonTaskSummaries({
   completedRange,
   now = taskManagementNow,
   peopleRows,
+  publishedPerformanceRecords,
   storeTaskRows
 }: {
   completedRange?: DateRangeFilterValue;
   now?: string;
   peopleRows: PeopleMember[];
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeTaskRows: StoreTaskRecord[];
 }) {
   const openTasks = storeTaskRows.filter(isOpenPersonTask);
@@ -227,10 +235,15 @@ export function buildPersonTaskSummaries({
       const overdueTasks = involvedTasks.filter((task) => isPersonTaskOverdue(task, now));
       const rejectedTasks = involvedTasks.filter((task) => task.status === '验收驳回');
       const rejectionCount = [...executorTasks, ...memberCompletedTasks].reduce((total, task) => total + task.reworkCount, 0);
+      const performanceSummary = getLatestPublishedPerformanceSummary(
+        publishedPerformanceRecords,
+        member.id
+      );
       const dispatch = getPersonTaskDispatchSummary(member, {
         involvedTasks,
         now,
         overdueTasks,
+        performanceScore: performanceSummary.score,
         rejectedTasks
       });
 
@@ -245,6 +258,8 @@ export function buildPersonTaskSummaries({
         member,
         overdueTasks,
         pendingAcceptanceTasks,
+        performancePeriod: performanceSummary.period,
+        performanceScore: performanceSummary.score,
         rejectionCount,
         rejectedTasks
       };
@@ -257,7 +272,8 @@ export function buildPersonTaskSummaries({
         right.pendingAcceptanceTasks.length - left.pendingAcceptanceTasks.length ||
         right.inProgressTasks.length - left.inProgressTasks.length ||
         right.involvedTasks.length - left.involvedTasks.length ||
-        right.member.workEvaluationSummary.score - left.member.workEvaluationSummary.score ||
+        (right.performanceScore ?? Number.NEGATIVE_INFINITY)
+          - (left.performanceScore ?? Number.NEGATIVE_INFINITY) ||
         left.member.name.localeCompare(right.member.name)
     );
 }

@@ -18,6 +18,7 @@ import type {
   AttendanceMonthlyConfirmationRecord,
   AttendanceMonthlySalarySettlementRecord
 } from './peopleAttendanceMonthlyDomain';
+import { getAttendanceMonthlyConfirmationTimestamp } from './peopleAttendanceMonthlyDomain';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 export type {
   PeopleAttendanceEffect,
@@ -340,9 +341,13 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
       }
 
       setAttendanceMonthlyConfirmations((currentRecords) => {
+        const confirmedAt = getAttendanceMonthlyConfirmationTimestamp(
+          `${peopleAttendanceToday} 10:30`,
+          attendanceMonthlyAdjustments.filter((record) => record.memberId === memberId && record.month === month)
+        );
         const nextRecord: AttendanceMonthlyConfirmationRecord = {
           actor: '李明',
-          confirmedAt: `${peopleAttendanceToday} 10:30`,
+          confirmedAt,
           memberId,
           month,
           note
@@ -353,7 +358,7 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
           : [nextRecord, ...currentRecords];
       });
     },
-    [attendanceMonthlySalarySettlements]
+    [attendanceMonthlyAdjustments, attendanceMonthlySalarySettlements]
   );
 
   const cancelAttendanceRecord = useCallback((recordId: string, cancelReason: string) => {

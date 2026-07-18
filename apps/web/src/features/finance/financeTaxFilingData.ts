@@ -5,9 +5,9 @@ import { getFinanceVatSurchargeSummary, type FinanceVatSurchargeSummary } from '
 
 export type FinanceTaxMatterType = '个人所得税' | '社保缴纳' | '公积金缴纳' | '增值税及附加' | '企业所得税' | '印花税' | '其他税费';
 export type FinanceTaxMatterPeriodType = '月度' | '季度' | '年度' | '按次';
-export type FinanceTaxMatterProcessStatus = '数据待确认' | '待申报' | '待缴款' | '部分缴纳' | '待退抵处理' | '退抵处理中' | '部分退抵' | '待补回执' | '已完成';
+export type FinanceTaxMatterProcessStatus = '数据待确认' | '待申报' | '待缴款' | '部分缴纳' | '待退抵处理' | '退抵处理中' | '部分退抵' | '申报材料待核对' | '已完成';
 export type FinanceTaxMatterAccountingStatus = '无需生成' | '待确认' | '可生成';
-export type FinanceTaxMatterEvidenceStatus = '无需回执' | '待补回执' | '已齐全';
+export type FinanceTaxMatterEvidenceStatus = '无需申报材料' | '材料待补' | '待核验' | '核验不一致' | '已齐全';
 export type FinanceTaxMatterDataStatus = '待准备' | '待复核' | '已确认';
 export type FinanceTaxMatterDeclarationStatus = '待申报' | '申报成功' | '零申报' | '无申报义务' | '已作废';
 export type FinanceTaxMatterPaymentStatus = '未开始' | '无需缴纳' | '待缴纳' | '部分缴纳' | '已缴纳';
@@ -16,13 +16,21 @@ export type FinanceTaxMatterOverpaymentMethod = '退税' | '抵缴';
 export type FinanceTaxMatterSettlementDirection = '待确定' | '应缴' | '无需补退' | '应退';
 export type FinanceTaxMatterSourceStatus = '待准备' | '待复核' | '已确认' | '不适用';
 export type FinanceTaxMatterDeclarationScenario = '月度扣缴' | '季度申报' | '季度预缴' | '年度汇算' | '按次申报';
+export type FinanceTaxDeclarationVerificationStatus = '未核验' | '人工核验一致' | '核验不一致';
 
 export type FinanceTaxMatterDeclarationHistoryRecord = {
   action: '更正' | '作废';
   declarationDate?: string;
-  declarationReceiptFileId?: string;
-  declarationReceiptNo?: string;
+  declarationFormFileIds: string[];
+  declarationResultFileId?: string;
+  declarationVerificationNote?: string;
+  declarationVerificationStatus: FinanceTaxDeclarationVerificationStatus;
+  declarationVerifiedAt?: string;
+  declarationVerifiedBy?: string;
+  taxAuthorityAssessmentVoucherNo?: string;
+  taxAuthorityDeclarationNo?: string;
   declarationStatus: FinanceTaxMatterDeclarationStatus;
+  filingAdjustmentAccountingPeriod?: string;
   filedAccountingAmount?: number;
   filedPayableAmount: number;
   filedRefundableAmount?: number;
@@ -74,11 +82,18 @@ export type FinanceTaxMatterRecord = {
   declarationDueDate: string;
   declarationDifferenceReason?: string;
   declarationHistory: FinanceTaxMatterDeclarationHistoryRecord[];
-  declarationReceiptFileId?: string;
-  declarationReceiptNo?: string;
+  declarationFormFileIds: string[];
+  declarationResultFileId?: string;
+  taxAuthorityDeclarationNo?: string;
+  taxAuthorityAssessmentVoucherNo?: string;
+  declarationVerificationStatus: FinanceTaxDeclarationVerificationStatus;
+  declarationVerificationNote?: string;
+  declarationVerifiedAt?: string;
+  declarationVerifiedBy?: string;
   declarationStatus: FinanceTaxMatterDeclarationStatus;
   declarationVersion: number;
   files: RelatedFileRecord[];
+  filingAdjustmentAccountingPeriod?: string;
   filedAccountingAmount?: number;
   id: string;
   linkedTransactionNos: string[];
@@ -149,7 +164,7 @@ export const taxMatterProcessStatusTone = {
   待退抵处理: 'amber',
   退抵处理中: 'blue',
   部分退抵: 'blue',
-  待补回执: 'amber',
+  申报材料待核对: 'amber',
   已完成: 'green'
 } as const satisfies Record<FinanceTaxMatterProcessStatus, StatusTagTone>;
 
@@ -187,7 +202,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     dataStatus: '待复核',
     declarationScenario: '月度扣缴',
     declarationDueDate: '2026-07-15',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
@@ -230,7 +247,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   {
     dataStatus: '待复核',
     declarationDueDate: '2026-07-20',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
@@ -280,7 +299,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   {
     dataStatus: '待复核',
     declarationDueDate: '2026-07-20',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
@@ -331,7 +352,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     dataStatus: '待复核',
     declarationScenario: '季度申报',
     declarationDueDate: '2026-07-15',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
@@ -375,7 +398,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     dataStatus: '待复核',
     declarationScenario: '季度预缴',
     declarationDueDate: '2026-07-15',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
@@ -419,7 +444,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     dataStatus: '待复核',
     declarationScenario: '季度申报',
     declarationDueDate: '2026-07-15',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],
@@ -464,17 +491,28 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     declarationScenario: '季度申报',
     declarationDate: '2026-04-12',
     declarationDueDate: '2026-04-20',
+    declarationFormFileIds: ['tax-file-q1-vat-form'],
     declarationHistory: [],
-    declarationReceiptFileId: 'tax-file-q1-vat-receipt',
-    declarationReceiptNo: 'VAT-2026Q1-0001',
+    declarationVerificationStatus: '人工核验一致',
+    declarationVerifiedAt: '2026-04-12 15:20',
+    declarationVerifiedBy: '李明',
+    declarationResultFileId: 'tax-file-q1-vat-receipt',
+    taxAuthorityDeclarationNo: 'VAT-2026Q1-0001',
     declarationVersion: 1,
     declarationStatus: '申报成功',
     files: [
       {
-        id: 'tax-file-q1-vat-receipt',
-        name: '2026-Q1_增值税及附加申报回执.pdf',
+        id: 'tax-file-q1-vat-form',
+        name: '2026-Q1_增值税及附加正式申报表.pdf',
         status: '已上传',
-        type: '申报回执',
+        type: '正式申报表',
+        updatedAt: '2026-04-12'
+      },
+      {
+        id: 'tax-file-q1-vat-receipt',
+        name: '2026-Q1_增值税及附加申报结果回执.pdf',
+        status: '已上传',
+        type: '申报结果回执',
         updatedAt: '2026-04-12'
       },
       {
@@ -503,8 +541,8 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         time: '2026-04-12 15:20',
         actor: '李明',
         object: 'TAX-2026Q1-VAT',
-        action: '上传回执',
-        summary: '归档申报回执和缴款回单'
+        action: '维护申报材料',
+        summary: '归档正式申报表、申报结果回执和缴款回单'
       }
     ],
     owner: '李明',
@@ -541,17 +579,28 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     declarationScenario: '季度预缴',
     declarationDate: '2026-04-12',
     declarationDueDate: '2026-04-20',
+    declarationFormFileIds: ['tax-file-q1-cit-form'],
     declarationHistory: [],
-    declarationReceiptFileId: 'tax-file-q1-cit-receipt',
-    declarationReceiptNo: 'CIT-2026Q1-0001',
+    declarationVerificationStatus: '人工核验一致',
+    declarationVerifiedAt: '2026-04-12 16:05',
+    declarationVerifiedBy: '李明',
+    declarationResultFileId: 'tax-file-q1-cit-receipt',
+    taxAuthorityDeclarationNo: 'CIT-2026Q1-0001',
     declarationVersion: 1,
     declarationStatus: '申报成功',
     files: [
       {
-        id: 'tax-file-q1-cit-receipt',
-        name: '2026-Q1_企业所得税预缴申报回执.pdf',
+        id: 'tax-file-q1-cit-form',
+        name: '2026-Q1_企业所得税预缴正式申报表.pdf',
         status: '已上传',
-        type: '申报回执',
+        type: '正式申报表',
+        updatedAt: '2026-04-12'
+      },
+      {
+        id: 'tax-file-q1-cit-receipt',
+        name: '2026-Q1_企业所得税预缴申报结果回执.pdf',
+        status: '已上传',
+        type: '申报结果回执',
         updatedAt: '2026-04-12'
       },
       {
@@ -580,8 +629,8 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         time: '2026-04-12 16:05',
         actor: '李明',
         object: 'TAX-2026Q1-CIT',
-        action: '上传回执',
-        summary: '归档申报回执和缴款回单'
+        action: '维护申报材料',
+        summary: '归档正式申报表、申报结果回执和缴款回单'
       }
     ],
     owner: '李明',
@@ -610,9 +659,86 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
   {
     dataStatus: '已确认',
     declarationScenario: '季度申报',
+    declarationDate: '2025-10-16',
+    declarationDueDate: '2025-10-20',
+    declarationFormFileIds: ['tax-file-2025q3-vat-form'],
+    declarationHistory: [],
+    declarationVerificationNote: '申报结果回执金额与系统登记结果不一致，待核对原申报数据',
+    declarationVerificationStatus: '核验不一致',
+    declarationVerifiedAt: '2025-10-17 09:30',
+    declarationVerifiedBy: '李明',
+    declarationResultFileId: 'tax-file-2025q3-vat-result',
+    declarationVersion: 1,
+    declarationStatus: '零申报',
+    files: [
+      {
+        id: 'tax-file-2025q3-vat-form',
+        name: '2025-Q3_增值税及附加正式申报表.pdf',
+        status: '已上传',
+        type: '正式申报表',
+        updatedAt: '2025-10-16'
+      },
+      {
+        id: 'tax-file-2025q3-vat-result',
+        name: '2025-Q3_增值税及附加申报结果回执.pdf',
+        status: '已上传',
+        type: '申报结果回执',
+        updatedAt: '2025-10-17'
+      }
+    ],
+    id: 'tax-matter-2025q3-vat-mismatch',
+    linkedTransactionNos: [],
+    matterNo: 'TAX-2025Q3-VAT',
+    matterType: '增值税及附加',
+    operationRecords: [
+      {
+        action: '维护申报材料',
+        actor: '李明',
+        id: 'tax-op-2025q3-vat-mismatch',
+        object: 'TAX-2025Q3-VAT',
+        summary: '人工核验发现申报结果与系统登记不一致',
+        time: '2025-10-17 09:30'
+      },
+      {
+        action: '登记申报结果',
+        actor: '李明',
+        id: 'tax-op-2025q3-vat-declared',
+        object: 'TAX-2025Q3-VAT',
+        summary: '登记 2025-Q3 增值税及附加零申报',
+        time: '2025-10-16 15:20'
+      }
+    ],
+    owner: '李明',
+    paidAmount: 0,
+    participantSummary: '季度零申报',
+    payableAmount: 0,
+    preparedPayableAmount: 0,
+    paymentDueDate: '2025-10-20',
+    paymentStatus: '无需缴纳',
+    period: '2025-Q3',
+    periodType: '季度',
+    processStatus: '申报材料待核对',
+    settlementDirection: '无需补退',
+    sourceItems: [
+      {
+        id: 'tax-source-2025q3-vat-preparation',
+        name: '办理依据',
+        sourceModule: '申报准备',
+        status: '已确认',
+        updatedAt: '2025-10-16'
+      }
+    ],
+    title: '2025-Q3 增值税及附加',
+    updatedAt: '2025-10-17'
+  },
+  {
+    dataStatus: '已确认',
+    declarationScenario: '季度申报',
     declarationDate: '2026-01-15',
     declarationDueDate: '2026-01-20',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '零申报',
     files: [],
@@ -626,7 +752,7 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
         actor: '李明',
         id: 'tax-op-2025q4-vat-receipt-pending',
         object: 'TAX-2025Q4-VAT',
-        summary: '登记 2025-Q4 增值税及附加零申报，申报回执待补充',
+        summary: '登记 2025-Q4 增值税及附加零申报，申报材料待补充',
         time: '2026-01-15 15:20'
       }
     ],
@@ -639,7 +765,7 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     paymentStatus: '无需缴纳',
     period: '2025-Q4',
     periodType: '季度',
-    processStatus: '待补回执',
+    processStatus: '申报材料待核对',
     settlementDirection: '无需补退',
     sourceItems: [
       {
@@ -658,7 +784,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     declarationScenario: '季度申报',
     declarationDate: '2026-04-10',
     declarationDueDate: '2026-04-20',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '无申报义务',
     files: [],
@@ -702,8 +830,10 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     dataStatus: '已确认',
     declarationDate: '2026-05-28',
     declarationDueDate: '2026-05-31',
+    declarationFormFileIds: [],
     declarationHistory: [],
-    declarationReceiptNo: 'CIT-2025-ANNUAL-001',
+    declarationVerificationStatus: '未核验',
+    taxAuthorityDeclarationNo: 'CIT-2025-ANNUAL-001',
     declarationScenario: '年度汇算',
     declarationStatus: '申报成功',
     declarationVersion: 1,
@@ -771,7 +901,9 @@ export const financeTaxMatterRecords: FinanceTaxMatterRecord[] = [
     dataStatus: '待准备',
     declarationDueDate: '2027-05-31',
     declarationScenario: '年度汇算',
+    declarationFormFileIds: [],
     declarationHistory: [],
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     declarationStatus: '待申报',
     files: [],

@@ -19,7 +19,7 @@ export type TaxMatterModuleScope = 'tax' | 'social';
 export type TaxMatterEditorMode =
   | 'social-receipt'
   | 'declaration-result'
-  | 'declaration-receipt'
+  | 'declaration-evidence'
   | 'payment-result'
   | 'refund-application'
   | 'refund-result'
@@ -114,7 +114,7 @@ export function getTaxMatterProcessStatusLabel(
   if (status === '数据待确认') return '明细待确认';
   if (status === '待申报') return '可缴费';
   if (status === '待缴款') return '待缴费';
-  if (status === '待补回执') return '待上传凭证';
+  if (status === '申报材料待核对') return '待上传凭证';
   return status;
 }
 
@@ -210,7 +210,9 @@ export function buildTaxMatterRecord(
 
   return {
     ...(existingRecord ?? {
+      declarationFormFileIds: [],
       declarationHistory: [],
+      declarationVerificationStatus: '未核验',
       declarationVersion: 1,
       files: [],
       id: `tax-matter-local-${Date.now()}`,
@@ -225,7 +227,7 @@ export function buildTaxMatterRecord(
     operationRecords: [
       ...(existingRecord?.operationRecords ?? []),
       {
-        action: isSocialInsuranceMatter ? '上传凭证' : '上传回执',
+      action: isSocialInsuranceMatter ? '上传凭证' : '维护申报材料',
         actor: '李明',
         id: `tax-op-receipt-${Date.now()}`,
         object: matterNo,
@@ -237,7 +239,7 @@ export function buildTaxMatterRecord(
     paidAmount: formValue.payableAmount,
     paymentDate: formValue.payableAmount > 0 ? formValue.paymentDate : undefined,
     paymentStatus: formValue.payableAmount > 0 ? '已缴纳' : '无需缴纳',
-    processStatus: hasRequiredReceiptFiles ? '已完成' : '待补回执',
+    processStatus: hasRequiredReceiptFiles ? '已完成' : '申报材料待核对',
     sourceItems: buildTaxMatterSourceItems(formValue, existingRecord?.sourceItems),
     title,
     updatedAt: financeToday

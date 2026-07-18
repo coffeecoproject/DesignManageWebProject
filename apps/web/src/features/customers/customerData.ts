@@ -1,3 +1,5 @@
+import type { BrandSettlementPolicy, BrandTaskPriceVersionRecord } from './brandTaskPricingModel';
+
 export type CustomerStatus = '合作中' | '待签约' | '已到期' | '无合同';
 export type BrandStatus = '启用' | '暂停' | '停用';
 export type StoreStatus = '筹备中' | '营业中' | '暂停' | '闭店';
@@ -105,6 +107,7 @@ export type BrandRecord = {
   owner: string;
   contactName: string;
   performanceRuleId: string;
+  settlementPolicy: BrandSettlementPolicy;
   taskConfigs: BrandTaskConfigRecord[];
   storeCount: number;
   updatedAt: string;
@@ -485,6 +488,7 @@ export const brandRecords: BrandRecord[] = [
     owner: '李明',
     contactName: '周岚',
     performanceRuleId: 'perf-rule-space-design-v2-draft',
+    settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: [
       {
         id: 'brand-task-starry-space-full-drawing',
@@ -512,6 +516,7 @@ export const brandRecords: BrandRecord[] = [
     owner: '王芳',
     contactName: '邓可',
     performanceRuleId: 'perf-rule-space-design-v2-draft',
+    settlementPolicy: { mode: '按月汇总', monthlyDueDay: 15 },
     taskConfigs: [
       {
         id: 'brand-task-starry-light-floor-plan',
@@ -535,6 +540,7 @@ export const brandRecords: BrandRecord[] = [
     owner: '王芳',
     contactName: '陈思',
     performanceRuleId: 'perf-rule-space-design-v2-draft',
+    settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: [
       {
         id: 'brand-task-nova-tea-full-drawing',
@@ -558,6 +564,7 @@ export const brandRecords: BrandRecord[] = [
     owner: '李明',
     contactName: '刘晨',
     performanceRuleId: 'perf-rule-space-design-v2-draft',
+    settlementPolicy: { mode: '按月汇总', monthlyDueDay: 20 },
     taskConfigs: [
       {
         id: 'brand-task-urban-hub-store-image',
@@ -577,10 +584,110 @@ export const brandRecords: BrandRecord[] = [
     owner: '赵敏',
     contactName: '唐青',
     performanceRuleId: 'perf-rule-space-design-v2-draft',
+    settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: [],
     storeCount: 1,
     updatedAt: '2026-04-30',
     note: '历史品牌，仅保留查询。'
+  }
+];
+
+export const brandTaskPriceVersionRecords: BrandTaskPriceVersionRecord[] = [
+  {
+    billable: true,
+    brandId: 'brand-starry-space',
+    contractId: 'contract-starry-framework',
+    currency: 'CNY',
+    effectiveFrom: '2026-01-15',
+    id: 'brand-price-starry-space-full-drawing-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-full-drawing',
+    unitPrice: 12000,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-starry-space',
+    contractId: 'contract-starry-framework',
+    currency: 'CNY',
+    effectiveFrom: '2026-01-15',
+    id: 'brand-price-starry-space-floor-plan-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-floor-plan',
+    unitPrice: 4800,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-starry-space',
+    contractId: 'contract-starry-framework',
+    currency: 'CNY',
+    effectiveFrom: '2026-01-15',
+    id: 'brand-price-starry-space-store-image-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-store-image',
+    unitPrice: 1600,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-starry-light',
+    contractId: 'contract-starry-supplement-001',
+    currency: 'CNY',
+    effectiveFrom: '2026-05-28',
+    id: 'brand-price-starry-light-floor-plan-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-floor-plan',
+    unitPrice: 4200,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-starry-light',
+    contractId: 'contract-starry-supplement-001',
+    currency: 'CNY',
+    effectiveFrom: '2026-05-28',
+    id: 'brand-price-starry-light-store-image-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-store-image',
+    unitPrice: 1300,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-nova-tea',
+    contractId: 'contract-nova-start',
+    currency: 'CNY',
+    effectiveFrom: '2026-03-01',
+    id: 'brand-price-nova-tea-full-drawing-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-full-drawing',
+    unitPrice: 10000,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-nova-tea',
+    contractId: 'contract-nova-start',
+    currency: 'CNY',
+    effectiveFrom: '2026-03-01',
+    id: 'brand-price-nova-tea-floor-plan-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-floor-plan',
+    unitPrice: 5000,
+    version: 1
+  },
+  {
+    billable: true,
+    brandId: 'brand-urban-hub',
+    contractId: 'contract-urban-framework',
+    currency: 'CNY',
+    effectiveFrom: '2025-09-20',
+    id: 'brand-price-urban-hub-store-image-v1',
+    status: '生效中',
+    taskConfigId: 'task-type-store-image',
+    unitPrice: 1800,
+    version: 1
   }
 ];
 

@@ -4,6 +4,7 @@ import { getFinanceTransactionAdjustmentBlocker } from './financeTransactionAdju
 import {
   applyFinanceReceivablePayableSettlementReview,
   canRegisterFinanceReceivablePayableSettlement,
+  getFinanceReceivablePayableSettlementSourceNo,
   getFinanceReceivablePayableLinkedTransactionRows,
   getFinanceReceivablePayableRegisterableAmount,
   getFinanceReceivablePayableSettlementTargets,
@@ -120,6 +121,14 @@ export function commitFinanceTransactionAdjustmentRegistration(
     return { message: '自然人劳务付款只能按原银行实付金额全额冲正', success: false };
   }
 
+  if (
+    adjustmentContext.mode === '冲正'
+    && originTransaction?.sourceType === '税费事项'
+    && !isSameMoney(transaction.amount, originTransaction.amount)
+  ) {
+    return { message: '税费缴退流水只能全额冲正；差额请登记补差流水', success: false };
+  }
+
   return {
     financeRows: [transaction, ...state.financeRows],
     receivablePayableRows: state.receivablePayableRows,
@@ -152,7 +161,10 @@ export function commitFinanceReceivablePayableSettlementRegistration(
     return { message: '当前事项没有可登记的收付款金额', success: false };
   }
 
-  if (transaction.status !== '待复核' || transaction.sourceNo !== record.documentNo) {
+  if (
+    transaction.status !== '待复核'
+    || transaction.sourceNo !== getFinanceReceivablePayableSettlementSourceNo(record)
+  ) {
     return { message: '流水状态或来源与应收应付事项不一致', success: false };
   }
 
@@ -213,6 +225,14 @@ export function commitFinanceTransactionReview(
 
     if (adjustmentBlocker) {
       return { message: adjustmentBlocker, success: false };
+    }
+
+    if (
+      transaction.adjustmentContext.mode === '冲正'
+      && originTransaction?.sourceType === '税费事项'
+      && !isSameMoney(transaction.amount, originTransaction.amount)
+    ) {
+      return { message: '税费缴退流水只能全额冲正；差额请登记补差流水', success: false };
     }
   }
 

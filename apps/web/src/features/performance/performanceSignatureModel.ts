@@ -2,13 +2,12 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import {
   performanceSignatureEmployees,
-  signatureRuleOptions,
   type PerformanceEmployeeSignatureArchive,
   type PerformanceSignatureFile,
   type PerformanceSignatureRelationStatus,
   type PerformanceSignatureRuleOption
 } from './performanceSignatureArchiveData';
-import type { PerformanceRuleCategory } from './performanceTypes';
+import type { PerformanceRuleCategory, PerformanceRulePreset } from './performanceTypes';
 
 export type PerformanceSignatureFileAction = 'preview' | 'download';
 export type SignatureRelationFilter = '全部' | '有历史版本';
@@ -64,11 +63,11 @@ export const employeeStatusTone = {
 } as const;
 
 export function getCurrentFiles(record: PerformanceEmployeeSignatureArchive) {
-  return record.files.filter((file) => file.relationStatus === '当前签署');
+  return record.files.filter((file) => file.relationStatus === '当前档案');
 }
 
 export function getHistoryFiles(record: PerformanceEmployeeSignatureArchive) {
-  return record.files.filter((file) => file.relationStatus === '历史文件');
+  return record.files.filter((file) => file.relationStatus === '历史档案');
 }
 
 export function getCurrentCategories(record: PerformanceEmployeeSignatureArchive) {
@@ -113,30 +112,59 @@ export function getSignatureRelationRows(
   );
 }
 
-export function getApplicableRuleOptions(employee: PerformanceEmployeeSignatureArchive | undefined) {
+export function buildPerformanceSignatureRuleOptions(ruleRows: PerformanceRulePreset[]): PerformanceSignatureRuleOption[] {
+  return ruleRows
+    .filter((rule) => rule.status === '已发布' && rule.categoryVersionState === '当前发布版本')
+    .map((rule) => ({
+      applicablePositions: [...rule.applicablePositions],
+      category: rule.category,
+      id: rule.id,
+      personnelType: rule.personnelType,
+      ruleName: rule.name,
+      ruleVersion: rule.currentVersion
+    }))
+    .sort((left, right) => left.category.localeCompare(right.category, 'zh-CN') || left.ruleName.localeCompare(right.ruleName, 'zh-CN'));
+}
+
+export function getApplicableRuleOptions(
+  employee: PerformanceEmployeeSignatureArchive | undefined,
+  ruleOptions: PerformanceSignatureRuleOption[]
+) {
   if (!employee) {
     return [];
   }
 
-  return signatureRuleOptions.filter((rule) => rule.applicablePositions.includes(employee.position));
+  return ruleOptions.filter(
+    (rule) => rule.personnelType === employee.personnelType && rule.applicablePositions.includes(employee.position)
+  );
 }
 
-export function getNewSignatureRuleOptions(employee: PerformanceEmployeeSignatureArchive | undefined) {
+export function getNewSignatureRuleOptions(
+  employee: PerformanceEmployeeSignatureArchive | undefined,
+  ruleOptions: PerformanceSignatureRuleOption[]
+) {
   const currentCategories = employee ? getCurrentCategories(employee) : [];
 
-  return getApplicableRuleOptions(employee).filter((rule) => !currentCategories.includes(rule.category));
+  return getApplicableRuleOptions(employee, ruleOptions).filter((rule) => !currentCategories.includes(rule.category));
 }
 
-export function getSameCategoryRuleOptions(employee: PerformanceEmployeeSignatureArchive | undefined, category: PerformanceRuleCategory) {
-  return getApplicableRuleOptions(employee).filter((rule) => rule.category === category);
+export function getSameCategoryRuleOptions(
+  employee: PerformanceEmployeeSignatureArchive | undefined,
+  category: PerformanceRuleCategory,
+  ruleOptions: PerformanceSignatureRuleOption[]
+) {
+  return getApplicableRuleOptions(employee, ruleOptions).filter((rule) => rule.category === category);
 }
 
-export function getFirstNewSignatureRule(employee: PerformanceEmployeeSignatureArchive | undefined) {
-  return getNewSignatureRuleOptions(employee)[0];
+export function getFirstNewSignatureRule(
+  employee: PerformanceEmployeeSignatureArchive | undefined,
+  ruleOptions: PerformanceSignatureRuleOption[]
+) {
+  return getNewSignatureRuleOptions(employee, ruleOptions)[0];
 }
 
-export function getRuleOption(ruleId: string) {
-  return signatureRuleOptions.find((rule) => rule.id === ruleId);
+export function getRuleOption(ruleId: string, ruleOptions: PerformanceSignatureRuleOption[]) {
+  return ruleOptions.find((rule) => rule.id === ruleId);
 }
 
 export function getSelectedSignatureFileName(file: UploadFile, fallbackName: string) {
@@ -145,10 +173,11 @@ export function getSelectedSignatureFileName(file: UploadFile, fallbackName: str
 
 export function buildSignatureCreateForm(
   employees: PerformanceEmployeeSignatureArchive[],
+  ruleOptions: PerformanceSignatureRuleOption[],
   employeeId = employees[0]?.id ?? ''
 ): SignatureCreateForm {
   const employee = employees.find((item) => item.id === employeeId);
-  const firstRule = getFirstNewSignatureRule(employee);
+  const firstRule = getFirstNewSignatureRule(employee, ruleOptions);
 
   return {
     employeeId,
@@ -219,7 +248,7 @@ export function createSignatureFile(
     fileName,
     id: `perf-file-${employee.workNo}-${rule.id}-${now}`,
     note,
-    relationStatus: '当前签署',
+    relationStatus: '当前档案',
     ruleName: rule.ruleName,
     ruleVersion: rule.ruleVersion,
     signedAt: '2026-06-14',
@@ -244,14 +273,14 @@ export function createSignatureOperation(
   };
 }
 
-export function addPerformanceSignatureRelation(
+export function addPerformanceSignatureArchive(
   employee: PerformanceEmployeeSignatureArchive,
   rule: PerformanceSignatureRuleOption,
   fileName: string,
   now = Date.now()
 ) {
-  const nextFile = createSignatureFile(employee, rule, fileName, '新增员工绩效签署关系', now);
-  const nextOperation = createSignatureOperation(employee, rule, '新增签署', `新增${rule.ruleName}员工签署文件`, now);
+  const nextFile = createSignatureFile(employee, rule, fileName, '新增员工绩效签署档案', now);
+  const nextOperation = createSignatureOperation(employee, rule, '新增签署档案', `上传${rule.ruleName}员工签署文件`, now);
 
   return {
     employee: {
@@ -265,20 +294,20 @@ export function addPerformanceSignatureRelation(
   };
 }
 
-export function updatePerformanceSignatureRelation(
+export function updatePerformanceSignatureArchive(
   employee: PerformanceEmployeeSignatureArchive,
   category: PerformanceRuleCategory,
   rule: PerformanceSignatureRuleOption,
   fileName: string,
   now = Date.now()
 ) {
-  const nextFile = createSignatureFile(employee, rule, fileName, '更新绩效规则版本后形成当前签署', now);
+  const nextFile = createSignatureFile(employee, rule, fileName, '更新规则版本后形成当前档案', now);
   const currentFile = getCurrentFiles(employee).find((file) => file.category === category);
   const nextOperation = createSignatureOperation(
     employee,
     rule,
-    '更新绩效版本',
-    currentFile ? `上传${rule.ruleName}签署文件，${currentFile.ruleName}转为历史签署` : `上传${rule.ruleName}签署文件`,
+    '更新签署档案',
+    currentFile ? `上传${rule.ruleName}签署文件，${currentFile.ruleName}转为历史档案` : `上传${rule.ruleName}签署文件`,
     now
   );
 
@@ -287,8 +316,8 @@ export function updatePerformanceSignatureRelation(
       ...employee,
       files: [
         ...employee.files.map((file) =>
-          file.category === category && file.relationStatus === '当前签署'
-            ? { ...file, relationStatus: '历史文件' as const, note: '版本更新后转为历史签署' }
+          file.category === category && file.relationStatus === '当前档案'
+            ? { ...file, relationStatus: '历史档案' as const, note: '版本更新后转为历史档案' }
             : file
         ),
         nextFile
@@ -301,7 +330,7 @@ export function updatePerformanceSignatureRelation(
   };
 }
 
-export function disablePerformanceSignatureRelation(
+export function archivePerformanceSignatureRelation(
   employee: PerformanceEmployeeSignatureArchive,
   category: PerformanceRuleCategory,
   now = Date.now()
@@ -314,14 +343,14 @@ export function disablePerformanceSignatureRelation(
       }
     : undefined;
   const nextOperation = fallbackRule
-    ? createSignatureOperation(employee, fallbackRule, '停用当前绩效', `${category}当前签署转为历史签署`, now)
+    ? createSignatureOperation(employee, fallbackRule, '移入历史档案', `${category}当前档案转为历史档案`, now)
     : undefined;
 
   return {
     ...employee,
     files: employee.files.map((file) =>
-      file.category === category && file.relationStatus === '当前签署'
-        ? { ...file, relationStatus: '历史文件' as const, note: '停用当前绩效后转为历史签署' }
+      file.category === category && file.relationStatus === '当前档案'
+        ? { ...file, relationStatus: '历史档案' as const, note: '当前档案已移入历史档案' }
         : file
     ),
     operationRecords: nextOperation ? [nextOperation, ...employee.operationRecords] : employee.operationRecords,

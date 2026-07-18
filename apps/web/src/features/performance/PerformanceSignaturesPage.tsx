@@ -13,11 +13,13 @@ import {
 import { PerformanceSignatureCreateDrawer } from './PerformanceSignatureCreateDrawer';
 import { PerformanceSignatureDrawer } from './PerformanceSignatureDrawer';
 import { PerformanceSignatureListTabs } from './PerformanceSignatureListTabs';
+import { usePerformanceRuleState } from './PerformanceRuleState';
 import {
-  addPerformanceSignatureRelation,
+  addPerformanceSignatureArchive,
+  archivePerformanceSignatureRelation,
+  buildPerformanceSignatureRuleOptions,
   buildSignatureCreateForm,
   defaultPerformanceSignatureFilters,
-  disablePerformanceSignatureRelation,
   filterPerformanceSignatureRows,
   getCurrentCategories,
   getInitialSignatureEmployees,
@@ -26,7 +28,7 @@ import {
   getRuleOption,
   getSelectedSignatureFileName,
   getSignatureRelationRows,
-  updatePerformanceSignatureRelation,
+  updatePerformanceSignatureArchive,
   type PerformanceSignatureFileAction,
   type PerformanceSignatureFilters,
   type SignatureCategoryFilter,
@@ -38,17 +40,21 @@ import type { PerformanceRuleCategory } from './performanceTypes';
 
 export function PerformanceSignaturesPage() {
   const [messageApi, contextHolder] = message.useMessage();
+  const { performanceRuleRows } = usePerformanceRuleState();
+  const ruleOptions = useMemo(() => buildPerformanceSignatureRuleOptions(performanceRuleRows), [performanceRuleRows]);
   const [filters, setFilters] = useState<PerformanceSignatureFilters>(defaultPerformanceSignatureFilters);
   const [employees, setEmployees] = useState<PerformanceEmployeeSignatureArchive[]>(() => getInitialSignatureEmployees());
   const [activeListTab, setActiveListTab] = useState<SignatureListTabKey>('current');
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
-  const [createForm, setCreateForm] = useState<SignatureCreateForm>(() => buildSignatureCreateForm(getInitialSignatureEmployees()));
+  const [createForm, setCreateForm] = useState<SignatureCreateForm>(() =>
+    buildSignatureCreateForm(getInitialSignatureEmployees(), ruleOptions)
+  );
 
   const filterOptions = useMemo(() => getPerformanceSignatureFilterOptions(employees), [employees]);
   const metrics = useMemo(() => getPerformanceSignatureMetrics(employees), [employees]);
-  const currentRelationRows = useMemo(() => getSignatureRelationRows(employees, '当前签署'), [employees]);
-  const historyRelationRows = useMemo(() => getSignatureRelationRows(employees, '历史文件'), [employees]);
+  const currentRelationRows = useMemo(() => getSignatureRelationRows(employees, '当前档案'), [employees]);
+  const historyRelationRows = useMemo(() => getSignatureRelationRows(employees, '历史档案'), [employees]);
   const allRelationRows = useMemo(() => [...currentRelationRows, ...historyRelationRows], [currentRelationRows, historyRelationRows]);
   const selectedRelation = selectedRelationId ? allRelationRows.find((row) => row.id === selectedRelationId) ?? null : null;
   const activeRows = activeListTab === 'current' ? currentRelationRows : historyRelationRows;
@@ -68,12 +74,12 @@ export function PerformanceSignaturesPage() {
   }
 
   function handleOpenCreateDrawer() {
-    setCreateForm(buildSignatureCreateForm(employees));
+    setCreateForm(buildSignatureCreateForm(employees, ruleOptions));
     setCreateDrawerOpen(true);
   }
 
   function handleCreateEmployeeChange(employeeId: string) {
-    setCreateForm(buildSignatureCreateForm(employees, employeeId));
+    setCreateForm(buildSignatureCreateForm(employees, ruleOptions, employeeId));
   }
 
   function handleCreateRuleChange(ruleId: string) {
@@ -82,7 +88,7 @@ export function PerformanceSignaturesPage() {
 
   function handleSelectCreateFile(file: UploadFile) {
     const employee = employees.find((item) => item.id === createForm.employeeId);
-    const rule = getRuleOption(createForm.ruleId);
+    const rule = getRuleOption(createForm.ruleId, ruleOptions);
 
     if (!employee || !rule) {
       return;
@@ -96,7 +102,7 @@ export function PerformanceSignaturesPage() {
 
   function handleSubmitCreateSignature() {
     const employee = employees.find((item) => item.id === createForm.employeeId);
-    const rule = getRuleOption(createForm.ruleId);
+    const rule = getRuleOption(createForm.ruleId, ruleOptions);
 
     if (!employee || !rule || !createForm.fileName) {
       void messageApi.warning('请选择员工、绩效规则版本和签署文件');
@@ -108,18 +114,18 @@ export function PerformanceSignaturesPage() {
       return;
     }
 
-    const result = addPerformanceSignatureRelation(employee, rule, createForm.fileName);
+    const result = addPerformanceSignatureArchive(employee, rule, createForm.fileName);
     const nextEmployees = employees.map((current) => (current.id === employee.id ? result.employee : current));
 
     updateEmployeeSignature(employee.id, () => result.employee);
     setActiveListTab('current');
     setCreateDrawerOpen(false);
-    setCreateForm(buildSignatureCreateForm(nextEmployees, employee.id));
-    void messageApi.success('绩效签署已新增');
+    setCreateForm(buildSignatureCreateForm(nextEmployees, ruleOptions, employee.id));
+    void messageApi.success('签署档案已新增');
   }
 
   function handleUpdateRelation(employeeId: string, category: PerformanceRuleCategory, ruleId: string, fileName: string) {
-    const rule = getRuleOption(ruleId);
+    const rule = getRuleOption(ruleId, ruleOptions);
     const employee = employees.find((item) => item.id === employeeId);
 
     if (!employee || !rule || rule.category !== category) {
@@ -127,30 +133,30 @@ export function PerformanceSignaturesPage() {
       return;
     }
 
-    const result = updatePerformanceSignatureRelation(employee, category, rule, fileName);
+    const result = updatePerformanceSignatureArchive(employee, category, rule, fileName);
 
     updateEmployeeSignature(employeeId, () => result.employee);
     setActiveListTab('current');
     setSelectedRelationId(`${employeeId}-${result.file.id}`);
-    void messageApi.success('绩效版本已更新');
+    void messageApi.success('签署档案已更新');
   }
 
-  function handleDisableRelation(employeeId: string, category: PerformanceRuleCategory) {
+  function handleArchiveRelation(employeeId: string, category: PerformanceRuleCategory) {
     const employee = employees.find((item) => item.id === employeeId);
 
     if (!employee) {
       return;
     }
 
-    const nextEmployee = disablePerformanceSignatureRelation(employee, category);
+    const nextEmployee = archivePerformanceSignatureRelation(employee, category);
 
     updateEmployeeSignature(employeeId, () => nextEmployee);
     setActiveListTab('history');
-    void messageApi.success('当前绩效已停用并转入历史签署');
+    void messageApi.success('签署文件已移入历史档案');
   }
 
   function handleAddRelation(employeeId: string, ruleId: string, fileName: string) {
-    const rule = getRuleOption(ruleId);
+    const rule = getRuleOption(ruleId, ruleOptions);
     const employee = employees.find((item) => item.id === employeeId);
 
     if (!employee || !rule) {
@@ -162,12 +168,12 @@ export function PerformanceSignaturesPage() {
       return;
     }
 
-    const result = addPerformanceSignatureRelation(employee, rule, fileName);
+    const result = addPerformanceSignatureArchive(employee, rule, fileName);
 
     updateEmployeeSignature(employeeId, () => result.employee);
     setActiveListTab('current');
     setSelectedRelationId(`${employeeId}-${result.file.id}`);
-    void messageApi.success('绩效签署已新增');
+    void messageApi.success('签署档案已新增');
   }
 
   return (
@@ -177,8 +183,8 @@ export function PerformanceSignaturesPage() {
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<TeamOutlined />} label="员工数" value={metrics.employeeCount} />
-          <MetricCard icon={<FileProtectOutlined />} label="当前签署关系" value={metrics.currentFileCount} />
-          <MetricCard icon={<HistoryOutlined />} label="历史版本" value={metrics.historyFileCount} />
+          <MetricCard icon={<FileProtectOutlined />} label="当前档案" value={metrics.currentFileCount} />
+          <MetricCard icon={<HistoryOutlined />} label="历史档案" value={metrics.historyFileCount} />
           <MetricCard icon={<FileTextOutlined />} label="绩效类别数" value={metrics.currentCategoryCount} />
         </MetricGrid>
       }
@@ -226,15 +232,16 @@ export function PerformanceSignaturesPage() {
         activeKey={activeListTab}
         records={filteredRelationRows}
         onChange={setActiveListTab}
-        onCreateSignature={handleOpenCreateDrawer}
+        onCreateArchive={handleOpenCreateDrawer}
         onRowClick={(record) => setSelectedRelationId(record.id)}
       />
 
       <PerformanceSignatureDrawer
         relation={selectedRelation}
+        ruleOptions={ruleOptions}
         onAddRelation={handleAddRelation}
+        onArchiveRelation={handleArchiveRelation}
         onClose={() => setSelectedRelationId(null)}
-        onDisableRelation={handleDisableRelation}
         onFileAction={handleFileAction}
         onUpdateRelation={handleUpdateRelation}
       />
@@ -242,6 +249,7 @@ export function PerformanceSignaturesPage() {
       <PerformanceSignatureCreateDrawer
         employees={employees}
         open={createDrawerOpen}
+        ruleOptions={ruleOptions}
         value={createForm}
         onClose={() => setCreateDrawerOpen(false)}
         onEmployeeChange={handleCreateEmployeeChange}

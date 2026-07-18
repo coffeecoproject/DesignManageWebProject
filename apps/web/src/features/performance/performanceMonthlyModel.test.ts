@@ -1,13 +1,17 @@
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
+import { peopleMembers } from '../people/mockData';
 import type { PeopleMember } from '../people/peopleTypes';
 import { performanceRulePresets } from './performanceMockData';
-import { performanceSignatureEmployees, signatureRuleOptions } from './performanceSignatureArchiveData';
 import {
   buildPerformanceSalarySettlementReference,
   buildPerformanceMonthlyRecords,
   getPerformanceMonthlyEmploymentScope
 } from './performanceMonthlyModel';
-import type { PerformanceDrawingTaskMonthlyRecord, PerformanceMonthlyCategoryRecord } from './performanceTypes';
+import {
+  calculateDrawingTaskPerformanceAmount,
+  calculateWeightedPerformanceQualityScore
+} from './performanceRuleCalculationModel';
+import type { PerformanceDrawingTaskMonthlyRecord } from './performanceTypes';
 
 type UnitTest = {
   name: string;
@@ -50,70 +54,22 @@ const weekdayCalendar: WorkCalendarRow = {
 };
 
 const annualExceptionRows: AnnualExceptionConfigRow[] = [];
+function requireFixture<T>(value: T | undefined, message: string): T {
+  if (!value) {
+    throw new Error(message);
+  }
+
+  return value;
+}
+const baseMember = requireFixture(
+  peopleMembers.find((member) => member.id === '20250018'),
+  'Performance test member 20250018 is missing.'
+);
 
 function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
   return {
-    address: '湖北武汉',
-    archiveFiles: [],
-    archiveStatus: '资料完整',
-    archiveUpdatedAt: '2026-06-16',
-    auditRecords: [],
-    birthDate: '1994-01-01',
-    city: '武汉',
-    contractNo: 'HT-PERF-001',
-    contractStartAt: '2026-06-16',
-    contractStatus: '劳动合同有效',
-    contractType: '劳动合同',
-    education: '本科',
-    educationMajor: '环境设计',
-    email: 'perf@example.com',
-    emergencyContact: '测试联系人',
-    emergencyContactPhone: '13800000000',
-    emergencyContactRelation: '家属',
-    gender: '女',
-    graduatedAt: '2016-06-30',
-    graduationSchool: '武汉大学',
-    hukouAddress: '湖北武汉',
-    id: '20269999',
-    idDocumentType: '身份证',
-    idValidUntil: '2036-01-01',
-    identityNo: '420000199401010000',
-    joinedAt: '2026-06-16',
-    mobile: '13800000001',
-    name: '绩效测试人员',
-    nationality: '中国',
-    paymentProfile: {
-      accountName: '绩效测试人员',
-      bankAccount: '6222000000000000000',
-      bankName: '招商银行',
-      mode: '工资发放',
-      payCycle: '月度'
-    },
-    personnelType: '全职',
-    position: '空间设计师',
-    salaryProfile: {
-      effectiveAt: '2026-06-16',
-      note: '',
-      payCycle: '月度',
-      regularSalary: '10000 元/月',
-      status: '已配置',
-      structure: '固定月薪'
-    },
-    source: '社招',
-    status: '在职',
-    taskAccessStatus: '可参与任务',
-    taskCapabilityIds: [],
-    taskRecords: [],
-    wechat: 'perf-test',
+    ...baseMember,
     workCalendarId: weekdayCalendar.id,
-    workEvaluationRecords: [],
-    workEvaluationSummary: {
-      acceptedTasks: 0,
-      level: 'A',
-      month: '2026-06',
-      reworkTasks: 0,
-      score: 90
-    },
     ...overrides
   };
 }
@@ -132,55 +88,33 @@ function createDrawingRecord(overrides: Partial<PerformanceDrawingTaskMonthlyRec
       pointValue: 25,
       prepayAmount: 0,
       prepayRatio: 0.5,
-      settlementNote: '测试',
+      settlementNote: '月度预发50%，季度复核差额',
       taskConfirmRatio: 1
     },
     baseQualityRatio: 0.9,
     category: '绘图任务制',
-    department: '设计部',
-    employeeName: '绩效测试人员',
+    employeeName: baseMember.name,
     events: [],
     excessQualityRatio: 0.9,
-    id: 'monthly-drawing-202606-test',
-    salarySettlementReference: 'performance-result:monthly-drawing-202606-test:monthly-prepay:v1',
+    id: 'task-performance:2026-06:20250018:perf-rule-space-design-2026-final',
     monthlyAmount: 0,
+    note: '按已验收任务归集。',
     performanceMonth: '2026-06',
-    position: '空间设计师',
+    position: baseMember.position,
     prepayAmount: 0,
     qualityBand: '80-89分',
     qualityScore: 86,
     qualitySummaries: [],
     ruleName: '绘图任务制V1',
     ruleVersion: 'V1',
-    sourceTaskCount: 20,
+    salarySettlementReference: 'performance-result:task-performance:2026-06:20250018:perf-rule-space-design-2026-final:monthly-prepay:v1',
+    sourceLabel: '任务验收',
+    sourceRecordIds: ['score-task-001'],
+    sourceTaskCount: 1,
     taskScore: 46.6,
     taskSummaries: [],
     updatedAt: '2026-06-30 18:00',
-    workNo: '20269999',
-    ...overrides
-  };
-}
-
-function createCategoryRecord(overrides: Partial<PerformanceMonthlyCategoryRecord> = {}): PerformanceMonthlyCategoryRecord {
-  return {
-    category: '岗位职责考核',
-    department: '设计部',
-    employeeName: '绩效测试人员',
-    events: [],
-    id: 'monthly-duty-202606-test',
-    salarySettlementReference: 'performance-result:monthly-duty-202606-test:monthly-prepay:v1',
-    monthlyAmount: 1200,
-    note: '岗位职责考核按周期评价结果进入员工绩效汇总',
-    performanceMonth: '2026-06',
-    position: '空间设计师',
-    prepayAmount: 600,
-    qualityScore: 90,
-    ruleName: '岗位职责考核V1',
-    ruleVersion: 'V1',
-    sourceLabel: '周期考核',
-    sourceTaskCount: 0,
-    updatedAt: '2026-06-30 18:00',
-    workNo: '20269999',
+    workNo: baseMember.id,
     ...overrides
   };
 }
@@ -190,198 +124,147 @@ const tests: UnitTest[] = [
     name: 'builds stable salary settlement references for confirmed performance results',
     run() {
       assertEqual(
-        buildPerformanceSalarySettlementReference('monthly-duty-202606-test', 'monthly-prepay'),
-        'performance-result:monthly-duty-202606-test:monthly-prepay:v1',
+        buildPerformanceSalarySettlementReference('monthly-drawing-202606-test', 'monthly-prepay'),
+        'performance-result:monthly-drawing-202606-test:monthly-prepay:v1',
         'the same performance result identity should produce a stable salary reference'
       );
       assertEqual(
-        buildPerformanceSalarySettlementReference('monthly-duty-202606-test', 'quarterly-review', 'review-2'),
-        'performance-result:monthly-duty-202606-test:quarterly-review:review-2',
-        'quarterly review revisions should have an explicit stable identity'
+        buildPerformanceSalarySettlementReference('quarterly:20260001:2026-Q2:绘图任务制', 'quarterly-difference', 'v2'),
+        'performance-result:quarterly:20260001:2026-Q2:绘图任务制:quarterly-difference:v2',
+        'quarterly result versions should produce an explicit stable difference identity'
       );
     }
   },
   {
-    name: 'calculates performance employment scope from actual workdays',
+    name: 'PF-10 calculates amounts only from structured ratios, factors and quality weights',
     run() {
+      const rule = performanceRulePresets[0];
+
+      assert(rule, 'published drawing rule should exist');
+      const qualityScore = calculateWeightedPerformanceQualityScore(
+        [
+          { id: 'quality', score: 40 },
+          { id: 'timeliness', score: 12.5 },
+          { id: 'workflow', score: 0 },
+          { id: 'collaboration', score: 0 }
+        ],
+        rule.qualityDimensions
+      );
+      const reweightedQualityScore = calculateWeightedPerformanceQualityScore(
+        [
+          { id: 'quality', score: 40 },
+          { id: 'timeliness', score: 12.5 },
+          { id: 'workflow', score: 0 },
+          { id: 'collaboration', score: 0 }
+        ],
+        rule.qualityDimensions.map((dimension) => ({
+          ...dimension,
+          weight: dimension.id === 'quality' ? 0.1 : dimension.id === 'timeliness' ? 0.7 : 0.1
+        }))
+      );
+      const originalAmount = calculateDrawingTaskPerformanceAmount({
+        basePerformanceAmount: 2500,
+        baselineScore: 80,
+        belowBaselineFactor: 0.5,
+        excessBands: rule.excessBands,
+        fullScore: 100,
+        monthlyPrepayRatio: 0.5,
+        qualityBands: rule.qualityBands,
+        qualityScore: 95,
+        taskScore: 40
+      });
+      const revisedAmount = calculateDrawingTaskPerformanceAmount({
+        basePerformanceAmount: 2500,
+        baselineScore: 80,
+        belowBaselineFactor: 0.8,
+        excessBands: rule.excessBands,
+        fullScore: 100,
+        monthlyPrepayRatio: 0.25,
+        qualityBands: rule.qualityBands,
+        qualityScore: 95,
+        taskScore: 40
+      });
+
+      assertEqual(qualityScore, 52.5, 'quality score should use configured weights');
+      assertEqual(reweightedQualityScore, 45, 'changing structured weights should change quality score');
+      assertEqual(originalAmount.monthlyAmount, 500, 'below-baseline amount should use configured factor');
+      assertEqual(originalAmount.prepayAmount, 250, 'prepay should use configured ratio');
+      assertEqual(revisedAmount.monthlyAmount, 800, 'revised factor should change the monthly result');
+      assertEqual(revisedAmount.prepayAmount, 200, 'revised prepay ratio should change prepay independently');
+    }
+  },
+  {
+    name: 'PF-11 prorates joining employee thresholds without discounting accepted task score',
+    run() {
+      const member = createMember({ joinedAt: '2026-06-16' });
       const scope = getPerformanceMonthlyEmploymentScope({
         annualExceptionRows,
-        member: createMember(),
+        member,
         month: '2026-06',
         workCalendarRows: [weekdayCalendar]
       });
-
-      assert(scope, 'mid-month full-time member should have a performance scope');
-      assertEqual(scope.monthWorkdays, 22, 'June 2026 weekday calendar should have 22 actual workdays');
-      assertEqual(scope.effectiveWorkdays, 11, 'June 16 entry should have 11 effective workdays');
-      assertEqual(scope.ratio, 0.5, 'performance ratio should use actual workdays, not 21.75 payroll days');
-    }
-  },
-  {
-    name: 'prorates full-time task-scoring thresholds without discounting task score',
-    run() {
       const records = buildPerformanceMonthlyRecords({
         annualExceptionRows,
-        categoryRecords: [createCategoryRecord({ category: '绘图任务制', id: 'monthly-drawing-202606-test', ruleName: '绘图任务制V1', sourceLabel: '任务汇总', taskScore: 46.6 })],
         drawingTaskRecords: [createDrawingRecord()],
-        peopleRows: [createMember()],
-        ruleOptions: signatureRuleOptions,
+        peopleRows: [member],
         ruleRows: performanceRulePresets,
-        signatureEmployees: [
-          {
-            ...performanceSignatureEmployees[1],
-            employeeName: '绩效测试人员',
-            files: [
-              {
-                category: '绘图任务制',
-                fileName: '绩效测试人员_绘图任务制V1_绩效签署文件.pdf',
-                id: 'perf-file-20269999-draw-v1',
-                note: '测试签署文件',
-                relationStatus: '当前签署',
-                ruleName: '绘图任务制V1',
-                ruleVersion: 'V1',
-                signedAt: '2026-06-16',
-                uploadedAt: '2026-06-16 10:00'
-              }
-            ],
-            id: 'perf-signature-employee-20269999',
-            workNo: '20269999'
-          }
-        ],
         workCalendarRows: [weekdayCalendar]
       });
-      const drawingRecord = records.drawingTaskRecords[0];
-      const categoryRecord = records.categoryRecords[0];
+      const record = records.drawingTaskRecords[0];
 
-      assert(drawingRecord, 'drawing record should remain after employment-scope calculation');
-      assert(categoryRecord, 'category record should be built from adjusted drawing detail');
-      assertEqual(drawingRecord.taskScore, 46.6, 'raw task score should not be discounted');
-      assertEqual(drawingRecord.prorationSummary?.fullScore, 50, 'full score should be prorated by effective workdays');
-      assertEqual(drawingRecord.prorationSummary?.baseLineScore, 40, 'base line should be prorated by effective workdays');
-      assertEqual(drawingRecord.prorationSummary?.basePerformanceAmount, 1250, 'base performance cap should be prorated');
-      assertEqual(drawingRecord.executionContract?.status, '已匹配', 'drawing record should match signed execution contract');
-      assertEqual(drawingRecord.amountSummary.confirmedBaseScore, 46.6, 'confirmed score should use raw task score below prorated full score');
-      assertEqual(drawingRecord.amountSummary.taskConfirmRatio, 1, 'task confirmation should compare against prorated base line');
-      assertEqual(drawingRecord.monthlyAmount, 1048.5, 'monthly amount should use prorated scoring thresholds');
-      assertEqual(drawingRecord.prepayAmount, 524.25, 'prepay should derive from adjusted monthly amount');
-      assertEqual(categoryRecord.monthlyAmount, 1048.5, 'category row should consume adjusted drawing amount');
+      assert(scope, 'mid-month employee should have a performance scope');
+      assert(record, 'mid-month employee result should remain available');
+      assertEqual(scope.monthWorkdays, 22, 'June 2026 should contain 22 weekday-calendar workdays');
+      assertEqual(scope.effectiveWorkdays, 11, 'June 16 entry should contain 11 effective workdays');
+      assertEqual(record.taskScore, 46.6, 'accepted task score should remain unchanged');
+      assertEqual(record.prorationSummary?.fullScore, 50, 'full score should follow effective workday ratio');
+      assertEqual(record.prorationSummary?.baseLineScore, 40, 'baseline should follow effective workday ratio');
+      assertEqual(record.prorationSummary?.basePerformanceAmount, 1250, 'base amount should follow effective workday ratio');
+      assertEqual(record.monthlyAmount, 1048.5, 'monthly amount should use prorated thresholds');
+      assertEqual(record.prepayAmount, 524.25, 'prepay should derive from the prorated result');
     }
   },
   {
-    name: 'prorates duty-assessment amounts but keeps project bonus amounts intact',
+    name: 'PF-11 prorates leaving employee thresholds without discounting accepted task score',
     run() {
+      const member = createMember({
+        archiveUpdatedAt: '2026-06-15',
+        contractEndAt: '2026-06-15',
+        joinedAt: '2025-11-15',
+        status: '离职'
+      });
       const records = buildPerformanceMonthlyRecords({
         annualExceptionRows,
-        categoryRecords: [
-          createCategoryRecord(),
-          createCategoryRecord({
-            category: '项目奖金',
-            id: 'monthly-bonus-202606-test',
-            monthlyAmount: 800,
-            note: '项目奖金按实际确认金额进入绩效',
-            prepayAmount: 400,
-            ruleName: '项目奖金V1',
-            sourceLabel: '奖金确认'
-          })
-        ],
-        drawingTaskRecords: [],
-        peopleRows: [createMember()],
-        ruleOptions: signatureRuleOptions,
+        drawingTaskRecords: [createDrawingRecord()],
+        peopleRows: [member],
         ruleRows: performanceRulePresets,
-        signatureEmployees: [
-          {
-            ...performanceSignatureEmployees[0],
-            employeeName: '绩效测试人员',
-            files: [
-              {
-                category: '岗位职责考核',
-                fileName: '绩效测试人员_岗位职责考核V1_绩效签署文件.pdf',
-                id: 'perf-file-20269999-duty-v1',
-                note: '测试签署文件',
-                relationStatus: '当前签署',
-                ruleName: '岗位职责考核V1',
-                ruleVersion: 'V1',
-                signedAt: '2026-06-16',
-                uploadedAt: '2026-06-16 10:00'
-              },
-              {
-                category: '项目奖金',
-                fileName: '绩效测试人员_项目奖金V1_绩效签署文件.pdf',
-                id: 'perf-file-20269999-bonus-v1',
-                note: '测试签署文件',
-                relationStatus: '历史文件',
-                ruleName: '项目奖金V1',
-                ruleVersion: 'V1',
-                signedAt: '2026-06-16',
-                uploadedAt: '2026-06-16 10:00'
-              }
-            ],
-            id: 'perf-signature-employee-20269999',
-            workNo: '20269999'
-          }
-        ],
         workCalendarRows: [weekdayCalendar]
       });
-      const dutyRecord = records.categoryRecords.find((record) => record.category === '岗位职责考核');
-      const bonusRecord = records.categoryRecords.find((record) => record.category === '项目奖金');
+      const record = records.drawingTaskRecords[0];
 
-      assert(dutyRecord, 'duty record should remain in scope');
-      assert(bonusRecord, 'project bonus record should remain in scope');
-      assertEqual(dutyRecord.monthlyAmount, 600, 'duty-assessment amount should be prorated by workday ratio');
-      assertEqual(dutyRecord.prepayAmount, 300, 'duty-assessment prepay should be prorated by workday ratio');
-      assertEqual(dutyRecord.executionContract?.status, '已匹配', 'duty record should match signature rule option contract');
-      assertEqual(bonusRecord.monthlyAmount, 800, 'project bonus should keep actual confirmed amount');
-      assertEqual(bonusRecord.prepayAmount, 400, 'project bonus prepay should keep actual confirmed amount');
-      assertEqual(bonusRecord.executionContract?.status, '已匹配', 'historical project bonus signature should remain contract matched');
+      assert(record, 'mid-month leaver result should remain available');
+      assertEqual(record.employmentScope?.effectiveWorkdays, 11, 'June 15 exit should contain 11 effective workdays');
+      assertEqual(record.taskScore, 46.6, 'accepted task score should remain unchanged for leavers');
+      assertEqual(record.prorationSummary?.fullScore, 50, 'leaver full score should be prorated');
+      assertEqual(record.prorationSummary?.baseLineScore, 40, 'leaver baseline should be prorated');
+      assertEqual(record.prorationSummary?.basePerformanceAmount, 1250, 'leaver base amount should be prorated');
     }
   },
   {
-    name: 'keeps monthly result but marks execution-contract problems',
+    name: 'keeps the result visible while flagging a rule-version mismatch',
     run() {
       const records = buildPerformanceMonthlyRecords({
         annualExceptionRows,
-        categoryRecords: [
-          createCategoryRecord({
-            category: '绘图任务制',
-            id: 'monthly-drawing-202606-test',
-            ruleName: '绘图任务制V2',
-            ruleVersion: 'V2',
-            sourceLabel: '任务汇总',
-            taskScore: 46.6
-          })
-        ],
         drawingTaskRecords: [createDrawingRecord({ ruleName: '绘图任务制V2', ruleVersion: 'V2' })],
         peopleRows: [createMember()],
-        ruleOptions: signatureRuleOptions,
         ruleRows: performanceRulePresets,
-        signatureEmployees: [
-          {
-            ...performanceSignatureEmployees[1],
-            employeeName: '绩效测试人员',
-            files: [
-              {
-                category: '绘图任务制',
-                fileName: '绩效测试人员_绘图任务制V1_绩效签署文件.pdf',
-                id: 'perf-file-20269999-draw-v1',
-                note: '测试签署文件',
-                relationStatus: '当前签署',
-                ruleName: '绘图任务制V1',
-                ruleVersion: 'V1',
-                signedAt: '2026-06-16',
-                uploadedAt: '2026-06-16 10:00'
-              }
-            ],
-            id: 'perf-signature-employee-20269999',
-            workNo: '20269999'
-          }
-        ],
         workCalendarRows: [weekdayCalendar]
       });
-      const drawingRecord = records.drawingTaskRecords[0];
+      const record = records.drawingTaskRecords[0];
 
-      assert(drawingRecord, 'drawing record should remain available for ledger review');
-      assertEqual(drawingRecord.executionContract?.status, '签署版本不一致', 'contract should flag version mismatch');
-      assertEqual(drawingRecord.executionContract?.signedRuleVersion, 'V1', 'contract should preserve signed version evidence');
+      assert(record, 'version-mismatched record should remain available for review');
+      assertEqual(record.ruleApplicability?.status, '规则版本不一致', 'period-version mismatch should be explicit');
+      assertEqual(record.ruleApplicability?.ruleVersion, 'V1', 'June should resolve the V1 published rule');
     }
   }
 ];

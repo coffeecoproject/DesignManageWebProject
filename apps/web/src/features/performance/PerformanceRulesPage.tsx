@@ -34,7 +34,6 @@ import {
   type RuleCategoryFilter,
   type RuleDrawerAction,
   type RuleRelatedFileRecord,
-  type RuleSignatureEmployeeRow,
   type RuleStatusFilter,
   type RuleTypeFilter
 } from './performanceRuleModel';
@@ -112,10 +111,6 @@ export function PerformanceRulesPage() {
 
   function handleDownloadRuleFile(file: RuleRelatedFileRecord) {
     void messageApi.success(`${file.name} 下载请求已记录`);
-  }
-
-  function handleRuleSignatureAction(employee: RuleSignatureEmployeeRow, rule: PerformanceRulePreset) {
-    void messageApi.info(`${rule.name} / ${employee.employeeName} 的签署记录和提醒能力仍为前端原型`);
   }
 
   function handleRuleAction(rule: PerformanceRulePreset, action: RuleDrawerAction) {
@@ -243,7 +238,6 @@ export function PerformanceRulesPage() {
           onAction={handleRuleAction}
           onDownloadFile={handleDownloadRuleFile}
           onPreviewFile={handlePreviewRuleFile}
-          onSignatureAction={handleRuleSignatureAction}
         />
     </ManagementPageScaffold>
   );

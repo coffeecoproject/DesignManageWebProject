@@ -86,14 +86,6 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     taskCapabilityIds: [],
     taskRecords: [],
     wechat: 'wx_demo',
-    workEvaluationRecords: [],
-    workEvaluationSummary: {
-      acceptedTasks: 0,
-      level: '-',
-      month: '2026-06',
-      reworkTasks: 0,
-      score: 0
-    },
     ...overrides
   };
 }

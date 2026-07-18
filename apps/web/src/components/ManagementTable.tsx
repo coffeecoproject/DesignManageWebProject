@@ -34,6 +34,7 @@ export type ManagementTableProps<T extends object> = {
   columns: TableColumnsType<T>;
   count?: ManagementTableCount;
   dataSource: T[];
+  emptyText?: ReactNode;
   primaryAction?: ManagementTableAction;
   rowTestIdPrefix?: string;
   rowKey: ManagementTableRowKey<T>;
@@ -167,6 +168,7 @@ export function ManagementTable<T extends object>({
   columns,
   count,
   dataSource,
+  emptyText = '暂无数据',
   primaryAction,
   rowTestIdPrefix,
   rowKey,
@@ -229,6 +231,7 @@ export function ManagementTable<T extends object>({
         className="management-table"
         columns={normalizedColumns}
         dataSource={dataSource}
+        locale={{ emptyText }}
         pagination={managementTablePagination}
         onRow={(record) => {
           const rowKeyValue = getRecordKey(record, rowKey);

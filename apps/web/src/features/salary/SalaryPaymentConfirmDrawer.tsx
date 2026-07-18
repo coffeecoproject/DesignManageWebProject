@@ -83,7 +83,7 @@ export function SalaryPaymentConfirmDrawer({
           ? !selectedPaymentDate
           : !selectedEvidence || !paymentDateMatches || !paymentAmountMatches,
         icon: requiresRecalculation ? <CalculatorOutlined /> : <CheckCircleOutlined />,
-        label: requiresRecalculation ? '重新核定' : '确认已发放',
+        label: requiresRecalculation ? '重新核定' : '确认关联',
         testId: requiresRecalculation
           ? 'salary-payment-recalculate-submit'
           : 'salary-payment-confirm-submit',
@@ -97,7 +97,7 @@ export function SalaryPaymentConfirmDrawer({
           }
         }
       }}
-      title={<DetailDrawerTitle subtitle="薪酬社保 / 薪酬明细" title="确认工资发放" />}
+      title={<DetailDrawerTitle subtitle="薪酬社保 / 薪酬明细" title="关联工资发放流水" />}
       width={680}
       onClose={onCancel}
     >
@@ -108,7 +108,9 @@ export function SalaryPaymentConfirmDrawer({
           <ReadOnlyField label="工资单编号" value={report.workflow?.payrollNo ?? '-'} />
           <ReadOnlyField label="计划发薪日" value={scheduledPaymentDate || '-'} />
           <ReadOnlyField label="当前个税月份" value={currentPersonalIncomeTaxPeriod || '-'} />
-          <ReadOnlyField label="工资薪金" value={formatSalaryMoney(settlement.employeeGrossPayableAmount)} />
+          <ReadOnlyField label="应发工资" value={formatSalaryMoney(settlement.grossEarningsAmount)} />
+          <ReadOnlyField label="业务扣减" value={formatSalaryMoney(settlement.businessDeductionAmount)} />
+          <ReadOnlyField label="计税工资" value={formatSalaryMoney(settlement.taxableIncomeAmount)} />
           <ReadOnlyField label="个人社保" value={formatSalaryMoney(settlement.employeeSocialInsuranceAmount)} />
           <ReadOnlyField label="个人公积金" value={formatSalaryMoney(settlement.employeeHousingFundAmount)} />
           <ReadOnlyField label="代扣个税" value={formatSalaryMoney(settlement.withheldPersonalIncomeTaxAmount)} />

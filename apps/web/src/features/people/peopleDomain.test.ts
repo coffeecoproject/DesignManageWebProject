@@ -1,5 +1,6 @@
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import { performanceRulePresets } from '../performance/performanceMockData';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import {
   applyPeopleMovementEffect,
   createPeopleMovementSnapshot,
@@ -41,10 +42,9 @@ type UnitTestResult = {
   total: number;
 };
 
-type PeopleMemberOverrides = Omit<Partial<PeopleMember>, 'paymentProfile' | 'salaryProfile' | 'workEvaluationSummary'> & {
+type PeopleMemberOverrides = Omit<Partial<PeopleMember>, 'paymentProfile' | 'salaryProfile'> & {
   paymentProfile?: Partial<PeopleMember['paymentProfile']>;
   salaryProfile?: Partial<PeopleMember['salaryProfile']>;
-  workEvaluationSummary?: Partial<PeopleMember['workEvaluationSummary']>;
 };
 
 function fail(message: string): never {
@@ -184,15 +184,7 @@ function createMember(overrides: PeopleMemberOverrides = {}): PeopleMember {
     taskCapabilityIds: ['design'],
     taskRecords: [],
     wechat: 'test-wechat',
-    workCalendarId: weekdayCalendar.id,
-    workEvaluationRecords: [],
-    workEvaluationSummary: {
-      acceptedTasks: 0,
-      level: 'A',
-      month: '2026-06',
-      reworkTasks: 0,
-      score: 90
-    }
+    workCalendarId: weekdayCalendar.id
   };
 
   return {
@@ -209,12 +201,7 @@ function createMember(overrides: PeopleMemberOverrides = {}): PeopleMember {
       ...overrides.salaryProfile
     },
     taskCapabilityIds: overrides.taskCapabilityIds ?? [...baseMember.taskCapabilityIds],
-    taskRecords: overrides.taskRecords ?? baseMember.taskRecords.map((record) => ({ ...record })),
-    workEvaluationRecords: overrides.workEvaluationRecords ?? baseMember.workEvaluationRecords.map((record) => ({ ...record })),
-    workEvaluationSummary: {
-      ...baseMember.workEvaluationSummary,
-      ...overrides.workEvaluationSummary
-    }
+    taskRecords: overrides.taskRecords ?? baseMember.taskRecords.map((record) => ({ ...record }))
   };
 }
 
@@ -233,6 +220,34 @@ function createAttendanceRecord(overrides: Partial<PeopleAttendanceRecord> = {})
     status: '生效中',
     type: '请假',
     updatedAt: '2026-06-16 10:00',
+    ...overrides
+  };
+}
+
+function createPublishedPerformanceRecord(
+  member: PeopleMember,
+  score: number,
+  overrides: Partial<PerformanceMonthlyCategoryRecord> = {}
+): PerformanceMonthlyCategoryRecord {
+  return {
+    category: '岗位职责考核',
+    employeeName: member.name,
+    events: [],
+    id: `performance-${member.id}-${score}`,
+    monthlyAmount: 1000,
+    note: '',
+    performanceMonth: '2026-06',
+    position: member.position,
+    prepayAmount: 0,
+    qualityScore: score,
+    ruleName: '测试绩效规则',
+    ruleVersion: 'V1',
+    salarySettlementReference: '2026-07 工资',
+    sourceLabel: '已发布绩效结果',
+    sourceRecordIds: [`source-${member.id}`],
+    sourceTaskCount: 1,
+    updatedAt: '2026-07-01 10:00',
+    workNo: member.id,
     ...overrides
   };
 }
@@ -496,38 +511,50 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'derives performance termination risk from applicable published rules',
+    name: 'derives performance low-score risk from applicable rules and published results',
     run: () => {
       const riskyMember = createMember({
-        position: '空间设计师',
-        workEvaluationRecords: [{ acceptedTasks: 1, level: 'D', month: '2026-06', reworkTasks: 0, score: 58 }],
-        workEvaluationSummary: { acceptedTasks: 1, level: 'D', month: '2026-06', reworkTasks: 0, score: 58 }
+        position: '空间设计师'
       });
       const lowScoreUnmatchedMember = createMember({
-        position: '财务专员',
-        workEvaluationRecords: [{ acceptedTasks: 1, level: 'D', month: '2026-06', reworkTasks: 0, score: 58 }],
-        workEvaluationSummary: { acceptedTasks: 1, level: 'D', month: '2026-06', reworkTasks: 0, score: 58 }
+        position: '财务专员'
       });
       const attentionOnlyMember = createMember({
-        position: '空间设计师',
-        workEvaluationRecords: [{ acceptedTasks: 1, level: 'C', month: '2026-06', reworkTasks: 0, score: 65 }],
-        workEvaluationSummary: { acceptedTasks: 1, level: 'C', month: '2026-06', reworkTasks: 0, score: 65 }
+        position: '空间设计师'
       });
+      const riskyPublishedRecord = createPublishedPerformanceRecord(riskyMember, 58);
+      const unmatchedPublishedRecord = createPublishedPerformanceRecord(lowScoreUnmatchedMember, 58);
+      const attentionPublishedRecord = createPublishedPerformanceRecord(attentionOnlyMember, 65);
 
       assertDeepEqual(
         getPeoplePerformanceRuleRiskLabels(riskyMember, performanceRulePresets),
+        [],
+        'performance risk should not be inferred without a published performance result'
+      );
+
+      assertDeepEqual(
+        getPeoplePerformanceRuleRiskLabels(riskyMember, performanceRulePresets, [riskyPublishedRecord]),
         [peoplePerformanceTerminationRiskLabel],
-        'latest score in rule termination band should trigger termination-condition risk'
+        'latest published score in the rule low-score band should trigger performance risk'
       );
       assertDeepEqual(
-        getPeoplePerformanceRuleRiskLabels(lowScoreUnmatchedMember, performanceRulePresets),
+        getPeoplePerformanceRuleRiskLabels(lowScoreUnmatchedMember, performanceRulePresets, [unmatchedPublishedRecord]),
         [],
-        'low score without an applicable published rule should not trigger termination-condition risk'
+        'low score without an applicable published rule should not trigger rule-derived risk'
       );
       assertDeepEqual(
-        getPeoplePerformanceRuleRiskLabels(attentionOnlyMember, performanceRulePresets),
+        getPeoplePerformanceRuleRiskLabels(attentionOnlyMember, performanceRulePresets, [attentionPublishedRecord]),
         [],
-        'score above the termination band should stay as a normal performance concern only'
+        'score above the rule low-score band should not trigger rule-derived risk'
+      );
+      assertDeepEqual(
+        getPeoplePerformanceRuleRiskLabels(
+          riskyMember,
+          performanceRulePresets,
+          [createPublishedPerformanceRecord(riskyMember, 58, { resultResponseStatus: '有异议' })]
+        ),
+        [],
+        'a disputed score should not trigger a personnel performance risk conclusion'
       );
     }
   },

@@ -1,6 +1,7 @@
 import type { PeopleAttendanceRecord } from '../people/peopleDomain';
 import { peopleMockRepository } from '../people/peopleRepository';
 import type { PeopleMember } from '../people/peopleTypes';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import type { StoreTaskRecord } from './TaskManagementState';
 import { buildTaskExecutorCandidates } from './taskAssignmentCandidates';
@@ -16,9 +17,7 @@ type UnitTestResult = {
   total: number;
 };
 
-type PeopleMemberOverrides = Omit<Partial<PeopleMember>, 'workEvaluationSummary'> & {
-  workEvaluationSummary?: Partial<PeopleMember['workEvaluationSummary']>;
-};
+type PeopleMemberOverrides = Partial<PeopleMember>;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -66,12 +65,7 @@ function createMember(overrides: PeopleMemberOverrides = {}): PeopleMember {
     taskAccessStatus: '可参与任务',
     workCalendarId: weekdayCalendar.id,
     ...overrides,
-    taskCapabilityIds: overrides.taskCapabilityIds ?? ['task-type-floor-plan'],
-    workEvaluationSummary: {
-      ...baseMember.workEvaluationSummary,
-      score: 90,
-      ...overrides.workEvaluationSummary
-    }
+    taskCapabilityIds: overrides.taskCapabilityIds ?? ['task-type-floor-plan']
   };
 }
 
@@ -94,11 +88,46 @@ function createAttendanceRecord(overrides: Partial<PeopleAttendanceRecord> = {})
   };
 }
 
-function getExecutorCandidate(member: PeopleMember, attendanceRecords: PeopleAttendanceRecord[], window: { endAt: string; startAt: string }) {
+function createPublishedPerformanceRecord(
+  workNo: string,
+  qualityScore: number,
+  overrides: Partial<PerformanceMonthlyCategoryRecord> = {}
+): PerformanceMonthlyCategoryRecord {
+  return {
+    category: '绘图任务制',
+    employeeName: '任务候选测试人员',
+    events: [],
+    id: `published-performance:${workNo}:2026-06`,
+    monthlyAmount: 1200,
+    note: '按正式绩效结果生成。',
+    performanceMonth: '2026-06',
+    position: '空间设计师',
+    prepayAmount: 600,
+    qualityScore,
+    ruleName: '设计绩效规则',
+    ruleVersion: 'V1',
+    salarySettlementReference: `performance-result:${workNo}:2026-06:v1`,
+    sourceLabel: '正式绩效结果',
+    sourceRecordIds: [`task-score:${workNo}:2026-06`],
+    sourceTaskCount: 1,
+    taskScore: qualityScore,
+    updatedAt: '2026-06-28 18:00',
+    workNo,
+    ...overrides
+  };
+}
+
+function getExecutorCandidate(
+  member: PeopleMember,
+  attendanceRecords: PeopleAttendanceRecord[],
+  window: { endAt: string; startAt: string },
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[] = []
+) {
   const [candidate] = buildTaskExecutorCandidates({
     annualExceptionRows,
     attendanceRecords,
     peopleRows: [member],
+    publishedPerformanceRecords,
     storeTaskRows,
     taskConfigId: 'task-type-floor-plan',
     window,
@@ -176,6 +205,47 @@ const tests: UnitTest[] = [
 
       assertEqual(candidate.selectable, true, 'part-time candidate should ignore time-window records');
       assert(candidate.blockers.length === 0, 'part-time candidate should have no time blockers');
+    }
+  },
+  {
+    name: 'PF-29 candidate ranking consumes the published performance result',
+    run: () => {
+      const member = createMember();
+      const candidate = getExecutorCandidate(
+        member,
+        [],
+        {
+          endAt: '2026-06-19 18:00',
+          startAt: '2026-06-19 10:00'
+        },
+        [createPublishedPerformanceRecord(member.id, 75)]
+      );
+
+      assertEqual(candidate.performanceScore, 75, 'published performance should be the candidate score');
+      assert(candidate.reasons.includes('绩效偏低：75 分'), 'published low score should create a soft warning');
+      assertEqual(candidate.selectable, true, 'performance should remain a recommendation signal, not a blocker');
+    }
+  },
+  {
+    name: 'PF-29 candidate ranking ignores a disputed performance result',
+    run: () => {
+      const member = createMember();
+      const candidate = getExecutorCandidate(
+        member,
+        [],
+        {
+          endAt: '2026-06-19 18:00',
+          startAt: '2026-06-19 10:00'
+        },
+        [createPublishedPerformanceRecord(member.id, 55, { resultResponseStatus: '有异议' })]
+      );
+
+      assertEqual(candidate.performanceScore, null, 'disputed performance should not become a candidate score');
+      assert(
+        !candidate.reasons.some((reason) => reason.includes('绩效偏低')),
+        'disputed performance should not create a low-score warning'
+      );
+      assertEqual(candidate.selectable, true, 'disputed performance should not become an assignment blocker');
     }
   }
 ];

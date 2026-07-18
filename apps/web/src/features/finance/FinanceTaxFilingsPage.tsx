@@ -40,7 +40,7 @@ import {
 import { StampDutySourceDetailDrawer } from './StampDutySourceDetailDrawer';
 import type { FinanceStampDutySourceRecord } from './financeStampDutyModel';
 import {
-  TaxDeclarationReceiptDrawer,
+  TaxDeclarationEvidenceDrawer,
   TaxDeclarationResultDrawer,
   TaxDeclarationRevisionDrawer,
   TaxMatterReceiptDrawer,
@@ -91,9 +91,9 @@ import {
   recordTaxMatterRefundApplication,
   recordTaxMatterRefundResult,
   startTaxMatterDeclarationRevision,
-  supplementTaxMatterDeclarationReceipt,
+  supplementTaxMatterDeclarationEvidence,
   type SocialInsuranceTaxMatterSummary,
-  type TaxMatterDeclarationReceiptInput,
+  type TaxMatterDeclarationEvidenceInput,
   type TaxMatterDeclarationResultInput,
   type TaxMatterOffsetResultInput,
   type TaxMatterPaymentResultInput,
@@ -266,7 +266,7 @@ const socialInsuranceProcessStatusOrder: Record<FinanceTaxMatterProcessStatus, n
   待退抵处理: 1,
   退抵处理中: 2,
   部分退抵: 2,
-  待补回执: 2,
+  申报材料待核对: 2,
   已完成: 3
 };
 
@@ -481,11 +481,11 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const canRecordDeclarationResult = Boolean(activeRecord)
     && !isSocialInsuranceModule
     && activeRecord?.processStatus === '待申报';
-  const canSupplementDeclarationReceipt = Boolean(
+  const canMaintainDeclarationEvidence = Boolean(
     activeRecord
     && !isSocialInsuranceModule
     && ['申报成功', '零申报'].includes(activeRecord.declarationStatus)
-    && getTaxMatterEvidenceStatus(activeRecord) === '待补回执'
+    && getTaxMatterEvidenceStatus(activeRecord) !== '已齐全'
   );
   const canRecordPaymentResult = Boolean(activeRecord)
     && !isSocialInsuranceModule
@@ -504,7 +504,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const canVoidDeclaration = Boolean(
     activeRecord
     && !isSocialInsuranceModule
-    && !getTaxMatterDeclarationRevisionValidationError(activeRecord, '作废', displayTaxMatterRows)
+    && !getTaxMatterDeclarationRevisionValidationError(activeRecord, '作废', displayTaxMatterRows, accountingVoucherRows)
   );
   const canUploadSocialReceipt = Boolean(activeRecord)
     && isSocialInsuranceModule
@@ -525,9 +525,9 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   );
   const pendingReceiptRows = displayTaxMatterRows.filter((record) =>
     isSocialInsuranceModule
-      ? record.processStatus === '待补回执'
+      ? record.processStatus === '申报材料待核对'
       : ['申报成功', '零申报'].includes(record.declarationStatus)
-        && getTaxMatterEvidenceStatus(record) === '待补回执'
+        && getTaxMatterEvidenceStatus(record) !== '已齐全'
   );
   const completedRows = displayTaxMatterRows.filter((record) => record.processStatus === '已完成');
 
@@ -614,18 +614,18 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     void messageApi.success(nextRecord.processStatus === '待缴款' ? '申报结果已登记，待缴款' : '申报结果已登记');
   }
 
-  function saveDeclarationReceipt(record: FinanceTaxMatterRecord, input: TaxMatterDeclarationReceiptInput) {
-    const nextRecord = supplementTaxMatterDeclarationReceipt(record, input);
+  function saveDeclarationEvidence(record: FinanceTaxMatterRecord, input: TaxMatterDeclarationEvidenceInput) {
+    const nextRecord = supplementTaxMatterDeclarationEvidence(record, input);
 
     if (!updateTaxMatterRecord(record.id, () => nextRecord)) {
-      void messageApi.warning('申报回执不可保存');
+      void messageApi.warning('申报材料不可保存');
       return;
     }
 
     setActiveRecordId(record.id);
     setActiveScope(nextRecord.processStatus === '已完成' ? 'completed' : 'pending');
     closeEditor();
-    void messageApi.success('申报回执已补充');
+    void messageApi.success('申报材料已保存');
   }
 
   function savePaymentResult(record: FinanceTaxMatterRecord, input: TaxMatterPaymentResultInput) {
@@ -759,7 +759,12 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   }
 
   function saveDeclarationRevision(record: FinanceTaxMatterRecord, action: '更正' | '作废', reason: string) {
-    const validationError = getTaxMatterDeclarationRevisionValidationError(record, action, displayTaxMatterRows);
+    const validationError = getTaxMatterDeclarationRevisionValidationError(
+      record,
+      action,
+      displayTaxMatterRows,
+      accountingVoucherRows
+    );
 
     if (validationError) {
       void messageApi.warning(validationError);
@@ -1031,7 +1036,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
           <MetricCard icon={<CalendarOutlined />} label={isSocialInsuranceModule ? '当前缴费' : '当前事项'} value={`${currentRows.length} 条`} />
           <MetricCard
             icon={<AuditOutlined />}
-            label={isSocialInsuranceModule ? '明细待确认' : '待补回执'}
+            label={isSocialInsuranceModule ? '明细待确认' : '材料待核对'}
             value={`${isSocialInsuranceModule ? pendingConfirmRows.length : pendingReceiptRows.length} 条`}
           />
           <MetricCard
@@ -1075,7 +1080,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         canRecordPaymentResult={canRecordPaymentResult}
         canRecordRefundResult={canRecordRefundResult}
         canSubmitRefundApplication={canSubmitRefundApplication}
-        canSupplementDeclarationReceipt={canSupplementDeclarationReceipt}
+        canMaintainDeclarationEvidence={canMaintainDeclarationEvidence}
         canUploadSocialReceipt={canUploadSocialReceipt}
         declarationDetailPreparation={activeDeclarationDetailPreparation}
         declarationPreparation={activeDeclarationPreparation}
@@ -1084,6 +1089,9 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         record={activeRecord}
         socialInsuranceEmployeeRows={activeSocialInsuranceEmployeeRows}
         socialInsuranceSummary={activeSocialInsuranceSummary}
+        taxFilingVouchers={accountingVoucherRows.filter((voucher) => (
+          voucher.sourceNo === activeRecord?.matterNo && Boolean(voucher.taxFilingContext)
+        ))}
         vatUnbilledIncomeRows={activeVatUnbilledIncomeRows}
         onClose={() => setActiveRecordId(undefined)}
         onDownloadFile={handleDownloadFile}
@@ -1116,10 +1124,10 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         onClose={closeEditor}
         onSave={saveDeclarationResult}
       />
-      <TaxDeclarationReceiptDrawer
-        record={editorState?.mode === 'declaration-receipt' ? activeEditorRecord : undefined}
+      <TaxDeclarationEvidenceDrawer
+        record={editorState?.mode === 'declaration-evidence' ? activeEditorRecord : undefined}
         onClose={closeEditor}
-        onSave={saveDeclarationReceipt}
+        onSave={saveDeclarationEvidence}
       />
       <TaxPaymentResultDrawer
         defaultAccountName={defaultPaymentAccountRef?.publicAccountSnapshot.displayName ?? '未配置默认付款账户'}

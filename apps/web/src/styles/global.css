@@ -2476,8 +2476,7 @@ body {
 }
 
 .detail-tabs[data-variant='workbench'] > .ant-tabs-content-holder,
-.detail-tabs[data-variant='sticky-workbench'] > .ant-tabs-content-holder,
-.detail-tabs[data-variant='section'] > .ant-tabs-content-holder {
+.detail-tabs[data-variant='sticky-workbench'] > .ant-tabs-content-holder {
   padding-top: 10px;
 }
 
@@ -2514,39 +2513,8 @@ body {
   padding-top: 0;
 }
 
-.detail-tabs[data-variant='page-section'] > .ant-tabs-nav {
-  background: #ffffff;
-  border: 1px solid #edf1f6;
-  border-radius: 8px 8px 0 0;
-  box-shadow: 0 6px 16px rgb(15 23 42 / 5%);
-  margin-bottom: -12px;
-  padding: 0 16px;
-}
-
-.detail-tabs[data-variant='page-section'] > .ant-tabs-content-holder {
-  padding-top: 0;
-}
-
-.detail-tabs[data-variant='section'] > .ant-tabs-nav,
-.detail-tabs[data-variant='nested-section'] > .ant-tabs-nav {
-  background: #ffffff;
-  border: 1px solid #e5edf6;
-  padding: 0 12px;
-}
-
-.detail-tabs[data-variant='section'] > .ant-tabs-nav {
-  border-radius: 8px;
-}
-
-.detail-tabs[data-variant='nested-section'] > .ant-tabs-nav {
-  border-radius: 8px 8px 0 0;
-}
-
 .detail-tabs[data-variant='workbench'] > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane > .drawer-tab-panel,
-.detail-tabs[data-variant='sticky-workbench'] > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane > .drawer-tab-panel,
-.detail-tabs[data-variant='page-section'] > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane > .drawer-tab-panel,
-.detail-tabs[data-variant='section'] > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane > .drawer-tab-panel,
-.detail-tabs[data-variant='nested-section'] > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane > .drawer-tab-panel {
+.detail-tabs[data-variant='sticky-workbench'] > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane > .drawer-tab-panel {
   min-height: 0;
 }
 
@@ -3494,13 +3462,6 @@ body {
   gap: 4px;
   justify-content: center;
   min-height: 76px;
-}
-
-.brand-task-config-editor__help {
-  color: #667085;
-  font-size: var(--sms-font-size-xs);
-  line-height: var(--sms-line-height-md);
-  margin: 2px 0 0;
 }
 
 .contact-editor-toolbar {

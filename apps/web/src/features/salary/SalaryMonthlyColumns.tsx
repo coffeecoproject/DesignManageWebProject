@@ -48,7 +48,7 @@ export const salaryMonthlyColumns: TableColumnsType<SalaryMonthlyReport> = [
     render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText>
   },
   {
-    title: '实发工资',
+    title: '实发测算',
     dataIndex: 'netSalary',
     width: 116,
     render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText>

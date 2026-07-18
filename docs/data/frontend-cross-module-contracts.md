@@ -101,9 +101,41 @@ The contract intentionally excludes UI-only fields such as day-equivalent displa
 - Profiles from a different tax year, non-resident profiles, missing profiles, unreported personnel, and deduction information that is pending acquisition or update cannot satisfy salary settlement readiness.
 - The frontend stores deduction aggregates only. Family-member identity details and official declaration payloads are not part of this contract.
 
-## Performance Execution Contract
+## Formal Payslip And Payment Lifecycle Contract
 
-Owner: `绩效管理 / 绩效规则` and `绩效管理 / 绩效签署`.
+### Ownership
+
+- `/salary/monthly` owns employee-month salary calculation, source readiness, confirmation, and the frozen formal payslip snapshot.
+- Finance payment registration and review own the actual cash-flow fact. Salary does not mark a payslip as paid merely because payroll was confirmed.
+- `/my-work/salary` is a current-employee read model. It does not own salary calculation, confirmation, payment registration, finance review, or reversal.
+
+### Formal Snapshot
+
+- A salary row in `结算中` or `待确认` remains a management draft and must not appear in `/my-work/salary`.
+- Confirming a salary row freezes the salary totals, salary composition lines, settlement-source records, payroll number, performance-settlement references, and confirmation operation record.
+- Later mutable attendance, statutory-deduction, performance, or salary-profile source changes must not rewrite that confirmed payslip. A correction must use the existing salary adjustment or reversal lifecycle instead of silently rebuilding the formal result.
+- An `已确认` formal payslip is employee-facing `待发放`. Only a reviewed and posted salary-payment transaction changes it to employee-facing `已发放`.
+- `workflow.payrollNo` is the sole formal wage-list identity. A management preview has no formal number, and UI consumers must not derive a second `SLIP-*` identifier.
+- The current payslip is a structured wage list, not a generated file or archive object. It has no `已生成 / 已锁定 / 生成时间` file lifecycle and exposes no preview/download action until a persisted immutable file derivative exists.
+
+### Payment And Reversal
+
+- The payment transaction keeps the frozen payroll number as its salary identity while retaining the payable relationship required by finance settlement.
+- Posting the transaction settles the linked employee net-pay payable and creates the salary payment fact. This payment fact, not the salary confirmation date, owns the personal-income-tax payment period.
+- Reversing the posted salary-payment transaction removes the active payment fact, returns the salary workflow to `已确认`, and therefore returns the employee display to `待发放`.
+- Reversal must preserve the frozen payslip, performance-settlement references, composition lines, source records, payroll number, and payment/reversal operation history.
+
+### Employee UI Boundary
+
+- `/my-work/salary` returns only the signed-in employee's `已确认` and `已发放` formal payslips, ordered by salary month descending.
+- The employee list exposes `月份 / 发放状态 / 应发合计 / 扣减合计 / 绩效薪酬 / 实发工资`; it does not expose management readiness, internal aggregation status, source-module blockers, or finance posting controls.
+- The read-only drawer uses `工资单 / 计薪依据 / 发放记录`. Employee-visible operation history is limited to formal confirmation, payment linkage, and payment reversal facts.
+- The `工资单` tab exposes the payroll number, salary month, employee/work number/position, payment status, confirmation time, actual payment time, summary amounts, and frozen composition lines. It does not imply that a PDF, archive package, or downloadable file exists.
+- Frontend filtering is not an authorization boundary. Backend integration must enforce current-user scope, persist immutable snapshots and idempotent payment relationships, and apply reversal atomically.
+
+## Performance Rule Applicability Contract
+
+Owner: `绩效管理 / 绩效规则`.
 
 Producer adapter: `绩效管理 / 绩效明细`.
 
@@ -111,50 +143,141 @@ Consumers: `绩效管理 / 绩效明细`, `绩效管理 / 绩效看板`, and `�
 
 Code evidence:
 
-- Type: `PerformanceExecutionContract` in `apps/web/src/features/performance/performanceTypes.ts`
-- Resolver: `resolvePerformanceExecutionContract` in `apps/web/src/features/performance/performanceExecutionContract.ts`
+- Type: `PerformanceRuleApplicability` in `apps/web/src/features/performance/performanceTypes.ts`
+- Resolver: `resolvePerformanceRuleApplicability` in `apps/web/src/features/performance/performanceRuleApplicabilityModel.ts`
 - Producer adapter: `buildPerformanceMonthlyRecords` in `apps/web/src/features/performance/performanceMonthlyModel.ts`
 - Consumers: `PerformanceMonthlyPage.tsx`, `PerformanceDashboardPage.tsx`, `salaryReportBuilder.ts`
-- Unit evidence: `performanceMonthlyModel.test.ts`, `performanceDashboardModel.test.ts`
+- Unit evidence: `performanceRuleApplicabilityModel.test.ts`, `performanceMonthlyModel.test.ts`, `performanceDashboardModel.test.ts`
 
-Contract version: `performance-execution-contract-v1`.
+Contract version: `performance-rule-applicability-v2`.
 
 ### Field Shape
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `workNo` | yes | Employee work number used to connect monthly result and signed-file archive. |
-| `category` | yes | Performance category such as `绘图任务制`, `岗位职责考核`, or `项目奖金`. |
+| `workNo` | yes | Employee work number used to resolve the personnel snapshot. |
+| `category` | yes | Performance category. The current result generator only supports `绘图任务制`; other enum values are reserved and must not produce current results. |
 | `position` | yes | Position snapshot on the monthly result. |
-| `ruleName` | yes | Rule name resolved from structured rule rows or signature rule options. |
+| `personnelType` | no | Personnel type used by the rule scope check. |
+| `ruleName` | yes | Rule name resolved from structured rule rows. |
 | `ruleVersion` | yes | Rule version resolved for the monthly result. |
-| `ruleSource` | yes | `结构化规则`, `签署规则选项`, or `未匹配`. |
-| `ruleId` | no | Matched structured rule id or signature rule option id. |
+| `ruleId` | no | Matched structured rule id. |
 | `applicablePositions` | yes | Position scope from the matched rule source. |
-| `signedFileId` | no | Matched signed-file id. |
-| `signedFileName` | no | Matched signed-file name. |
-| `signedRuleName` | no | Rule name carried by the signed file. |
-| `signedRuleVersion` | no | Rule version carried by the signed file. |
-| `signedAt` | no | Signed-file date from the signature archive. |
-| `status` | yes | `已匹配`, `缺少签署`, `签署版本不一致`, `岗位不适用`, `规则未发布`, or `规则未配置`. |
+| `effectiveStartAt` | no | Rule effective start date. |
+| `effectiveEndAt` | no | Rule effective end date. |
+| `status` | yes | `适用`, personnel/scope/effective-period failures, `规则未配置`, `规则冲突`, or `规则版本不一致`. |
 | `note` | yes | Compact explanation for the contract status. |
 
 ### Business Rules
 
-- Monthly performance rows must carry an execution contract before they are rendered in `绩效明细`, aggregated in `绩效看板`, or consumed by `薪酬明细`.
-- Contract matching uses stable frontend identifiers: `workNo + category + ruleVersion`, plus position applicability from the rule source.
-- Structured `绩效规则` rows are preferred when available. Categories that are not yet fully structured, such as current `岗位职责考核` and `项目奖金` mock rows, may temporarily resolve their applicability from signature rule options.
-- Historical signed files can satisfy historical monthly rows when the rule version matches. This keeps historical result ledgers readable before backend effective-date logic exists.
-- `绩效看板` treats non-`已匹配` contract statuses as risk rows.
-- `薪酬明细` consumes the adjusted monthly performance rows after this contract is attached. It must not read raw performance mock rows directly.
+- Monthly performance rows must carry a rule-applicability result before they are rendered in `绩效明细`, aggregated in `绩效看板`, or consumed by `薪酬明细`.
+- Applicability is resolved from `workNo + personnel type + position + category + performance month` against published, effective structured rule rows.
+- A single applicable rule is required. No rule, multiple rules, an unpublished rule, an out-of-period rule, or a rule-version drift produces an explicit non-applicable status.
+- Publishing a new rule version closes the previous effective period. Historical monthly rows continue to resolve against the version effective in their own month.
+- Offline signed files are evidence archives only. Missing, archived, or replaced files never enable, disable, or change rule applicability.
+- `绩效看板` treats non-`适用` applicability statuses as risk rows.
+- `薪酬明细` consumes monthly performance rows after applicability is attached. It must not read raw performance mock rows directly.
 
 ### UI Boundary
 
-The execution contract is visible only as compact basis information in performance detail drawers and risk information in performance dashboard summaries. It does not expose full rule formula tables, signature-file maintenance actions, task process details, legal e-sign evidence, backend authorization, or payroll posting controls.
+Rule applicability is visible only as compact basis information in performance detail drawers and risk information in performance dashboard summaries. `签署档案` separately manages employee-uploaded offline signed files and does not expose online confirmation, legal e-sign, rule-enablement, task process, backend authorization, or payroll posting controls.
 
 ### Backend Integration Notes
 
-Before backend integration, this frontend contract should become an API/data contract with immutable result snapshots. Backend should decide whether `executionContract`, `employmentScope`, and `prorationSummary` are stored as denormalized monthly result snapshots or rebuilt from versioned rule/signature sources. Production use must add authorization, audit logging, effective-date ordering, signature-file storage authorization, and persistence guarantees.
+Before backend integration, this frontend contract should become an API/data contract with immutable result snapshots. Backend should decide whether `ruleApplicability`, `employmentScope`, and `prorationSummary` are stored as denormalized monthly-result snapshots or rebuilt from versioned personnel and rule sources. Signed-file archive storage remains a separate evidence contract. Production use must add authorization, audit logging, effective-date ordering, file-storage authorization, and persistence guarantees.
+
+## Task Acceptance To Monthly Performance Source Contract
+
+Owner: `任务管理 / 任务验收` owns task completion and scoring facts. `绩效管理 / 绩效明细` owns monthly aggregation and calculation.
+
+Producer adapter: `buildTaskPerformanceMonthlySourceRecords` in `apps/web/src/features/performance/taskPerformanceMonthlySourceModel.ts`.
+
+Consumers: `绩效明细`, `绩效看板`, and the performance part of `薪酬明细`.
+
+Contract version: `task-acceptance-performance-source-v1`.
+
+### Stable Source Fields
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `taskId` | yes | Unique accepted-task identity and deduplication key. |
+| `acceptedAt` | yes | Acceptance fact time; its month owns the performance source period. |
+| `employeeId` | yes | Executor work number from the accepted task snapshot. |
+| `ruleId / ruleVersion` | yes | Published rule version resolved for the employee and source month. |
+| `scoreItemId / scoreValue` | yes | Structured task score item and accepted score. |
+| `qualityDimensionScores` | yes | Complete dimension-level scores; the weighted result is recalculated from the matched rule. |
+| `sourceRecordIds` | yes | Immutable scoring-source identities attached to the monthly result. |
+
+### Business Rules
+
+- Only a completed task with `acceptedAt`, an `已计入` scoring row, a full-time salary-paid executor, and one applicable published drawing-task rule can become a source fact.
+- `taskId` is the uniqueness key. If duplicate scoring rows exist, only the latest valid row is retained and the task is counted once.
+- Unaccepted, rejected, cancelled, part-time, rule-version-mismatched, incomplete-quality, and unsupported-category rows are excluded rather than repaired with fallback data.
+- Prepay ratio, below-baseline factor, quality weights, quality bands, and excess bands are structured rule fields. Calculation must not parse display text or use hidden coefficients.
+- Task score remains the accepted business fact. For mid-month joining or leaving, only full score, baseline score, and base performance amount are prorated by actual workdays.
+- Source months come from effective periods of published drawing-task rules through the current frontend business date. Therefore an applicable full-time employee receives a zero-task `0分 / 0元` monthly draft even when no task row exists for that month.
+- `岗位职责考核` and `项目奖金` remain unavailable until a real source contract exists. They must not generate monthly rows, appear as enabled result tabs, or enter salary consumption.
+- Offline signed files remain outside this contract and never participate in task-source eligibility or calculation.
+
+### Frontend And Backend Boundary
+
+The current implementation is a frontend-session domain adapter over task, people, rule, and work-calendar state. Backend integration must persist accepted-task scoring facts with idempotent task identities, immutable rule/source snapshots, server-owned acceptance timestamps, authorization, and audit evidence. It must not recreate old static monthly result rows or use the signed-file archive as a calculation gate.
+
+## Performance Result Snapshot Contract
+
+Owner: `PerformanceResultState` under `绩效管理 / 绩效明细`.
+
+Producer adapter: `usePerformanceResults` over current monthly calculations, quarterly aggregation, and formal result state.
+
+Current consumers: `绩效明细`, `绩效看板`, `人员总览`, `工作概览`, `我的绩效`, task-assignment and personnel-task summaries, and `薪酬明细`.
+
+Contract version: `performance-result-snapshot-v3-frontend-session`.
+
+### Identity And Version Rules
+
+- One monthly result lineage is identified by `employee work number + performance month + performance category`, not by a mutable source-record ID or rule ID.
+- One quarterly result lineage is identified by `employee work number + natural quarter + performance category`. Its expected months come from the actually applicable monthly read model; months before employment or rule applicability are not fabricated as missing.
+- An unpublished result is a live draft. Source changes recompute that draft and its source hash without creating formal history.
+- Publishing freezes the employee, position, rule, calculation, source IDs, source hash, amount, prepay, publisher, delivery time, feedback deadline, and work-calendar deadline snapshot.
+- A quarterly draft can publish only after the quarter ends and every applicable month has a current published monthly result. Its calculated amount and prepay total come only from those monthly snapshots; a nonzero adjustment requires a reason and is frozen with optional evidence references.
+- Quarterly results expose the quarter-end `salarySettlementMonth` and one quarterly-difference settlement reference. Performance does not own a free settlement date or payment date.
+- Repeated publication is rejected. A published result is never overwritten in place.
+- A monthly correction requires a changed current source and a reason. A quarterly correction may also correct a frozen quarterly manual adjustment even when monthly sources are unchanged. Both create the next version and keep prior versions in history. An unsettled prior version becomes `已更正`; a settled prior version remains frozen as `已结算` and records its successor.
+- A changed monthly source can produce a monthly V2 and a recalculated quarterly V2. The quarterly correction is explicit and never silently overwrites a published or settled quarter.
+- Current downstream consumers receive only the current `已发布 / 已结算` version. Drafts and corrected historical versions are excluded.
+
+### Employee Feedback Rules
+
+- `/my-work/performance` exposes only the current employee's current formal monthly and quarterly versions. It does not expose drafts or superseded history as actionable results.
+- An employee may confirm or object only between delivery and the frozen three-working-day deadline. Confirmation records employee, time and version without changing money; objection accepts a required reason and optional evidence references, never an employee-entered amount.
+- Pending results remain ineligible for performance-pay consumption during the feedback window. A confirmed result, a no-objection result after the deadline, or a management-resolved objection is eligible; an open objection is not.
+- Management may close an objection by maintaining the current result with a resolution note, or by publishing a corrected version when the formal source has changed. This is result correction, not an approval workflow.
+- These writes remain frontend-session state. Authorization, idempotency, delivery proof, evidence-file persistence, concurrency and backend audit storage remain future API responsibilities.
+
+### Salary Consumption Rules
+
+- Salary consumes only the current formal version after employee confirmation, after the frozen feedback deadline with no objection, or after an objection has been resolved. An active objection and a pending result still inside the feedback window are excluded.
+- A monthly result contributes only its `prepayAmount`. A quarterly result contributes only its `quarterDifferenceAmount`; salary must not pay the quarterly final amount again.
+- `salarySettlementReference` is the idempotency identity. One reference can be claimed by only one salary workflow.
+- Salary confirmation changes only the referenced formal results from `已发布` to `已结算` and freezes an audit event. It does not settle unreferenced results.
+- If V1 has already been claimed, V2 contributes only `V2 settlement amount - latest claimed prior-version settlement amount`.
+- A confirmed or paid salary month is immutable. A later monthly or quarterly correction is moved to the next unlocked salary month while retaining the originally requested settlement month.
+
+### Read-Only Consumer Rules
+
+- Work overview, personnel overview, performance dashboard, task-assignment candidates, and personnel-task summaries read the latest current formal monthly result through the shared performance result consumer model.
+- Drafts and superseded history never become current score summaries.
+- An open-objection result remains visible in the performance risk summary, but is excluded from normal trend amounts, personnel averages, personnel-risk conclusions, and task-candidate score hints until the objection is resolved or a corrected version is published.
+- Task assignment may use the formal performance score only as a soft ranking or warning signal. A low score does not make an otherwise eligible employee unavailable.
+- Legacy `PeopleWorkEvaluationRecord` and `workEvaluationSummary / workEvaluationRecords` have been removed from the personnel contract and Mock data. Historical performance must come from formal performance-result versions; no dual-read compatibility is allowed.
+
+### Current UI And Session Boundary
+
+- `/performance/monthly` owns monthly and quarterly draft publication in one management ledger. Monthly and quarterly correction remain available only for changed sources. These actions are result freezing and delivery, not approval.
+- `/performance/dashboard` and `/people/overview` are read-only consumers and do not recalculate or mutate formal results.
+- No formal-result mock is pre-seeded. Before an in-session publication, management statistics and personnel performance summaries show no formal result rather than treating drafts as published data.
+- Result writes persist only for the current frontend session. Route changes retain state; browser refresh restores the source-derived draft baseline.
+- Quarterly generation, publication, delivery, employee confirmation/objection, salary consumption and later-difference allocation use the same result contract. Authorization, concurrency, cross-session idempotency, delivery proof and backend persistence remain outside this frontend phase.
 
 ## Finance Bank Reconciliation Contract
 
@@ -507,3 +630,67 @@ matter. Tax handling cannot edit item, basis, rate, reduction, or payable amount
 Completed tax handling emits the accrual entry `Dr 5403 / Cr 2221.05`; a reviewed
 and reconciled tax-payment transaction emits `Dr 2221.05 / Cr 1002`. Neither step
 creates a receivable/payable row.
+
+### Task customer receivable contract
+
+Customer task revenue uses three owners and one dependency direction:
+
+```text
+CustomerManagementState
+  -> TaskManagementState
+  -> FinanceManagementState
+```
+
+`CustomerManagementState` owns versioned brand settlement policy and versioned task prices.
+A billable price version must point to a signed, effective contract owned by the
+same customer. Updating a price closes the previous version and creates a new
+version; updating an existing brand settlement policy schedules a new version
+from the next month. Neither operation rewrites a task snapshot.
+
+`TaskManagementState` resolves the active version when a task is created and
+stores a hidden `TaskCustomerBillingSnapshot`. The snapshot freezes customer and
+brand names, price version, unit price, contract identity/name/amount mode, and
+settlement policy. Internal acceptance creates one deterministic
+`CustomerTaskBillingFact` per task and one stable acceptance archive file with a
+real file URL. The archive is frozen into the settlement line and reused as the
+receivable source evidence; a label-only file without a URL is not acceptable
+accounting evidence. Employee-facing task views must not render
+the snapshot, customer price, contract, or receivable identity.
+
+Internal acceptance is the unified customer-revenue trigger. It does not wait
+for customer confirmation and does not introduce a second approval flow. A
+part-time executor's labor-tax or identity data can block the employee labor
+payable, but it cannot roll back the accepted task, customer billing fact, or
+performance source.
+
+Task facts derive either one per-task settlement batch or one closed-month batch
+for the same customer, brand, contract, and accounting period. A non-billable
+fact remains traceable but produces no batch. A late fact discovered after a
+monthly receivable exists does not mutate that receivable; it creates an explicit
+adjustment receivable in the later discovery period and retains the original
+monthly receivable unchanged.
+
+Fixed contract amount is a management observation, not a settlement gate.
+`TaskManagementState` derives contract usage only from effective accepted
+billable facts, marks usage at 80% as near the limit and usage at or above 100%
+as exceeded, and exposes the summary only to the management-side brand detail.
+It must not reserve in-progress task amounts or suppress task creation,
+acceptance, settlement batches, or receivables.
+
+`FinanceManagementState` is the only owner of the generated receivable and all
+later invoice, collection, voucher, ledger, close, and report state. A task batch
+creates an already-confirmed source receivable with `sourceType = 任务结算` and a
+frozen task-settlement snapshot. The receivable is source-owned and cannot be
+edited as a manual business record. Customer receivable and employee
+performance/salary/part-time labor payable are separate facts even when they
+originate from the same task.
+
+Acceptance reversal is audit-preserving. It returns the task to pending
+acceptance, marks the acceptance archive and billing fact as reversed, removes
+the employee labor source from settlement calculation while retaining it as
+reversed history, and stops the performance source from contributing.
+If finance has not consumed the receivable, the receivable is voided or the
+reversed task line is removed from its monthly batch. If an invoice allocation,
+voucher, settlement, or closed period has consumed it, the original receivable remains immutable and
+an explicit finance correction issue requires reversal or a later-period
+adjustment.

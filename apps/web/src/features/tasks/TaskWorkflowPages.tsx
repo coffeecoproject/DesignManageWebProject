@@ -128,7 +128,7 @@ function useTaskContext() {
 
 export function TaskSubmitWorkbench({ memberId, renderScaffold = false }: TaskWorkflowWorkbenchProps = {}) {
   const [messageApi, contextHolder] = message.useMessage();
-  const { brandRows, getBrandById, getCustomerById, performanceRuleRows, saveStoreTask, storeRows, storeTaskRows, taskConfigRows } = useTaskContext();
+  const { getBrandById, getCustomerById, peopleRows, performanceRuleRows, saveStoreTask, storeRows, storeTaskRows, taskConfigRows } = useTaskContext();
   const [activeTaskId, setActiveTaskId] = useState<string>();
   const [deliveryDrafts, setDeliveryDrafts] = useState<TaskFileDraft[]>(() => [createTaskFileDraft('压缩包')]);
   const [submitNote, setSubmitNote] = useState('');
@@ -149,7 +149,13 @@ export function TaskSubmitWorkbench({ memberId, renderScaffold = false }: TaskWo
     [memberId, storeTaskRows]
   );
   const selectedTask = submitRows.find((record) => record.id === activeTaskId) ?? submitRows[0];
-  const selectedPerformanceRule = selectedTask ? getTaskPerformanceRule(selectedTask, brandRows, performanceRuleRows) : undefined;
+  const selectedPerformanceRule = selectedTask
+    ? getTaskPerformanceRule(
+        selectedTask,
+        peopleRows.find((person) => person.id === selectedTask.executorId),
+        performanceRuleRows
+      )
+    : undefined;
   const selectedScoreItem = selectedTask ? getTaskScoreItem(selectedTask, selectedPerformanceRule) : undefined;
   const completedDeliveryDrafts = useMemo(
     () => normalizeCompletedTaskFileDrafts(deliveryDrafts),
@@ -390,7 +396,6 @@ export function TaskSubmitWorkbench({ memberId, renderScaffold = false }: TaskWo
 export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: TaskWorkflowWorkbenchProps = {}) {
   const [messageApi, contextHolder] = message.useMessage();
   const {
-    brandRows,
     clientFeedbackRows,
     commitTaskAcceptance,
     createClientFeedback,
@@ -433,7 +438,9 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
   const selectedRule = performanceRuleRows.find((rule) => rule.id === scoringDraft?.ruleId);
   const selectedScoreItem = selectedRule?.taskScoreItems.find((item) => item.id === scoringDraft?.scoreItemId);
   const completedDimensionScores = getCompletedDimensionScores(scoringDraft);
-  const qualityScore = completedDimensionScores ? getQualityScore(completedDimensionScores) : undefined;
+  const qualityScore = completedDimensionScores && selectedRule
+    ? getQualityScore(completedDimensionScores, selectedRule.qualityDimensions)
+    : undefined;
   const qualityBand = typeof qualityScore === 'number' ? getQualityBand(selectedRule, qualityScore) : undefined;
   const acceptanceBlockers = selectedTask ? getAcceptanceBlockers(selectedTask, scoringDraft) : [];
   const acceptanceReady = selectedTask ? acceptanceBlockers.length === 0 : false;
@@ -456,8 +463,12 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
     }
 
     setFeedbackDraft(buildAcceptanceFeedbackDraft(selectedTask, getCustomerById));
-    setScoringDraft(buildAcceptanceScoringDraft(selectedTask, brandRows, performanceRuleRows));
-  }, [brandRows, getCustomerById, performanceRuleRows, selectedTask]);
+    setScoringDraft(buildAcceptanceScoringDraft(
+      selectedTask,
+      peopleRows.find((person) => person.id === selectedTask.executorId),
+      performanceRuleRows
+    ));
+  }, [getCustomerById, peopleRows, performanceRuleRows, selectedTask]);
 
   function finishAcceptanceAction(currentTask: StoreTaskRecord, nextTask: StoreTaskRecord, successMessage: string, persistTask = true) {
     if (persistTask) {
@@ -479,7 +490,11 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
     setReworkRequirement('');
     setReworkScreenshots([]);
     setFeedbackDraft(buildAcceptanceFeedbackDraft(record, getCustomerById));
-    setScoringDraft(buildAcceptanceScoringDraft(record, brandRows, performanceRuleRows));
+    setScoringDraft(buildAcceptanceScoringDraft(
+      record,
+      peopleRows.find((person) => person.id === record.executorId),
+      performanceRuleRows
+    ));
   }
 
   function handleAccept(record: StoreTaskRecord) {
@@ -497,8 +512,20 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
       return;
     }
 
-    commitTaskAcceptance(result.commitInput);
-    finishAcceptanceAction(record, result.nextTask, '任务已验收完成', false);
+    const commitResult = commitTaskAcceptance(result.commitInput);
+    if (!commitResult.success) {
+      setActiveAcceptanceTab('overview');
+      void messageApi.warning(commitResult.message);
+      return;
+    }
+    finishAcceptanceAction(
+      record,
+      result.nextTask,
+      result.warnings.length > 0
+        ? `任务已验收完成；${result.warnings.join('；')}`
+        : '任务已验收完成',
+      false
+    );
   }
 
   function startRework(record: StoreTaskRecord) {

@@ -23,6 +23,7 @@ type TaskDetailDrawerProps = {
   getBrandName: (brandId: string) => string;
   getCustomerName: (customerId: string) => string;
   onClose: () => void;
+  onReverseAcceptance: (record: StoreTaskRecord) => void;
   onTerminate: (record: StoreTaskRecord) => void;
   open: boolean;
   storeRows: StoreRecord[];
@@ -34,6 +35,7 @@ export function TaskDetailDrawer({
   getBrandName,
   getCustomerName,
   onClose,
+  onReverseAcceptance,
   onTerminate,
   open,
   storeRows,
@@ -48,7 +50,13 @@ export function TaskDetailDrawer({
       closeAction={{ label: '关闭', onClick: onClose }}
       open={open}
       secondaryAction={
-        task && !isTaskClosed(task)
+        task?.status === '已完成'
+          ? {
+              danger: true,
+              label: '撤销验收',
+              onClick: () => onReverseAcceptance(task)
+            }
+          : task && !isTaskClosed(task)
           ? {
               danger: true,
               label: '中止任务',

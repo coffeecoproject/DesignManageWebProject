@@ -1,23 +1,17 @@
 import {
-  AuditOutlined,
-  CalculatorOutlined,
   CheckCircleOutlined,
   FileSearchOutlined,
-  PartitionOutlined,
-  ProfileOutlined,
   SearchOutlined,
+  SendOutlined,
   TeamOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Button, DatePicker, Empty, InputNumber, Select, message } from 'antd';
+import { Select } from 'antd';
 import type { TableColumnsType } from 'antd';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
-import { DetailDrawerTitle, DetailInfoGrid, DetailSection } from '../../components/Detail';
-import { DetailSummaryCards } from '../../components/DetailSummaryCards';
+import { StatusTag, type StatusTagTone } from '../../components/Detail';
 import { DetailTabs } from '../../components/DetailTabs';
-import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
-import { DetailDrawerShell } from '../../components/DrawerShell';
 import {
   DateScopeFilter,
   getDateScopeMonthRange,
@@ -30,37 +24,35 @@ import { ManagementPageScaffold } from '../../components/ManagementPageScaffold'
 import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
-import { OperationRecordSection } from '../../components/OperationRecordSection';
-import type { OperationRecord } from '../../components/OperationRecordTable';
 import { CellText, CompactCell } from '../../components/TableCell';
-import { performanceDrawingTaskMonthlyRecords, performanceMonthlyCategoryRecords } from './performanceMockData';
-import {
-  getPerformanceQuarterEndDate,
-  getPerformanceQuarterlyReviewSourceRecords,
-  type PerformanceQuarterlyReviewPolicy
-} from './performanceQuarterlyReviewModel';
-import { usePerformanceMonthlyState } from './PerformanceMonthlyState';
-import { usePerformanceRuleState } from './PerformanceRuleState';
+import { taskManagementToday } from '../tasks/TaskManagementState';
+import { PerformanceResultDrawer } from './PerformanceResultDrawer';
 import type {
-  PerformanceDrawingTaskMonthlyRecord,
   PerformanceMonthlyCategoryRecord,
+  PerformanceResultLifecycleStatus,
+  PerformanceResultReadRecord,
   PerformanceRuleCategory
 } from './performanceTypes';
-import { usePerformanceMonthlyRecords } from './usePerformanceMonthlyRecords';
+import { isMonthlyPerformanceResult } from './performanceResultModel';
+import { getPerformanceQuarterMonths } from './performanceQuarterlyResultModel';
+import { usePerformanceResults } from './usePerformanceResults';
 
 type MonthlyEmployeeFilter = '全部' | string;
 type PerformanceDetailTabKey = '综合' | PerformanceRuleCategory;
+type PerformanceResultStatusFilter = '全部' | PerformanceResultLifecycleStatus;
 
 type PerformanceMonthlyFilters = {
   employee: MonthlyEmployeeFilter;
   keyword: string;
   performanceTime: DateScopeFilterValue;
+  status: PerformanceResultStatusFilter;
 };
 
 const defaultFilters: PerformanceMonthlyFilters = {
   employee: '全部',
   keyword: '',
-  performanceTime: { mode: 'all' }
+  performanceTime: { mode: 'all' },
+  status: '全部'
 };
 
 const performanceDetailTabs: Array<{
@@ -69,14 +61,17 @@ const performanceDetailTabs: Array<{
   testIdKey: string;
 }> = [
   { key: '综合', label: '综合', testIdKey: 'all' },
-  { key: '绘图任务制', label: '绘图任务制', testIdKey: 'drawing' },
-  { key: '岗位职责考核', label: '岗位职责考核', testIdKey: 'duty' },
-  { key: '项目奖金', label: '项目奖金', testIdKey: 'bonus' }
+  { key: '绘图任务制', label: '绘图任务制', testIdKey: 'drawing' }
 ];
 
-const performanceDetailAvailableMonths = Array.from(new Set(performanceMonthlyCategoryRecords.map((record) => record.performanceMonth))).sort();
-const performanceDetailDefaultMonth =
-  performanceDetailAvailableMonths[performanceDetailAvailableMonths.length - 1] ?? performanceDrawingTaskMonthlyRecords[0]?.performanceMonth ?? '2026-06';
+const resultStatusOptions: PerformanceResultStatusFilter[] = ['全部', '待发布', '已发布', '已结算'];
+const resultStatusTone: Record<PerformanceResultLifecycleStatus, StatusTagTone> = {
+  已发布: 'green',
+  已更正: 'gray',
+  已结算: 'green',
+  待发布: 'amber'
+};
+const performanceDetailDefaultMonth = taskManagementToday.slice(0, 7);
 const performanceDetailDefaultMonthRange = getDateScopeMonthRange(performanceDetailDefaultMonth);
 const currentPerformanceActor = '李明';
 
@@ -88,10 +83,6 @@ function formatOptionalScore(value?: number) {
   return typeof value === 'number' ? formatScore(value) : '-';
 }
 
-function formatRatio(value: number) {
-  return `${Math.round(value * 100)}%`;
-}
-
 function formatMoney(value: number) {
   return `${value.toLocaleString('zh-CN', {
     maximumFractionDigits: 2,
@@ -99,8 +90,22 @@ function formatMoney(value: number) {
   })} 元`;
 }
 
-function formatSourceCount(value: number) {
-  return value > 0 ? `${value} 条` : '-';
+function getResultSourceRecord(readRecord: PerformanceResultReadRecord) {
+  return isMonthlyPerformanceResult(readRecord.result)
+    ? readRecord.result.calculationSnapshot.categoryRecord
+    : undefined;
+}
+
+function getResultCategory(readRecord: PerformanceResultReadRecord) {
+  return isMonthlyPerformanceResult(readRecord.result)
+    ? readRecord.result.calculationSnapshot.categoryRecord.category
+    : readRecord.result.calculationSnapshot.category;
+}
+
+function getResultAmount(readRecord: PerformanceResultReadRecord) {
+  return isMonthlyPerformanceResult(readRecord.result)
+    ? readRecord.result.monthlyAmount
+    : readRecord.result.quarterFinalAmount;
 }
 
 function getPerformanceResultSecondary(record: PerformanceMonthlyCategoryRecord) {
@@ -108,35 +113,50 @@ function getPerformanceResultSecondary(record: PerformanceMonthlyCategoryRecord)
     return `任务完成分 ${formatScore(record.taskScore)}`;
   }
 
-  if (record.category === '岗位职责考核') {
-    return '周期考核';
-  }
-
-  if (record.category === '项目奖金') {
-    return '奖金确认';
-  }
-
   return record.sourceLabel;
 }
 
-function isPerformanceMonthInRange(performanceMonth: string, range?: DateRangeFilterValue) {
+function getPerformancePeriodMonthRange(period: string) {
+  if (/^\d{4}-Q[1-4]$/.test(period)) {
+    const months = getPerformanceQuarterMonths(period);
+
+    return {
+      endDate: getDateScopeMonthRange(months[2]!).endDate,
+      startDate: getDateScopeMonthRange(months[0]!).startDate
+    };
+  }
+
+  return getDateScopeMonthRange(period);
+}
+
+function isPerformancePeriodInRange(period: string, range?: DateRangeFilterValue) {
   if (!range) {
     return true;
   }
 
-  const monthRange = getDateScopeMonthRange(performanceMonth);
+  const monthRange = getPerformancePeriodMonthRange(period);
 
   return monthRange.startDate <= range.endDate && monthRange.endDate >= range.startDate;
 }
 
-function monthlyCategoryRecordMatchesFilters(record: PerformanceMonthlyCategoryRecord, filters: PerformanceMonthlyFilters, performanceRange?: DateRangeFilterValue) {
+function performanceResultMatchesFilters(
+  readRecord: PerformanceResultReadRecord,
+  filters: PerformanceMonthlyFilters,
+  performanceRange?: DateRangeFilterValue
+) {
+  const { result } = readRecord;
+  const record = getResultSourceRecord(readRecord);
   const keyword = filters.keyword.trim().toLowerCase();
 
-  if (!isPerformanceMonthInRange(record.performanceMonth, performanceRange)) {
+  if (!isPerformancePeriodInRange(result.period, performanceRange)) {
     return false;
   }
 
-  if (filters.employee !== '全部' && record.employeeName !== filters.employee) {
+  if (filters.employee !== '全部' && result.employeeNameSnapshot !== filters.employee) {
+    return false;
+  }
+
+  if (filters.status !== '全部' && result.lifecycleStatus !== filters.status) {
     return false;
   }
 
@@ -145,97 +165,163 @@ function monthlyCategoryRecordMatchesFilters(record: PerformanceMonthlyCategoryR
   }
 
   return [
-    record.employeeName,
-    record.workNo,
-    record.position,
-    record.department,
-    record.category,
-    record.ruleName,
-    record.ruleVersion,
-    record.performanceMonth,
-    record.sourceLabel,
-    record.note
+    result.employeeNameSnapshot,
+    result.workNoSnapshot,
+    result.positionSnapshot,
+    result.kind,
+    result.lifecycleStatus,
+    result.period,
+    getResultCategory(readRecord),
+    result.ruleNameSnapshot,
+    result.ruleVersion,
+    record?.sourceLabel,
+    record?.note
   ]
     .join(' ')
     .toLowerCase()
     .includes(keyword);
 }
 
-function getCategoryOperationRecords(record: PerformanceMonthlyCategoryRecord): OperationRecord[] {
-  return record.events.map((event) => ({
-    id: event.id,
-    action: event.action,
-    actor: event.actor,
-    object: event.object,
-    summary: event.summary,
-    time: event.time
-  }));
+function getPerformanceResultsForTab(tabKey: PerformanceDetailTabKey, records: PerformanceResultReadRecord[]) {
+  return tabKey === '综合'
+    ? records
+    : records.filter((record) => getResultCategory(record) === tabKey);
 }
 
-function getDrawingTaskDetail(
-  record: PerformanceMonthlyCategoryRecord,
-  drawingTaskRecords: PerformanceDrawingTaskMonthlyRecord[]
-): PerformanceDrawingTaskMonthlyRecord | undefined {
-  if (record.category !== '绘图任务制') {
-    return undefined;
-  }
-
-  return drawingTaskRecords.find((item) => item.id === record.id);
-}
-
-function getPerformanceRecordsForTab(tabKey: PerformanceDetailTabKey, records: PerformanceMonthlyCategoryRecord[]) {
-  return tabKey === '综合' ? records : records.filter((record) => record.category === tabKey);
-}
-
-function getPerformanceDetailColumns(tabKey: PerformanceDetailTabKey): TableColumnsType<PerformanceMonthlyCategoryRecord> {
-  const columns: TableColumnsType<PerformanceMonthlyCategoryRecord> = [
+function getPerformanceResultColumns(tabKey: PerformanceDetailTabKey): TableColumnsType<PerformanceResultReadRecord> {
+  const columns: TableColumnsType<PerformanceResultReadRecord> = [
     {
       title: '绩效周期',
-      dataIndex: 'performanceMonth',
+      key: 'period',
       width: 110,
-      render: (performanceMonth: string) => <CellText>{performanceMonth}</CellText>
+      render: (_, readRecord) => <CellText>{readRecord.result.period}</CellText>
+    },
+    {
+      align: 'center',
+      title: '结果类型',
+      key: 'kind',
+      width: 104,
+      render: (_, readRecord) => <CellText>{readRecord.result.kind}</CellText>
     },
     {
       title: '工号',
-      dataIndex: 'workNo',
+      key: 'workNo',
       width: 110,
-      render: (workNo: string) => <CellText>{workNo}</CellText>
+      render: (_, readRecord) => <CellText>{readRecord.result.workNoSnapshot}</CellText>
     },
     {
       title: '人员',
       key: 'employee',
       width: 168,
-      render: (_, record) => <CompactCell primary={record.employeeName} secondary={`${record.position} / ${record.department}`} />
+      render: (_, readRecord) => (
+        <CompactCell
+          primary={readRecord.result.employeeNameSnapshot}
+          secondary={readRecord.result.positionSnapshot}
+        />
+      )
     },
     {
       title: '绩效类别',
       key: 'category',
       width: 150,
-      render: (_, record) => <CompactCell primary={record.category} secondary={record.sourceLabel} />
+      render: (_, readRecord) => {
+        const record = getResultSourceRecord(readRecord);
+
+        return (
+          <CompactCell
+            primary={getResultCategory(readRecord)}
+            secondary={record?.sourceLabel ?? '月度结果归集'}
+          />
+        );
+      }
     },
     {
       title: '绩效结果',
       key: 'result',
       width: 146,
-      render: (_, record) => <CompactCell primary={formatOptionalScore(record.qualityScore)} secondary={getPerformanceResultSecondary(record)} />
+      render: (_, readRecord) => {
+        const result = readRecord.result;
+
+        if (!isMonthlyPerformanceResult(result)) {
+          const sourceCount = result.calculationSnapshot.sourceResults.length;
+          const expectedCount = result.calculationSnapshot.expectedMonths.length;
+
+          return (
+            <CompactCell
+              primary={formatMoney(result.quarterFinalAmount)}
+              secondary={`已归集 ${sourceCount}/${expectedCount} 个月`}
+            />
+          );
+        }
+
+        const monthlyRecord = result.calculationSnapshot.categoryRecord;
+
+        return (
+          <CompactCell
+            primary={formatOptionalScore(monthlyRecord.qualityScore)}
+            secondary={getPerformanceResultSecondary(monthlyRecord)}
+          />
+        );
+      }
     },
     {
+      align: 'center',
+      title: '结果状态',
+      key: 'status',
+      width: 126,
+      render: (_, readRecord) => (
+        <CompactCell
+          align="center"
+          primarySlot={
+            <StatusTag
+              tone={resultStatusTone[readRecord.result.lifecycleStatus]}
+              value={readRecord.result.lifecycleStatus}
+              variant="compact"
+            />
+          }
+          secondary={
+            readRecord.sourceChangedSincePublish
+              ? '来源有变化'
+              : `V${readRecord.result.version}`
+          }
+        />
+      )
+    },
+    {
+      align: 'center',
       title: '来源记录',
-      dataIndex: 'sourceTaskCount',
+      key: 'sourceTaskCount',
       width: 110,
-      render: (value: number) => <CellText>{formatSourceCount(value)}</CellText>
+      render: (_, readRecord) => (
+        <CellText>
+          {isMonthlyPerformanceResult(readRecord.result)
+            ? `${readRecord.result.calculationSnapshot.categoryRecord.sourceTaskCount} 条`
+            : `${readRecord.result.calculationSnapshot.sourceResults.length} 个月`}
+        </CellText>
+      )
     },
     {
-      title: '绩效金额',
-      dataIndex: 'monthlyAmount',
+      align: 'right',
+      title: '结果金额',
+      key: 'resultAmount',
       width: 126,
-      render: (value: number) => <CellText>{formatMoney(value)}</CellText>
+      render: (_, readRecord) => <CellText>{formatMoney(getResultAmount(readRecord))}</CellText>
     },
     {
-      title: '预发金额',
-      dataIndex: 'prepayAmount',
-      width: 126,
-      render: (value: number) => <CellText>{formatMoney(value)}</CellText>
+      align: 'right',
+      title: '预发/差额',
+      key: 'settlementAmount',
+      width: 140,
+      render: (_, readRecord) => (
+        <CompactCell
+          primary={formatMoney(
+            isMonthlyPerformanceResult(readRecord.result)
+              ? readRecord.result.prepayAmount
+              : readRecord.result.quarterDifferenceAmount
+          )}
+          secondary={isMonthlyPerformanceResult(readRecord.result) ? '月度预发' : '季度差额'}
+        />
+      )
     }
   ];
 
@@ -243,350 +329,91 @@ function getPerformanceDetailColumns(tabKey: PerformanceDetailTabKey): TableColu
     return columns;
   }
 
-  const sourceColumnIndex = columns.findIndex((column) => column.key === 'category');
-  columns.splice(sourceColumnIndex + 1, 0, {
+  const categoryColumnIndex = columns.findIndex((column) => column.key === 'category');
+  columns.splice(categoryColumnIndex + 1, 0, {
     title: '绩效规则',
     key: 'rule',
     width: 170,
-    render: (_, record) => <CompactCell primary={record.ruleName} secondary={record.ruleVersion} />
+    render: (_, readRecord) => (
+      <CompactCell
+        primary={readRecord.result.ruleNameSnapshot}
+        secondary={readRecord.result.ruleVersion}
+      />
+    )
   });
 
   return columns;
 }
 
-function QuarterlyPerformanceReview({
-  policy,
-  record,
-  sourceRecords
-}: {
-  policy?: PerformanceQuarterlyReviewPolicy;
-  record: PerformanceMonthlyCategoryRecord;
-  sourceRecords: PerformanceMonthlyCategoryRecord[];
-}) {
-  const [messageApi, contextHolder] = message.useMessage();
-  const [finalAmount, setFinalAmount] = useState<number>();
-  const [settlementDate, setSettlementDate] = useState(() => {
-    const quarterEndDate = getPerformanceQuarterEndDate(record.performanceMonth);
-    const currentDate = dayjs().format('YYYY-MM-DD');
-    return currentDate > quarterEndDate ? currentDate : quarterEndDate;
-  });
-  const { confirmQuarterlyReview } = usePerformanceMonthlyState();
-  const reviewResult = record.quarterlyReviewResult;
-
-  if (record.category !== '绘图任务制' || (!reviewResult && !policy)) {
-    return null;
-  }
-
-  if (reviewResult) {
-    return (
-      <DetailSection icon={<CheckCircleOutlined />} title="季度结果">
-        <DetailInfoGrid
-          columns={3}
-          items={[
-            { label: '复核季度', value: reviewResult.reviewPeriod },
-            { label: '最终金额', value: formatMoney(reviewResult.finalAmount) },
-            { label: '来源月份', value: reviewResult.sourceMonths.join(' / ') },
-            { label: '已预发', value: formatMoney(reviewResult.prepayAmount) },
-            { label: '结算差额', value: formatMoney(reviewResult.finalAmount - reviewResult.prepayAmount) },
-            { label: '结算日期', value: reviewResult.settlementDate },
-            { label: '随薪酬结算', value: reviewResult.settlementDate.slice(0, 7) }
-          ]}
-        />
-      </DetailSection>
-    );
-  }
-
-  function handleConfirm() {
-    if (typeof finalAmount !== 'number') {
-      void messageApi.warning('请填写季度最终金额');
-      return;
-    }
-
-    const result = confirmQuarterlyReview(sourceRecords, {
-      confirmedAt: dayjs().format('YYYY-MM-DD HH:mm'),
-      confirmedBy: currentPerformanceActor,
-      finalAmount,
-      settlementDate
-    }, policy);
-
-    if (!result.success) {
-      void messageApi.error(result.reason ?? '季度绩效结果未保存');
-      return;
-    }
-
-    void messageApi.success('季度绩效结果已确认');
-  }
-
-  return (
-    <DetailSection
-      extra={
-        <Button
-          disabled={typeof finalAmount !== 'number' || !settlementDate}
-          icon={<CheckCircleOutlined />}
-          type="primary"
-          onClick={handleConfirm}
-        >
-          确认季度结果
-        </Button>
-      }
-      icon={<CalculatorOutlined />}
-      title="季度结果"
-    >
-      {contextHolder}
-      <DrawerFormGrid>
-        <DrawerFormField label="季度来源">
-          <span>{sourceRecords.map((sourceRecord) => sourceRecord.performanceMonth).join(' / ')}</span>
-        </DrawerFormField>
-        <DrawerFormField label="已预发合计">
-          <span>{formatMoney(sourceRecords.reduce((total, sourceRecord) => total + sourceRecord.prepayAmount, 0))}</span>
-        </DrawerFormField>
-        <DrawerFormField label="季度最终金额" required>
-          <InputNumber
-            min={0}
-            precision={2}
-            style={{ width: '100%' }}
-            value={finalAmount}
-            onChange={(value) => setFinalAmount(value ?? undefined)}
-          />
-        </DrawerFormField>
-        <DrawerFormField label="结算日期" required>
-          <DatePicker
-            allowClear={false}
-            disabledDate={(current) => current.isBefore(dayjs(getPerformanceQuarterEndDate(record.performanceMonth)), 'day')}
-            style={{ width: '100%' }}
-            value={dayjs(settlementDate)}
-            onChange={(value) => value && setSettlementDate(value.format('YYYY-MM-DD'))}
-          />
-        </DrawerFormField>
-      </DrawerFormGrid>
-    </DetailSection>
-  );
-}
-
-function PerformanceDetailDrawer({
-  drawingTaskRecords,
-  onClose,
-  quarterlyReviewPolicy,
-  quarterlySourceRecords,
-  record
-}: {
-  drawingTaskRecords: PerformanceDrawingTaskMonthlyRecord[];
-  onClose: () => void;
-  quarterlyReviewPolicy?: PerformanceQuarterlyReviewPolicy;
-  quarterlySourceRecords: PerformanceMonthlyCategoryRecord[];
-  record: PerformanceMonthlyCategoryRecord | null;
-}) {
-  const drawingTaskDetail = record ? getDrawingTaskDetail(record, drawingTaskRecords) : undefined;
-  const operationRecords = record ? getCategoryOperationRecords(record) : [];
-
-  return (
-    <DetailDrawerShell
-      bodyTestId="performance-detail-drawer"
-      className="performance-monthly-drawer"
-      closeAction={{ label: '关闭', onClick: onClose }}
-      open={Boolean(record)}
-      title={
-        record ? (
-          <DetailDrawerTitle subtitle={`${record.category} / ${record.ruleVersion}`} title={`${record.employeeName} ${record.performanceMonth} 绩效明细`} />
-        ) : null
-      }
-      width={900}
-      onClose={onClose}
-    >
-      {record ? (
-        <div className="rule-readonly-stack performance-monthly-detail-stack">
-          <DetailSummaryCards
-            columns={4}
-            items={[
-              { icon: <TeamOutlined />, key: 'employee', label: '员工', value: record.employeeName },
-              { icon: <ProfileOutlined />, key: 'month', label: '绩效周期', value: record.performanceMonth },
-              { icon: <PartitionOutlined />, key: 'category', label: '绩效类别', value: record.category },
-              { icon: <WalletOutlined />, key: 'amount', label: '绩效金额', value: formatMoney(record.monthlyAmount) }
-            ]}
-          />
-
-          <DetailTabs
-            tabTestIdPrefix="performance-detail-drawer-tab"
-            testId="performance-detail-drawer-tabs"
-            items={[
-              {
-                key: 'basic',
-                label: '基础信息',
-                children: (
-                  <DetailSection icon={<ProfileOutlined />} title="基础信息">
-                    <DetailInfoGrid
-                      columns={3}
-                      items={[
-                        { label: '员工', value: `${record.employeeName} / ${record.workNo}` },
-                        { label: '岗位', value: `${record.position} / ${record.department}` },
-                        { label: '绩效周期', value: record.performanceMonth },
-                        { label: '绩效类别', value: record.category },
-                        { label: '绩效规则', value: `${record.ruleName} / ${record.ruleVersion}` },
-                        { label: '来源', value: record.sourceLabel },
-                        ...(record.executionContract
-                          ? [
-                              { label: '执行契约', value: record.executionContract.status },
-                              {
-                                label: '签署依据',
-                                value: record.executionContract.signedRuleVersion
-                                  ? `${record.executionContract.signedRuleName ?? record.executionContract.ruleName} / ${record.executionContract.signedAt ?? '-'}`
-                                  : record.executionContract.note
-                              },
-                              {
-                                label: '适用范围',
-                                value: record.executionContract.applicablePositions.length > 0
-                                  ? record.executionContract.applicablePositions.join(' / ')
-                                  : '-'
-                              }
-                            ]
-                          : []),
-                        ...(record.employmentScope
-                          ? [
-                              {
-                                label: '计绩区间',
-                                value: `${record.employmentScope.effectiveStartDate} 至 ${record.employmentScope.effectiveEndDate}`
-                              },
-                              {
-                                label: '计绩工作日',
-                                value: `${record.employmentScope.effectiveWorkdays}/${record.employmentScope.monthWorkdays}`
-                              }
-                            ]
-                          : [])
-                      ]}
-                    />
-                  </DetailSection>
-                )
-              },
-              {
-                key: 'result',
-                label: '结果金额',
-                children: (
-                  <div className="rule-readonly-stack">
-                    <DetailSection icon={<CheckCircleOutlined />} title="结果金额">
-                      <DetailInfoGrid
-                        columns={3}
-                        items={[
-                          { label: '质量分', value: formatOptionalScore(record.qualityScore) },
-                          ...(typeof record.taskScore === 'number' ? [{ label: '任务完成分', value: formatScore(record.taskScore) }] : []),
-                          ...(record.prorationSummary
-                            ? [
-                                { label: '满分口径', value: formatScore(record.prorationSummary.fullScore) },
-                                { label: '达标线', value: formatScore(record.prorationSummary.baseLineScore) },
-                                { label: '基础绩效上限', value: formatMoney(record.prorationSummary.basePerformanceAmount) }
-                              ]
-                            : []),
-                          { label: '绩效金额', value: formatMoney(record.monthlyAmount) },
-                          { label: '预发金额', value: formatMoney(record.prepayAmount) },
-                          { label: '说明', value: record.note }
-                        ]}
-                      />
-                    </DetailSection>
-                    <QuarterlyPerformanceReview
-                      key={record.id}
-                      policy={quarterlyReviewPolicy}
-                      record={record}
-                      sourceRecords={quarterlySourceRecords}
-                    />
-                  </div>
-                )
-              },
-              {
-                key: 'source',
-                label: '来源明细',
-                children: (
-                  <DetailSection icon={<FileSearchOutlined />} title="来源明细">
-                    <DetailInfoGrid
-                      columns={3}
-                      items={[
-                        { label: '来源', value: record.sourceLabel },
-                        { label: '来源记录', value: formatSourceCount(record.sourceTaskCount) },
-                        ...(drawingTaskDetail
-                          ? [
-                              { label: '预发比例', value: formatRatio(drawingTaskDetail.amountSummary.prepayRatio) },
-                              { label: '复核结算', value: drawingTaskDetail.amountSummary.settlementNote }
-                            ]
-                          : [{ label: '说明', value: record.note }])
-                      ]}
-                    />
-                  </DetailSection>
-                )
-              },
-              {
-                key: 'records',
-                label: '处理记录',
-                children:
-                  operationRecords.length > 0 ? (
-                    <OperationRecordSection icon={<AuditOutlined />} records={operationRecords} title="处理记录" />
-                  ) : (
-                    <Empty description="暂无处理记录" />
-                  )
-              }
-            ]}
-          />
-        </div>
-      ) : null}
-    </DetailDrawerShell>
-  );
+function getPerformanceActionTimestamp() {
+  return dayjs().format('YYYY-MM-DD HH:mm:ss');
 }
 
 export function PerformanceMonthlyPage() {
   const [filters, setFilters] = useState<PerformanceMonthlyFilters>(defaultFilters);
   const [activeTab, setActiveTab] = useState<PerformanceDetailTabKey>('综合');
-  const [selectedRecordId, setSelectedRecordId] = useState<string>();
-  const { performanceRuleRows } = usePerformanceRuleState();
-  const performanceMonthlyRecords = usePerformanceMonthlyRecords();
-  const selectedRecord = performanceMonthlyRecords.categoryRecords.find((record) => record.id === selectedRecordId) ?? null;
-  const quarterlySourceRecords = selectedRecord
-    ? getPerformanceQuarterlyReviewSourceRecords(selectedRecord, performanceMonthlyRecords.categoryRecords)
+  const [selectedResultKey, setSelectedResultKey] = useState<string>();
+  const {
+    allResults,
+    correctResult,
+    getResultHistory,
+    publishResult,
+    resolveEmployeeObjection
+  } = usePerformanceResults();
+  const selectedReadRecord = allResults.find(
+    ({ result }) => result.resultKey === selectedResultKey
+  ) ?? null;
+  const selectedResultHistory = selectedReadRecord
+    ? getResultHistory(selectedReadRecord.result.resultKey)
     : [];
-  const selectedPerformanceRule = selectedRecord
-    ? performanceRuleRows.find(
-        (rule) =>
-          rule.id === selectedRecord.executionContract?.ruleId
-          || (rule.name === selectedRecord.ruleName && rule.currentVersion === selectedRecord.ruleVersion)
-      )
-    : undefined;
-  const quarterlyReviewPolicy = selectedPerformanceRule
-    ? {
-        payoutMode: selectedPerformanceRule.payoutMode,
-        reviewCycle: selectedPerformanceRule.reviewCycle
-      }
-    : undefined;
-
   const employeeOptions = useMemo(
-    () => ['全部', ...Array.from(new Set(performanceMonthlyRecords.categoryRecords.map((record) => record.employeeName)))],
-    [performanceMonthlyRecords.categoryRecords]
+    () => ['全部', ...Array.from(new Set(allResults.map(({ result }) => result.employeeNameSnapshot)))],
+    [allResults]
   );
-  const performanceRange = useMemo(() => getDateScopeRange(filters.performanceTime, performanceDetailDefaultMonth), [filters.performanceTime]);
-
-  const baseDetailRecords = useMemo(
+  const performanceRange = useMemo(
+    () => getDateScopeRange(filters.performanceTime, performanceDetailDefaultMonth),
+    [filters.performanceTime]
+  );
+  const baseResults = useMemo(
     () =>
-      performanceMonthlyRecords.categoryRecords
-        .filter((record) => monthlyCategoryRecordMatchesFilters(record, filters, performanceRange))
+      allResults
+        .filter((record) => performanceResultMatchesFilters(record, filters, performanceRange))
         .sort(
           (left, right) =>
-            right.performanceMonth.localeCompare(left.performanceMonth) ||
-            left.employeeName.localeCompare(right.employeeName, 'zh-CN') ||
-            left.category.localeCompare(right.category, 'zh-CN') ||
-            right.monthlyAmount - left.monthlyAmount
+            right.result.period.localeCompare(left.result.period)
+            || left.result.employeeNameSnapshot.localeCompare(right.result.employeeNameSnapshot, 'zh-CN')
+            || getResultCategory(left).localeCompare(getResultCategory(right), 'zh-CN')
+            || getResultAmount(right) - getResultAmount(left)
         ),
-    [filters, performanceMonthlyRecords.categoryRecords, performanceRange]
+    [allResults, filters, performanceRange]
   );
-  const detailRecords = useMemo(() => getPerformanceRecordsForTab(activeTab, baseDetailRecords), [activeTab, baseDetailRecords]);
-
-  const employeeCount = useMemo(() => new Set(detailRecords.map((record) => record.workNo)).size, [detailRecords]);
-  const monthlyAmountTotal = detailRecords.reduce((total, record) => total + record.monthlyAmount, 0);
-  const prepayAmountTotal = detailRecords.reduce((total, record) => total + record.prepayAmount, 0);
+  const visibleResults = useMemo(
+    () => getPerformanceResultsForTab(activeTab, baseResults),
+    [activeTab, baseResults]
+  );
+  const employeeCount = useMemo(
+    () => new Set(visibleResults.map(({ result }) => result.workNoSnapshot)).size,
+    [visibleResults]
+  );
+  const draftCount = visibleResults.filter(({ result }) => result.lifecycleStatus === '待发布').length;
+  const publishedResults = visibleResults.filter(
+    ({ result }) => result.lifecycleStatus === '已发布' || result.lifecycleStatus === '已结算'
+  );
+  const publishedPrepayTotal = publishedResults.reduce(
+    (total, { result }) => total + (isMonthlyPerformanceResult(result) ? result.prepayAmount : 0),
+    0
+  );
 
   return (
     <ManagementPageScaffold
       layout="table-workbench"
       metrics={
-        <MetricGrid columns={4}>
+        <MetricGrid columns={5}>
           <MetricCard icon={<TeamOutlined />} label="绩效员工" value={employeeCount} />
-          <MetricCard icon={<FileSearchOutlined />} label="绩效明细" value={detailRecords.length} />
-          <MetricCard icon={<WalletOutlined />} label="绩效总额" value={formatMoney(monthlyAmountTotal)} />
-          <MetricCard icon={<CalculatorOutlined />} label="预发金额" value={formatMoney(prepayAmountTotal)} />
+          <MetricCard icon={<FileSearchOutlined />} label="结果明细" value={visibleResults.length} />
+          <MetricCard icon={<SendOutlined />} label="待发布" value={draftCount} />
+          <MetricCard icon={<CheckCircleOutlined />} label="已发布" value={publishedResults.length} />
+          <MetricCard icon={<WalletOutlined />} label="月度预发" value={formatMoney(publishedPrepayTotal)} />
         </MetricGrid>
       }
       filters={
@@ -605,7 +432,19 @@ export function PerformanceMonthlyPage() {
                 data-testid="performance-monthly-employee-filter"
                 options={employeeOptions.map((employee) => ({ label: employee, value: employee }))}
                 value={filters.employee}
-                onChange={(employee: MonthlyEmployeeFilter) => setFilters((current) => ({ ...current, employee }))}
+                onChange={(employee: MonthlyEmployeeFilter) =>
+                  setFilters((current) => ({ ...current, employee }))
+                }
+              />
+            </FilterField>
+            <FilterField label="结果状态">
+              <Select
+                data-testid="performance-result-status-filter"
+                options={resultStatusOptions.map((status) => ({ label: status, value: status }))}
+                value={filters.status}
+                onChange={(status: PerformanceResultStatusFilter) =>
+                  setFilters((current) => ({ ...current, status }))
+                }
               />
             </FilterField>
             <KeywordFilter
@@ -626,35 +465,62 @@ export function PerformanceMonthlyPage() {
         activeKey={activeTab}
         tabTestIdPrefix="performance-detail-category-tab"
         testId="performance-detail-category-tabs"
-        variant="section"
-        items={performanceDetailTabs.map((tab) => ({
-          key: tab.key,
-          label: tab.label,
-          children: (() => {
-            const tabRecords = getPerformanceRecordsForTab(tab.key, baseDetailRecords);
+        variant="workbench"
+        items={performanceDetailTabs.map((tab) => {
+          const tabResults = getPerformanceResultsForTab(tab.key, baseResults);
 
-            return (
-              <ManagementTable<PerformanceMonthlyCategoryRecord>
-                columns={getPerformanceDetailColumns(tab.key)}
-                count={{ value: tabRecords.length, unit: '条绩效明细' }}
-                dataSource={tabRecords}
-                rowKey="id"
-                rowTestIdPrefix={`performance-detail-table-row-${tab.testIdKey}`}
-                tableTestId={`performance-detail-table-${tab.testIdKey}`}
-                onRowClick={(record) => setSelectedRecordId(record.id)}
+          return {
+            key: tab.key,
+            label: tab.label,
+            children: (
+              <ManagementTable<PerformanceResultReadRecord>
+                columns={getPerformanceResultColumns(tab.key)}
+                count={{ value: tabResults.length, unit: '条绩效结果' }}
+                dataSource={tabResults}
+                rowKey={(record) => record.result.resultKey}
+                rowTestIdPrefix={`performance-result-table-row-${tab.testIdKey}`}
+                tableTestId={`performance-result-table-${tab.testIdKey}`}
+                onRowClick={(record) => setSelectedResultKey(record.result.resultKey)}
               />
-            );
-          })()
-        }))}
+            )
+          };
+        })}
         onChange={(key) => setActiveTab(key as PerformanceDetailTabKey)}
       />
 
-      <PerformanceDetailDrawer
-        drawingTaskRecords={performanceMonthlyRecords.drawingTaskRecords}
-        quarterlyReviewPolicy={quarterlyReviewPolicy}
-        quarterlySourceRecords={quarterlySourceRecords}
-        record={selectedRecord}
-        onClose={() => setSelectedRecordId(undefined)}
+      <PerformanceResultDrawer
+        actionTime={getPerformanceActionTimestamp()}
+        history={selectedResultHistory}
+        readRecord={selectedReadRecord}
+        onClose={() => setSelectedResultKey(undefined)}
+        onCorrect={(correctionReason, adjustment) =>
+          selectedReadRecord
+            ? correctResult(selectedReadRecord.result.resultKey, {
+                actor: currentPerformanceActor,
+                correctionReason,
+                deliveredAt: getPerformanceActionTimestamp(),
+                ...adjustment
+              })
+            : { reason: '未选择绩效结果', success: false }
+        }
+        onPublish={(input) =>
+          selectedReadRecord
+            ? publishResult(selectedReadRecord.result.resultKey, {
+                actor: currentPerformanceActor,
+                deliveredAt: getPerformanceActionTimestamp(),
+                ...input
+              })
+            : { reason: '未选择绩效结果', success: false }
+        }
+        onResolveObjection={(resolutionSummary) =>
+          selectedReadRecord
+            ? resolveEmployeeObjection(selectedReadRecord.result.id, {
+                actor: currentPerformanceActor,
+                resolutionSummary,
+                resolvedAt: getPerformanceActionTimestamp()
+              })
+            : { reason: '未选择绩效结果', success: false }
+        }
       />
     </ManagementPageScaffold>
   );

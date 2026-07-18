@@ -311,7 +311,7 @@ export const financePeriodCloseStageAuditMatrix: readonly FinancePeriodCloseStag
   {
     blockers: [
       '结账来源检查已收敛到真实模块，但仍是前端会话汇总依据',
-      '缺薪酬社保、税务办理、会计凭证和资金链路的后端统一结账来源状态服务',
+      '缺薪酬社保、税费计提凭证、会计凭证和资金链路的后端统一结账来源状态服务',
       '缺来源事项到候选凭证、凭证记账和闭期检查的一致性持久化证据'
     ],
     currentEvidence: [

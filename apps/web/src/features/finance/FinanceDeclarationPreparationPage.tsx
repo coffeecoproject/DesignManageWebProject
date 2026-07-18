@@ -8,7 +8,7 @@ import {
   PlusOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
-import { Alert, DatePicker, Input, InputNumber, Select, message } from 'antd';
+import { DatePicker, Input, InputNumber, Select, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
@@ -47,7 +47,6 @@ import { VatUnbilledIncomeDetailTable } from './VatUnbilledIncomeDetailTable';
 import {
   applyDeclarationPreparationSourceState,
   declarationPreparationStatusTone,
-  getDeclarationPreparationAccountingPeriod,
   getDeclarationPreparationUnbilledIncomeCandidates,
   getDeclarationPreparationProgress,
   isDeclarationPreparationReady,
@@ -374,7 +373,6 @@ export function FinanceDeclarationPreparationPage() {
     addStampDutySettlementSource,
     declarationPreparationRows,
     financeRows,
-    getAccountingPeriodGuard,
     invoiceBusinessAllocationRows,
     invoiceRows,
     manualStampDutySourceRows,
@@ -456,23 +454,12 @@ export function FinanceDeclarationPreparationPage() {
     (total, record) => total + getDeclarationPreparationProgress(record).pendingCount,
     0
   );
-  const activeRecordAccountingPeriod = activeRecord
-    ? getDeclarationPreparationAccountingPeriod(activeRecord.period)
-    : undefined;
-  const activeRecordPeriodGuard = activeRecord
-    ? getAccountingPeriodGuard(activeRecordAccountingPeriod, '调整申报准备')
-    : undefined;
-  const activeRecordReadbackNotice =
-    activeRecordPeriodGuard && !activeRecordPeriodGuard.allowed
-      ? `${activeRecordPeriodGuard.reason} 当前申报准备仅用于回看，不再调整申报口径。`
-      : undefined;
-
   function updatePreparation(recordId: string, updater: (record: FinanceDeclarationPreparationRecord) => FinanceDeclarationPreparationRecord) {
     return updateDeclarationPreparationRecord(recordId, updater);
   }
 
   function handleUnbilledIncomeInclusionChange(businessRecordId: string, included: boolean) {
-    if (!activeRecord || activeRecord.status !== '准备中' || activeRecordReadbackNotice) {
+    if (!activeRecord || activeRecord.status !== '准备中') {
       return;
     }
 
@@ -524,7 +511,7 @@ export function FinanceDeclarationPreparationPage() {
     businessRecordId: string,
     reason: FinanceUnbilledIncomeExclusionReason
   ) {
-    if (!activeRecord || activeRecord.status !== '准备中' || activeRecordReadbackNotice) {
+    if (!activeRecord || activeRecord.status !== '准备中') {
       return;
     }
 
@@ -710,13 +697,6 @@ export function FinanceDeclarationPreparationPage() {
   }
 
   function handleConfirmPreparation(record: FinanceDeclarationPreparationRecord) {
-    const periodGuard = getAccountingPeriodGuard(getDeclarationPreparationAccountingPeriod(record.period), '确认申报准备结果');
-
-    if (!periodGuard.allowed) {
-      void messageApi.warning(periodGuard.reason);
-      return;
-    }
-
     if (!isDeclarationPreparationReady(record)) {
       void messageApi.warning('仍有准备项未确认');
       return;
@@ -870,8 +850,7 @@ export function FinanceDeclarationPreparationPage() {
   const canConfirmActiveRecord = Boolean(
     activeRecord &&
     activeRecord.status === '准备中' &&
-    isDeclarationPreparationReady(activeRecord) &&
-    !activeRecordReadbackNotice
+    isDeclarationPreparationReady(activeRecord)
   );
   const stampDutyAmountError = validateStampDutyDocumentAmounts({
     amount: stampDutyDocumentForm.amount,
@@ -1022,15 +1001,6 @@ export function FinanceDeclarationPreparationPage() {
                 }
               ]}
             />
-            {activeRecordReadbackNotice ? (
-              <Alert
-                className="finance-period-readback-alert"
-                message={activeRecordReadbackNotice}
-                showIcon
-                type="info"
-              />
-            ) : null}
-
             <DetailTabs
               items={[
                 {
@@ -1124,7 +1094,7 @@ export function FinanceDeclarationPreparationPage() {
                           </DetailSection>
                           <DetailSection icon={<FileTextOutlined />} title="未开票应税事项">
                             <VatUnbilledIncomeDetailTable
-                              editable={activeRecord.status === '准备中' && !activeRecordReadbackNotice}
+                              editable={activeRecord.status === '准备中'}
                               records={activeUnbilledIncomeCandidates}
                               onInclusionChange={handleUnbilledIncomeInclusionChange}
                               onReasonChange={handleUnbilledIncomeReasonChange}
@@ -1139,7 +1109,7 @@ export function FinanceDeclarationPreparationPage() {
                       ) : null}
                       {activeRecord.declarationScenario === '年度汇算' && activeRecord.citAnnualSettlement ? (
                         <CorporateIncomeTaxAnnualSourceReviewPanel
-                          editable={activeRecord.status === '准备中' && !activeRecordReadbackNotice}
+                          editable={activeRecord.status === '准备中'}
                           profitBeforeTaxAmount={activeRecord.citSummary?.cumulativeProfitBeforeTaxAmount ?? 0}
                           review={activeRecord.citAnnualSourceReview}
                           onSave={saveCorporateIncomeTaxAnnualSourceReview}
@@ -1147,7 +1117,7 @@ export function FinanceDeclarationPreparationPage() {
                       ) : null}
                       {activeRecord.declarationScenario === '季度预缴' ? (
                         <CorporateIncomeTaxQuarterSourceReviewPanel
-                          editable={activeRecord.status === '准备中' && !activeRecordReadbackNotice}
+                          editable={activeRecord.status === '准备中'}
                           period={activeRecord.period}
                           profitBeforeTaxAmount={activeRecord.citSummary?.cumulativeProfitBeforeTaxAmount ?? 0}
                           review={activeRecord.citQuarterSourceReview}
@@ -1295,7 +1265,7 @@ export function FinanceDeclarationPreparationPage() {
       </DrawerFormShell>
 
       <StampDutySourceDetailDrawer
-        editable={Boolean(activeRecord?.status === '准备中' && !activeRecordReadbackNotice)}
+        editable={Boolean(activeRecord?.status === '准备中')}
         record={activeStampDutySource}
         resolution={activeStampDutyResolution}
         onClose={() => setActiveStampDutySource(undefined)}

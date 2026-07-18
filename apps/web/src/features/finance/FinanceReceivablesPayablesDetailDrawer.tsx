@@ -20,7 +20,10 @@ import { TagChip } from '../../components/TagChip';
 import type { FinanceTransactionRecord } from './financeData';
 import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import type { FinanceInvoiceBusinessAllocation, FinanceInvoiceRecord } from './financeInvoiceData';
-import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
+import type {
+  FinanceCustomerTaskSettlementLine,
+  FinanceReceivablePayableRecord
+} from './financeReceivablesPayablesData';
 import {
   getReceivablePayableOutstandingAmount,
   receivablePayableDirectionTone,
@@ -135,6 +138,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
   const naturalPersonPayment = record.naturalPersonPayment;
   const laborPayment = naturalPersonPayment?.incomeType === '劳务报酬' ? naturalPersonPayment : undefined;
   const salarySettlement = record.salarySettlement;
+  const taskSettlement = record.taskSettlement;
   const periodReadbackNotice = recordLockedReason
     ? getClosedAccountingPeriodReadbackNotice(record.accountingPeriod, '当前权责事项')
     : undefined;
@@ -182,6 +186,42 @@ export function FinanceReceivablesPayablesDetailDrawer({
     {
       title: '匹配金额',
       dataIndex: 'matchedAmount',
+      width: 120,
+      render: (amount: number) => formatMoney(amount)
+    }
+  ];
+  const taskSettlementColumns: TableColumnsType<FinanceCustomerTaskSettlementLine> = [
+    {
+      title: '来源任务',
+      dataIndex: 'taskName',
+      width: 240,
+      render: (_taskName: string, row) => (
+        <div>
+          <div>{row.taskName}</div>
+          <div className="secondary-text">{row.taskCode} / {row.storeName}</div>
+        </div>
+      )
+    },
+    {
+      title: '验收时间',
+      dataIndex: 'acceptedAt',
+      width: 150
+    },
+    {
+      title: '验收人',
+      dataIndex: 'acceptedBy',
+      width: 100
+    },
+    {
+      title: '价格版本',
+      dataIndex: 'priceVersion',
+      width: 100,
+      render: (version: number) => `V${version}`
+    },
+    {
+      title: '结算金额',
+      dataIndex: 'amount',
+      align: 'right',
       width: 120,
       render: (amount: number) => formatMoney(amount)
     }
@@ -299,6 +339,18 @@ export function FinanceReceivablesPayablesDetailDrawer({
                     { label: '来源单号', value: record.sourceNo },
                     { label: '来源名称', value: record.sourceTitle },
                     { label: amountLabels.amount, value: formatMoney(record.amount) },
+                    ...(taskSettlement
+                      ? [
+                          { label: '品牌', value: taskSettlement.brandName },
+                          { label: '结算方式', value: taskSettlement.settlementMode },
+                          {
+                            label: '依据合同',
+                            value: taskSettlement.contractCode
+                              ? `${taskSettlement.contractCode} / ${taskSettlement.contractName ?? '-'}`
+                              : '-'
+                          }
+                        ]
+                      : []),
                     ...(laborPayment
                       ? [
                           { label: '所得类型', value: laborPayment.incomeType },
@@ -328,6 +380,15 @@ export function FinanceReceivablesPayablesDetailDrawer({
                     { label: '备注', value: record.note, wide: true }
                   ]}
                 />
+                {taskSettlement ? (
+                  <CompactDetailTable<FinanceCustomerTaskSettlementLine>
+                    columns={taskSettlementColumns}
+                    dataSource={taskSettlement.lineItems}
+                    emptyText="暂无来源任务"
+                    rowKey="taskId"
+                    scrollX={720}
+                  />
+                ) : null}
               </DetailSection>
             ),
             key: 'basic',

@@ -1,4 +1,3 @@
-import type { PerformanceEmployeeSignatureArchive } from './performanceSignatureArchiveData';
 import type { PerformanceMonthlyCategoryRecord, PerformanceRuleCategory, PerformanceRulePreset } from './performanceTypes';
 
 export type PerformanceDashboardPeriodMode = 'month' | 'quarter' | 'year' | 'custom';
@@ -16,7 +15,6 @@ export type PerformanceDashboardRiskLevel = 'high' | 'medium' | 'low';
 export type PerformanceDashboardMetrics = {
   averageQualityScore: number | null;
   currentExceptionCount: number;
-  currentSignedRelationships: number;
   employeeCount: number;
   periodAmount: number;
   periodPrepayAmount: number;
@@ -83,7 +81,6 @@ type PerformanceDashboardSource = {
   now?: string;
   periodRange?: PerformanceDashboardPeriodRange;
   ruleRows: PerformanceRulePreset[];
-  signatureEmployees: PerformanceEmployeeSignatureArchive[];
   today?: string;
 };
 
@@ -302,37 +299,21 @@ function buildEmployeeRows(records: PerformanceMonthlyCategoryRecord[]) {
     );
 }
 
-function getCurrentSignedFiles(signatureEmployees: PerformanceEmployeeSignatureArchive[]) {
-  return signatureEmployees.flatMap((employee) =>
-    employee.files
-      .filter((file) => file.relationStatus === '当前签署')
-      .map((file) => ({
-        category: file.category,
-        employeeName: employee.employeeName,
-        position: employee.position,
-        ruleVersion: file.ruleVersion,
-        workNo: employee.workNo
-      }))
-  );
-}
-
-function getLatestObservedMonth(records: PerformanceMonthlyCategoryRecord[], periodRange: PerformanceDashboardPeriodRange) {
-  return records.reduce(
-    (latest, record) => (record.performanceMonth > latest ? record.performanceMonth : latest),
-    getMonthKey(parseDateOnly(periodRange.endDate))
-  );
-}
-
-function buildRiskRows({
-  periodRange,
-  periodRecords,
-  ruleRows,
-  signatureEmployees
-}: Pick<PerformanceDashboardSource, 'ruleRows' | 'signatureEmployees'> & {
-  periodRange: PerformanceDashboardPeriodRange;
-  periodRecords: PerformanceMonthlyCategoryRecord[];
-}) {
-  const scoreRiskRows = periodRecords
+function buildRiskRows(periodRecords: PerformanceMonthlyCategoryRecord[]) {
+  const settledRecords = periodRecords.filter((record) => record.resultResponseStatus !== '有异议');
+  const objectionRiskRows = periodRecords
+    .filter((record) => record.resultResponseStatus === '有异议')
+    .map<PerformanceDashboardRiskRow>((record) => ({
+      amountImpact: record.monthlyAmount,
+      basis: `${record.performanceMonth} / ${record.ruleVersion}`,
+      id: `objection-${record.id}`,
+      objectMeta: `${record.position} / ${record.category}`,
+      objectName: record.employeeName,
+      ownerName: record.employeeName,
+      riskLevel: 'high',
+      riskText: '绩效结果存在未处理异议'
+    }));
+  const scoreRiskRows = settledRecords
     .filter((record) => (record.taskScore ?? 100) < 80 || (record.qualityScore ?? 100) < 80)
     .map<PerformanceDashboardRiskRow>((record) => {
       const riskItems: string[] = [];
@@ -356,50 +337,19 @@ function buildRiskRows({
         riskText: riskItems.join(' / ')
       };
     });
-  const contractRiskRows = periodRecords
-    .filter((record) => record.executionContract && record.executionContract.status !== '已匹配')
+  const applicabilityRiskRows = settledRecords
+    .filter((record) => record.ruleApplicability && record.ruleApplicability.status !== '适用')
     .map<PerformanceDashboardRiskRow>((record) => ({
       amountImpact: record.monthlyAmount,
       basis: `${record.performanceMonth} / ${record.ruleVersion}`,
-      id: `contract-${record.id}`,
+      id: `applicability-${record.id}`,
       objectMeta: `${record.position} / ${record.category}`,
       objectName: record.employeeName,
       ownerName: record.employeeName,
-      riskLevel: record.executionContract?.status === '缺少签署' || record.executionContract?.status === '签署版本不一致' ? 'high' : 'medium',
-      riskText: record.executionContract?.status ?? '执行契约异常'
+      riskLevel: record.ruleApplicability?.status === '规则冲突' || record.ruleApplicability?.status === '规则版本不一致' ? 'high' : 'medium',
+      riskText: record.ruleApplicability?.status ?? '规则适用异常'
     }));
-  const observedMonth = getLatestObservedMonth(periodRecords, periodRange);
-  const observedRecordKeys = new Set(
-    periodRecords
-      .filter((record) => record.performanceMonth === observedMonth)
-      .map((record) => `${record.workNo}::${record.category}`)
-  );
-  const missingMonthlyRows = getCurrentSignedFiles(signatureEmployees)
-    .filter((file) => !observedRecordKeys.has(`${file.workNo}::${file.category}`))
-    .map<PerformanceDashboardRiskRow>((file) => ({
-      amountImpact: 0,
-      basis: `${observedMonth} / ${file.ruleVersion}`,
-      id: `missing-monthly-${file.workNo}-${file.category}`,
-      objectMeta: `${file.position} / ${file.category}`,
-      objectName: file.employeeName,
-      ownerName: file.employeeName,
-      riskLevel: 'medium',
-      riskText: '当前签署关系缺少月度绩效'
-    }));
-  const ruleWorkflowRows = ruleRows
-    .filter((rule) => rule.status === '待审核' || rule.status === '审核驳回')
-    .map<PerformanceDashboardRiskRow>((rule) => ({
-      amountImpact: 0,
-      basis: rule.currentVersion,
-      id: `rule-${rule.id}`,
-      objectMeta: `${rule.category} / ${rule.status}`,
-      objectName: rule.name,
-      ownerName: rule.lastUpdatedBy,
-      riskLevel: rule.status === '审核驳回' ? 'high' : 'medium',
-      riskText: rule.status === '审核驳回' ? '规则审核驳回' : '规则待审核'
-    }));
-
-  return [...scoreRiskRows, ...contractRiskRows, ...missingMonthlyRows, ...ruleWorkflowRows].sort((left, right) => {
+  return [...objectionRiskRows, ...scoreRiskRows, ...applicabilityRiskRows].sort((left, right) => {
     const levelScore: Record<PerformanceDashboardRiskLevel, number> = { high: 3, low: 1, medium: 2 };
 
     return (
@@ -414,41 +364,34 @@ export function buildPerformanceDashboardData({
   monthlyRecords,
   periodRange,
   ruleRows,
-  signatureEmployees,
   today = defaultPerformanceDashboardToday
 }: PerformanceDashboardSource): PerformanceDashboardData {
   const activePeriodRange = periodRange ?? buildPerformanceDashboardPeriodRange('month', today);
   const periodRecords = monthlyRecords.filter((record) => isMonthInRange(record.performanceMonth, activePeriodRange));
-  const qualityScores = periodRecords
+  const settledPeriodRecords = periodRecords.filter((record) => record.resultResponseStatus !== '有异议');
+  const qualityScores = settledPeriodRecords
     .map((record) => record.qualityScore)
     .filter((value): value is number => typeof value === 'number');
-  const currentSignedRelationships = getCurrentSignedFiles(signatureEmployees).length;
   const publishedRules = ruleRows.filter((rule) => rule.status === '已发布').length;
-  const riskRows = buildRiskRows({
-    periodRange: activePeriodRange,
-    periodRecords,
-    ruleRows,
-    signatureEmployees
-  });
+  const riskRows = buildRiskRows(periodRecords);
 
   return {
-    categoryDistribution: buildDistribution(periodRecords, (record) => record.category),
-    employeeRows: buildEmployeeRows(periodRecords),
+    categoryDistribution: buildDistribution(settledPeriodRecords, (record) => record.category),
+    employeeRows: buildEmployeeRows(settledPeriodRecords),
     metrics: {
       averageQualityScore: getAverage(qualityScores),
       currentExceptionCount: riskRows.length,
-      currentSignedRelationships,
-      employeeCount: getUniqueCount(periodRecords.map((record) => record.workNo)),
-      periodAmount: sumMoney(periodRecords, 'monthlyAmount'),
-      periodPrepayAmount: sumMoney(periodRecords, 'prepayAmount'),
+      employeeCount: getUniqueCount(settledPeriodRecords.map((record) => record.workNo)),
+      periodAmount: sumMoney(settledPeriodRecords, 'monthlyAmount'),
+      periodPrepayAmount: sumMoney(settledPeriodRecords, 'prepayAmount'),
       publishedRules,
-      recordCount: periodRecords.length,
-      sourceTaskCount: periodRecords.reduce((sum, record) => sum + record.sourceTaskCount, 0)
+      recordCount: settledPeriodRecords.length,
+      sourceTaskCount: settledPeriodRecords.reduce((sum, record) => sum + record.sourceTaskCount, 0)
     },
     period: activePeriodRange,
-    positionDistribution: buildDistribution(periodRecords, (record) => record.position),
+    positionDistribution: buildDistribution(settledPeriodRecords, (record) => record.position),
     riskRows,
-    ruleVersionDistribution: buildDistribution(periodRecords, (record) => record.ruleName),
-    trend: buildTrend(activePeriodRange, periodRecords)
+    ruleVersionDistribution: buildDistribution(settledPeriodRecords, (record) => record.ruleName),
+    trend: buildTrend(activePeriodRange, settledPeriodRecords)
   };
 }

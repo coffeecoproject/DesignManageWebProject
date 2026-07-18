@@ -8,7 +8,7 @@ import { MyExpenseReviewProvider } from '../features/my-work/MyExpenseReviewStat
 import { PeopleOrganizationProvider } from '../features/people/PeopleOrganizationState';
 import { PermissionRoleProvider } from '../features/people/PermissionRoleState';
 import { PerformanceRuleProvider } from '../features/performance/PerformanceRuleState';
-import { PerformanceMonthlyProvider } from '../features/performance/PerformanceMonthlyState';
+import { PerformanceResultProvider } from '../features/performance/PerformanceResultState';
 import { SalaryManagementProvider } from '../features/salary/SalaryManagementState';
 import { FinanceCategoryProvider } from '../features/system/FinanceCategoryState';
 import { PublicAccountConfigProvider } from '../features/system/PublicAccountConfigState';
@@ -56,13 +56,13 @@ export function RootApp() {
                           <FinanceCategoryProvider>
                             <PublicAccountConfigProvider>
                               <TaskManagementProvider>
-                                <PerformanceMonthlyProvider>
+                                <PerformanceResultProvider>
                                   <FinanceManagementProvider>
                                     <MyExpenseReviewProvider>
                                       <RouterProvider router={router} />
                                     </MyExpenseReviewProvider>
                                   </FinanceManagementProvider>
-                                </PerformanceMonthlyProvider>
+                                </PerformanceResultProvider>
                               </TaskManagementProvider>
                             </PublicAccountConfigProvider>
                           </FinanceCategoryProvider>

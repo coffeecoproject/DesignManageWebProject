@@ -627,8 +627,6 @@ export function clonePeopleMember(member: PeopleMember): PeopleMember {
     paymentProfile: { ...member.paymentProfile },
     salaryProfile: { ...member.salaryProfile },
     taskCapabilityIds: [...member.taskCapabilityIds],
-    taskRecords: member.taskRecords.map((record) => ({ ...record })),
-    workEvaluationRecords: member.workEvaluationRecords.map((record) => ({ ...record })),
-    workEvaluationSummary: { ...member.workEvaluationSummary }
+    taskRecords: member.taskRecords.map((record) => ({ ...record }))
   };
 }

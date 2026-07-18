@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import {
+  brandTaskPriceVersionRecords,
   brandRecords,
   customerContractRecords,
   customerRecords,
@@ -11,8 +13,20 @@ import {
   type CustomerStatus,
   type StoreRecord
 } from './customerData';
+import {
+  createInitialBrandSettlementPolicyVersions,
+  reconcileBrandTaskPriceVersions,
+  reconcileBrandSettlementPolicyVersions,
+  resolveActiveBrandSettlementPolicyVersion,
+  resolveActiveBrandTaskPriceVersion,
+  type BrandSettlementPolicyVersionRecord,
+  type BrandTaskPriceVersionRecord,
+  type BrandTaskPricingDraft
+} from './brandTaskPricingModel';
 
 type CustomerManagementStateValue = {
+  brandSettlementPolicyRows: BrandSettlementPolicyVersionRecord[];
+  brandTaskPriceRows: BrandTaskPriceVersionRecord[];
   brandRows: BrandRecord[];
   contractRows: CustomerContractRecord[];
   customerRows: CustomerRecord[];
@@ -23,7 +37,21 @@ type CustomerManagementStateValue = {
   getCustomerBrandCount: (customerId: string) => number;
   getCustomerById: (customerId: string | undefined) => CustomerRecord | undefined;
   getCustomerStoreCount: (customerId: string) => number;
-  saveBrand: (record: BrandRecord) => void;
+  getActiveBrandTaskPrice: (
+    brandId: string,
+    taskConfigId: string,
+    effectiveAt: string
+  ) => BrandTaskPriceVersionRecord | undefined;
+  getActiveBrandSettlementPolicy: (
+    brandId: string,
+    effectiveAt: string
+  ) => BrandSettlementPolicyVersionRecord | undefined;
+  saveBrandConfiguration: (input: {
+    effectiveAt: string;
+    pricingDrafts: BrandTaskPricingDraft[];
+    record: BrandRecord;
+    settlementPolicyEffectiveAt: string;
+  }) => void;
   saveContract: (record: CustomerContractRecord) => void;
   saveCustomer: (record: CustomerRecord) => void;
   saveStore: (record: StoreRecord) => void;
@@ -40,6 +68,10 @@ function upsertById<T extends { id: string }>(records: T[], nextRecord: T) {
 export function CustomerManagementProvider({ children }: { children: ReactNode }) {
   const [customerRows, setCustomerRows] = useState<CustomerRecord[]>(() => customerRecords);
   const [brandRows, setBrandRows] = useState<BrandRecord[]>(() => brandRecords);
+  const [brandSettlementPolicyRows, setBrandSettlementPolicyRows] = useState<BrandSettlementPolicyVersionRecord[]>(() =>
+    createInitialBrandSettlementPolicyVersions(brandRecords, '2026-01-01')
+  );
+  const [brandTaskPriceRows, setBrandTaskPriceRows] = useState<BrandTaskPriceVersionRecord[]>(() => brandTaskPriceVersionRecords);
   const [storeRows, setStoreRows] = useState<StoreRecord[]>(() => storeRecords);
   const [contractRows, setContractRows] = useState<CustomerContractRecord[]>(() => customerContractRecords);
 
@@ -47,9 +79,57 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
     setCustomerRows((currentRows) => upsertById(currentRows, record));
   }, []);
 
-  const saveBrand = useCallback((record: BrandRecord) => {
+  const saveBrandConfiguration = useCallback(({
+    effectiveAt,
+    pricingDrafts,
+    record,
+    settlementPolicyEffectiveAt
+  }: {
+    effectiveAt: string;
+    pricingDrafts: BrandTaskPricingDraft[];
+    record: BrandRecord;
+    settlementPolicyEffectiveAt: string;
+  }) => {
     setBrandRows((currentRows) => upsertById(currentRows, record));
+    setBrandSettlementPolicyRows((currentRows) =>
+      reconcileBrandSettlementPolicyVersions({
+        asOfDate: frontendBusinessToday,
+        brandId: record.id,
+        effectiveAt: settlementPolicyEffectiveAt,
+        policy: record.settlementPolicy,
+        policyVersions: currentRows
+      })
+    );
+    setBrandTaskPriceRows((currentRows) =>
+      reconcileBrandTaskPriceVersions({
+        brandId: record.id,
+        effectiveAt,
+        priceVersions: currentRows,
+        pricingDrafts
+      })
+    );
   }, []);
+
+  const getActiveBrandSettlementPolicy = useCallback(
+    (brandId: string, effectiveAt: string) =>
+      resolveActiveBrandSettlementPolicyVersion({
+        brandId,
+        effectiveAt,
+        policyVersions: brandSettlementPolicyRows
+      }),
+    [brandSettlementPolicyRows]
+  );
+
+  const getActiveBrandTaskPrice = useCallback(
+    (brandId: string, taskConfigId: string, effectiveAt: string) =>
+      resolveActiveBrandTaskPriceVersion({
+        brandId,
+        effectiveAt,
+        priceVersions: brandTaskPriceRows,
+        taskConfigId
+      }),
+    [brandTaskPriceRows]
+  );
 
   const saveStore = useCallback((record: StoreRecord) => {
     setStoreRows((currentRows) => upsertById(currentRows, record));
@@ -103,33 +183,41 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
 
   const value = useMemo<CustomerManagementStateValue>(
     () => ({
+      brandSettlementPolicyRows,
+      brandTaskPriceRows,
       brandRows,
       contractRows,
       customerRows,
       storeRows,
       deriveCustomerStatus,
       getBrandById,
+      getActiveBrandSettlementPolicy,
+      getActiveBrandTaskPrice,
       getBrandStoreCount,
       getCustomerBrandCount,
       getCustomerById,
       getCustomerStoreCount,
-      saveBrand,
+      saveBrandConfiguration,
       saveContract,
       saveCustomer,
       saveStore
     }),
     [
       brandRows,
+      brandSettlementPolicyRows,
+      brandTaskPriceRows,
       contractRows,
       customerRows,
       storeRows,
       deriveCustomerStatus,
       getBrandById,
+      getActiveBrandSettlementPolicy,
+      getActiveBrandTaskPrice,
       getBrandStoreCount,
       getCustomerBrandCount,
       getCustomerById,
       getCustomerStoreCount,
-      saveBrand,
+      saveBrandConfiguration,
       saveContract,
       saveCustomer,
       saveStore

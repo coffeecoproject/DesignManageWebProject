@@ -1261,6 +1261,7 @@ export function FinanceFinancialStatementsPage() {
     accountingVoucherLaterPeriodAdjustmentRows,
     accountingVoucherLifecycleRows,
     bankReconciliationRows,
+    declarationPreparationRows,
     financeRows,
     invoiceBusinessAllocationRows,
     invoiceRows,
@@ -1285,6 +1286,7 @@ export function FinanceFinancialStatementsPage() {
       accountingVoucherLaterPeriodAdjustmentRows,
       {
         accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+        declarationPreparationRows,
         invoiceBusinessAllocationRows,
         monthEndMatterRows
       }
@@ -1292,6 +1294,7 @@ export function FinanceFinancialStatementsPage() {
     [
       accountingVoucherLaterPeriodAdjustmentRows,
       bankReconciliationRows,
+      declarationPreparationRows,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,

@@ -10,7 +10,11 @@ import {
   type AccountingVoucherLifecycleRecord,
   type AccountingVoucherRecord
 } from './financeAccountingVoucherModel';
-import { commitFinanceTransactionReview } from './financeSettlementWorkflow';
+import {
+  commitFinanceTransactionAdjustmentRegistration,
+  commitFinanceTransactionReview
+} from './financeSettlementWorkflow';
+import { buildFinanceTransactionAdjustmentRecord } from './financeTransactionAdjustmentModel';
 import {
   attachTaxMatterPaymentTransaction,
   attachTaxMatterRefundTransaction,
@@ -21,6 +25,7 @@ import {
   recordTaxMatterPaymentResult,
   recordTaxMatterRefundApplication,
   recordTaxMatterRefundResult,
+  reconcileTaxMatterCashSettlement,
   startTaxMatterDeclarationRevision
 } from './financeTaxMatterModel';
 
@@ -77,18 +82,29 @@ function createPayableTaxMatter(
     ...seed,
     dataStatus: '已确认',
     declarationDate: '2026-07-10',
+    declarationFormFileIds: [`declaration-form-${matterType}`],
     declarationHistory: [],
-    declarationReceiptFileId: `declaration-${matterType}`,
-    declarationReceiptNo: `DECLARATION-${matterType}`,
+    declarationResultFileId: `declaration-${matterType}`,
+    declarationVerificationStatus: '人工核验一致',
+    declarationVerifiedAt: '2026-07-10 15:20',
+    declarationVerifiedBy: '李明',
+    taxAuthorityDeclarationNo: `DECLARATION-${matterType}`,
     declarationStatus: '申报成功',
     declarationVersion: 1,
     filedAccountingAmount: amount,
     files: [
       {
-        id: `declaration-${matterType}`,
-        name: `${matterType}申报回执.pdf`,
+        id: `declaration-form-${matterType}`,
+        name: `${matterType}正式申报表.pdf`,
         status: '已上传',
-        type: '申报回执',
+        type: '正式申报表',
+        updatedAt: '2026-07-10'
+      },
+      {
+        id: `declaration-${matterType}`,
+        name: `${matterType}申报结果回执.pdf`,
+        status: '已上传',
+        type: '申报结果回执',
         updatedAt: '2026-07-10'
       }
     ],
@@ -407,7 +423,22 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(originalPayment.matter, '更正', '补充纳税调整增加应纳税额');
       const correctedMatter = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-08-10',
-        declarationReceiptNo: 'CIT-CORRECTION-002',
+        declarationFormFiles: [{
+          id: 'cit-correction-form',
+          name: '企业所得税更正正式申报表.pdf',
+          status: '已上传',
+          type: '正式申报表',
+          updatedAt: '2026-08-10'
+        }],
+        declarationResultFile: {
+          id: 'cit-correction-result',
+          name: '企业所得税更正申报结果回执.pdf',
+          status: '已上传',
+          type: '申报结果回执',
+          updatedAt: '2026-08-10'
+        },
+        declarationVerificationStatus: '人工核验一致',
+        taxAuthorityDeclarationNo: 'CIT-CORRECTION-002',
         declarationStatus: '申报成功',
         differenceReason: '补充纳税调整增加应纳税额',
         settlementAmount: 100,
@@ -513,7 +544,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(paidOriginal.matter, '更正', '更正后调减增值税及附加');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-05-10',
-        declarationReceiptNo: 'VAT-REFUND-CORRECTION-002',
+        taxAuthorityDeclarationNo: 'VAT-REFUND-CORRECTION-002',
         declarationStatus: '申报成功',
         differenceReason: '更正后调减增值税及附加',
         settlementAmount: 66.51,
@@ -546,13 +577,184 @@ const tests: UnitTest[] = [
       }), 'VAT refund should preserve itemized allocation data');
       const matter = attachTaxMatterRefundTransaction(refunded, transaction);
       const reviewedTransaction = reviewTransaction(transaction);
-      const booked = bookReadyVouchers(buildVoucherRows([reviewedTransaction], [matter]));
-      const liabilityCredit = ['2221.01', '2221.04', '2221.06', '2221.07']
-        .reduce((total, code) => total + sumLedger(booked.entries, code, '贷方'), 0);
+      const voucherRows = buildVoucherRows([reviewedTransaction], [matter]);
+      const refundVoucher = assertDefined(
+        voucherRows.find((record) => record.sourceNo === transaction.transactionNo),
+        'reviewed VAT refund should create a cash voucher'
+      );
+      const liabilityCredit = refundVoucher.lines
+        .filter((line) => line.side === '贷方' && ['2221.01', '2221.04', '2221.06', '2221.07'].includes(line.subjectCode))
+        .reduce((total, line) => total + line.amount, 0);
+      const booked = bookReadyVouchers(voucherRows);
 
       assertEqual(transaction.taxPaymentAllocations?.length, 4, 'VAT refund should retain four allocation lines');
       assertClose(liabilityCredit, 66.51, 'booked VAT refund should settle the four reduced liabilities');
       assertClose(sumLedger(booked.entries, '1002', '借方'), 66.51, 'booked VAT refund should increase bank balance');
+    }
+  },
+  {
+    name: 'TAX-GL-09 reopens tax payment after its pending-review transaction is voided',
+    run: () => {
+      const matter = createPayableTaxMatter('印花税', 10, {
+        id: 'workflow-stamp-payment-void',
+        matterNo: 'TAX-WORKFLOW-STAMP-PAYMENT-VOID'
+      });
+      const payment = preparePaymentWorkflow(matter, 10);
+      const voidedTransaction: FinanceTransactionRecord = {
+        ...payment.transaction,
+        status: '已作废'
+      };
+      const reconciledMatter = reconcileTaxMatterCashSettlement(payment.matter, [voidedTransaction]);
+
+      assertClose(reconciledMatter.paidAmount, 0, 'voided payment must not remain in the tax cash facts');
+      assertEqual(reconciledMatter.paymentStatus, '待缴纳', 'voided payment should reopen payment handling');
+      assertEqual(reconciledMatter.processStatus, '待缴款', 'voided payment should reopen the tax matter');
+      assertEqual(reconciledMatter.paymentDate, undefined, 'voided payment must clear the effective payment date');
+    }
+  },
+  {
+    name: 'TAX-GL-10 nets a posted tax-payment reversal back to the unpaid liability',
+    run: () => {
+      const matter = createPayableTaxMatter('企业所得税', 500, {
+        id: 'workflow-cit-payment-reversal',
+        matterNo: 'TAX-WORKFLOW-CIT-PAYMENT-REVERSAL'
+      });
+      const payment = preparePaymentWorkflow(matter, 500);
+      const reviewedPayment = reviewTransaction(payment.transaction);
+      const reversal = buildFinanceTransactionAdjustmentRecord({
+        existingRows: [reviewedPayment],
+        files: [createReceipt('cit-payment-reversal-receipt', '缴款回单')],
+        form: {
+          amountText: '500.00',
+          mode: '冲正',
+          note: '原缴款流水重复登记',
+          occurredAt: '2026-07-16',
+          reason: '原缴款流水重复登记'
+        },
+        originRecord: reviewedPayment
+      });
+      const reviewedReversal = reviewTransaction(reversal, [reversal, reviewedPayment]);
+      const reconciledMatter = reconcileTaxMatterCashSettlement(
+        payment.matter,
+        [reviewedReversal, reviewedPayment]
+      );
+      const booked = bookReadyVouchers(
+        buildVoucherRows([reviewedReversal, reviewedPayment], [reconciledMatter])
+      );
+
+      assertClose(reconciledMatter.paidAmount, 0, 'posted reversal should remove the effective tax payment');
+      assertEqual(reconciledMatter.processStatus, '待缴款', 'posted reversal should reopen tax payment handling');
+      assertClose(
+        sumLedger(booked.entries, '1002', '借方'),
+        sumLedger(booked.entries, '1002', '贷方'),
+        'payment and reversal should net the bank movement to zero'
+      );
+      assertClose(
+        sumLedger(booked.entries, '2221.02', '贷方') - sumLedger(booked.entries, '2221.02', '借方'),
+        500,
+        'tax liability should remain outstanding after the cash payment is reversed'
+      );
+
+      const repeatedPayment = preparePaymentWorkflow(
+        reconciledMatter,
+        500,
+        '2026-07-17',
+        [reviewedReversal, reviewedPayment]
+      );
+
+      assertClose(repeatedPayment.transaction.amount, 500, 'reopened tax liability should allow a new payment registration');
+    }
+  },
+  {
+    name: 'TAX-GL-11 reopens a tax refund after its posted receipt is reversed',
+    run: () => {
+      const matter = createPayableTaxMatter('企业所得税', 0, {
+        filedAccountingAmount: -500,
+        id: 'workflow-cit-refund-reversal',
+        matterNo: 'TAX-WORKFLOW-CIT-REFUND-REVERSAL',
+        payableAmount: 0,
+        paymentStatus: '无需缴纳',
+        processStatus: '待退抵处理',
+        refundableAmount: 500,
+        refundApplicationDate: '2026-07-12',
+        refundStatus: '申请中',
+        settlementDirection: '应退'
+      });
+      const receipt = createReceipt('cit-refund-reversal-receipt', '退税回单');
+      const refundedMatter = recordTaxMatterRefundResult(matter, {
+        amount: 500,
+        receiptFile: receipt,
+        refundDate: '2026-07-15'
+      });
+      const refundTransaction = assertDefined(buildTaxMatterRefundTransaction({
+        financeRows: [],
+        publicAccountRef: getFinanceSeedPublicAccountRef('public-account-ccb-payment-reserve'),
+        record: refundedMatter,
+        refundAmount: 500,
+        refundDate: '2026-07-15',
+        refundReceiptFile: receipt
+      }), 'tax refund should generate a receipt transaction');
+      const attachedMatter = attachTaxMatterRefundTransaction(refundedMatter, refundTransaction);
+      const reviewedRefund = reviewTransaction(refundTransaction);
+      const reversal = buildFinanceTransactionAdjustmentRecord({
+        existingRows: [reviewedRefund],
+        files: [createReceipt('cit-refund-bank-reversal', '退税回单')],
+        form: {
+          amountText: '500.00',
+          mode: '冲正',
+          note: '退税到账流水重复登记',
+          occurredAt: '2026-07-16',
+          reason: '退税到账流水重复登记'
+        },
+        originRecord: reviewedRefund
+      });
+      const reviewedReversal = reviewTransaction(reversal, [reversal, reviewedRefund]);
+      const reconciledMatter = reconcileTaxMatterCashSettlement(
+        attachedMatter,
+        [reviewedReversal, reviewedRefund]
+      );
+
+      assertClose(reconciledMatter.refundedAmount ?? 0, 0, 'posted reversal should remove the effective refund receipt');
+      assertEqual(reconciledMatter.refundStatus, '申请中', 'refund handling should return to the submitted application');
+      assertEqual(reconciledMatter.processStatus, '退抵处理中', 'reversed refund should no longer appear complete');
+      assertEqual(reconciledMatter.refundDate, undefined, 'reversed refund must clear the effective receipt date');
+    }
+  },
+  {
+    name: 'TAX-GL-12 rejects partial tax reversal and keeps amount differences on the supplement path',
+    run: () => {
+      const matter = createPayableTaxMatter('企业所得税', 500, {
+        id: 'workflow-cit-partial-reversal',
+        matterNo: 'TAX-WORKFLOW-CIT-PARTIAL-REVERSAL'
+      });
+      const payment = preparePaymentWorkflow(matter, 500);
+      const reviewedPayment = reviewTransaction(payment.transaction);
+      const partialReversal = buildFinanceTransactionAdjustmentRecord({
+        existingRows: [reviewedPayment],
+        files: [createReceipt('cit-partial-reversal-receipt', '缴款回单')],
+        form: {
+          amountText: '250.00',
+          mode: '冲正',
+          note: '尝试部分冲正',
+          occurredAt: '2026-07-16',
+          reason: '尝试部分冲正'
+        },
+        originRecord: reviewedPayment
+      });
+      const result = commitFinanceTransactionAdjustmentRegistration(
+        { financeRows: [reviewedPayment], receivablePayableRows: [] },
+        partialReversal
+      );
+
+      assertEqual(result.success, false, 'tax payment reversal must keep the original allocation intact');
+      if (result.success) {
+        throw new Error('partial tax reversal should have been rejected');
+      }
+      assertEqual(
+        result.message,
+        '税费缴退流水只能全额冲正；差额请登记补差流水',
+        'partial correction should use the supplement workflow'
+      );
     }
   }
 ];

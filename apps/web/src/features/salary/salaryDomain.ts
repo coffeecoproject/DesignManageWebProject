@@ -236,11 +236,21 @@ export type SalaryMonthlyWorkflowRecord = {
   payrollNo?: string;
   paidAt?: string;
   paidBy?: string;
+  paymentLifecycleRecords?: SalaryPaymentLifecycleRecord[];
   personalIncomeTaxPeriod?: string;
+  salaryCompositionLines?: SalaryCompositionLine[];
   salarySettlementReferences?: string[];
   settlementSnapshot?: SalarySettlementSnapshot;
+  settlementSourceRecords?: SalarySettlementSourceRecord[];
   status: SalaryMonthlyStatus;
   updatedAt: string;
+};
+
+export type SalaryPaymentLifecycleRecord = {
+  action: '关联发放流水' | '发放流水冲正';
+  actor: string;
+  financeTransactionNo: string;
+  occurredAt: string;
 };
 
 export type SalaryOperationRecord = {
@@ -363,8 +373,10 @@ export function createConfirmedSalaryMonthlyWorkflow({
   memberId,
   month,
   note,
+  salaryCompositionLines,
   salarySettlementReferences = [],
-  settlementSnapshot
+  settlementSnapshot,
+  settlementSourceRecords
 }: {
   confirmedAt: string;
   confirmedBy: string;
@@ -372,8 +384,10 @@ export function createConfirmedSalaryMonthlyWorkflow({
   memberId: string;
   month: string;
   note: string;
+  salaryCompositionLines: SalaryCompositionLine[];
   salarySettlementReferences?: string[];
   settlementSnapshot: SalarySettlementSnapshot;
+  settlementSourceRecords: SalarySettlementSourceRecord[];
 }): SalaryMonthlyWorkflowRecord {
   return {
     id: existingWorkflow?.id ?? buildSalaryMonthlyWorkflowId(month, memberId),
@@ -386,14 +400,17 @@ export function createConfirmedSalaryMonthlyWorkflow({
     confirmedBy,
     paidAt: undefined,
     paidBy: undefined,
+    salaryCompositionLines: salaryCompositionLines.map((line) => ({ ...line })),
     salarySettlementReferences: [...new Set(salarySettlementReferences)].sort(),
     settlementSnapshot,
+    settlementSourceRecords: settlementSourceRecords.map((record) => ({ ...record })),
     updatedAt: confirmedAt
   };
 }
 
 export function createPaidSalaryMonthlyWorkflow({
   existingWorkflow,
+  financeTransactionNo,
   memberId,
   month,
   note,
@@ -401,12 +418,25 @@ export function createPaidSalaryMonthlyWorkflow({
   paidBy
 }: {
   existingWorkflow?: SalaryMonthlyWorkflowRecord;
+  financeTransactionNo?: string;
   memberId: string;
   month: string;
   note: string;
   paidAt: string;
   paidBy: string;
 }): SalaryMonthlyWorkflowRecord {
+  const paymentLifecycleRecords = financeTransactionNo
+    ? [
+        ...(existingWorkflow?.paymentLifecycleRecords ?? []),
+        {
+          action: '关联发放流水' as const,
+          actor: paidBy,
+          financeTransactionNo,
+          occurredAt: paidAt
+        }
+      ]
+    : existingWorkflow?.paymentLifecycleRecords;
+
   return {
     id: existingWorkflow?.id ?? buildSalaryMonthlyWorkflowId(month, memberId),
     memberId,
@@ -418,16 +448,20 @@ export function createPaidSalaryMonthlyWorkflow({
     confirmedBy: existingWorkflow?.confirmedBy,
     paidAt,
     paidBy,
+    paymentLifecycleRecords,
     personalIncomeTaxPeriod: existingWorkflow?.personalIncomeTaxPeriod,
+    salaryCompositionLines: existingWorkflow?.salaryCompositionLines?.map((line) => ({ ...line })),
     salarySettlementReferences: existingWorkflow?.salarySettlementReferences
       ? [...existingWorkflow.salarySettlementReferences]
       : [],
     settlementSnapshot: existingWorkflow?.settlementSnapshot,
+    settlementSourceRecords: existingWorkflow?.settlementSourceRecords?.map((record) => ({ ...record })),
     updatedAt: paidAt
   };
 }
 
 export function reverseSalaryPaymentByFinanceTransaction({
+  actor,
   financeTransactionNo,
   occurredAt,
   salaryMonthlyWorkflows,
@@ -460,11 +494,29 @@ export function reverseSalaryPaymentByFinanceTransaction({
     payrollNo: existingWorkflow?.payrollNo ?? payment.payrollNo,
     paidAt: undefined,
     paidBy: undefined,
+    paymentLifecycleRecords: [
+      ...(existingWorkflow?.paymentLifecycleRecords ?? [
+        {
+          action: '关联发放流水' as const,
+          actor: payment.paidBy,
+          financeTransactionNo,
+          occurredAt: payment.paidAt
+        }
+      ]),
+      {
+        action: '发放流水冲正',
+        actor,
+        financeTransactionNo,
+        occurredAt
+      }
+    ],
     personalIncomeTaxPeriod: existingWorkflow?.personalIncomeTaxPeriod ?? payment.taxPeriod,
+    salaryCompositionLines: existingWorkflow?.salaryCompositionLines?.map((line) => ({ ...line })),
     salarySettlementReferences: existingWorkflow?.salarySettlementReferences
       ? [...existingWorkflow.salarySettlementReferences]
       : [],
     settlementSnapshot: existingWorkflow?.settlementSnapshot ?? payment.settlementSnapshot,
+    settlementSourceRecords: existingWorkflow?.settlementSourceRecords?.map((record) => ({ ...record })),
     status: '已确认',
     updatedAt: occurredAt
   };
@@ -519,7 +571,14 @@ function resolvePerformanceSalaryMonth({
 
   let salaryMonth = requestedMonth;
 
-  while (isSalaryMonthlyPaid(salaryMonthlyWorkflows, employeeNo, salaryMonth)) {
+  while (
+    salaryMonthlyWorkflows.some(
+      (workflow) =>
+        workflow.memberId === employeeNo
+        && workflow.month === salaryMonth
+        && (workflow.status === '已确认' || workflow.status === '已发放')
+    )
+  ) {
     const nextMonth = getNextSalaryMonth(salaryMonth);
 
     if (nextMonth === salaryMonth) {
@@ -551,7 +610,7 @@ export function buildSalaryPerformanceSettlementLines({
       requestedMonth: string;
     }
   ) {
-    if (input.amount === 0 || seenReferences.has(input.salarySettlementReference)) {
+    if (seenReferences.has(input.salarySettlementReference)) {
       return;
     }
 
@@ -576,12 +635,16 @@ export function buildSalaryPerformanceSettlementLines({
   }
 
   for (const record of performanceRecords) {
-    addLine(record, {
-      amount: record.prepayAmount,
-      kind: '月度预发',
-      requestedMonth: record.performanceMonth,
-      salarySettlementReference: record.salarySettlementReference
-    });
+    const quarterlyReference = record.quarterlyReviewResult?.salarySettlementReference;
+
+    if (!quarterlyReference || record.salarySettlementReference !== quarterlyReference) {
+      addLine(record, {
+        amount: record.prepayAmount,
+        kind: '月度预发',
+        requestedMonth: record.performanceMonth,
+        salarySettlementReference: record.salarySettlementReference
+      });
+    }
 
     if (record.quarterlyReviewResult) {
       addLine(record, {
@@ -897,7 +960,7 @@ function getSettlementStatusFromWorkflow(
     return workflow.status;
   }
 
-  if (workflow?.status === '已确认' && sourceReady) {
+  if (workflow?.status === '已确认' && (workflow.settlementSnapshot || sourceReady)) {
     return workflow.status;
   }
 
@@ -1629,15 +1692,30 @@ function getMonthlySalaryOperationRecords({
   }
 
   if (workflow?.paidAt) {
-    rows.push({
-      action: '确认工资发放',
-      actor: workflow.paidBy ?? '周倩',
-      id: `salary-op-paid-${workflow.id}`,
-      object,
-      summary: payrollNo ? `工资已按 ${payrollNo} 发放` : '工资已发放',
-      time: workflow.paidAt
-    });
+    if (!workflow.paymentLifecycleRecords?.some((record) => record.action === '关联发放流水')) {
+      rows.push({
+        action: '关联发放流水',
+        actor: workflow.paidBy ?? '周倩',
+        id: `salary-op-paid-${workflow.id}`,
+        object,
+        summary: payrollNo ? `${payrollNo} 已关联工资发放流水` : '工资发放流水已关联',
+        time: workflow.paidAt
+      });
+    }
   }
+
+  rows.push(
+    ...(workflow?.paymentLifecycleRecords ?? []).map((record, index) => ({
+      action: record.action,
+      actor: record.actor,
+      id: `salary-op-payment-${workflow?.id ?? `${month}-${memberName}`}-${index}-${record.occurredAt}`,
+      object,
+      summary: record.action === '发放流水冲正'
+        ? `${record.financeTransactionNo} 已冲正，薪酬恢复待发`
+        : `${record.financeTransactionNo} 已关联工资发放流水`,
+      time: record.occurredAt
+    }))
+  );
 
   return rows.sort((left, right) => right.time.localeCompare(left.time));
 }
@@ -1816,7 +1894,7 @@ export function buildSalaryMonthlyReports({
         id: `salary-performance-adjustment:${line.salarySettlementReference}`,
         memberId: member.id,
         month,
-        reason: `${line.kind}原计划进入 ${line.deferredFromMonth} 薪酬；原工资已发放，转入本月${isIncrease ? '绩效补发' : '绩效追回'}`,
+        reason: `${line.kind}原计划进入 ${line.deferredFromMonth} 薪酬；原薪酬已确认，转入本月${isIncrease ? '绩效补发' : '绩效追回'}`,
         salarySettlementReference: line.salarySettlementReference,
         source: '薪酬调整',
         status: '已生效',
@@ -1900,7 +1978,7 @@ export function buildSalaryMonthlyReports({
     const personalIncomeTaxProfile = personalIncomeTaxProfiles?.find(
       (profile) => profile.employeeNo === member.id && profile.taxYear === plannedPersonalIncomeTaxPeriod.slice(0, 4)
     );
-    const settlementSourceRecords = buildSettlementSourceRecords({
+    const currentSettlementSourceRecords = buildSettlementSourceRecords({
       attendanceContract,
       member,
       personalIncomeTaxPeriod: plannedPersonalIncomeTaxPeriod,
@@ -1914,7 +1992,13 @@ export function buildSalaryMonthlyReports({
       salaryMonthlyWorkflows,
       salarySettlementReferences: performanceSettlementLines.map((line) => line.salarySettlementReference)
     });
-    const settlementPendingSourceLabels = [
+    const hasFrozenSettlement = Boolean(
+      workflow?.settlementSnapshot && (workflow.status === '已确认' || workflow.status === '已发放')
+    );
+    const settlementSourceRecords = hasFrozenSettlement && workflow?.settlementSourceRecords
+      ? workflow.settlementSourceRecords.map((record) => ({ ...record }))
+      : currentSettlementSourceRecords;
+    const settlementPendingSourceLabels = hasFrozenSettlement ? [] : [
       ...settlementSourceRecords
       .filter((record) => record.status === '待确认')
       .map((record) => record.label),
@@ -1985,7 +2069,7 @@ export function buildSalaryMonthlyReports({
         + settlementSnapshot.withheldPersonalIncomeTaxAmount
     );
     const netSalary = settlementSnapshot.employeeNetPayableAmount;
-    const salaryCompositionLines = buildSalaryCompositionLines({
+    const currentSalaryCompositionLines = buildSalaryCompositionLines({
       attendanceDeductionAmount: Math.abs(Math.min(0, attendanceDeltaAmount)),
       attendanceDeductionHours: Math.abs(Math.min(0, attendanceDeltaHours)),
       attendanceIncreaseAmount: Math.max(0, attendanceDeltaAmount),
@@ -1998,6 +2082,9 @@ export function buildSalaryMonthlyReports({
       salaryAdjustmentAmount,
       socialInsuranceDeductionAmount
     });
+    const salaryCompositionLines = hasFrozenSettlement && workflow?.salaryCompositionLines
+      ? workflow.salaryCompositionLines.map((line) => ({ ...line }))
+      : currentSalaryCompositionLines;
     const status = getSettlementStatusFromWorkflow(workflow, sourceReady);
     const payrollNo = workflow?.payrollNo;
 

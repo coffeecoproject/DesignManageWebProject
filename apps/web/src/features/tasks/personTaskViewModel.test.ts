@@ -1,5 +1,6 @@
 import { peopleMockRepository } from '../people/peopleRepository';
 import type { PeopleMember } from '../people/peopleTypes';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import type { StoreTaskRecord } from './TaskManagementState';
 import { buildPersonTaskSummaries, isOpenPersonTask } from './personTaskViewModel';
 
@@ -14,9 +15,7 @@ type UnitTestResult = {
   total: number;
 };
 
-type PeopleMemberOverrides = Omit<Partial<PeopleMember>, 'workEvaluationSummary'> & {
-  workEvaluationSummary?: Partial<PeopleMember['workEvaluationSummary']>;
-};
+type PeopleMemberOverrides = Partial<PeopleMember>;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -46,12 +45,7 @@ function createMember(id: string, overrides: PeopleMemberOverrides = {}): People
     status: '在职',
     taskAccessStatus: '可参与任务',
     ...overrides,
-    taskCapabilityIds: overrides.taskCapabilityIds ?? ['task-type-floor-plan'],
-    workEvaluationSummary: {
-      ...baseMember.workEvaluationSummary,
-      score: 90,
-      ...overrides.workEvaluationSummary
-    }
+    taskCapabilityIds: overrides.taskCapabilityIds ?? ['task-type-floor-plan']
   };
 }
 
@@ -81,6 +75,36 @@ function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
   };
 }
 
+function createPublishedPerformanceRecord(
+  workNo: string,
+  qualityScore: number,
+  performanceMonth = '2026-06'
+): PerformanceMonthlyCategoryRecord {
+  return {
+    category: '绘图任务制',
+    employeeName: `测试人员 ${workNo}`,
+    events: [],
+    id: `published-performance:${workNo}:${performanceMonth}`,
+    monthlyAmount: 1200,
+    note: '按正式绩效结果生成。',
+    performanceMonth,
+    position: '空间设计师',
+    prepayAmount: 600,
+    qualityScore,
+    ruleName: '设计绩效规则',
+    ruleVersion: 'V1',
+    salarySettlementReference: `performance-result:${workNo}:${performanceMonth}:v1`,
+    sourceLabel: '正式绩效结果',
+    sourceRecordIds: [`task-score:${workNo}:${performanceMonth}`],
+    sourceTaskCount: 1,
+    taskScore: qualityScore,
+    updatedAt: `${performanceMonth}-28 18:00`,
+    workNo
+  };
+}
+
+const noPublishedPerformanceRecords: PerformanceMonthlyCategoryRecord[] = [];
+
 const tests: UnitTest[] = [
   {
     name: 'closed tasks are not counted in person task summaries',
@@ -89,6 +113,7 @@ const tests: UnitTest[] = [
       const summaries = buildPersonTaskSummaries({
         now: '2026-06-17 10:00',
         peopleRows,
+        publishedPerformanceRecords: noPublishedPerformanceRecords,
         storeTaskRows: [
           createTask({ id: 'task-open', executorId: 'member-active', status: '进行中' }),
           createTask({ id: 'task-done', executorId: 'member-active', status: '已完成' }),
@@ -114,6 +139,7 @@ const tests: UnitTest[] = [
         completedRange: { endDate: '2026-06-30', startDate: '2026-06-01' },
         now: '2026-06-17 10:00',
         peopleRows,
+        publishedPerformanceRecords: noPublishedPerformanceRecords,
         storeTaskRows: [
           createTask({
             acceptedAt: '2026-06-10 09:00',
@@ -151,6 +177,7 @@ const tests: UnitTest[] = [
       const summaries = buildPersonTaskSummaries({
         now: '2026-06-17 10:00',
         peopleRows,
+        publishedPerformanceRecords: noPublishedPerformanceRecords,
         storeTaskRows: [
           createTask({
             id: 'task-in-progress',
@@ -194,6 +221,7 @@ const tests: UnitTest[] = [
         completedRange: { endDate: '2026-06-30', startDate: '2026-06-01' },
         now: '2026-06-17 10:00',
         peopleRows,
+        publishedPerformanceRecords: noPublishedPerformanceRecords,
         storeTaskRows: [
           createTask({
             id: 'task-open-reworked',
@@ -230,6 +258,7 @@ const tests: UnitTest[] = [
       const summaries = buildPersonTaskSummaries({
         now: '2026-06-17 10:00',
         peopleRows,
+        publishedPerformanceRecords: noPublishedPerformanceRecords,
         storeTaskRows: [createTask({ executorId: 'member-ended', id: 'task-open-ended', status: '验收驳回' })]
       });
       const summary = summaries[0];
@@ -238,6 +267,23 @@ const tests: UnitTest[] = [
       assertEqual(summary.id, 'member-ended', 'ended member should be selected');
       assertEqual(summary.involvedTasks.length, 1, 'open task should be visible for ended member');
       assertEqual(summary.dispatch.state, '不可分配', 'ended member should be unavailable');
+    }
+  },
+  {
+    name: 'PF-29 person task summary consumes the published performance result',
+    run() {
+      const member = createMember('member-active');
+      const [summary] = buildPersonTaskSummaries({
+        now: '2026-06-17 10:00',
+        peopleRows: [member],
+        publishedPerformanceRecords: [createPublishedPerformanceRecord(member.id, 92)],
+        storeTaskRows: []
+      });
+
+      assert(summary, 'active member should remain visible');
+      assertEqual(summary.performanceScore, 92, 'published performance should be the displayed score');
+      assertEqual(summary.performancePeriod, '2026-06', 'published performance period should be retained');
+      assertEqual(summary.dispatch.state, '当前可分配', 'published performance should remain a soft dispatch signal');
     }
   },
   {

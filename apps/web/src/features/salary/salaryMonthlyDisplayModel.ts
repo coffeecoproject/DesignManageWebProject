@@ -27,7 +27,7 @@ export type StatutoryDeductionDisplayRow = {
   sourceMonth: string;
 };
 
-export type SalaryPayslipStatus = '暂未生成' | '预览' | '已生成' | '已锁定';
+export type SalaryPayslipStatus = '暂不可查看' | '预览' | '待发放' | '已发放';
 
 export type SalaryPayslipLine = {
   deductionAmount?: number;
@@ -35,6 +35,15 @@ export type SalaryPayslipLine = {
   incomeAmount?: number;
   item: string;
   note: string;
+};
+
+export type SalaryPerformanceSettlementDisplayRow = {
+  amount: number;
+  id: string;
+  kind: SalaryMonthlyReport['performanceSettlementLines'][number]['kind'];
+  note: string;
+  performancePeriod: string;
+  sourceLabel: string;
 };
 
 export type SalaryAdjustmentFormValue = {
@@ -79,10 +88,10 @@ export const salaryCompositionDirectionTone = {
 } as const;
 
 export const salaryPayslipStatusTone = {
-  暂未生成: 'gray',
+  暂不可查看: 'gray',
   预览: 'amber',
-  已生成: 'blue',
-  已锁定: 'green'
+  待发放: 'blue',
+  已发放: 'green'
 } as const;
 
 export const salaryAdjustmentTypeOptions: SalaryAdjustmentType[] = ['奖金', '补贴', '补发', '误发追回', '代垫款收回'];
@@ -143,22 +152,47 @@ export function getStatutoryDeductionRows(report: SalaryMonthlyReport): Statutor
   ];
 }
 
+export function getSalaryPerformanceSettlementRows(
+  report: SalaryMonthlyReport
+): SalaryPerformanceSettlementDisplayRow[] {
+  const sourceRecordsById = new Map(
+    report.performanceRecords.map((record) => [record.id, record])
+  );
+
+  return report.performanceSettlementLines.map((line) => {
+    const sourceRecord = sourceRecordsById.get(line.sourceRecordId);
+    const performancePeriod = sourceRecord?.quarterlyReviewResult?.reviewPeriod
+      ?? line.performanceMonth;
+
+    return {
+      amount: line.amount,
+      id: line.salarySettlementReference,
+      kind: line.kind,
+      note: line.deferredFromMonth
+        ? `原计划进入 ${line.deferredFromMonth} 薪酬，因原薪酬已确认转入本月`
+        : `${sourceRecord?.ruleName ?? '绩效规则'} / 本月直接计入`,
+      performancePeriod,
+      sourceLabel: sourceRecord?.sourceLabel ?? '正式绩效结果'
+    };
+  });
+}
+
 export function getSalaryPayslipStatus(report: SalaryMonthlyReport): SalaryPayslipStatus {
   if (report.status === '结算中') {
-    return '暂未生成';
+    return '暂不可查看';
   }
 
   if (report.status === '待确认') {
     return '预览';
   }
 
-  return report.status === '已发放' ? '已锁定' : '已生成';
+  return report.status === '已发放' ? '已发放' : '待发放';
 }
 
 export function getSalaryPayslipNo(report: SalaryMonthlyReport) {
   const status = getSalaryPayslipStatus(report);
 
-  if (status === '暂未生成') {
+  if (status === '暂不可查看') {
     return '-';
   }
 
@@ -166,17 +200,7 @@ export function getSalaryPayslipNo(report: SalaryMonthlyReport) {
     return '预览未编号';
   }
 
-  return `SLIP-${report.month.replace('-', '')}-${report.member.id}`;
-}
-
-export function getSalaryPayslipGeneratedAt(report: SalaryMonthlyReport) {
-  const status = getSalaryPayslipStatus(report);
-
-  if (status === '暂未生成' || status === '预览') {
-    return '-';
-  }
-
-  return report.workflow?.confirmedAt ?? '-';
+  return report.workflow?.payrollNo ?? '-';
 }
 
 function sumSocialInsuranceDeduction(report: SalaryMonthlyReport, category: '社保' | '公积金') {

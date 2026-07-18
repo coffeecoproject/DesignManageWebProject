@@ -1,4 +1,5 @@
 import type { PersonnelType } from '../people/peopleTypes';
+import type { PerformanceResponseDeadline } from './performanceResultDeadlineModel';
 
 export type PerformanceRuleStatus = '草稿' | '待审核' | '审核驳回' | '已发布' | '停用';
 
@@ -8,15 +9,9 @@ export type PerformanceRuleCategory = '绘图任务制' | '岗位职责考核' |
 
 export type PerformanceRuleTemplateMode = '固定模块' | '待新增';
 
-export type PerformanceRuleCategoryVersionState = '当前发布版本' | '员工执行旧版' | '待审核' | '审核驳回' | '草稿';
+export type PerformanceRuleCategoryVersionState = '当前发布版本' | '历史发布版本' | '待审核' | '审核驳回' | '草稿';
 
 export type PerformanceRuleDocumentStatus = '待生成' | '已生成' | '已发布' | '已归档';
-
-export type PerformanceSignatureStatus = '待发起' | '待员工确认' | '部分确认' | '已完成' | '已撤回' | '已失效';
-
-export type PerformanceSignatureMethod = '在线确认' | '电子签待接入' | '线下补录';
-
-export type PerformanceSignatureEmployeeStatus = '待确认' | '已确认' | '已拒绝' | '已撤回';
 
 export type PerformanceTaskScoreItem = {
   id: string;
@@ -35,6 +30,7 @@ export type PerformanceQualityDimension = {
   id: string;
   name: string;
   score: number;
+  weight: number;
   focus: string;
   evidence: string;
 };
@@ -87,7 +83,7 @@ export type PerformanceMonthlyEvent = {
 
 export type PerformanceMonthlyTaskSummary = {
   id: string;
-  taskItem: '平面图' | '施工图' | '物料营建单/下单流程' | '门店P图';
+  taskItem: string;
   quantity: number;
   quantityUnit: string;
   scorePerUnit: number;
@@ -136,36 +132,29 @@ export type PerformanceMonthlyProrationSummary = {
   originalFullScore: number;
 };
 
-export type PerformanceQuarterlyReviewResult = {
-  confirmedAt: string;
-  finalAmount: number;
-  prepayAmount: number;
-  reviewPeriod: string;
-  salarySettlementReference: string;
-  settlementDate: string;
-  sourceMonths: string[];
-  sourceRecordIds: string[];
-};
+export type PerformanceRuleApplicabilityStatus =
+  | '适用'
+  | '人员未找到'
+  | '人员类型不适用'
+  | '岗位不适用'
+  | '规则未发布'
+  | '不在生效期'
+  | '规则未配置'
+  | '规则冲突'
+  | '规则版本不一致';
 
-export type PerformanceExecutionContractStatus = '已匹配' | '缺少签署' | '签署版本不一致' | '岗位不适用' | '规则未发布' | '规则未配置';
-
-export type PerformanceExecutionContractSource = '结构化规则' | '签署规则选项' | '未匹配';
-
-export type PerformanceExecutionContract = {
+export type PerformanceRuleApplicability = {
   applicablePositions: string[];
   category: PerformanceRuleCategory;
+  effectiveEndAt?: string;
+  effectiveStartAt?: string;
   note: string;
+  personnelType?: PersonnelType;
   position: string;
   ruleId?: string;
   ruleName: string;
-  ruleSource: PerformanceExecutionContractSource;
   ruleVersion: string;
-  signedAt?: string;
-  signedFileId?: string;
-  signedFileName?: string;
-  signedRuleName?: string;
-  signedRuleVersion?: string;
-  status: PerformanceExecutionContractStatus;
+  status: PerformanceRuleApplicabilityStatus;
   workNo: string;
 };
 
@@ -174,7 +163,6 @@ export type PerformanceMonthlyCategoryRecord = {
   employeeName: string;
   workNo: string;
   position: string;
-  department: string;
   category: PerformanceRuleCategory;
   ruleName: string;
   ruleVersion: string;
@@ -183,46 +171,166 @@ export type PerformanceMonthlyCategoryRecord = {
   monthlyAmount: number;
   prepayAmount: number;
   sourceTaskCount: number;
+  sourceRecordIds: string[];
   qualityScore?: number;
   taskScore?: number;
   updatedAt: string;
   sourceLabel: string;
   note: string;
-  executionContract?: PerformanceExecutionContract;
+  ruleApplicability?: PerformanceRuleApplicability;
+  resultLifecycleStatus?: PerformanceResultLifecycleStatus;
+  resultResponseStatus?: PerformanceEmployeeResponseStatus;
   employmentScope?: PerformanceMonthlyEmploymentScope;
   prorationSummary?: PerformanceMonthlyProrationSummary;
-  quarterlyReviewResult?: PerformanceQuarterlyReviewResult;
   events: PerformanceMonthlyEvent[];
 };
 
-export type PerformanceDrawingTaskMonthlyRecord = {
-  id: string;
-  employeeName: string;
-  workNo: string;
-  position: string;
-  department: string;
+export type PerformanceDrawingTaskMonthlyRecord = Omit<
+  PerformanceMonthlyCategoryRecord,
+  'category' | 'qualityScore' | 'taskScore'
+> & {
   category: '绘图任务制';
-  ruleName: string;
-  ruleVersion: string;
-  salarySettlementReference: string;
-  performanceMonth: string;
   taskScore: number;
   qualityScore: number;
   qualityBand: string;
   baseQualityRatio: number;
   excessQualityRatio: number;
-  monthlyAmount: number;
-  prepayAmount: number;
-  sourceTaskCount: number;
-  updatedAt: string;
   taskSummaries: PerformanceMonthlyTaskSummary[];
   qualitySummaries: PerformanceMonthlyQualitySummary[];
   amountSummary: PerformanceMonthlyAmountSummary;
-  executionContract?: PerformanceExecutionContract;
-  employmentScope?: PerformanceMonthlyEmploymentScope;
-  prorationSummary?: PerformanceMonthlyProrationSummary;
-  quarterlyReviewResult?: PerformanceQuarterlyReviewResult;
-  events: PerformanceMonthlyEvent[];
+};
+
+export type PerformanceResultKind = '月度结果' | '季度结果';
+
+export type PerformanceResultLifecycleStatus = '待发布' | '已发布' | '已结算' | '已更正';
+
+export type PerformanceEmployeeResponseStatus = '待确认' | '已确认' | '有异议' | '异议已处理';
+
+export type PerformanceEmployeeResponse = {
+  employeeId: string;
+  evidenceFileIds?: string[];
+  objectionReason?: string;
+  respondedAt?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolutionSummary?: string;
+  resultId: string;
+  resultVersion: number;
+  status: PerformanceEmployeeResponseStatus;
+};
+
+export type PerformanceResultEvent = {
+  action:
+    | '生成草稿'
+    | '发布结果'
+    | '确认结果'
+    | '提出异议'
+    | '维持原结果'
+    | '更正结果'
+    | '标记已更正'
+    | '结算结果';
+  actor: string;
+  id: string;
+  resultVersion: number;
+  summary: string;
+  time: string;
+};
+
+export type PerformanceCalculationSnapshot = {
+  categoryRecord: PerformanceMonthlyCategoryRecord;
+  drawingTaskRecord?: PerformanceDrawingTaskMonthlyRecord;
+};
+
+export type PerformanceQuarterlySourceSnapshot = {
+  monthlyAmount: number;
+  period: string;
+  prepayAmount: number;
+  publishedAt: string;
+  resultId: string;
+  resultVersion: number;
+  ruleId: string;
+  ruleName: string;
+  ruleVersion: string;
+  sourceHash: string;
+};
+
+export type PerformanceQuarterlyCalculationSnapshot = {
+  category: PerformanceRuleCategory;
+  expectedMonths: string[];
+  missingMonths: string[];
+  unresolvedObjectionMonths: string[];
+  quarterAdjustmentAmount: number;
+  quarterAdjustmentReason?: string;
+  quarterCalculatedAmount: number;
+  quarterClosed: boolean;
+  quarterDifferenceAmount: number;
+  quarterEndDate: string;
+  quarterEvidenceFileIds: string[];
+  quarterFinalAmount: number;
+  quarterPrepayAmount: number;
+  salarySettlementMonth: string;
+  sourceResults: PerformanceQuarterlySourceSnapshot[];
+};
+
+type PerformanceResultSnapshotBase = {
+  correctionReason?: string;
+  deliveredAt?: string;
+  employeeId: string;
+  employeeNameSnapshot: string;
+  employeeResponse: PerformanceEmployeeResponse;
+  events: PerformanceResultEvent[];
+  id: string;
+  kind: PerformanceResultKind;
+  lifecycleStatus: PerformanceResultLifecycleStatus;
+  period: string;
+  positionSnapshot: string;
+  publishedAt?: string;
+  publishedBy?: string;
+  responseDeadline?: string;
+  responseDeadlineSnapshot?: PerformanceResponseDeadline;
+  resultKey: string;
+  ruleId: string;
+  ruleNameSnapshot: string;
+  ruleVersion: string;
+  salarySettlementMonth?: string;
+  salarySettlementReference: string;
+  sourceHash: string;
+  sourceRecordIds: string[];
+  supersededByResultId?: string;
+  supersedesResultId?: string;
+  version: number;
+  workNoSnapshot: string;
+};
+
+export type PerformanceMonthlyResultSnapshot = PerformanceResultSnapshotBase & {
+  calculationSnapshot: PerformanceCalculationSnapshot;
+  kind: '月度结果';
+  monthlyAmount: number;
+  prepayAmount: number;
+};
+
+export type PerformanceQuarterlyResultSnapshot = PerformanceResultSnapshotBase & {
+  calculationSnapshot: PerformanceQuarterlyCalculationSnapshot;
+  kind: '季度结果';
+  quarterAdjustmentAmount: number;
+  quarterAdjustmentReason?: string;
+  quarterCalculatedAmount: number;
+  quarterDifferenceAmount: number;
+  quarterEvidenceFileIds: string[];
+  quarterFinalAmount: number;
+  quarterPrepayAmount: number;
+  salarySettlementMonth: string;
+};
+
+export type PerformanceResultSnapshot = PerformanceMonthlyResultSnapshot | PerformanceQuarterlyResultSnapshot;
+
+export type PerformanceResultReadRecord = {
+  currentSourceRecord?: PerformanceMonthlyCategoryRecord;
+  currentQuarterDraft?: PerformanceQuarterlyResultSnapshot;
+  publishBlockingReasons: string[];
+  result: PerformanceResultSnapshot;
+  sourceAvailable: boolean;
+  sourceChangedSincePublish: boolean;
 };
 
 export type PerformanceRuleGeneratedFile = {
@@ -245,59 +353,6 @@ export type PerformanceRuleSourceFile = {
   uploadedBy: string;
   uploadedAt: string;
   note: string;
-};
-
-export type PerformanceSignatureEmployee = {
-  id: string;
-  employeeName: string;
-  workNo: string;
-  position: string;
-  currentRuleVersion: string;
-  pendingRuleVersion?: string;
-  executionRuleVersion: string;
-  calculationPolicy: string;
-  confirmStatus: PerformanceSignatureEmployeeStatus;
-  confirmedAt?: string;
-  method: PerformanceSignatureMethod;
-  effectiveDate: string;
-  payrollUsable: boolean;
-  note: string;
-};
-
-export type PerformanceSignatureBatchEvent = {
-  id: string;
-  time: string;
-  actor: string;
-  action: string;
-  changeSummary: string;
-  note: string;
-};
-
-export type PerformanceSignatureBatch = {
-  id: string;
-  code: string;
-  name: string;
-  ruleId: string;
-  ruleName: string;
-  category: PerformanceRuleCategory;
-  ruleVersion: string;
-  previousRuleVersion?: string;
-  executionFallback: string;
-  positions: string[];
-  personnelType: PersonnelType;
-  fileName: string;
-  fileVersion: string;
-  method: PerformanceSignatureMethod;
-  status: PerformanceSignatureStatus;
-  launchedAt: string;
-  launchedBy: string;
-  effectiveDate: string;
-  totalCount: number;
-  confirmedCount: number;
-  payrollUsableCount: number;
-  riskNote: string;
-  employees: PerformanceSignatureEmployee[];
-  events: PerformanceSignatureBatchEvent[];
 };
 
 export type PerformanceStructuredFieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum' | 'money' | 'ratio';
@@ -340,9 +395,10 @@ export type PerformanceRulePreset = {
   fullScore: number;
   baseLineScore?: number;
   basePerformanceAmount?: number;
+  belowBaselineFactor: number;
+  monthlyPrepayRatio: number;
   scoringCycle: string;
   reviewCycle: string;
-  payoutMode: string;
   taskScoreSummary: string;
   qualityScoreSummary: string;
   calculationSummary: string;

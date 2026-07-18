@@ -13,6 +13,7 @@ import {
   type FinanceDeclarationPreparationRecord
 } from './financeDeclarationPreparationData';
 import type {
+  FinanceTaxDeclarationVerificationStatus,
   FinanceTaxMatterDeclarationStatus,
   FinanceTaxMatterAccountingStatus,
   FinanceTaxMatterDataStatus,
@@ -42,12 +43,16 @@ export type SocialInsuranceTaxMatterSummary = {
   totalAmount: number;
 };
 
-export type TaxMatterReceiptFileType = '申报回执' | '缴款回单' | '退抵申请回执' | '退税申请回执' | '退税回单' | '抵缴确认单';
+export type TaxMatterReceiptFileType = '正式申报表' | '申报结果回执' | '缴款回单' | '退抵申请回执' | '退税申请回执' | '退税回单' | '抵缴确认单';
 
 export type TaxMatterDeclarationResultInput = {
   declarationDate: string;
-  declarationReceiptFile?: RelatedFileRecord;
-  declarationReceiptNo?: string;
+  declarationFormFiles?: RelatedFileRecord[];
+  declarationResultFile?: RelatedFileRecord;
+  declarationVerificationNote?: string;
+  declarationVerificationStatus?: FinanceTaxDeclarationVerificationStatus;
+  taxAuthorityAssessmentVoucherNo?: string;
+  taxAuthorityDeclarationNo?: string;
   declarationStatus: Extract<FinanceTaxMatterDeclarationStatus, '申报成功' | '零申报'>;
   differenceReason?: string;
   settlementAmount: number;
@@ -62,10 +67,38 @@ export type TaxMatterDeclarationRevisionContext = {
   operationId?: string;
 };
 
+function getLatestEffectiveDeclarationHistory(
+  declarationHistory: FinanceTaxMatterRecord['declarationHistory']
+) {
+  return [...declarationHistory].reverse().find((record) => record.action !== '作废');
+}
+
 export function getTaxMatterDeclarationResultValidationError(
   record: Pick<FinanceTaxMatterRecord, 'declarationHistory' | 'declarationVersion' | 'matterType' | 'preparedPayableAmount' | 'preparedRefundableAmount' | 'preparedSettlementDirection'>,
-  input: Pick<TaxMatterDeclarationResultInput, 'declarationStatus' | 'differenceReason' | 'settlementAmount' | 'settlementDirection' | 'vatBreakdown'>
+  input: Pick<
+    TaxMatterDeclarationResultInput,
+    | 'declarationFormFiles'
+    | 'declarationResultFile'
+    | 'declarationStatus'
+    | 'declarationVerificationNote'
+    | 'declarationVerificationStatus'
+    | 'differenceReason'
+    | 'settlementAmount'
+    | 'settlementDirection'
+    | 'vatBreakdown'
+  >
 ) {
+  if (
+    input.declarationVerificationStatus === '人工核验一致'
+    && (!input.declarationFormFiles?.length || !input.declarationResultFile)
+  ) {
+    return '正式申报表和申报结果回执齐全后才能标记核验一致';
+  }
+
+  if (input.declarationVerificationStatus === '核验不一致' && !input.declarationVerificationNote?.trim()) {
+    return '请填写核验不一致原因';
+  }
+
   if (record.matterType === '增值税及附加') {
     if (input.declarationStatus === '零申报') {
       return input.settlementDirection === '无需补退' && roundMoney(input.settlementAmount) === 0
@@ -216,7 +249,7 @@ export function getVatDeclarationVersionSettlement(
       + breakdown.localEducationSurchargeAmount
   );
   const priorOfficialTotalAmount = record.declarationVersion > 1
-    ? roundMoney(record.declarationHistory.at(-1)?.filedVatSettlement?.totalPayableAmount ?? 0)
+    ? roundMoney(getLatestEffectiveDeclarationHistory(record.declarationHistory)?.filedVatSettlement?.totalPayableAmount ?? 0)
     : 0;
   const versionDifference = roundMoney(officialTotalAmount - priorOfficialTotalAmount);
 
@@ -227,9 +260,13 @@ export function getVatDeclarationVersionSettlement(
       : { amount: 0, direction: '无需补退', officialTotalAmount };
 }
 
-export type TaxMatterDeclarationReceiptInput = {
-  declarationReceiptFile?: RelatedFileRecord;
-  declarationReceiptNo?: string;
+export type TaxMatterDeclarationEvidenceInput = {
+  declarationFormFiles: RelatedFileRecord[];
+  declarationResultFile?: RelatedFileRecord;
+  declarationVerificationNote?: string;
+  declarationVerificationStatus: FinanceTaxDeclarationVerificationStatus;
+  taxAuthorityAssessmentVoucherNo?: string;
+  taxAuthorityDeclarationNo?: string;
 };
 
 export type TaxMatterPaymentResultInput = {
@@ -311,7 +348,8 @@ export function getTaxMatterRequiredReceiptTypes(record: TaxMatterReceiptRequire
   }
 
   return [
-    '申报回执',
+    '正式申报表',
+    '申报结果回执',
     ...(['部分缴纳', '已缴纳'].includes(record.paymentStatus) ? ['缴款回单' as const] : [])
   ];
 }
@@ -405,7 +443,7 @@ export function getTaxMatterAccountingAmount(
 
 export function getTaxMatterAccountingDelta(record: FinanceTaxMatterRecord) {
   const currentAmount = getTaxMatterAccountingAmount(record);
-  const previousVersion = record.declarationHistory.at(-1);
+  const previousVersion = getLatestEffectiveDeclarationHistory(record.declarationHistory);
 
   if (!previousVersion) {
     return currentAmount;
@@ -421,21 +459,34 @@ export function getTaxMatterAccountingReceiptTypes(
     return [];
   }
 
-  return ['申报成功', '零申报'].includes(record.declarationStatus) ? ['申报回执'] : [];
+  return ['申报成功', '零申报'].includes(record.declarationStatus)
+    ? ['正式申报表', '申报结果回执']
+    : [];
 }
 
 export function getTaxMatterEvidenceStatus(
-  record: Pick<FinanceTaxMatterRecord, 'declarationReceiptFileId' | 'declarationReceiptNo' | 'declarationStatus' | 'matterType'>
+  record: Pick<
+    FinanceTaxMatterRecord,
+    'declarationFormFileIds' | 'declarationResultFileId' | 'declarationStatus' | 'declarationVerificationStatus' | 'matterType'
+  >
 ): FinanceTaxMatterEvidenceStatus {
   if (isSocialInsuranceTaxMatter(record.matterType) || record.declarationStatus === '无申报义务') {
-    return '无需回执';
+    return '无需申报材料';
   }
 
   if (!['申报成功', '零申报'].includes(record.declarationStatus)) {
-    return '待补回执';
+    return '材料待补';
   }
 
-  return record.declarationReceiptFileId || record.declarationReceiptNo ? '已齐全' : '待补回执';
+  if (!record.declarationResultFileId || record.declarationFormFileIds.length === 0) {
+    return '材料待补';
+  }
+
+  if (record.declarationVerificationStatus === '核验不一致') {
+    return '核验不一致';
+  }
+
+  return record.declarationVerificationStatus === '人工核验一致' ? '已齐全' : '待核验';
 }
 
 export function getTaxMatterAccountingStatus(record: FinanceTaxMatterRecord): FinanceTaxMatterAccountingStatus {
@@ -483,7 +534,7 @@ export function getTaxMatterSettlementDirection(
 export function deriveTaxMatterProcessStatus(
   record: Pick<
     FinanceTaxMatterRecord,
-    'dataStatus' | 'declarationReceiptFileId' | 'declarationReceiptNo' | 'declarationStatus' | 'matterType' | 'offsetAmount' | 'offsetBaselineAmount' | 'offsetReceivedAmount' | 'offsetReceivedBaselineAmount' | 'paidAmount' | 'payableAmount' | 'paymentBaselineAmount' | 'refundableAmount' | 'refundBaselineAmount' | 'refundedAmount' | 'refundStatus' | 'settlementDirection'
+    'dataStatus' | 'declarationFormFileIds' | 'declarationResultFileId' | 'declarationStatus' | 'declarationVerificationStatus' | 'matterType' | 'offsetAmount' | 'offsetBaselineAmount' | 'offsetReceivedAmount' | 'offsetReceivedBaselineAmount' | 'paidAmount' | 'payableAmount' | 'paymentBaselineAmount' | 'refundableAmount' | 'refundBaselineAmount' | 'refundedAmount' | 'refundStatus' | 'settlementDirection'
   >
 ): FinanceTaxMatterProcessStatus {
   if (record.dataStatus !== '已确认') {
@@ -524,7 +575,7 @@ export function deriveTaxMatterProcessStatus(
     return '待退抵处理';
   }
 
-  return record.declarationReceiptFileId || record.declarationReceiptNo ? '已完成' : '待补回执';
+  return getTaxMatterEvidenceStatus(record) === '已齐全' ? '已完成' : '申报材料待核对';
 }
 
 export function recordTaxMatterDeclarationResult(
@@ -549,22 +600,35 @@ export function recordTaxMatterDeclarationResult(
     : vatVersionSettlement?.amount ?? roundMoney(input.settlementAmount);
   const payableAmount = settlementDirection === '应缴' ? settlementAmount : 0;
   const refundableAmount = settlementDirection === '应退' ? settlementAmount : 0;
-  const priorFiledAccountingAmount = record.declarationHistory.at(-1)?.filedAccountingAmount;
+  const priorFiledAccountingAmount = getLatestEffectiveDeclarationHistory(record.declarationHistory)?.filedAccountingAmount;
   const currentSettlementAccountingAmount = payableAmount - refundableAmount;
   const filedAccountingAmount = record.matterType === '企业所得税' || record.matterType === '印花税'
     ? roundMoney((priorFiledAccountingAmount ?? 0) + currentSettlementAccountingAmount)
     : record.filedAccountingAmount;
   const currentVersionPaidAmount = getTaxMatterCurrentVersionPaidAmount(record);
-  const declarationReceiptFileId = input.declarationReceiptFile?.id;
-  const nextFiles = input.declarationReceiptFile
-    ? [input.declarationReceiptFile, ...record.files]
-    : record.files;
+  const declarationFormFiles = input.declarationFormFiles ?? [];
+  const declarationResultFileId = input.declarationResultFile?.id;
+  const retainedFiles = record.files.filter((file) => (
+    !record.declarationFormFileIds.includes(file.id)
+    && file.id !== record.declarationResultFileId
+  ));
+  const nextFiles = mergeTaxMatterFiles(retainedFiles, [
+    ...declarationFormFiles,
+    ...(input.declarationResultFile ? [input.declarationResultFile] : [])
+  ]);
+  const declarationVerificationStatus = input.declarationVerificationStatus ?? '未核验';
   const nextRecord: FinanceTaxMatterRecord = {
     ...record,
     declarationDate: input.declarationDate,
     declarationDifferenceReason: input.differenceReason?.trim() || undefined,
-    declarationReceiptFileId,
-    declarationReceiptNo: input.declarationReceiptNo?.trim() || undefined,
+    declarationFormFileIds: declarationFormFiles.map((file) => file.id),
+    declarationResultFileId,
+    declarationVerificationNote: input.declarationVerificationNote?.trim() || undefined,
+    declarationVerificationStatus,
+    declarationVerifiedAt: declarationVerificationStatus === '未核验' ? undefined : `${financeToday} 15:10`,
+    declarationVerifiedBy: declarationVerificationStatus === '未核验' ? undefined : '李明',
+    taxAuthorityAssessmentVoucherNo: input.taxAuthorityAssessmentVoucherNo?.trim() || undefined,
+    taxAuthorityDeclarationNo: input.taxAuthorityDeclarationNo?.trim() || undefined,
     declarationStatus: input.declarationStatus,
     files: nextFiles,
     filedAccountingAmount,
@@ -599,7 +663,7 @@ export function recordTaxMatterDeclarationResult(
         actor: '李明',
         id: `tax-op-declaration-${record.id}-${Date.now()}`,
         object: record.matterNo,
-        summary: `${input.declarationStatus}，${settlementDirection} ${settlementAmount.toFixed(2)} 元`,
+        summary: `第 ${record.declarationVersion} 版：${input.declarationStatus}，${settlementDirection} ${settlementAmount.toFixed(2)} 元`,
         time: `${financeToday} 15:10`
       },
       ...record.operationRecords
@@ -607,26 +671,42 @@ export function recordTaxMatterDeclarationResult(
   };
 }
 
-export function supplementTaxMatterDeclarationReceipt(
+export function supplementTaxMatterDeclarationEvidence(
   record: FinanceTaxMatterRecord,
-  input: TaxMatterDeclarationReceiptInput
+  input: TaxMatterDeclarationEvidenceInput
 ): FinanceTaxMatterRecord {
-  const declarationReceiptNo = input.declarationReceiptNo?.trim() || undefined;
+  const taxAuthorityAssessmentVoucherNo = input.taxAuthorityAssessmentVoucherNo?.trim() || undefined;
+  const taxAuthorityDeclarationNo = input.taxAuthorityDeclarationNo?.trim() || undefined;
+  const declarationVerificationNote = input.declarationVerificationNote?.trim() || undefined;
+  const hasRequiredFiles = input.declarationFormFiles.length > 0 && Boolean(input.declarationResultFile);
 
   if (
     !['申报成功', '零申报'].includes(record.declarationStatus)
-    || (!input.declarationReceiptFile && !declarationReceiptNo)
+    || (!input.declarationFormFiles.length && !input.declarationResultFile && !taxAuthorityDeclarationNo)
+    || (input.declarationVerificationStatus === '人工核验一致' && !hasRequiredFiles)
+    || (input.declarationVerificationStatus === '核验不一致' && !declarationVerificationNote)
   ) {
     return record;
   }
 
-  const nextFiles = input.declarationReceiptFile
-    ? [input.declarationReceiptFile, ...record.files.filter((file) => file.id !== input.declarationReceiptFile?.id)]
-    : record.files;
+  const retainedFiles = record.files.filter((file) => (
+    !record.declarationFormFileIds.includes(file.id)
+    && file.id !== record.declarationResultFileId
+  ));
+  const nextFiles = mergeTaxMatterFiles(retainedFiles, [
+    ...input.declarationFormFiles,
+    ...(input.declarationResultFile ? [input.declarationResultFile] : [])
+  ]);
   const nextRecord: FinanceTaxMatterRecord = {
     ...record,
-    declarationReceiptFileId: input.declarationReceiptFile?.id ?? record.declarationReceiptFileId,
-    declarationReceiptNo: declarationReceiptNo ?? record.declarationReceiptNo,
+    declarationFormFileIds: input.declarationFormFiles.map((file) => file.id),
+    declarationResultFileId: input.declarationResultFile?.id,
+    declarationVerificationNote,
+    declarationVerificationStatus: input.declarationVerificationStatus,
+    declarationVerifiedAt: input.declarationVerificationStatus === '未核验' ? undefined : `${financeToday} 15:20`,
+    declarationVerifiedBy: input.declarationVerificationStatus === '未核验' ? undefined : '李明',
+    taxAuthorityAssessmentVoucherNo,
+    taxAuthorityDeclarationNo,
     files: nextFiles,
     updatedAt: financeToday
   };
@@ -636,18 +716,21 @@ export function supplementTaxMatterDeclarationReceipt(
     processStatus: deriveTaxMatterProcessStatus(nextRecord),
     operationRecords: [
       {
-        action: '补充申报回执',
+        action: '维护申报材料',
         actor: '李明',
-        id: `tax-op-declaration-receipt-${record.id}-${Date.now()}`,
+        id: `tax-op-declaration-evidence-${record.id}-${Date.now()}`,
         object: record.matterNo,
-        summary: input.declarationReceiptFile
-          ? `上传 ${input.declarationReceiptFile.name}`
-          : `登记申报回执号 ${declarationReceiptNo}`,
+        summary: `申报材料${hasRequiredFiles ? '已齐全' : '待补充'}，${input.declarationVerificationStatus}`,
         time: `${financeToday} 15:20`
       },
       ...record.operationRecords
     ]
   };
+}
+
+function mergeTaxMatterFiles(existingFiles: RelatedFileRecord[], incomingFiles: RelatedFileRecord[]) {
+  const incomingIds = new Set(incomingFiles.map((file) => file.id));
+  return [...incomingFiles, ...existingFiles.filter((file) => !incomingIds.has(file.id))];
 }
 
 export function recordTaxMatterRefundResult(
@@ -870,7 +953,8 @@ export function recordTaxMatterPaymentResult(
 export function getTaxMatterDeclarationRevisionValidationError(
   record: FinanceTaxMatterRecord,
   action: '更正' | '作废',
-  allRecords: FinanceTaxMatterRecord[] = [record]
+  allRecords: FinanceTaxMatterRecord[] = [record],
+  voucherRows: Array<{ id: string; status: string }> = []
 ) {
   if (!['申报成功', '零申报'].includes(record.declarationStatus)) {
     return '只能调整已完成申报的事项';
@@ -885,6 +969,16 @@ export function getTaxMatterDeclarationRevisionValidationError(
     )
   ) {
     return '已有缴款、退税申请或退税到账记录，只能更正申报';
+  }
+
+  if (
+    action === '作废'
+    && voucherRows.some((voucher) => (
+      voucher.id === `voucher-tax-${record.id}-filing-v${record.declarationVersion}`
+      && voucher.status === '已记账'
+    ))
+  ) {
+    return '本版申报差异已记账，不能直接作废；请通过更正申报形成后续调整';
   }
 
   if (record.matterType !== '企业所得税' || record.declarationScenario !== '季度预缴') {
@@ -934,9 +1028,16 @@ export function startTaxMatterDeclarationRevision(
   const currentHistory = {
     action,
     declarationDate: record.declarationDate,
-    declarationReceiptFileId: record.declarationReceiptFileId,
-    declarationReceiptNo: record.declarationReceiptNo,
+    declarationFormFileIds: record.declarationFormFileIds,
+    declarationResultFileId: record.declarationResultFileId,
+    declarationVerificationNote: record.declarationVerificationNote,
+    declarationVerificationStatus: record.declarationVerificationStatus,
+    declarationVerifiedAt: record.declarationVerifiedAt,
+    declarationVerifiedBy: record.declarationVerifiedBy,
+    taxAuthorityAssessmentVoucherNo: record.taxAuthorityAssessmentVoucherNo,
+    taxAuthorityDeclarationNo: record.taxAuthorityDeclarationNo,
     declarationStatus: record.declarationStatus,
+    filingAdjustmentAccountingPeriod: record.filingAdjustmentAccountingPeriod,
     filedAccountingAmount: getTaxMatterAccountingAmount(record),
     filedPayableAmount: record.payableAmount,
     filedRefundableAmount: record.refundableAmount,
@@ -954,11 +1055,18 @@ export function startTaxMatterDeclarationRevision(
     ...record,
     declarationDate: undefined,
     declarationDifferenceReason: undefined,
+    declarationFormFileIds: [],
     declarationHistory: [...record.declarationHistory, currentHistory],
-    declarationReceiptFileId: undefined,
-    declarationReceiptNo: undefined,
+    declarationResultFileId: undefined,
+    declarationVerificationNote: undefined,
+    declarationVerificationStatus: '未核验',
+    declarationVerifiedAt: undefined,
+    declarationVerifiedBy: undefined,
+    taxAuthorityAssessmentVoucherNo: undefined,
+    taxAuthorityDeclarationNo: undefined,
     declarationStatus: '待申报',
     declarationVersion: record.declarationVersion + 1,
+    filingAdjustmentAccountingPeriod: undefined,
     filedAccountingAmount: undefined,
     payableAmount: 0,
     paymentBaselineAmount: record.paidAmount,
@@ -990,7 +1098,9 @@ export function startTaxMatterDeclarationRevision(
         actor: operatedBy,
         id: context.operationId ?? `tax-op-revision-${record.id}-${Date.now()}`,
         object: record.matterNo,
-        summary: reason.trim(),
+        summary: action === '更正'
+          ? `第 ${record.declarationVersion} 版调整为第 ${record.declarationVersion + 1} 版：${reason.trim()}`
+          : `作废第 ${record.declarationVersion} 版：${reason.trim()}`,
         time: operatedAt
       },
       ...record.operationRecords
@@ -1442,9 +1552,11 @@ export function ensurePayrollIitTaxMatterRecords(
       return {
         dataStatus: '待复核',
         declarationDueDate: dueDate,
+        declarationFormFileIds: [],
         declarationHistory: [],
         declarationScenario: '月度扣缴',
         declarationStatus: '待申报',
+        declarationVerificationStatus: '未核验',
         declarationVersion: 1,
         files: [],
         id: `tax-matter-${compactPeriod}-iit`,
@@ -1612,7 +1724,7 @@ function buildTaxMatterRefundAllocations(
     return undefined;
   }
 
-  const previousSettlement = record.declarationHistory.at(-1)?.filedVatSettlement;
+  const previousSettlement = getLatestEffectiveDeclarationHistory(record.declarationHistory)?.filedVatSettlement;
 
   if (!previousSettlement) {
     return undefined;
@@ -1698,23 +1810,124 @@ function buildTaxMatterRefundAllocations(
 }
 
 export function getTaxMatterLinkedPaymentAmount(record: FinanceTaxMatterRecord, financeRows: FinanceTransactionRecord[]) {
-  const linkedNos = new Set(record.linkedTransactionNos);
+  const { adjustmentRows, directRows } = getTaxMatterSettlementTransactions(record, financeRows);
 
-  return roundMoney(
-    financeRows
-      .filter((row) => linkedNos.has(row.transactionNo) && row.direction === '支出' && row.status !== '已作废')
-      .reduce((total, row) => total + row.amount, 0)
-  );
+  return getTaxMatterSettlementNetAmount(directRows, adjustmentRows, '税费缴纳');
 }
 
 export function getTaxMatterLinkedRefundAmount(record: FinanceTaxMatterRecord, financeRows: FinanceTransactionRecord[]) {
-  const linkedNos = new Set(record.linkedTransactionNos);
+  const { adjustmentRows, directRows } = getTaxMatterSettlementTransactions(record, financeRows);
 
-  return roundMoney(
-    financeRows
-      .filter((row) => linkedNos.has(row.transactionNo) && row.direction === '收入' && row.status !== '已作废')
-      .reduce((total, row) => total + row.amount, 0)
-  );
+  return getTaxMatterSettlementNetAmount(directRows, adjustmentRows, '税费退还');
+}
+
+function getTaxMatterSettlementTransactions(
+  record: FinanceTaxMatterRecord,
+  financeRows: FinanceTransactionRecord[]
+) {
+  const linkedNos = new Set(record.linkedTransactionNos);
+  const directRows = financeRows.filter((row) => (
+    row.sourceType === '税费事项'
+    && (row.sourceNo === record.matterNo || linkedNos.has(row.transactionNo))
+  ));
+  const directTransactionNos = new Set(directRows.map((row) => row.transactionNo));
+  const adjustmentRows = financeRows.filter((row) => (
+    row.adjustmentContext?.originTransactionNo
+    && directTransactionNos.has(row.adjustmentContext.originTransactionNo)
+  ));
+
+  return {
+    adjustmentRows,
+    directRows
+  };
+}
+
+function getTaxMatterSettlementNetAmount(
+  directRows: FinanceTransactionRecord[],
+  adjustmentRows: FinanceTransactionRecord[],
+  category: '税费缴纳' | '税费退还'
+) {
+  const positiveDirection = category === '税费缴纳' ? '支出' : '收入';
+  const negativeDirection = positiveDirection === '支出' ? '收入' : '支出';
+  const activeDirectRows = directRows.filter((row) => row.category === category && row.status !== '已作废');
+  const postedAdjustmentRows = adjustmentRows.filter((row) => row.category === category && row.status === '已入账');
+
+  return roundMoney(Math.max(0, [...activeDirectRows, ...postedAdjustmentRows].reduce((total, row) => {
+    if (row.direction === positiveDirection) {
+      return total + row.amount;
+    }
+
+    if (row.direction === negativeDirection) {
+      return total - row.amount;
+    }
+
+    return total;
+  }, 0)));
+}
+
+function getLatestTaxMatterSettlementDate(
+  directRows: FinanceTransactionRecord[],
+  category: '税费缴纳' | '税费退还'
+) {
+  return directRows
+    .filter((row) => row.category === category && row.status !== '已作废')
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))[0]
+    ?.occurredAt;
+}
+
+/**
+ * Tax handling stores the external filing result, while finance rows store the cash facts.
+ * Reconcile their amounts so a voided registration or a posted reversal cannot leave the
+ * tax matter falsely shown as paid or refunded.
+ */
+export function reconcileTaxMatterCashSettlement(
+  record: FinanceTaxMatterRecord,
+  financeRows: FinanceTransactionRecord[]
+): FinanceTaxMatterRecord {
+  const { adjustmentRows, directRows } = getTaxMatterSettlementTransactions(record, financeRows);
+
+  if (directRows.length === 0) {
+    return record;
+  }
+
+  const paidAmount = getTaxMatterSettlementNetAmount(directRows, adjustmentRows, '税费缴纳');
+  const refundedAmount = getTaxMatterSettlementNetAmount(directRows, adjustmentRows, '税费退还');
+  const currentVersionPaidAmount = roundMoney(Math.max(0, paidAmount - (record.paymentBaselineAmount ?? 0)));
+  const currentVersionRefundedAmount = roundMoney(Math.max(0, refundedAmount - (record.refundBaselineAmount ?? 0)));
+  const paymentStatus = record.payableAmount <= 0
+    ? '无需缴纳'
+    : currentVersionPaidAmount <= 0
+      ? '待缴纳'
+      : currentVersionPaidAmount < record.payableAmount
+        ? '部分缴纳'
+        : '已缴纳';
+  const refundStatus = (record.refundableAmount ?? 0) <= 0
+    ? '不适用'
+    : currentVersionRefundedAmount <= 0
+      ? record.refundApplicationDate
+        ? '申请中'
+        : '待申请'
+      : currentVersionRefundedAmount < (record.refundableAmount ?? 0)
+        ? '部分到账'
+        : '已到账';
+  const nextRecord: FinanceTaxMatterRecord = {
+    ...record,
+    paidAmount,
+    paymentDate: paidAmount > 0
+      ? getLatestTaxMatterSettlementDate(directRows, '税费缴纳')
+      : undefined,
+    paymentStatus,
+    refundedAmount,
+    refundDate: refundedAmount > 0
+      ? getLatestTaxMatterSettlementDate(directRows, '税费退还')
+      : undefined,
+    refundStatus
+  };
+
+  return {
+    ...nextRecord,
+    processStatus: deriveTaxMatterProcessStatus(nextRecord)
+  };
 }
 
 export function buildTaxMatterPaymentTransaction({

@@ -10,6 +10,7 @@ import {
   type AcceptanceScoringDraft
 } from './taskAcceptanceModel';
 import { appendTaskOperation } from './taskOperationModel';
+import { ensureTaskAcceptanceArchive } from './taskAcceptanceEvidenceModel';
 import {
   buildPartTimeLaborAcceptanceRecord,
   type PartTimeLaborSettlementPerson
@@ -34,6 +35,7 @@ export type PrepareTaskAcceptanceResult =
       commitInput: TaskAcceptanceCommitInput;
       nextTask: StoreTaskRecord;
       success: true;
+      warnings: string[];
     };
 
 function getBlockerTargetTab(blockers: string[]) {
@@ -61,13 +63,18 @@ export function prepareTaskAcceptanceCommit({
   }
 
   const scoringRecord = buildTaskPerformanceScoringRecord(task, scoringDraft, performanceRuleRows);
-  const nextTask = appendTaskOperation(
+  const acceptedTask = ensureTaskAcceptanceArchive(
     {
       ...task,
       acceptedAt,
       acceptorName: task.acceptorName,
       status: '已完成'
     },
+    acceptedAt,
+    task.acceptorName || '李明'
+  );
+  const nextTask = appendTaskOperation(
+    acceptedTask,
     '验收通过',
     `交付验收通过；绩效评分 ${formatScore(scoringRecord.qualityScore)}`,
     '李明',
@@ -78,22 +85,14 @@ export function prepareTaskAcceptanceCommit({
     task: nextTask
   });
 
-  if (!laborAcceptanceResult.ready) {
-    return {
-      blockers: [laborAcceptanceResult.message],
-      message: laborAcceptanceResult.message,
-      success: false,
-      targetTab: 'overview'
-    };
-  }
-
   return {
     commitInput: {
-      laborAcceptance: laborAcceptanceResult.acceptanceRecord,
+      laborAcceptance: laborAcceptanceResult.ready ? laborAcceptanceResult.acceptanceRecord : undefined,
       scoringRecord,
       task: nextTask
     },
     nextTask,
-    success: true
+    success: true,
+    warnings: laborAcceptanceResult.ready ? [] : [laborAcceptanceResult.message]
   };
 }

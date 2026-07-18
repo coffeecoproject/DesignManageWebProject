@@ -11,7 +11,7 @@ type PerformanceSignatureListTabsProps = {
   activeKey: SignatureListTabKey;
   records: PerformanceSignatureRelationRow[];
   onChange: (key: SignatureListTabKey) => void;
-  onCreateSignature: () => void;
+  onCreateArchive: () => void;
   onRowClick: (record: PerformanceSignatureRelationRow) => void;
 };
 
@@ -19,7 +19,7 @@ export function PerformanceSignatureListTabs({
   activeKey,
   records,
   onChange,
-  onCreateSignature,
+  onCreateArchive,
   onRowClick
 }: PerformanceSignatureListTabsProps) {
   const columns = useMemo<TableColumnsType<PerformanceSignatureRelationRow>>(
@@ -83,12 +83,17 @@ export function PerformanceSignatureListTabs({
       tabs={[
         createTabbedManagementTableItem<PerformanceSignatureRelationRow>({
           key: 'current',
-          label: '当前签署',
+          label: '当前档案',
           table: {
             columns,
-            count: { value: records.length, unit: '条当前签署' },
+            count: { value: records.length, unit: '份当前档案' },
             dataSource: records,
-            primaryAction: { icon: <PlusOutlined />, label: '新增签署', testId: 'performance-signature-create-button', onClick: onCreateSignature },
+            primaryAction: {
+              icon: <PlusOutlined />,
+              label: '新增签署档案',
+              testId: 'performance-signature-create-button',
+              onClick: onCreateArchive
+            },
             rowTestIdPrefix: 'performance-signature-current-table-row',
             rowKey: 'id',
             tableTestId: 'performance-signature-current-table',
@@ -97,10 +102,10 @@ export function PerformanceSignatureListTabs({
         }),
         createTabbedManagementTableItem<PerformanceSignatureRelationRow>({
           key: 'history',
-          label: '历史签署',
+          label: '历史档案',
           table: {
             columns,
-            count: { value: records.length, unit: '条历史版本' },
+            count: { value: records.length, unit: '份历史档案' },
             dataSource: records,
             rowTestIdPrefix: 'performance-signature-history-table-row',
             rowKey: 'id',

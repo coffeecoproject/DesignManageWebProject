@@ -2,8 +2,11 @@ import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCa
 import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import { getMemberWorkCalendar } from '../people/peopleDomain';
 import type { PeopleMember } from '../people/peopleTypes';
-import type { PerformanceEmployeeSignatureArchive, PerformanceSignatureRuleOption } from './performanceSignatureArchiveData';
-import { attachPerformanceExecutionContracts } from './performanceExecutionContract';
+import { attachPerformanceRuleApplicability } from './performanceRuleApplicabilityModel';
+import {
+  calculateDrawingTaskPerformanceAmount,
+  roundPerformanceValue
+} from './performanceRuleCalculationModel';
 import type {
   PerformanceDrawingTaskMonthlyRecord,
   PerformanceMonthlyCategoryRecord,
@@ -14,12 +17,9 @@ import type {
 
 type BuildPerformanceMonthlyRecordsInput = {
   annualExceptionRows: AnnualExceptionConfigRow[];
-  categoryRecords: PerformanceMonthlyCategoryRecord[];
   drawingTaskRecords: PerformanceDrawingTaskMonthlyRecord[];
   peopleRows: PeopleMember[];
-  ruleOptions: PerformanceSignatureRuleOption[];
   ruleRows: PerformanceRulePreset[];
-  signatureEmployees: PerformanceEmployeeSignatureArchive[];
   workCalendarRows: WorkCalendarRow[];
 };
 
@@ -60,17 +60,9 @@ export function getPerformanceMonthRange(month: string): PerformanceMonthRange {
   };
 }
 
-function roundPerformanceValue(value: number) {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  return Math.round(value * 100) / 100;
-}
-
 export function buildPerformanceSalarySettlementReference(
   performanceResultId: string,
-  resultKind: 'monthly-prepay' | 'quarterly-review',
+  resultKind: 'monthly-prepay' | 'quarterly-difference',
   revision = 'v1'
 ) {
   return `performance-result:${performanceResultId}:${resultKind}:${revision}`;
@@ -158,7 +150,19 @@ function findMonthlyMember(record: Pick<PerformanceMonthlyCategoryRecord, 'workN
   return peopleRows.find((member) => member.id === record.workNo);
 }
 
-function findMonthlyRule(record: Pick<PerformanceMonthlyCategoryRecord, 'category' | 'ruleName' | 'ruleVersion'>, ruleRows: PerformanceRulePreset[]) {
+function findMonthlyRule(
+  record: Pick<
+    PerformanceMonthlyCategoryRecord,
+    'category' | 'ruleName' | 'ruleVersion' | 'ruleApplicability'
+  >,
+  ruleRows: PerformanceRulePreset[],
+) {
+  const applicabilityRuleId = record.ruleApplicability?.ruleId;
+
+  if (applicabilityRuleId) {
+    return ruleRows.find((rule) => rule.id === applicabilityRuleId);
+  }
+
   return ruleRows.find(
     (rule) =>
       rule.name === record.ruleName ||
@@ -181,21 +185,6 @@ function buildProrationSummary(rule: PerformanceRulePreset, scope: PerformanceMo
   };
 }
 
-function getTaskConfirmRatio(taskScore: number, baseLineScore: number) {
-  return taskScore >= baseLineScore ? 1 : 0.5;
-}
-
-function getExcessMultiplier(rule: PerformanceRulePreset, taskScore: number, scope: PerformanceMonthlyEmploymentScope) {
-  const matchedBand = rule.excessBands.find((band) => {
-    const minScore = roundPerformanceValue(band.minScoreExclusive * scope.ratio);
-    const maxScore = typeof band.maxScore === 'number' ? roundPerformanceValue(band.maxScore * scope.ratio) : undefined;
-
-    return taskScore > minScore && (typeof maxScore !== 'number' || taskScore <= maxScore);
-  });
-
-  return matchedBand?.multiplier ?? 0;
-}
-
 function buildProrationNote(scope: PerformanceMonthlyEmploymentScope, proration: PerformanceMonthlyProrationSummary) {
   return `计绩区间 ${scope.effectiveStartDate} 至 ${scope.effectiveEndDate}，${scope.effectiveWorkdays}/${scope.monthWorkdays} 个工作日；满分口径 ${proration.fullScore} 分，达标线 ${proration.baseLineScore} 分。`;
 }
@@ -206,20 +195,18 @@ function adjustDrawingTaskRecord(
   rule: PerformanceRulePreset
 ): PerformanceDrawingTaskMonthlyRecord {
   const proration = buildProrationSummary(rule, scope);
-  const basePerformanceAmount = rule.basePerformanceAmount ?? 0;
-  const pointValue = rule.fullScore > 0 ? basePerformanceAmount / rule.fullScore : record.amountSummary.pointValue;
-  const confirmedBaseScore = Math.min(record.taskScore, proration.fullScore);
-  const excessScore = Math.max(0, roundPerformanceValue(record.taskScore - proration.fullScore));
-  const taskConfirmRatio = getTaskConfirmRatio(record.taskScore, proration.baseLineScore);
-  const excessMultiplier = getExcessMultiplier(rule, record.taskScore, scope);
-  const baseAmount = roundPerformanceValue(
-    confirmedBaseScore * pointValue * record.baseQualityRatio * taskConfirmRatio
-  );
-  const excessAmount = roundPerformanceValue(
-    excessScore * pointValue * excessMultiplier * record.excessQualityRatio
-  );
-  const monthlyAmount = roundPerformanceValue(baseAmount + excessAmount);
-  const prepayAmount = roundPerformanceValue(monthlyAmount * record.amountSummary.prepayRatio);
+  const amount = calculateDrawingTaskPerformanceAmount({
+    basePerformanceAmount: rule.basePerformanceAmount ?? 0,
+    baselineScore: rule.baseLineScore ?? 0,
+    belowBaselineFactor: rule.belowBaselineFactor,
+    excessBands: rule.excessBands,
+    fullScore: rule.fullScore,
+    monthlyPrepayRatio: rule.monthlyPrepayRatio,
+    qualityBands: rule.qualityBands,
+    qualityScore: record.qualityScore,
+    taskScore: record.taskScore,
+    thresholdRatio: scope.ratio
+  });
   const settlementNote = proration.applied
     ? buildProrationNote(scope, proration)
     : record.amountSummary.settlementNote;
@@ -228,105 +215,44 @@ function adjustDrawingTaskRecord(
     ...record,
     amountSummary: {
       ...record.amountSummary,
-      baseAmount,
-      confirmedBaseScore: roundPerformanceValue(confirmedBaseScore),
-      excessAmount,
-      excessMultiplier,
-      excessScore,
-      monthlyAmount,
-      pointValue,
-      prepayAmount,
+      baseAmount: amount.baseAmount,
+      baseQualityRatio: amount.baseQualityRatio,
+      confirmedBaseScore: amount.confirmedBaseScore,
+      excessAmount: amount.excessAmount,
+      excessMultiplier: amount.excessMultiplier,
+      excessQualityRatio: amount.excessQualityRatio,
+      excessScore: amount.excessScore,
+      monthlyAmount: amount.monthlyAmount,
+      pointValue: amount.pointValue,
+      prepayAmount: amount.prepayAmount,
+      prepayRatio: amount.prepayRatio,
       settlementNote,
-      taskConfirmRatio
+      taskConfirmRatio: amount.taskConfirmRatio
     },
+    baseQualityRatio: amount.baseQualityRatio,
     employmentScope: scope,
-    monthlyAmount,
-    prepayAmount,
-    prorationSummary: proration
-  };
-}
-
-function toMonthlyCategoryRecord(record: PerformanceDrawingTaskMonthlyRecord): PerformanceMonthlyCategoryRecord {
-  return {
-    id: record.id,
-    employeeName: record.employeeName,
-    workNo: record.workNo,
-    position: record.position,
-    department: record.department,
-    category: record.category,
-    ruleName: record.ruleName,
-    ruleVersion: record.ruleVersion,
-    salarySettlementReference: record.salarySettlementReference,
-    performanceMonth: record.performanceMonth,
-    monthlyAmount: record.monthlyAmount,
-    prepayAmount: record.prepayAmount,
-    sourceTaskCount: record.sourceTaskCount,
-    qualityScore: record.qualityScore,
-    taskScore: record.taskScore,
-    updatedAt: record.updatedAt,
-    sourceLabel: '任务汇总',
-    note: '来自绘图任务制绩效明细',
-    executionContract: record.executionContract,
-    employmentScope: record.employmentScope,
-    prorationSummary: record.prorationSummary,
-    quarterlyReviewResult: record.quarterlyReviewResult,
-    events: record.events
-  };
-}
-
-function adjustNonTaskCategoryRecord(
-  record: PerformanceMonthlyCategoryRecord,
-  scope: PerformanceMonthlyEmploymentScope,
-  rule: PerformanceRulePreset | undefined
-): PerformanceMonthlyCategoryRecord {
-  if (record.category !== '岗位职责考核') {
-    return {
-      ...record,
-      employmentScope: scope
-    };
-  }
-
-  const monthlyAmount = roundPerformanceValue(record.monthlyAmount * scope.ratio);
-  const prepayAmount = roundPerformanceValue(record.prepayAmount * scope.ratio);
-  const proration = rule ? buildProrationSummary(rule, scope) : undefined;
-
-  return {
-    ...record,
-    employmentScope: scope,
-    monthlyAmount,
-    note: scope.ratio < fullScopeRatio
-      ? `${record.note}；${scope.effectiveWorkdays}/${scope.monthWorkdays} 个工作日折算。`
-      : record.note,
-    prepayAmount,
+    excessQualityRatio: amount.excessQualityRatio,
+    monthlyAmount: amount.monthlyAmount,
+    prepayAmount: amount.prepayAmount,
     prorationSummary: proration
   };
 }
 
 export function buildPerformanceMonthlyRecords({
   annualExceptionRows,
-  categoryRecords,
   drawingTaskRecords,
   peopleRows,
-  ruleOptions,
   ruleRows,
-  signatureEmployees,
   workCalendarRows
 }: BuildPerformanceMonthlyRecordsInput) {
-  const contractedDrawingRecords = attachPerformanceExecutionContracts({
+  const applicableDrawingRecords = attachPerformanceRuleApplicability({
+    peopleRows,
     records: drawingTaskRecords,
-    ruleOptions,
-    ruleRows,
-    signatureEmployees
-  });
-  const contractedCategoryRecords = attachPerformanceExecutionContracts({
-    records: categoryRecords,
-    ruleOptions,
-    ruleRows,
-    signatureEmployees
+    ruleRows
   });
   const drawingRecordsById = new Map<string, PerformanceDrawingTaskMonthlyRecord>();
 
-  for (const record of contractedDrawingRecords) {
+  for (const record of applicableDrawingRecords) {
     const member = findMonthlyMember(record, peopleRows);
     const rule = findMonthlyRule(record, ruleRows);
     const scope = member
@@ -348,33 +274,10 @@ export function buildPerformanceMonthlyRecords({
     );
   }
 
-  const nextCategoryRecords = contractedCategoryRecords.flatMap<PerformanceMonthlyCategoryRecord>((record) => {
-    const drawingRecord = drawingRecordsById.get(record.id);
-
-    if (drawingRecord) {
-      return [toMonthlyCategoryRecord(drawingRecord)];
-    }
-
-    const member = findMonthlyMember(record, peopleRows);
-    const rule = findMonthlyRule(record, ruleRows);
-    const scope = member
-      ? getPerformanceMonthlyEmploymentScope({
-          annualExceptionRows,
-          member,
-          month: record.performanceMonth,
-          workCalendarRows
-        })
-      : undefined;
-
-    if (member && !scope) {
-      return [];
-    }
-
-    return member && scope ? [adjustNonTaskCategoryRecord(record, scope, rule)] : [record];
-  });
+  const nextDrawingRecords = [...drawingRecordsById.values()];
 
   return {
-    categoryRecords: nextCategoryRecords,
-    drawingTaskRecords: [...drawingRecordsById.values()]
+    categoryRecords: nextDrawingRecords as PerformanceMonthlyCategoryRecord[],
+    drawingTaskRecords: nextDrawingRecords
   };
 }

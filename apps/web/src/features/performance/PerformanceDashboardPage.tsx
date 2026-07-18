@@ -20,7 +20,6 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { usePerformanceRuleState } from './PerformanceRuleState';
-import { performanceSignatureEmployees } from './performanceSignatureArchiveData';
 import {
   buildPerformanceDashboardData,
   buildPerformanceDashboardPeriodRange,
@@ -31,7 +30,7 @@ import {
   type PerformanceDashboardRiskRow,
   type PerformanceDashboardTrendPoint
 } from './performanceDashboardModel';
-import { usePerformanceMonthlyRecords } from './usePerformanceMonthlyRecords';
+import { usePerformanceResults } from './usePerformanceResults';
 
 type PerformanceDashboardCustomRange = {
   endDate: string;
@@ -183,7 +182,7 @@ export function PerformanceDashboardPage() {
     endDate: defaultPerformanceDashboardPeriodRange.endDate,
     startDate: defaultPerformanceDashboardPeriodRange.startDate
   }));
-  const performanceMonthlyRecords = usePerformanceMonthlyRecords();
+  const { publishedMonthlyRecords } = usePerformanceResults();
   const { performanceRuleRows } = usePerformanceRuleState();
 
   const selectedPeriodRange = useMemo(
@@ -198,13 +197,12 @@ export function PerformanceDashboardPage() {
   const dashboard = useMemo(
     () =>
       buildPerformanceDashboardData({
-        monthlyRecords: performanceMonthlyRecords.categoryRecords,
+        monthlyRecords: publishedMonthlyRecords,
         periodRange: selectedPeriodRange,
         ruleRows: performanceRuleRows,
-        signatureEmployees: performanceSignatureEmployees,
         today: performanceDashboardToday
       }),
-    [performanceMonthlyRecords.categoryRecords, performanceRuleRows, selectedPeriodRange]
+    [performanceRuleRows, publishedMonthlyRecords, selectedPeriodRange]
   );
 
   const riskColumns = useMemo<TableColumnsType<PerformanceDashboardRiskRow>>(
@@ -296,7 +294,6 @@ export function PerformanceDashboardPage() {
         <div className="performance-dashboard-meta">
           <span>统计周期 {dashboard.period.label}</span>
           <span>截至 {performanceDashboardNow}</span>
-          <span>当前签署 {dashboard.metrics.currentSignedRelationships} 个</span>
           <span>已发布规则 {dashboard.metrics.publishedRules} 个</span>
           <span>来源任务 {dashboard.metrics.sourceTaskCount} 条</span>
         </div>

@@ -60,7 +60,7 @@ function createReceivablePayableRecord(overrides: Partial<FinanceReceivablePayab
     settlementStatus: '未结清',
     sourceNo: 'CON-TEST-001',
     sourceTitle: '光谷商业空间方案阶段',
-    sourceType: '项目阶段确认',
+    sourceType: '任务结算',
     taxBasis: {
       basisSource: '来源单据',
       salesCategory: '服务、不动产和无形资产',

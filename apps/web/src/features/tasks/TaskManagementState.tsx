@@ -1,6 +1,13 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { frontendBusinessNow, frontendBusinessToday } from '../../app/frontendBusinessClock';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import type { OperationRecord } from '../../components/OperationRecordTable';
+import { useCustomerManagementState } from '../customers/CustomerManagementState';
+import type { BrandRecord, CustomerContractRecord, CustomerRecord } from '../customers/customerData';
+import type {
+  BrandSettlementPolicyVersionRecord,
+  BrandTaskPriceVersionRecord
+} from '../customers/brandTaskPricingModel';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import {
   buildPartTimeLaborSettlementBatches,
@@ -8,7 +15,25 @@ import {
   type PartTimeLaborSettlementBatch,
   type PartTimeLaborSettlementBlocker
 } from './partTimeLaborSettlementModel';
-import { applyTaskAcceptanceCommit, type TaskWorkflowState } from './taskAcceptanceCommitModel';
+import {
+  applyTaskAcceptanceCommit,
+  applyTaskAcceptanceReversal,
+  validateTaskAcceptanceCommit,
+  type TaskAcceptanceReversalInput,
+  type TaskAcceptanceCommitValidation,
+  type TaskWorkflowState
+} from './taskAcceptanceCommitModel';
+import { ensureTaskAcceptanceArchive } from './taskAcceptanceEvidenceModel';
+import {
+  buildCustomerTaskBillingFact,
+  buildCustomerTaskContractUsageSummaries,
+  buildCustomerTaskSettlementBatches,
+  buildTaskCustomerBillingSnapshot,
+  type CustomerTaskBillingFact,
+  type CustomerTaskContractUsageSummary,
+  type CustomerTaskSettlementBatch,
+  type TaskCustomerBillingSnapshot
+} from './taskCustomerBillingModel';
 
 export type StoreTaskStatus = '进行中' | '待验收' | '验收驳回' | '已完成' | '已中止';
 export type StoreTaskFileSource = '飞书云盘' | '业务服务器';
@@ -28,6 +53,7 @@ export type StoreTaskRecord = {
   id: string;
   code: string;
   customerId: string;
+  customerBillingSnapshot?: TaskCustomerBillingSnapshot;
   brandId: string;
   storeId: string;
   taskConfigId: string;
@@ -145,7 +171,11 @@ type TaskManagementStateValue = {
   clientFeedbackRows: ClientFeedbackRecord[];
   createClientFeedback: (input: ClientFeedbackCreateInput) => ClientFeedbackRecord;
   createStoreTask: (input: StoreTaskCreateInput) => StoreTaskRecord;
-  commitTaskAcceptance: (input: TaskAcceptanceCommitInput) => void;
+  commitTaskAcceptance: (input: TaskAcceptanceCommitInput) => TaskAcceptanceCommitValidation;
+  reverseTaskAcceptance: (input: TaskAcceptanceReversalInput) => { message?: string; success: boolean };
+  customerTaskBillingFacts: CustomerTaskBillingFact[];
+  customerTaskContractUsageSummaries: CustomerTaskContractUsageSummary[];
+  customerTaskSettlementBatches: CustomerTaskSettlementBatch[];
   partTimeLaborAcceptanceRows: PartTimeLaborAcceptanceRecord[];
   partTimeLaborSettlementBatches: PartTimeLaborSettlementBatch[];
   partTimeLaborSettlementBlockers: PartTimeLaborSettlementBlocker[];
@@ -162,9 +192,9 @@ export type TaskAcceptanceCommitInput = {
   task: StoreTaskRecord;
 };
 
-export const taskManagementToday = '2026-06-15';
+export const taskManagementToday = frontendBusinessToday;
 export const taskDateTimeFormat = 'YYYY-MM-DD HH:mm';
-export const taskManagementNow = `${taskManagementToday} 10:00`;
+export const taskManagementNow = frontendBusinessNow;
 
 export function normalizeTaskHourText(value: string | undefined, fallbackHour = 18) {
   if (!value) {
@@ -461,7 +491,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     acceptorName: '李明',
     brandId: 'brand-nova-tea',
     code: 'TASK-2026-006',
-    createdAt: '2026-06-09 09:30',
+    createdAt: '2026-06-10 09:30',
     customerId: 'customer-nova',
     files: [
       {
@@ -539,7 +569,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
         actor: '李明',
         object: '长沙岳麓首店吧台深化图归档',
         summary: '创建吧台深化图归档任务并分配执行人',
-        time: '2026-06-09 09:40'
+        time: '2026-06-10 09:40'
       }
     ],
     executorId: '20250018',
@@ -980,6 +1010,41 @@ const seedClientFeedbackRows: ClientFeedbackRecord[] = [
 const seedTaskPerformanceScoringRows: TaskPerformanceScoringRecord[] = [
   {
     adjustmentReason: '',
+    confirmedAt: '2026-06-07 16:30',
+    confirmedBy: '示例全职 B',
+    id: 'score-store-task-2026-008',
+    operationRecords: [
+      {
+        id: 'op-score-store-task-2026-008-create',
+        action: '验收计分',
+        actor: '示例全职 B',
+        object: '武汉光谷店软装清单核对',
+        summary: '绘图任务制V1 / 全套施工图 / 质量分 88',
+        time: '2026-06-07 16:30'
+      }
+    ],
+    performanceCategory: '绘图任务制',
+    ruleId: 'perf-rule-space-design-2026-final',
+    ruleName: '绘图任务制V1',
+    ruleVersion: 'V1',
+    scoreItemId: 'construction-drawing',
+    scoreItemName: '全套施工图',
+    scoreValue: 2.2,
+    qualityBand: '80-89分',
+    qualityDimensionScores: [
+      { id: 'quality', maxScore: 40, name: '成果有效性与质量', score: 35 },
+      { id: 'timeliness', maxScore: 25, name: '交付时效', score: 22 },
+      { id: 'workflow', maxScore: 25, name: '流程闭环', score: 22 },
+      { id: 'collaboration', maxScore: 10, name: '项目配合与沟通归档', score: 9 }
+    ],
+    qualityScore: 88,
+    sourceMonth: '2026-06',
+    status: '已计入',
+    taskId: 'store-task-2026-008',
+    updatedAt: '2026-06-07 16:30'
+  },
+  {
+    adjustmentReason: '',
     confirmedAt: '2026-06-13 18:00',
     confirmedBy: '李明',
     id: 'score-store-task-2026-006',
@@ -1126,15 +1191,73 @@ function buildClientFeedbackOperation(taskName: string, fileCount: number): Oper
 
 const TaskManagementStateContext = createContext<TaskManagementStateValue | undefined>(undefined);
 
+function attachCustomerBillingSnapshot(
+  task: StoreTaskRecord,
+  context: {
+    brandRows: BrandRecord[];
+    contractRows: CustomerContractRecord[];
+    customerRows: CustomerRecord[];
+    getActiveBrandTaskPrice: (
+      brandId: string,
+      taskConfigId: string,
+      effectiveAt: string
+    ) => BrandTaskPriceVersionRecord | undefined;
+    getActiveBrandSettlementPolicy: (
+      brandId: string,
+      effectiveAt: string
+    ) => BrandSettlementPolicyVersionRecord | undefined;
+  }
+) {
+  if (task.customerBillingSnapshot) {
+    return task;
+  }
+
+  const brand = context.brandRows.find((row) => row.id === task.brandId);
+  const customer = context.customerRows.find((row) => row.id === task.customerId);
+  const priceVersion = context.getActiveBrandTaskPrice(task.brandId, task.taskConfigId, task.createdAt);
+  const settlementPolicyVersion = context.getActiveBrandSettlementPolicy(task.brandId, task.createdAt);
+  const contract = context.contractRows.find((row) => row.id === priceVersion?.contractId);
+  const customerBillingSnapshot = brand && customer
+    ? buildTaskCustomerBillingSnapshot({
+        brandId: task.brandId,
+        brandName: brand.name,
+        capturedAt: task.createdAt,
+        contract,
+        customerId: task.customerId,
+        customerName: customer.name,
+        priceVersion,
+        settlementPolicyVersion,
+        taskConfigId: task.taskConfigId,
+        taskId: task.id
+      })
+    : undefined;
+
+  return customerBillingSnapshot ? { ...task, customerBillingSnapshot } : task;
+}
+
+function attachTaskAcceptanceArchive(task: StoreTaskRecord) {
+  return task.status === '已完成' && task.acceptedAt
+    ? ensureTaskAcceptanceArchive(task, task.acceptedAt, task.acceptorName || '李明')
+    : task;
+}
+
 export function TaskManagementProvider({ children }: { children: ReactNode }) {
   const { peopleRows } = usePeopleOrganizationState();
+  const customerManagementState = useCustomerManagementState();
   const [taskWorkflowState, setTaskWorkflowState] = useState<TaskWorkflowState>(() => ({
+    customerTaskBillingFacts: seedStoreTaskRows
+      .map(attachTaskAcceptanceArchive)
+      .map((task) => attachCustomerBillingSnapshot(task, customerManagementState))
+      .map(buildCustomerTaskBillingFact)
+      .filter((fact): fact is CustomerTaskBillingFact => Boolean(fact)),
     partTimeLaborAcceptanceRows: seedPartTimeLaborAcceptanceRows,
-    storeTaskRows: seedStoreTaskRows,
+    storeTaskRows: seedStoreTaskRows
+      .map(attachTaskAcceptanceArchive)
+      .map((task) => attachCustomerBillingSnapshot(task, customerManagementState)),
     taskPerformanceScoringRows: seedTaskPerformanceScoringRows
   }));
   const [clientFeedbackRows, setClientFeedbackRows] = useState<ClientFeedbackRecord[]>(() => seedClientFeedbackRows);
-  const { partTimeLaborAcceptanceRows, storeTaskRows, taskPerformanceScoringRows } = taskWorkflowState;
+  const { customerTaskBillingFacts, partTimeLaborAcceptanceRows, storeTaskRows, taskPerformanceScoringRows } = taskWorkflowState;
   const partTimeLaborSettlementResult = useMemo(() => {
     const settlementPeriods = Array.from(
       new Set(
@@ -1161,6 +1284,18 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
       { batches: [] as PartTimeLaborSettlementBatch[], blockers: [] as PartTimeLaborSettlementBlocker[] }
     );
   }, [partTimeLaborAcceptanceRows, peopleRows, storeTaskRows]);
+  const customerTaskSettlementResult = useMemo(
+    () => buildCustomerTaskSettlementBatches({ asOfDate: taskManagementToday, facts: customerTaskBillingFacts }),
+    [customerTaskBillingFacts]
+  );
+  const customerTaskContractUsageSummaries = useMemo(
+    () => buildCustomerTaskContractUsageSummaries({
+      contracts: customerManagementState.contractRows,
+      facts: customerTaskBillingFacts,
+      priceVersions: customerManagementState.brandTaskPriceRows
+    }),
+    [customerManagementState.brandTaskPriceRows, customerManagementState.contractRows, customerTaskBillingFacts]
+  );
 
   const value = useMemo<TaskManagementStateValue>(
     () => ({
@@ -1188,11 +1323,44 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
         const sequence = getNextTaskSequence(storeTaskRows);
         const paddedSequence = String(sequence).padStart(3, '0');
         const code = `TASK-2026-${paddedSequence}`;
+        const taskId = `store-task-2026-${paddedSequence}`;
+        const brand = customerManagementState.getBrandById(input.brandId);
+        const customer = customerManagementState.customerRows.find((row) => row.id === input.customerId);
+        const priceVersion = customerManagementState.getActiveBrandTaskPrice(
+          input.brandId,
+          input.taskConfigId,
+          taskManagementNow
+        );
+        const settlementPolicyVersion = customerManagementState.getActiveBrandSettlementPolicy(
+          input.brandId,
+          taskManagementNow
+        );
+        const contract = customerManagementState.contractRows.find((row) => row.id === priceVersion?.contractId);
+        const customerBillingSnapshot = brand && customer
+          ? buildTaskCustomerBillingSnapshot({
+              brandId: input.brandId,
+              brandName: brand.name,
+              capturedAt: taskManagementNow,
+              contract,
+              customerId: input.customerId,
+              customerName: customer.name,
+              priceVersion,
+              settlementPolicyVersion,
+              taskConfigId: input.taskConfigId,
+              taskId
+            })
+          : undefined;
+
+        if (!customerBillingSnapshot) {
+          throw new Error('当前品牌任务缺少有效结算配置');
+        }
+
         const nextRecord: StoreTaskRecord = {
           ...input,
           code,
           createdAt: taskManagementNow,
-          id: `store-task-2026-${paddedSequence}`,
+          customerBillingSnapshot,
+          id: taskId,
           operationRecords: [buildCreateOperation(input.name)],
           reworkCount: 0,
           status: '进行中',
@@ -1206,8 +1374,34 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
         return nextRecord;
       },
       commitTaskAcceptance(input) {
+        const validation = validateTaskAcceptanceCommit(input);
+        if (!validation.success) {
+          return validation;
+        }
+
         setTaskWorkflowState((currentState) => applyTaskAcceptanceCommit(currentState, input));
+        return validation;
       },
+      reverseTaskAcceptance(input) {
+        try {
+          const nextState = applyTaskAcceptanceReversal({
+            customerTaskBillingFacts,
+            partTimeLaborAcceptanceRows,
+            storeTaskRows,
+            taskPerformanceScoringRows
+          }, input);
+          setTaskWorkflowState(nextState);
+          return { success: true };
+        } catch (error) {
+          return {
+            message: error instanceof Error ? error.message : '当前验收结果不可撤销',
+            success: false
+          };
+        }
+      },
+      customerTaskBillingFacts,
+      customerTaskContractUsageSummaries,
+      customerTaskSettlementBatches: customerTaskSettlementResult.batches,
       partTimeLaborAcceptanceRows,
       partTimeLaborSettlementBatches: partTimeLaborSettlementResult.batches,
       partTimeLaborSettlementBlockers: partTimeLaborSettlementResult.blockers,
@@ -1236,7 +1430,17 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
       taskPerformanceScoringRows,
       storeTaskRows
     }),
-    [clientFeedbackRows, partTimeLaborAcceptanceRows, partTimeLaborSettlementResult, storeTaskRows, taskPerformanceScoringRows]
+    [
+      clientFeedbackRows,
+      customerManagementState,
+      customerTaskBillingFacts,
+      customerTaskContractUsageSummaries,
+      customerTaskSettlementResult,
+      partTimeLaborAcceptanceRows,
+      partTimeLaborSettlementResult,
+      storeTaskRows,
+      taskPerformanceScoringRows
+    ]
   );
 
   return <TaskManagementStateContext.Provider value={value}>{children}</TaskManagementStateContext.Provider>;

@@ -211,7 +211,6 @@ function PeriodCloseDrawer({
   const pendingItemSummary = [
     { count: record.pendingReviewCashFlowCount, label: '流水复核', unit: '条' },
     { count: record.unreconciledCashFlowCount, label: '银行对账', unit: '条' },
-    { count: record.taxHandlingPendingCount, label: '税务办理', unit: '项' },
     { count: record.socialInsurancePendingCount, label: '社保公积金', unit: '项' }
   ]
     .filter((item) => item.count > 0)
@@ -807,6 +806,7 @@ export function FinancePeriodClosePage() {
     accountingVoucherLifecycleRows,
     bankReconciliationRows,
     closeAccountingPeriod,
+    declarationPreparationRows,
     financeRows,
     invoiceBusinessAllocationRows,
     invoiceRows,
@@ -844,6 +844,7 @@ export function FinancePeriodClosePage() {
           accountingVoucherLaterPeriodAdjustmentRows,
           {
             accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+            declarationPreparationRows,
             invoiceBusinessAllocationRows,
             monthEndMatterRows
           }
@@ -854,6 +855,7 @@ export function FinancePeriodClosePage() {
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingVoucherLifecycleRows,
       bankReconciliationRows,
+      declarationPreparationRows,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,
@@ -1153,13 +1155,13 @@ export function FinancePeriodClosePage() {
       )
     },
     {
-      title: '税务社保',
-      key: 'taxSocial',
-      width: 190,
+      title: '社保公积金',
+      key: 'socialInsurance',
+      width: 150,
       render: (_, record) => (
         <CompactCell
-          primary={`${record.taxHandlingPendingCount} 项税务`}
-          secondary={`${record.socialInsurancePendingCount} 项社保公积金`}
+          primary={`${record.socialInsurancePendingCount} 项待处理`}
+          secondary={record.socialInsurancePendingCount > 0 ? '需完成缴费确认' : '本期已完成'}
         />
       )
     },

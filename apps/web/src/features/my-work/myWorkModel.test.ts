@@ -6,6 +6,7 @@ import {
   buildMyWorkPerformanceTaskRows,
   buildMyWorkTaskRows,
   buildMyWorkTaskSummary,
+  getMySalaryDisplayStatus,
   getMySalaryReports,
   getMyWorkMember,
   toMyWorkArchiveStatus
@@ -91,13 +92,13 @@ function createScoringRecord(overrides: Partial<TaskPerformanceScoringRecord> = 
 
 const tests: UnitTest[] = [
   {
-    name: 'current member falls back to requested id and active person',
+    name: 'current member resolves only the requested account identity',
     run() {
       const target = createMember({ id: 'member-target', name: '目标人员' });
       const fallback = createMember({ id: 'member-fallback', name: '兜底人员', status: '在职' });
 
       assertEqual(getMyWorkMember([fallback, target], 'member-target')?.id, 'member-target', 'requested member should be selected');
-      assertEqual(getMyWorkMember([fallback], 'missing')?.id, 'member-fallback', 'active member should be fallback');
+      assertEqual(getMyWorkMember([fallback], 'missing'), undefined, 'missing account identity must not fall back to another employee');
     }
   },
   {
@@ -161,14 +162,38 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'my salary and performance helpers keep employee ownership',
+    name: 'my salary exposes only current employee formal payslips and employee-facing lifecycle facts',
     run() {
       const currentMember = createMember({ id: 'member-001' });
       const otherMember = createMember({ id: 'other' });
       const salaryReports = getMySalaryReports('member-001', [
-        { member: otherMember, month: '2026-06' },
-        { member: currentMember, month: '2026-05' },
-        { member: currentMember, month: '2026-06' }
+        { member: otherMember, month: '2026-06', status: '已发放' },
+        {
+          member: currentMember,
+          month: '2026-05',
+          operationRecords: [
+            { action: '归集薪酬明细' },
+            { action: '确认薪酬明细' }
+          ],
+          settlementSourceRecords: [
+            { id: 'confirmed-source', status: '已确认' },
+            { id: 'pending-source', status: '待确认' }
+          ],
+          status: '已确认'
+        },
+        {
+          member: currentMember,
+          month: '2026-06',
+          operationRecords: [
+            { action: '确认薪酬明细' },
+            { action: '关联发放流水' },
+            { action: '发放流水冲正' }
+          ],
+          settlementSourceRecords: [],
+          status: '已发放'
+        },
+        { member: currentMember, month: '2026-07', status: '待确认' },
+        { member: currentMember, month: '2026-08', status: '结算中' }
       ] as never);
       const performanceRows = buildMyWorkPerformanceTaskRows(
         'member-001',
@@ -179,8 +204,21 @@ const tests: UnitTest[] = [
         [createScoringRecord({ taskId: 'task-test-001' }), createScoringRecord({ id: 'score-other', taskId: 'task-other' })]
       );
 
-      assertEqual(salaryReports.length, 2, 'salary reports should keep only current member');
+      assertEqual(salaryReports.length, 2, 'employee salary should keep only current-member confirmed or paid rows');
       assertEqual(salaryReports[0]?.month, '2026-06', 'salary reports should sort by latest month');
+      assertEqual(salaryReports[0]?.employeeStatus, '已发放', 'paid salary should retain the employee-facing paid state');
+      assertEqual(salaryReports[1]?.employeeStatus, '待发放', 'confirmed salary should read as pending payment to the employee');
+      assertEqual(
+        salaryReports[1]?.employeeOperationRecords.length,
+        1,
+        'employee history should exclude internal salary collection operations'
+      );
+      assertEqual(
+        salaryReports[1]?.employeeSettlementSourceRecords.length,
+        1,
+        'employee salary basis should exclude unresolved internal source checks'
+      );
+      assertEqual(getMySalaryDisplayStatus({ status: '待确认' } as never), undefined, 'draft salary should not have an employee-facing state');
       assertEqual(performanceRows.length, 1, 'performance rows should keep only executor-owned tasks');
       assertEqual(performanceRows[0]?.task?.id, 'task-test-001', 'performance row should attach source task');
     }

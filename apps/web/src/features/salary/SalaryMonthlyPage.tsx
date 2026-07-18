@@ -22,6 +22,8 @@ import { ManagementTable } from '../../components/ManagementTable';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
+import { usePerformanceResultState } from '../performance/PerformanceResultState';
+import { settlePerformanceResults } from '../performance/performanceResultSettlementModel';
 import {
   createSalaryAdjustmentForm,
   createSalaryAdjustmentFormFromRecord,
@@ -44,6 +46,7 @@ import { salaryMonthlyColumns } from './SalaryMonthlyColumns';
 import { SalaryMonthlyDetailDrawer } from './SalaryMonthlyDetailDrawer';
 import { SalaryPaymentConfirmDrawer } from './SalaryPaymentConfirmDrawer';
 import { useSalaryMonthlyReportBuilder } from './salaryReportBuilder';
+import { salaryToday } from './SalaryManagementState';
 
 const salaryDetailDefaultMonthRange = getDateScopeMonthRange(salaryDetailDefaultMonth);
 
@@ -97,6 +100,7 @@ export function SalaryMonthlyPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const { financeRows, getAccountingPeriodGuard } = useFinanceManagement();
   const { getSalaryMonthlyReports, salaryReportMonths, salaryState } = useSalaryMonthlyReportBuilder();
+  const performanceResultState = usePerformanceResultState();
   const [filters, setFilters] = useState<SalaryMonthlyFilters>(defaultSalaryMonthlyFilters);
   const [activeReportId, setActiveReportId] = useState<string>();
   const [paymentReportId, setPaymentReportId] = useState<string>();
@@ -221,12 +225,31 @@ export function SalaryMonthlyPage() {
       return;
     }
 
+    const performanceSettlementInput = {
+      actor: '李明',
+      salarySettlementReferences: report.performanceSettlementLines.map(
+        (line) => line.salarySettlementReference
+      ),
+      settledAt: `${salaryToday} 10:30`
+    };
+    const performanceValidation = settlePerformanceResults(
+      performanceResultState.formalResults,
+      performanceSettlementInput
+    );
+
+    if (!performanceValidation.success) {
+      void messageApi.warning(performanceValidation.reason ?? '绩效结果结算失败');
+      return;
+    }
+
     const result = salaryState.confirmSalaryMonthlyReport(report);
 
     if (!result.success) {
       void messageApi.warning(result.reason ?? '薪酬明细确认失败');
       return;
     }
+
+    performanceResultState.settleSalaryResults(performanceSettlementInput);
 
     setActiveReportId(report.id);
     void messageApi.success('薪酬明细已确认');
@@ -237,7 +260,7 @@ export function SalaryMonthlyPage() {
   }
 
   function handlePay(report: SalaryMonthlyReport, evidence: SalaryPaymentEvidenceInput) {
-    if (!guardSalaryMonthlyMutation(evidence.occurredAt.slice(0, 7), '确认工资发放')) {
+    if (!guardSalaryMonthlyMutation(evidence.occurredAt.slice(0, 7), '关联工资发放流水')) {
       return;
     }
 
@@ -322,7 +345,7 @@ export function SalaryMonthlyPage() {
         </FilterPanel>
       }
       metrics={
-        <MetricGrid>
+        <MetricGrid columns={4}>
           <MetricCard icon={<FileTextOutlined />} label="薪酬明细" value={metrics.total} />
           <MetricCard icon={<FileSearchOutlined />} label="涉及员工" value={metrics.employeeCount} />
           <MetricCard icon={<ReloadOutlined />} label="结算中" value={metrics.processing} />
@@ -330,7 +353,7 @@ export function SalaryMonthlyPage() {
           <MetricCard icon={<WalletOutlined />} label="已发放" value={metrics.paid} />
           <MetricCard icon={<WalletOutlined />} label="应发合计" value={formatSalaryMoney(metrics.grossSalary)} />
           <MetricCard icon={<FileSearchOutlined />} label="扣减合计" value={formatSalaryMoney(metrics.deductionAmount)} />
-          <MetricCard icon={<CheckCircleOutlined />} label="实发合计" value={formatSalaryMoney(metrics.netSalary)} />
+          <MetricCard icon={<CheckCircleOutlined />} label="实发测算" value={formatSalaryMoney(metrics.netSalary)} />
         </MetricGrid>
       }
     >

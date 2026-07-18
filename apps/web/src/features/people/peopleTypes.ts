@@ -45,14 +45,6 @@ export type PeopleAuditRecord = {
   note: string;
 };
 
-export type PeopleWorkEvaluationRecord = {
-  month: string;
-  acceptedTasks: number;
-  reworkTasks: number;
-  score: number;
-  level: string;
-};
-
 export type PeopleArchiveFile = {
   id: string;
   name: string;
@@ -105,8 +97,6 @@ export type PeopleMember = {
   taskCapabilityIds: string[];
   taskAccessStatus: '可参与任务' | '暂停参与' | '已关闭';
   taskRecords: PeopleTaskRecord[];
-  workEvaluationSummary: PeopleWorkEvaluationRecord;
-  workEvaluationRecords: PeopleWorkEvaluationRecord[];
   archiveFiles: PeopleArchiveFile[];
   paymentProfile: {
     mode: PeoplePaymentProfileMode;

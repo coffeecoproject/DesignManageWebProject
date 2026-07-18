@@ -86,10 +86,12 @@ export function confirmSalaryMonthlyReportState({
           memberId,
           month,
           note,
+          salaryCompositionLines: report.salaryCompositionLines,
           salarySettlementReferences: report.performanceSettlementLines.map(
             (line) => line.salarySettlementReference
           ),
-          settlementSnapshot: report.settlementSnapshot
+          settlementSnapshot: report.settlementSnapshot,
+          settlementSourceRecords: report.settlementSourceRecords
         })
     ),
     success: true

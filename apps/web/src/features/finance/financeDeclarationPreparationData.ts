@@ -2123,7 +2123,9 @@ export function getDeclarationPreparationUnbilledIncomeCandidates(
         netAmount: taxBasisResolved
           ? roundMoney(Math.max(0, businessRecord.taxBasis.taxExcludedAmount - allocatedTax.taxExcludedAmount))
           : 0,
-        obligationBasis: businessRecord.sourceType === '项目阶段确认' ? '项目阶段已确认' : '应收事项已确认',
+        obligationBasis: businessRecord.sourceType === '任务结算'
+          ? '任务已内部验收'
+          : '应收事项已确认',
         obligationDate: businessRecord.confirmDate,
         selectedForInclusion,
         status,

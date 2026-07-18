@@ -85,6 +85,26 @@ function createReadyTask({
     code,
     createdAt: '2026-06-10 09:00',
     customerId: 'customer-starry',
+    customerBillingSnapshot: {
+      billable: true,
+      brandId: 'brand-starry-space',
+      brandName: '星际空间',
+      capturedAt: '2026-06-10 09:00',
+      contractAmount: null,
+      contractAmountMode: '无固定金额',
+      currency: 'CNY',
+      customerId: 'customer-starry',
+      customerName: '星河餐饮集团',
+      id: `task-billing-snapshot-${id}`,
+      priceVersion: 1,
+      priceVersionId: 'brand-price-starry-image-v1',
+      settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+      settlementPolicyVersion: 1,
+      settlementPolicyVersionId: 'brand-settlement-starry-v1',
+      taskConfigId: 'task-type-store-image',
+      taskId: id,
+      unitPrice: 1600
+    },
     executorId: partTimePerson.id,
     executorName: partTimePerson.name,
     files: [
@@ -122,6 +142,7 @@ function createReadyTask({
 
 function createWorkflowState(tasks: StoreTaskRecord[]): TaskWorkflowState {
   return {
+    customerTaskBillingFacts: [],
     partTimeLaborAcceptanceRows: [],
     storeTaskRows: tasks,
     taskPerformanceScoringRows: []
@@ -216,7 +237,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'NP-06 FRONTEND-CHAIN blocks task acceptance before state mutation when tax identity or gross amount is invalid',
+    name: 'NP-06 FRONTEND-CHAIN keeps customer acceptance independent while labor source remains blocked',
     run: () => {
       const identityPendingTask = createReadyTask({ amount: 3200, code: 'TASK-PT-FRONT-004', id: 'task-pt-front-004' });
       const identityPendingPerson = {
@@ -234,8 +255,8 @@ const tests: UnitTest[] = [
         task: identityPendingTask
       });
 
-      assert(!identityResult.success, 'pending tax identity should block the page acceptance action');
-      assertEqual(identityResult.message, '兼职执行人的税务身份尚未确认', 'identity blocker should be explicit');
+      assert(identityResult.success, 'pending tax identity must not block customer acceptance');
+      assertEqual(identityResult.warnings[0], '兼职执行人的税务身份尚未确认', 'labor blocker should remain explicit');
 
       const invalidAmountTask = createReadyTask({ amount: 0, code: 'TASK-PT-FRONT-005', id: 'task-pt-front-005' });
       const amountResult = prepareTaskAcceptanceCommit({
@@ -246,16 +267,22 @@ const tests: UnitTest[] = [
         task: invalidAmountTask
       });
 
-      assert(!amountResult.success, 'invalid tax-inclusive amount should block the page acceptance action');
-      assertEqual(amountResult.message, '兼职任务税前约定金额无效', 'amount blocker should be explicit');
+      assert(amountResult.success, 'invalid labor amount must not block customer acceptance');
+      assertEqual(amountResult.warnings[0], '兼职任务税前约定金额无效', 'labor amount blocker should remain explicit');
 
-      const unchangedState = createWorkflowState([identityPendingTask, invalidAmountTask]);
-      const settlementResult = buildSettlementResult(unchangedState, [identityPendingPerson, partTimePerson]);
+      const acceptedIdentityState = applyTaskAcceptanceCommit(
+        createWorkflowState([identityPendingTask, invalidAmountTask]),
+        identityResult.commitInput
+      );
+      const acceptedState = applyTaskAcceptanceCommit(acceptedIdentityState, amountResult.commitInput);
+      const settlementResult = buildSettlementResult(acceptedState, [identityPendingPerson, partTimePerson]);
 
-      assert(unchangedState.storeTaskRows.every((row) => row.status === '待验收'), 'blocked acceptance should not complete any task');
-      assertEqual(unchangedState.partTimeLaborAcceptanceRows.length, 0, 'blocked acceptance should not write labor facts');
-      assertEqual(unchangedState.taskPerformanceScoringRows.length, 0, 'blocked acceptance should not write performance scoring');
-      assertEqual(settlementResult.batches.length, 0, 'blocked acceptance should not derive a labor settlement batch');
+      assert(acceptedState.storeTaskRows.every((row) => row.status === '已完成'), 'customer acceptance should complete both tasks');
+      assertEqual(acceptedState.customerTaskBillingFacts.length, 2, 'customer billing facts should remain independent from labor blockers');
+      assertEqual(acceptedState.partTimeLaborAcceptanceRows.length, 0, 'invalid labor sources must not write labor facts');
+      assertEqual(acceptedState.taskPerformanceScoringRows.length, 2, 'customer acceptance should retain performance scoring');
+      assertEqual(settlementResult.blockers.length, 2, 'labor settlement should surface both source blockers');
+      assertEqual(settlementResult.batches.length, 0, 'invalid labor sources should not derive a labor settlement batch');
     }
   }
 ];

@@ -31,6 +31,7 @@ export type FinanceInvoiceDeclarationStatus =
   | '后续开票已关联';
 export type FinanceSourceType =
   | '合同应收'
+  | '任务结算'
   | '薪酬发放'
   | '外协结算'
   | '报销单'
@@ -249,6 +250,24 @@ export const financePrimaryCategorySeeds: FinancePrimaryCategoryConfig[] = [
 ];
 
 export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
+  {
+    code: 'FC2-REV-DESIGN-SERVICE',
+    counterpartyScope: '客户',
+    defaultSourceType: '任务结算',
+    direction: '收入',
+    id: 'finance-secondary-design-service-income',
+    includeInReport: true,
+    name: '设计服务收入',
+    note: '施工图、平面方案、门店图等任务验收后确认的设计服务收入。',
+    defaultAccountingSubjectCode: '5001',
+    paymentMethods: ['对公账户收款', '员工代收'],
+    primaryId: 'finance-primary-customer-income',
+    reportAggregation: '经营收入',
+    sortOrder: 5,
+    status: '启用',
+    updatedAt: financeCategoryConfigToday,
+    voucherRequirement: '任务验收记录及价格依据合同'
+  },
   {
     code: 'FC2-REV-CUSTOMER-PAYMENT',
     counterpartyScope: '客户',
@@ -498,6 +517,13 @@ export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAcc
     cashDebit: '2241'
   },
   客户回款: {
+    accrualReceivable: '1122',
+    accrualRevenue: '5001',
+    cashCredit: '1122',
+    cashDebit: '1002',
+    outputVatPayable: '2221.01'
+  },
+  设计服务收入: {
     accrualReceivable: '1122',
     accrualRevenue: '5001',
     cashCredit: '1122',
@@ -1619,6 +1645,59 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
         time: '2026-04-12 15:40',
         actor: '财务复核',
         object: 'FIN-202604-0009',
+        action: '复核入账',
+        summary: '核对缴款回单后入账'
+      }
+    ]
+  },
+  {
+    id: 'fin-flow-tax-cit-q1',
+    transactionNo: 'FIN-202604-0012',
+    occurredAt: '2026-04-12',
+    accountingPeriod: '2026-04',
+    direction: '支出',
+    category: '税费缴纳',
+    counterparty: '税务机关',
+    counterpartyType: '内部',
+    amount: 500,
+    currency: 'CNY',
+    paymentMethod: '对公账户付款',
+    ...ccbPaymentPublicAccountRef,
+    sourceType: '税费事项',
+    sourceNo: 'TAX-2026Q1-CIT',
+    sourceTitle: '2026-Q1 企业所得税季度预缴',
+    voucherStatus: '已上传',
+    reconciliationStatus: '已对账',
+    status: '已入账',
+    registeredBy: '李明',
+    reviewedBy: '财务复核',
+    reviewedAt: '2026-04-12 16:15',
+    reconciledAt: '2026-04-12',
+    note: '2026-Q1 企业所得税季度预缴',
+    updatedAt: '2026-04-12 16:20',
+    files: [
+      {
+        id: 'fin-file-q1-cit-payment',
+        name: '2026-Q1_企业所得税预缴缴款回单.pdf',
+        status: '已上传',
+        type: '缴款回单',
+        updatedAt: '2026-04-12'
+      }
+    ],
+    operationRecords: [
+      {
+        id: 'fin-op-q1-cit-payment-register',
+        time: '2026-04-12 16:05',
+        actor: '李明',
+        object: 'FIN-202604-0012',
+        action: '登记流水',
+        summary: '登记企业所得税季度预缴 500 元'
+      },
+      {
+        id: 'fin-op-q1-cit-payment-review',
+        time: '2026-04-12 16:15',
+        actor: '财务复核',
+        object: 'FIN-202604-0012',
         action: '复核入账',
         summary: '核对缴款回单后入账'
       }

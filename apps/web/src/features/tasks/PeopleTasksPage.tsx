@@ -15,6 +15,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import { usePerformanceResults } from '../performance/usePerformanceResults';
 import { useTaskConfigState } from '../system/TaskConfigState';
 import { taskManagementNow, type StoreTaskRecord, useTaskManagementState } from './TaskManagementState';
 import { PeopleTaskDrawer } from './PeopleTaskDrawer';
@@ -34,6 +35,7 @@ const peopleTaskCurrentMonthRange = getDateScopeMonthRange(peopleTaskCurrentMont
 export function PeopleTasksPage() {
   const { getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
   const { peopleRows } = usePeopleOrganizationState();
+  const { publishedMonthlyRecords } = usePerformanceResults();
   const { taskConfigRows } = useTaskConfigState();
   const { storeTaskRows } = useTaskManagementState();
   const [filters, setFilters] = useState<PeopleTaskFilterState>(defaultPeopleTaskFilters);
@@ -45,9 +47,10 @@ export function PeopleTasksPage() {
       buildPersonTaskSummaries({
         completedRange,
         peopleRows,
+        publishedPerformanceRecords: publishedMonthlyRecords,
         storeTaskRows
       }),
-    [completedRange, peopleRows, storeTaskRows]
+    [completedRange, peopleRows, publishedMonthlyRecords, storeTaskRows]
   );
   const filteredSummaries = useMemo(() => filterPersonTaskSummaries(summaries, filters), [filters, summaries]);
   const activeSummary = activeSummaryId ? summaries.find((summary) => summary.id === activeSummaryId) : undefined;

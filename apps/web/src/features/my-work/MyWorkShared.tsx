@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
+import { getLatestPublishedPerformanceSummary } from '../performance/performanceResultConsumerModel';
+import { usePerformanceResults } from '../performance/usePerformanceResults';
 import { useSalaryMonthlyReportBuilder } from '../salary/salaryReportBuilder';
 import { useTaskConfigState } from '../system/TaskConfigState';
 import { taskManagementNow, type StoreTaskRecord } from '../tasks/TaskManagementState';
@@ -10,7 +12,6 @@ import type { TaskDetailTableRow } from '../tasks/components/TaskDetailTable';
 import { getTaskTypeName as resolveTaskTypeName } from '../tasks/taskDisplayModel';
 import {
   buildMyWorkArchiveSummary,
-  buildMyWorkPerformanceTaskRows,
   buildMyWorkTaskRows,
   buildMyWorkTaskSummary,
   currentMyWorkMemberId,
@@ -23,9 +24,10 @@ export function useMyWorkData() {
   const { getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
   const { peopleRows } = usePeopleOrganizationState();
   const { performanceRuleRows } = usePerformanceRuleState();
+  const { publishedMonthlyRecords } = usePerformanceResults();
   const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
   const { taskConfigRows } = useTaskConfigState();
-  const { storeTaskRows, taskPerformanceScoringRows } = useTaskManagementState();
+  const { storeTaskRows } = useTaskManagementState();
 
   const member = useMemo(() => getMyWorkMember(peopleRows, currentMyWorkMemberId), [peopleRows]);
   const month = taskManagementNow.slice(0, 7);
@@ -61,9 +63,9 @@ export function useMyWorkData() {
     return getMySalaryReports(member.id, salaryState.salaryDetailMonths.flatMap((salaryMonth) => getSalaryMonthlyReports(salaryMonth)));
   }, [getSalaryMonthlyReports, member, salaryState.salaryDetailMonths]);
   const latestSalaryReport = useMemo(() => getLatestSalaryReport(salaryReports), [salaryReports]);
-  const performanceTaskRows = useMemo(
-    () => (member ? buildMyWorkPerformanceTaskRows(member.id, storeTaskRows, taskPerformanceScoringRows) : []),
-    [member, storeTaskRows, taskPerformanceScoringRows]
+  const performanceSummary = useMemo(
+    () => getLatestPublishedPerformanceSummary(publishedMonthlyRecords, member?.id ?? ''),
+    [member?.id, publishedMonthlyRecords]
   );
 
   function getBrandName(task: StoreTaskRecord) {
@@ -100,7 +102,7 @@ export function useMyWorkData() {
     getTaskTypeName,
     latestSalaryReport,
     member,
-    performanceTaskRows,
+    performanceSummary,
     salaryReports,
     taskRows,
     taskSummary

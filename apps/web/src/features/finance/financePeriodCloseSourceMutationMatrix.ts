@@ -327,8 +327,8 @@ export const financePeriodCloseSourceMutationMatrix: readonly FinancePeriodClose
     stateWrites: ['addAccountingVoucherLaterPeriodAdjustment']
   },
   {
-    accountingPeriodSource: '税费所属法定期间映射的会计月份',
-    closedPeriodBehavior: '闭期时不能确认税费申报',
+    accountingPeriodSource: '实际申报日期对应月份；原税款所属期仅作为申报归属',
+    closedPeriodBehavior: '原所属期闭期后仍可申报；申报差异只进入实际申报月份，申报月份已结账时拒绝直接改账',
     evidence: 'FinanceTaxFilingsPage + financeTaxFilingData',
     frontendEntry: '确认税务申报',
     id: 'tax-handling-declaration',
@@ -353,8 +353,8 @@ export const financePeriodCloseSourceMutationMatrix: readonly FinancePeriodClose
     stateWrites: ['addFinanceTransaction', 'updateTaxMatterRecord']
   },
   {
-    accountingPeriodSource: '税费所属法定期间映射的会计月份',
-    closedPeriodBehavior: '闭期时不能补充或改写税务办理回执',
+    accountingPeriodSource: '回执对应申报或缴退款的实际办理月份',
+    closedPeriodBehavior: '原所属期闭期后允许补充证据文件，但不得据此覆盖已结账凭证；金额差异进入开放期间调整',
     evidence: 'FinanceTaxFilingsPage + financeTaxFilingData',
     frontendEntry: '更新税务办理回执',
     id: 'tax-handling-receipts',
@@ -366,8 +366,8 @@ export const financePeriodCloseSourceMutationMatrix: readonly FinancePeriodClose
     stateWrites: ['updateTaxMatterRecord']
   },
   {
-    accountingPeriodSource: '申报准备项对应税务期间映射的会计月份',
-    closedPeriodBehavior: '闭期时不能确认申报准备项',
+    accountingPeriodSource: '税费计提使用原业务期间；申报核对使用实际申报期间',
+    closedPeriodBehavior: '原期间未闭期时更新计提依据；闭期后只允许完善申报资料，不覆盖已记账计提',
     evidence: 'FinanceDeclarationPreparationPage + financeTaxDeclarationPreparationModel',
     frontendEntry: '确认申报准备项',
     id: 'declaration-preparation-confirm-item',
@@ -379,8 +379,8 @@ export const financePeriodCloseSourceMutationMatrix: readonly FinancePeriodClose
     stateWrites: ['updateDeclarationPreparationRecord']
   },
   {
-    accountingPeriodSource: '申报准备结果所属会计月份',
-    closedPeriodBehavior: '闭期时不能确认申报准备结果',
+    accountingPeriodSource: '税费计提使用原业务期间；外部申报差异使用实际申报期间',
+    closedPeriodBehavior: '原期间闭期后仍可确认申报口径；差异生成开放期间调整凭证，禁止回写原期间',
     evidence: 'FinanceDeclarationPreparationPage + financeTaxDeclarationPreparationModel',
     frontendEntry: '确认申报准备结果',
     id: 'declaration-preparation-confirm',

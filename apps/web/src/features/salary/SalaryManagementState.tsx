@@ -62,7 +62,7 @@ type SalaryManagementStateValue = {
 
 export const salaryToday = '2026-06-18';
 
-const initialSalaryDetailMonths = ['2026-06'];
+const initialSalaryDetailMonths = ['2026-06', '2026-05'];
 
 const initialSalaryAdjustments: SalaryAdjustmentRecord[] = [
   {
@@ -112,6 +112,23 @@ const initialPersonalIncomeTaxCumulativeSnapshots: SalaryPersonalIncomeTaxCumula
   }
 ];
 
+const initialMaySalarySettlementSnapshot = {
+  businessDeductionAmount: 0,
+  employeeGrossPayableAmount: 12000,
+  employeeHousingFundAmount: 0,
+  employeeNetPayableAmount: 11059.83,
+  employeeSocialInsuranceAmount: 861,
+  employerContributionAmount: 2214,
+  employerHousingFundAmount: 0,
+  employerSocialInsuranceAmount: 2214,
+  grossEarningsAmount: 12000,
+  payrollMonth: '2026-05',
+  payrollNo: 'PAY-202605-20250018',
+  taxableIncomeAmount: 12000,
+  totalEmploymentCostAmount: 14214,
+  withheldPersonalIncomeTaxAmount: 79.17
+};
+
 const initialSalaryMonthlyWorkflows: SalaryMonthlyWorkflowRecord[] = [
   {
     confirmedAt: '2026-06-17 10:40',
@@ -139,6 +156,30 @@ const initialSalaryMonthlyWorkflows: SalaryMonthlyWorkflowRecord[] = [
     },
     status: '已确认',
     updatedAt: '2026-06-17 10:40'
+  },
+  {
+    confirmedAt: '2026-06-10 10:00',
+    confirmedBy: '李明',
+    id: buildSalaryMonthlyWorkflowId('2026-05', '20250018'),
+    memberId: '20250018',
+    month: '2026-05',
+    note: '五月薪酬已完成实际发放',
+    paidAt: '2026-06-15 10:30',
+    paidBy: '周倩',
+    paymentLifecycleRecords: [
+      {
+        action: '关联发放流水',
+        actor: '周倩',
+        financeTransactionNo: 'FIN-202606-0019',
+        occurredAt: '2026-06-15 10:30'
+      }
+    ],
+    payrollNo: 'PAY-202605-20250018',
+    personalIncomeTaxPeriod: '2026-06',
+    salarySettlementReferences: [],
+    settlementSnapshot: initialMaySalarySettlementSnapshot,
+    status: '已发放',
+    updatedAt: '2026-06-15 10:30'
   }
 ];
 
@@ -183,22 +224,7 @@ const initialSalaryPaymentRecords: SalaryPaymentRecord[] = [
       taxRate: 0.03
     },
     position: '财务专员',
-    settlementSnapshot: {
-      businessDeductionAmount: 0,
-      employeeGrossPayableAmount: 12000,
-      employeeHousingFundAmount: 0,
-      employeeNetPayableAmount: 11059.83,
-      employeeSocialInsuranceAmount: 861,
-      employerContributionAmount: 2214,
-      employerHousingFundAmount: 0,
-      employerSocialInsuranceAmount: 2214,
-      grossEarningsAmount: 12000,
-      payrollMonth: '2026-05',
-      payrollNo: 'PAY-202605-20250018',
-      taxableIncomeAmount: 12000,
-      totalEmploymentCostAmount: 14214,
-      withheldPersonalIncomeTaxAmount: 79.17
-    },
+    settlementSnapshot: initialMaySalarySettlementSnapshot,
     taxPeriod: '2026-06'
   }
 ];
@@ -396,11 +422,14 @@ export function SalaryManagementProvider({ children }: { children: ReactNode }) 
                 memberId: report.member.id,
                 month: report.month,
                 note,
+                salaryCompositionLines: report.salaryCompositionLines,
                 salarySettlementReferences: report.performanceSettlementLines.map(
                   (line) => line.salarySettlementReference
                 ),
-                settlementSnapshot: report.settlementSnapshot
+                settlementSnapshot: report.settlementSnapshot,
+                settlementSourceRecords: report.settlementSourceRecords
               }),
+              financeTransactionNo: evidence.financeTransactionNo,
               memberId: report.member.id,
               month: report.month,
               note,

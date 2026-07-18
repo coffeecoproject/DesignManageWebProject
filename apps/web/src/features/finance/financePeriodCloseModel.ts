@@ -37,7 +37,6 @@ export type FinancePeriodCloseCheckCode =
   | 'financial_statements'
   | 'cash_review'
   | 'cash_reconciliation'
-  | 'tax_handling'
   | 'social_insurance_housing_fund';
 
 export type FinancePeriodCloseFilters = {
@@ -90,7 +89,6 @@ export type FinancePeriodCloseRecord = {
   laterAdjustmentTargetCount: number;
   socialInsurancePendingCount: number;
   status: FinancePeriodCloseStatus;
-  taxHandlingPendingCount: number;
   trialBalanceDifference: number;
   trialBalanceStatus: '平衡' | '不平衡';
   unbookedVoucherCount: number;
@@ -136,7 +134,6 @@ export function createFinancePeriodCloseSummarySnapshot(
     pendingReviewCashFlowCount: record.pendingReviewCashFlowCount,
     pendingVoucherCount: record.pendingVoucherCount,
     socialInsurancePendingCount: record.socialInsurancePendingCount,
-    taxHandlingPendingCount: record.taxHandlingPendingCount,
     trialBalanceDifference: record.trialBalanceDifference,
     trialBalanceStatus: record.trialBalanceStatus,
     unbookedVoucherCount: record.unbookedVoucherCount,
@@ -268,7 +265,6 @@ const currentFinancePeriodCloseCheckCodes = new Set<string>([
   'financial_statements',
   'cash_review',
   'cash_reconciliation',
-  'tax_handling',
   'social_insurance_housing_fund'
 ]);
 
@@ -304,10 +300,6 @@ const periodCloseCheckActions: Partial<Record<FinancePeriodCloseCheckCode, Perio
   social_insurance_housing_fund: {
     label: '去社保公积金',
     path: '/salary/social-insurance'
-  },
-  tax_handling: {
-    label: '去税务办理',
-    path: '/tax/handling'
   },
   voucher_booking: {
     label: '去会计凭证',
@@ -806,14 +798,6 @@ function buildPeriodCloseRecord({
   );
   const pendingReviewCashFlowCount = pendingReviewCashFlowRows.length;
   const periodTaxMatterRows = taxMatterRows.filter((record) => getTaxMatterAccountingPeriod(record) === period);
-  const pendingTaxHandlingRows = periodTaxMatterRows.filter((record) =>
-    !isSocialInsuranceMatter(record)
-      && (
-        record.dataStatus !== '已确认'
-        || ['数据待确认', '待申报', '待补回执'].includes(record.processStatus)
-      )
-  );
-  const taxHandlingPendingCount = pendingTaxHandlingRows.length;
   const pendingSocialInsuranceRows = periodTaxMatterRows.filter((record) =>
     isSocialInsuranceMatter(record) && getTaxMatterAccountingStatus(record) === '待确认'
   );
@@ -917,14 +901,6 @@ function buildPeriodCloseRecord({
       title: '银行对账'
     }),
     createCheckItem({
-      code: 'tax_handling',
-      detail: taxHandlingPendingCount === 0 ? '本期对应税务办理事项已完成。' : `还有 ${taxHandlingPendingCount} 项税务办理事项未完成。`,
-      nextStep: '需先在税务办理完成对应会计期间申报或回执事项',
-      passed: taxHandlingPendingCount === 0,
-      sourceSummary: summarizeCheckSources('税务办理', pendingTaxHandlingRows.map((record) => record.matterNo)),
-      title: '税务办理'
-    }),
-    createCheckItem({
       code: 'social_insurance_housing_fund',
       detail: socialInsurancePendingCount === 0 ? '本期社保公积金事项已完成。' : `还有 ${socialInsurancePendingCount} 项社保公积金事项未完成。`,
       nextStep: '需先在社保公积金完成缴费确认、缴费登记或凭证补充',
@@ -971,7 +947,6 @@ function buildPeriodCloseRecord({
     }),
     socialInsurancePendingCount,
     status,
-    taxHandlingPendingCount,
     trialBalanceDifference: roundMoney(periodSummary.trialBalanceDifference),
     trialBalanceStatus: periodSummary.trialBalanceStatus,
     unbookedVoucherCount,
@@ -1033,7 +1008,6 @@ function buildPeriodCloseRecord({
     }),
     socialInsurancePendingCount: displaySummary.socialInsurancePendingCount,
     status,
-    taxHandlingPendingCount: displaySummary.taxHandlingPendingCount,
     trialBalanceDifference: displaySummary.trialBalanceDifference,
     trialBalanceStatus: displayTrialBalanceStatus,
     unbookedVoucherCount: displaySummary.unbookedVoucherCount,

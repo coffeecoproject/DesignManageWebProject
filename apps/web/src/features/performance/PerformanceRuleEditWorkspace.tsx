@@ -11,6 +11,7 @@ import { CellText } from '../../components/TableCell';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import {
   formatRatio,
+  formatPerformancePayoutMode,
   getRuleReviewBlockerText,
   getTaskConfigName,
   performanceEligiblePositionOptions,
@@ -205,6 +206,7 @@ function RuleEditQualityForm({ items }: { items: PerformanceQualityDimension[] }
           <div className="rule-edit-card-title">{item.name}</div>
           <div className="rule-edit-grid">
             <ReadOnlyField density="compact" label="最高分值" value={`${item.score} 分`} />
+            <ReadOnlyField density="compact" label="权重" value={formatRatio(item.weight)} />
             <div className="rule-description-grid">
               <RuleDescriptionBlock label="评价重点" value={item.focus} />
               <RuleDescriptionBlock label="参考材料" value={item.evidence} />
@@ -327,7 +329,7 @@ export function PerformanceRuleEditWorkspace({
                   <ReadOnlyField density="compact" label="规则版本" value={activeRule.currentVersion} />
                   <ReadOnlyField density="compact" label="计分周期" value={activeRule.scoringCycle} />
                   <ReadOnlyField density="compact" label="复核结算" value={activeRule.reviewCycle} />
-                  <ReadOnlyField density="compact" label="发放方式" value={activeRule.payoutMode} />
+                  <ReadOnlyField density="compact" label="发放方式" value={formatPerformancePayoutMode(activeRule)} />
                   <label className="rule-edit-field rule-edit-field-wide">
                     <span className="field-label">适用岗位</span>
                     <Select

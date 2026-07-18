@@ -3,6 +3,7 @@ import type { PeopleAttendanceRecord } from './peopleDomain';
 import {
   buildAttendanceMonthlyReports,
   getAdjustmentDirectionFromType,
+  getAttendanceMonthlyConfirmationTimestamp,
   getAttendanceMonthRange,
   getMonthlyAdjustmentSignedDays,
   getMonthlyAdjustmentSignedHours,
@@ -159,14 +160,6 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     taskRecords: [],
     wechat: 'test-wechat',
     workCalendarId: weekdayCalendar.id,
-    workEvaluationRecords: [],
-    workEvaluationSummary: {
-      acceptedTasks: 0,
-      level: 'A',
-      month: '2026-06',
-      reworkTasks: 0,
-      score: 90
-    },
     ...overrides
   };
 }
@@ -470,6 +463,24 @@ const tests: UnitTest[] = [
       assertEqual(staleConfirmationReport.confirmation, undefined, 'stale confirmation should not be attached');
       assertEqual(freshConfirmationReport.status, '已确认', 'confirmation after adjustment should remain valid');
       assert(freshConfirmationReport.confirmation, 'fresh confirmation should be attached');
+    }
+  },
+  {
+    name: 'places a new confirmation after the latest monthly adjustment',
+    run: () => {
+      assertEqual(
+        getAttendanceMonthlyConfirmationTimestamp('2026-06-16 10:30', [
+          { createdAt: '2026-06-16 09:00' },
+          { createdAt: '2026-06-16 16:20' }
+        ]),
+        '2026-06-16 16:21',
+        'confirmation should remain effective when the month already contains a later adjustment'
+      );
+      assertEqual(
+        getAttendanceMonthlyConfirmationTimestamp('2026-06-16 10:30', []),
+        '2026-06-16 10:30',
+        'confirmation should keep the operation timestamp when no later adjustment exists'
+      );
     }
   },
   {

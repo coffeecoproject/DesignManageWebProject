@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { useTaskManagementState } from '../tasks/TaskManagementState';
 import {
   applyAccountingPeriodCloseLock,
+  assignTaxFilingAdjustmentAccountingPeriod,
   type AccountingPeriodCloseCheckSnapshotItem,
   type AccountingPeriodCloseSummarySnapshot,
   canBookAccountingVoucher,
@@ -62,7 +64,7 @@ import {
   type FinanceBusinessInvoiceAssociationDraft,
   type FinanceInvoiceAssociationDraft
 } from './financeInvoiceAssociationModel';
-import { buildOriginalInvoiceRedSummary } from './financeInvoiceModel';
+import { buildOriginalInvoiceRedSummary, isFinanceInvoiceAllocationEffective } from './financeInvoiceModel';
 import {
   financeReceivablePayableRecords,
   type FinanceReceivablePayableRecord
@@ -83,7 +85,10 @@ import {
   financeTaxMatterRecords,
   type FinanceTaxMatterRecord
 } from './financeTaxFilingData';
-import { ensurePayrollIitTaxMatterRecords } from './financeTaxMatterModel';
+import {
+  ensurePayrollIitTaxMatterRecords,
+  reconcileTaxMatterCashSettlement
+} from './financeTaxMatterModel';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 import type { SalaryAdjustmentRecord } from '../salary/salaryDomain';
 import { accountingSubjectProfile } from './financeAccountingSubjectData';
@@ -95,6 +100,12 @@ import {
 } from './financeMonthEndModel';
 import { financeToday, getAccountingPeriodFromBusinessPeriod } from './financeUtils';
 import { mergePartTimeLaborReceivablePayableRecords } from './financePartTimeLaborSettlementModel';
+import {
+  getCustomerTaskSettlementMergeIssues,
+  mergeCustomerTaskReceivablePayableRecords,
+  reconcileCustomerTaskReversals,
+  type CustomerTaskSettlementMergeIssue
+} from './financeCustomerTaskSettlementModel';
 import { mergeSalaryReceivablePayableRecords } from './financeSalarySettlementModel';
 import {
   buildFinanceExpenseApprovalCommit,
@@ -136,6 +147,7 @@ type FinanceManagementStateValue = {
   accountingVoucherLifecycleRows: AccountingVoucherLifecycleRecord[];
   accountingVoucherRows: AccountingVoucherRecord[];
   bankReconciliationRows: FinanceBankReconciliationLinkRecord[];
+  customerTaskSettlementIssues: CustomerTaskSettlementMergeIssue[];
   confirmBankReconciliation: (bankRecord: BankStatementRecord, transactions: FinanceTransactionRecord[]) => boolean;
   financeRows: FinanceTransactionRecord[];
   manualStampDutySourceRows: FinanceStampDutySourceRecord[];
@@ -238,6 +250,7 @@ function createSeedAccountingVoucherLifecycleRows() {
     [],
     {
       accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+      declarationPreparationRows: financeDeclarationPreparationRecords,
       invoiceBusinessAllocationRows: financeInvoiceBusinessAllocations,
       monthEndMatterRows: financeMonthEndMatterRecords
     }
@@ -266,6 +279,7 @@ const seedAccountingVoucherLifecycleRows = createSeedAccountingVoucherLifecycleR
 const seedAccountingPeriodLocks: AccountingPeriodLockRecord[] = [];
 
 export function FinanceManagementProvider({ children }: { children: ReactNode }) {
+  const { brandRows, customerRows, storeRows } = useCustomerManagementState();
   const {
     isSalaryAdjustmentPeriodOpen,
     salaryAdjustments,
@@ -276,7 +290,11 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     voidSalaryAdjustment
   } = useSalaryManagementState();
   const { peopleRows } = usePeopleOrganizationState();
-  const { partTimeLaborSettlementBatches } = useTaskManagementState();
+  const {
+    customerTaskBillingFacts,
+    customerTaskSettlementBatches,
+    partTimeLaborSettlementBatches
+  } = useTaskManagementState();
   const [financeRows, setFinanceRows] = useState<FinanceTransactionRecord[]>(financeTransactionRecords);
   const [invoiceRows, setInvoiceRows] = useState<FinanceInvoiceRecord[]>(financeInvoiceRecords);
   const [invoiceBusinessAllocationRows, setInvoiceBusinessAllocationRows] = useState<FinanceInvoiceBusinessAllocation[]>(
@@ -308,6 +326,86 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
   const [bankReconciliationRows, setBankReconciliationRows] = useState<FinanceBankReconciliationLinkRecord[]>(
     () => seedBankReconciliationRows
   );
+  const customerTaskReversalReconciliation = useMemo(
+    () => reconcileCustomerTaskReversals({
+      canDirectCorrect: (record) =>
+        guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '撤销任务验收').allowed
+        && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+        && !invoiceBusinessAllocationRows.some((allocation) =>
+          allocation.targetType === '应收应付'
+          && allocation.targetId === record.id
+          && isFinanceInvoiceAllocationEffective(allocation)
+        )
+        && !hasFinanceReceivablePayableActiveSettlement(
+          financeRows.filter((transaction) => record.linkedTransactionNos.includes(transaction.transactionNo))
+        ),
+      facts: customerTaskBillingFacts,
+      records: receivablePayableRows
+    }),
+    [
+      accountingPeriodLocks,
+      accountingVoucherLifecycleRows,
+      customerTaskBillingFacts,
+      financeRows,
+      invoiceBusinessAllocationRows,
+      receivablePayableRows
+    ]
+  );
+  const customerTaskSettlementIssues = useMemo(
+    () => [
+      ...getCustomerTaskSettlementMergeIssues({
+        batches: customerTaskSettlementBatches,
+        brands: brandRows,
+        customers: customerRows,
+        records: receivablePayableRows
+      }),
+      ...customerTaskReversalReconciliation.issues
+    ],
+    [
+      brandRows,
+      customerRows,
+      customerTaskReversalReconciliation.issues,
+      customerTaskSettlementBatches,
+      receivablePayableRows
+    ]
+  );
+  useEffect(() => {
+    setReceivablePayableRows((currentRows) => {
+      const mergedRows = mergeCustomerTaskReceivablePayableRecords({
+        batches: customerTaskSettlementBatches,
+        brands: brandRows,
+        customers: customerRows,
+        records: currentRows,
+        stores: storeRows
+      });
+
+      return reconcileCustomerTaskReversals({
+        canDirectCorrect: (record) =>
+          guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '撤销任务验收').allowed
+          && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+          && !invoiceBusinessAllocationRows.some((allocation) =>
+            allocation.targetType === '应收应付'
+            && allocation.targetId === record.id
+            && isFinanceInvoiceAllocationEffective(allocation)
+          )
+          && !hasFinanceReceivablePayableActiveSettlement(
+            financeRows.filter((transaction) => record.linkedTransactionNos.includes(transaction.transactionNo))
+          ),
+        facts: customerTaskBillingFacts,
+        records: mergedRows
+      }).records;
+    });
+  }, [
+    accountingPeriodLocks,
+    accountingVoucherLifecycleRows,
+    brandRows,
+    customerRows,
+    customerTaskBillingFacts,
+    customerTaskSettlementBatches,
+    financeRows,
+    invoiceBusinessAllocationRows,
+    storeRows
+  ]);
   useEffect(() => {
     setReceivablePayableRows((currentRows) =>
       mergePartTimeLaborReceivablePayableRecords({
@@ -337,8 +435,10 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     [declarationPreparationRows, financeRows, receivablePayableRows, salaryPaymentRecords]
   );
   const effectiveTaxMatterRows = useMemo(
-    () => ensurePayrollIitTaxMatterRecords(taxMatterRows, effectiveDeclarationPreparationRows),
-    [effectiveDeclarationPreparationRows, taxMatterRows]
+    () => ensurePayrollIitTaxMatterRecords(taxMatterRows, effectiveDeclarationPreparationRows)
+      .map((record) => reconcileTaxMatterCashSettlement(record, financeRows))
+      .map((record) => assignTaxFilingAdjustmentAccountingPeriod(record, accountingPeriodLocks)),
+    [accountingPeriodLocks, effectiveDeclarationPreparationRows, financeRows, taxMatterRows]
   );
   const derivedReceivablePayableRows = useMemo(
     () => deriveFinanceReceivablePayableSettlementRows(receivablePayableRows, financeRows),
@@ -356,6 +456,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         accountingVoucherLaterPeriodAdjustmentRows,
         {
           accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+          declarationPreparationRows: effectiveDeclarationPreparationRows,
           invoiceBusinessAllocationRows,
           monthEndMatterRows
         }
@@ -366,7 +467,9 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingVoucherLifecycleRows,
       bankReconciliationRows,
+      customerTaskSettlementIssues,
       derivedReceivablePayableRows,
+      effectiveDeclarationPreparationRows,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,
@@ -586,21 +689,26 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           return false;
         }
 
+        const committedRecord = assignTaxFilingAdjustmentAccountingPeriod(
+          nextRecord,
+          accountingPeriodLocks
+        );
+
         const preparation = effectiveDeclarationPreparationRows.find(
           (record) =>
-            record.taxType === nextRecord.matterType
-            && record.period === nextRecord.period
-            && (!nextRecord.declarationScenario || record.declarationScenario === nextRecord.declarationScenario)
+            record.taxType === committedRecord.matterType
+            && record.period === committedRecord.period
+            && (!committedRecord.declarationScenario || record.declarationScenario === committedRecord.declarationScenario)
         );
         const nextPreparation = preparation
           ? finalizeDeclarationPreparationAfterFiling(
               finalizePayrollIitCorrectionPreparation(
                 preparation,
-                nextRecord,
+                committedRecord,
                 currentFinanceActor,
                 `${financeToday} 15:10`
               ),
-              nextRecord,
+              committedRecord,
               currentFinanceActor,
               `${financeToday} 15:10`
             )
@@ -608,8 +716,8 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
 
         setTaxMatterRows((currentRows) =>
           currentRows.some((record) => record.id === recordId)
-            ? currentRows.map((record) => (record.id === recordId ? nextRecord : record))
-            : [nextRecord, ...currentRows]
+            ? currentRows.map((record) => (record.id === recordId ? committedRecord : record))
+            : [committedRecord, ...currentRows]
         );
 
         if (preparation && nextPreparation && nextPreparation !== preparation) {
@@ -1409,18 +1517,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           return false;
         }
 
-        const accountingPeriod = getAccountingPeriodFromBusinessPeriod(currentRecord.period);
-
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, accountingPeriod, '调整申报准备').allowed) {
-          return false;
-        }
-
         const nextRecord = updater(currentRecord);
-        const nextAccountingPeriod = getAccountingPeriodFromBusinessPeriod(nextRecord.period);
-
-        if (!guardAccountingPeriodOpen(accountingPeriodLocks, nextAccountingPeriod, '调整申报准备').allowed) {
-          return false;
-        }
 
         setDeclarationPreparationRows((currentRows) =>
           currentRows.some((record) => record.id === recordId)
@@ -1630,6 +1727,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         return true;
       },
       bankReconciliationRows,
+      customerTaskSettlementIssues,
       declarationPreparationRows: effectiveDeclarationPreparationRows,
       financeRows,
       manualStampDutySourceRows,

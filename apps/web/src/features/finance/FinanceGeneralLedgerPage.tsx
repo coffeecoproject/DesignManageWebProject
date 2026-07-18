@@ -248,6 +248,7 @@ export function FinanceGeneralLedgerPage() {
     accountingVoucherLaterPeriodAdjustmentRows,
     accountingVoucherLifecycleRows,
     bankReconciliationRows,
+    declarationPreparationRows,
     financeRows,
     invoiceBusinessAllocationRows,
     invoiceRows,
@@ -272,6 +273,7 @@ export function FinanceGeneralLedgerPage() {
           accountingVoucherLaterPeriodAdjustmentRows,
           {
             accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
+            declarationPreparationRows,
             invoiceBusinessAllocationRows,
             monthEndMatterRows
           }
@@ -282,6 +284,7 @@ export function FinanceGeneralLedgerPage() {
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingVoucherLifecycleRows,
       bankReconciliationRows,
+      declarationPreparationRows,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,

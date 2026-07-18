@@ -21,7 +21,7 @@ import {
   formatPayslipAmount,
   formatSignedMoney,
   getSalaryAdjustmentDirectionLabel,
-  getSalaryPayslipGeneratedAt,
+  getSalaryPerformanceSettlementRows,
   getSalaryPayslipLines,
   getSalaryPayslipNo,
   getSalaryPayslipStatus,
@@ -31,6 +31,7 @@ import {
   salaryMonthlyStatusTone,
   salaryPayslipStatusTone,
   salarySettlementSourceStatusTone,
+  type SalaryPerformanceSettlementDisplayRow,
   type SalaryPayslipLine,
   type StatutoryDeductionDisplayRow
 } from './salaryMonthlyDisplayModel';
@@ -44,8 +45,6 @@ import {
   type SalaryMonthlyReport,
   type SalarySettlementSourceRecord
 } from './salaryDomain';
-
-type SalaryPerformanceRecord = SalaryMonthlyReport['performanceRecords'][number];
 
 type SalaryMonthlyDetailDrawerProps = {
   open: boolean;
@@ -163,24 +162,23 @@ export function SalaryMonthlyDetailDrawer({
       width: 260
     }
   ];
-  const performanceColumns: TableColumnsType<SalaryPerformanceRecord> = [
+  const performanceColumns: TableColumnsType<SalaryPerformanceSettlementDisplayRow> = [
     {
-      title: '绩效类别',
-      key: 'category',
+      title: '结算项目',
+      key: 'kind',
       width: 150,
-      render: (_, record) => <CompactCell primary={record.category} secondary={record.sourceLabel} />
+      render: (_, record) => <CompactCell primary={record.kind} secondary={record.sourceLabel} />
     },
     {
-      title: '绩效总额',
-      dataIndex: 'monthlyAmount',
-      width: 130,
-      render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText>
+      title: '绩效期间',
+      dataIndex: 'performancePeriod',
+      width: 130
     },
     {
-      title: '本月预发',
-      dataIndex: 'prepayAmount',
+      title: '本月计入',
+      dataIndex: 'amount',
       width: 130,
-      render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText>
+      render: (amount: number) => <CellText>{formatSignedMoney(amount)}</CellText>
     },
     {
       title: '说明',
@@ -263,7 +261,7 @@ export function SalaryMonthlyDetailDrawer({
         ? {
             disabled: Boolean(periodReadbackNotice),
             icon: <WalletOutlined />,
-            label: '确认已发放',
+            label: '关联发放流水',
             onClick: () => onOpenPayment(report)
           }
         : undefined;
@@ -315,8 +313,7 @@ export function SalaryMonthlyDetailDrawer({
                       { label: '岗位', value: report.member.position },
                       { label: '计薪方式', value: report.salaryMode },
                       { label: '确认时间', value: report.workflow?.confirmedAt ?? '-' },
-                      { label: '发放时间', value: report.workflow?.paidAt ?? '-' },
-                      { label: '生成时间', value: getSalaryPayslipGeneratedAt(report) },
+                      { label: '实际发放时间', value: report.workflow?.paidAt ?? '-' },
                       {
                         label: '缺少确认项',
                         value: report.settlementPendingSourceLabels.length > 0 ? report.settlementPendingSourceLabels.join('、') : '-',
@@ -333,7 +330,7 @@ export function SalaryMonthlyDetailDrawer({
                     scrollX={820}
                   />
                 </DetailSection>
-                {payslipStatus === '暂未生成' ? null : (
+                {payslipStatus === '暂不可查看' ? null : (
                   <DetailSection icon={<WalletOutlined />} title="工资单明细">
                     <CompactDetailTable<SalaryPayslipLine>
                       columns={payslipColumns}
@@ -419,10 +416,10 @@ export function SalaryMonthlyDetailDrawer({
                     }
                   />
                 </DetailSection>
-                <DetailSection icon={<FileSearchOutlined />} title="绩效来源">
-                  <CompactDetailTable<SalaryPerformanceRecord>
+                <DetailSection icon={<FileSearchOutlined />} title="绩效结算">
+                  <CompactDetailTable<SalaryPerformanceSettlementDisplayRow>
                     columns={performanceColumns}
-                    dataSource={report.performanceRecords}
+                    dataSource={getSalaryPerformanceSettlementRows(report)}
                     emptyText="暂无进入本月薪酬的绩效结果"
                     rowKey="id"
                     scrollX={720}

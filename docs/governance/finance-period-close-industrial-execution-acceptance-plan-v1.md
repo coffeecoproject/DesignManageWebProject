@@ -40,7 +40,7 @@ Related contracts and plans:
   -> 正式报表 / 后续调整 / 异常反结账
 ```
 
-期间结账是最后的检查和锁期动作，不承载具体业务处理动作。具体处理动作仍归属于应收应付、发票台账关联、收支流水、流水复核、银行对账、薪酬社保、税务办理、会计凭证、固定资产等来源模块。
+期间结账是最后的检查和锁期动作，不承载具体业务处理动作。具体处理动作仍归属于应收应付、发票台账关联、收支流水、流水复核、银行对账、薪酬社保、申报准备、税务办理、会计凭证、固定资产等来源模块。税务边界必须区分期末会计计提和次月外部办理：原期间只检查税费计提凭证是否已记账，次月申报、缴款和回执不阻断原期间结账。
 
 ## 2. 当前状态
 
@@ -48,14 +48,13 @@ Related contracts and plans:
 
 - `/finance/accounting-vouchers` 支持前端会话内 `制单 -> 记账 -> 冲销` 生命周期。
 - `/finance/general-ledger` 从已记账凭证读取期间科目余额。
-- `/finance/period-close` 已有八项前端检查：
+- `/finance/period-close` 已有七项前端检查：
   - 凭证来源
   - 凭证记账
   - 总账试算
   - 财务报表
   - 流水复核
   - 银行对账
-  - 税务办理
   - 社保公积金
 - `/finance/period-close` 通过确认抽屉写入前端会话内期间锁。
 
@@ -113,7 +112,7 @@ framework-agnostic contract skeleton；持久化期间锁、真实 HTTP/API 集�
 - `/finance/financial-statements` 已作为前端会话内只读正式报表承接页接入，当前只读取已记账总账和科目余额，区分 `待结账` 与 `正式报表`；现金流量表已按已记账现金/银行分录和对方科目 `cashFlowItem / cashFlowActivity` 映射生成，缺映射时显示待补映射并阻断结账，不从应收应付、流水、发票等业务源单倒推。
 - `/finance/accounting-subjects` 已把 `cashFlowItem / cashFlowActivity` 作为会计科目的只读内置映射呈现，供现金流量表追溯来源；当前不开放业务侧编辑，后端接入前不声明映射版本、审批或生效期能力。
 - `/finance/period-close` 前端 `报表准备` 检查已复用财务报表模型的现金流量映射缺口：总账试算平衡但现金/银行分录对方科目缺少现金流量项目映射时，期间仍为 `需处理`，并归口跳转到 `/finance/financial-statements`。
-- `/finance/period-close` 前端已移除独立调整检查：薪酬社保、税务办理、后续调整和其他来源事项通过各自来源模块状态和会计凭证状态进入结账检查；期间结账只显示汇总检查结果，不在结账页处理来源事项，也不显示假入口。
+- `/finance/period-close` 前端已移除独立调整检查：薪酬社保、税费计提、后续调整和其他来源事项通过各自来源模块状态和会计凭证状态进入结账检查；期间结账只显示汇总检查结果，不在结账页处理来源事项，也不显示假入口。税务申报、缴款和回执属于结账后的外部办理，不再作为原期间独立检查组。
 - `/finance/period-close` 前端 `凭证制单 / 凭证记账` 检查已从泛化跳转升级为深链处理入口：跳转 `/finance/accounting-vouchers` 时带归属月份、凭证状态和单号参数；会计凭证页读取参数后自动筛选并打开对应制单事项或已制单凭证抽屉，期间结账仍只负责导航，不在结账抽屉内处理凭证。
 - `/finance/accounting-vouchers` 前端后续期间调整已把重复校验前移到入口模型和抽屉验证：同一原凭证在同一调整期间已有后续调整事项时，入口不再引导同期间重复创建；如存在后续开放期间，则列表下一步和详情入口默认指向下一个可用调整期间，并在详情回看既有调整事项号；抽屉仍会禁用重复提交，避免状态层静默去重造成 false-success。
 - 前端模型已覆盖后续期间调整的目标期间结账闭环：`待制单` 调整阻断凭证制单，`已制单` 调整阻断凭证记账，`已记账` 调整进入目标期间总账并允许目标期间在其他检查通过时结账；原已结账期间继续读取结账时快照，只追加后续调整回看上下文，不因目标期间调整凭证改写历史期间汇总。
@@ -175,7 +174,7 @@ framework-agnostic contract skeleton；持久化期间锁、真实 HTTP/API 集�
 - `apps/api/src/finance/financeSqlRepositoryGatewayContract.ts` 已补统一 SQL repository gateway contract：同一请求形态入口组合 row-backed 期间锁、总账 SQL rows、现金流映射 SQL rows 和报表 snapshot SQL rows，覆盖结账后读取总账、报表 readiness、正式报表快照写入、既有快照重放和缺权限拒绝。该 contract 仍是本地仓储组合证据；没有监听 HTTP server、真实 SQL driver、migration apply、数据库事务、auth middleware、归档服务或生产证据。
 - `apps/api/src/finance/financeHttpApiRepositoryGatewayContract.test.ts` 已补矩阵驱动测试：遍历所有普通 `financeSourceMutationRouteDefinitions`，先通过 row-backed gateway 提交期间结账，再直接调用每条本地 route skeleton，验证都会从已提交候选 row 锁读到闭期并返回 `CLOSED_ACCOUNTING_PERIOD`，既不改源行金额/状态/版本，也不插入 create-type 源行。该证据仍是本地 route skeleton 范围，不是生产源单 API 集成。
 - `apps/api/src/finance/accountingVoucherLifecycleContract.ts` 已补普通会计凭证生命周期的本地后端目标契约：制单校验来源 hash 和借贷平衡、生成正式凭证号并冻结来源/分录快照；记账写入一行分录对应一行总账并支持重复记账重放不重复写；开放期间冲销生成已记账反向凭证并保留原凭证关联；已结账期间制单、记账和同期间冲销统一返回 `CLOSED_ACCOUNTING_PERIOD` 并指向后续期间调整。该契约仍不是监听 HTTP endpoint、真实凭证 repository、数据库事务、权限中间件或总账持久化证据。
-- 独立调整来源契约已不作为当前期间结账前端口径；后续后端应提供统一结账来源状态服务，聚合薪酬社保、税务办理、会计凭证、资金复核、银行对账和报表准备状态。该契约仍不是自动折旧、摊销、预提或候选凭证服务，也不是 HTTP endpoint、数据库或生产证据。
+- 独立调整来源契约已不作为当前期间结账前端口径；后续后端应提供统一结账来源状态服务，聚合薪酬社保、税费计提凭证、会计凭证、资金复核、银行对账和报表准备状态。外部税务申报、缴款和回执不得反向阻断已完成税费计提的原期间。该契约仍不是自动折旧、摊销、预提或候选凭证服务，也不是 HTTP endpoint、数据库或生产证据。
 - `/finance/period-close` 页面不在结账抽屉内生成报表；未通过时归口跳转到 `/finance/financial-statements` 查看报表承接状态，避免把报表结果继续塞回期间结账页。
 
 阶段 1-3 的后端 close-checks、持久化期间锁和源单 API 闭期守卫仍是正式工业化必需项；当前本地契约轮次只补齐可执行契约证据，不替代生产数据库、生产身份和生产部署。
@@ -426,7 +425,7 @@ test、permission test、CI 证据、非生产演练、发布记录或生产锁�
 | 流水复核 | 复核入账、退回、作废 | 影响可记账资金事实 |
 | 银行对账 | 对账关系、异常处理、补差冲正 | 影响资金凭证完整性 |
 | 会计凭证 | 制单、记账、冲销 | 影响总账和报表 |
-| 税务办理 | 申报、缴款、回执 | 影响税费凭证和结账前置 |
+| 申报准备 / 税务办理 | 期末税费计提、次月申报、缴款、回执 | 期末税费计提凭证影响原期间结账；次月申报差异进入开放期间，外部办理状态不阻断原期间 |
 | 社保公积金 | 确认、缴费、回单 | 影响工资社保相关凭证 |
 | 薪酬社保 | 工资、绩效、社保、公积金、个税结果 | 影响薪酬计提和付款 |
 | 账套初始化 | 期初调整凭证 | 影响后续总账口径 |
@@ -470,10 +469,10 @@ test、permission test、CI 证据、非生产演练、发布记录或生产锁�
    写入总账分录
 
 9. 来源事项完成
-   薪酬社保、税务办理、后续调整、凭证候选和资金链路在各自模块完成
+   薪酬社保、税费计提、后续调整、凭证候选和资金链路在各自模块完成
 
 10. 期间结账检查
-    检查凭证、总账、资金、税务、社保和报表准备
+    检查凭证、总账、资金、税费计提、社保和报表准备；不等待次月税务申报、缴款和回执
 
 11. 确认结账
     写期间锁、检查快照、结账事件
@@ -526,7 +525,6 @@ GET /api/finance/accounting-periods/{period}/close-checks
 | 凭证记账 | 已制单未记账数量和凭证列表 |
 | 总账试算 | 借方、贷方、差额、试算状态 |
 | 资金对账 | 已复核未对账流水、对账异常流水 |
-| 税务办理 | 未申报、未缴款、缺回执事项 |
 | 社保公积金 | 未确认、未缴费、缺回单事项 |
 | 报表准备 | 报表可生成状态和阻断原因 |
 
@@ -639,7 +637,7 @@ assertAccountingPeriodOpen(accountingPeriod)
 - 收支流水复核、退回、作废。
 - 银行对账确认、撤销、补差、冲正。
 - 会计凭证制单、记账、冲销。
-- 税务办理确认、缴款、回执变更。
+- 税务申报、缴款和回执允许在原期间结账后继续办理；与期末计提存在差异时，只能在申报发生的开放期间生成调整凭证，不得改写原期间税费凭证。
 - 社保公积金确认、缴费、回单变更。
 - 薪酬明细确认、社保公积金确认、个税确认。
 - 账套初始化启用后期初调整制单/记账。
@@ -705,7 +703,7 @@ assertAccountingPeriodOpen(accountingPeriod)
 | 来源类型 | 来源模块 | 目标承接 |
 | --- | --- | --- |
 | 薪酬社保 | 薪酬社保 | 薪酬/社保凭证与缴费状态 |
-| 税务办理 | 税务办理 | 税费凭证与办理状态 |
+| 税费计提 | 申报准备 / 会计凭证 | 原期间税费计提凭证状态；外部办理差异由申报发生的开放期间承接 |
 | 后续调整 | 会计凭证 | 后续期间调整凭证 |
 | 资金链路 | 流水复核 / 银行对账 | 已复核流水与银行对账状态 |
 | 财务报表 | 财务报表 | 报表可出具状态 |
@@ -835,12 +833,11 @@ V3: 自动计算折旧、摊销、预提等来源事实，并由会计凭证承�
 8. 记账
 9. 来源事项完成
 10. 总账试算平衡
-11. 税务办理完成
-12. 社保公积金完成
-13. close-checks 全部通过
-14. 确认结账
-15. 已结账期间禁止修改
-16. 报表读取已结账结果
+11. 社保公积金完成
+12. close-checks 全部通过
+13. 确认结账
+14. 已结账期间禁止修改
+15. 报表读取已结账结果；次月税务申报差异进入开放期间调整
 ```
 
 ## 7. 异常验收矩阵
@@ -853,7 +850,9 @@ V3: 自动计算折旧、摊销、预提等来源事实，并由会计凭证承�
 | 总账借贷不平 | 不能结账 |
 | 已复核流水未银行对账 | 不能结账 |
 | 银行对账存在异常 | 不能结账 |
-| 税务办理未完成 | 不能结账 |
+| 原期间税费计提凭证未记账 | 不能结账 |
+| 次月税务申报、缴款或回执未完成 | 不阻断原期间；继续在税务办理处理 |
+| 申报结果与原计提存在差异 | 在申报发生的开放期间生成调整凭证，不回写已结账期间 |
 | 社保公积金未完成 | 不能结账 |
 | 来源事项未完成或候选凭证未承接 | 不能结账 |
 | 已结账后调整应收应付 | 后端拒绝 |
@@ -971,7 +970,7 @@ POST /api/finance/accounting-periods/{period}/reopen
 | 期间锁未持久化 | 已有 row-backed candidate rows、HTTP 入口到 row-backed repository、HTTP 写入口到 service transaction boundary、HTTP 写入口到 managed PostgreSQL runtime、project runtime process contract、project runtime Node server contract、project service-process bootstrap contract、project service-process runtime lifecycle contract、managed secret provider readiness contract、project service runtime admission contract、PostgreSQL migration plan、project migration artifact、仓库内 not-applied SQL artifact、rollback/forward-fix review、operational gate contract、本地 PostgreSQL dry-run、isolated apply fixture drill、persisted replay drill、row-lock concurrency drill、service concurrency contract、service transaction boundary runtime trace validation、PG-like client port contract、native PostgreSQL pool adapter contract、PostgreSQL runtime binding contract、PostgreSQL secret resolver contract、PostgreSQL pool factory/config contract、PostgreSQL runtime readiness package contract、runtime implementation manifest contract、runtime implementation bundle contract、PG-like client/repository bridge contract、PG-like atomic commit bridge contract、service atomic commit boundary contract、PostgreSQL service runtime gateway contract、PostgreSQL shared service pool runtime contract、PostgreSQL managed service pool runtime contract（含 bundle.poolConfig 消费和 bundle/readiness drift 阻断）、row-backed service-restart idempotent replay、transaction isolation policy contract、formal DB transaction manager contract、DB connection-pool lifecycle contract 和 DB runtime adapter contract；仍缺正式项目 schema migration apply、真实目标数据库选择、真实备份恢复计划审批、真实 release/rollback owner 指派、production apply approval、真实应用层 SQL driver/repository、真实 secret manager implementation、真实 DB client implementation、真实 DB runtime implementation、生产应用服务进程 wiring、真实数据库隔离级别验证、真实应用服务数据库持久化重放和多实例真实服务级验证 | 阶段 2 |
 | 源单 API 未统一锁期 | 已有本地 source mutation route adapter、operation registry、源单 repository API contract、源表 repository adapter contract、source mutation API transaction bridge、HTTP managed PostgreSQL source mutation bridge/server-entry/framework-adapter/application-framework/route-plugin/node-listener/application-server/project-server-wiring/project-runtime-process/project-runtime-node-server/project-service-process-bootstrap/project-service-process-runtime-lifecycle/project-service-runtime-admission contract 和 row-backed HTTP gateway 矩阵测试，覆盖所有普通本地 route skeleton 在已提交候选期间锁后拒绝闭期写入，证明 create/update 源单写入统一进入 repository transaction guard，并进一步证明 concrete framework-shaped request 映射、server-shaped 请求解析、framework route plugin 统一 `/api/finance` 入口、framework application managed-first/fallback route、服务端 principal/账套资源校验、客户端 header 防伪、真实本地 HTTP listener、application Node server 通过 route plugin host 委托统一 application adapter、project API server wiring 禁止 direct finance handler、project runtime process active path 委托同一 managed runtime 且 active summary 必须携带 runtime bundle evidence、本地 project runtime Node host 通过真实 HTTP 请求进入同一进程链、本地 service-process bootstrap 启动前阻断生产/密钥/公网配置漂移、本地 service-process runtime lifecycle 探针和 graceful shutdown 边界、本地 service runtime admission 启动前阻断未满足准入的服务运行时、managed runtime commit 后 SQL 源表回写、闭期拒绝不回写、版本冲突和事务异常不提交的本地源表边界；仍缺生产源表服务/API、真实 SQL source repository runtime、真实 auth middleware、源表事务和生产直接 API 调用闭期拒绝证据 | 阶段 3 |
 | 会计凭证仍有前端 session 生命周期 | 已有本地后端目标契约覆盖制单冻结快照、记账写总账、重复记账重放、开放期冲销和闭期拒绝；本地凭证/总账 repository contract 已覆盖仓储快照、幂等重放、voucher row 同步和总账行回读；本地 request-shaped gateway 已覆盖 prepare/book/reverse 的权限、版本、幂等和闭期拒绝。仍缺监听 HTTP、真实凭证/总账 SQL repository、数据库事务、权限中间件、migration 和生产持久化回放证据，前端 session 仍不是正式凭证和总账证据 | 阶段 4 |
-| 来源事项就绪仍未后端化 | 前端已移除独立来源 checklist，改由薪酬社保、税务办理、会计凭证、资金复核、银行对账和报表准备等真实模块状态汇总结账；仍缺后端统一 close-checks 来源状态服务、自动折旧/摊销/预提计算、候选凭证服务、HTTP/DB/权限/事务证据 | 阶段 5 |
+| 来源事项就绪仍未后端化 | 前端已移除独立来源 checklist，改由薪酬社保、税费计提凭证、会计凭证、资金复核、银行对账和报表准备等真实模块状态汇总结账；税务外部办理已从原期间门禁移除。仍缺后端统一 close-checks 来源状态服务、自动折旧/摊销/预提计算、候选凭证服务、HTTP/DB/权限/事务证据 | 阶段 5 |
 | 反结账未成正式后端流程 | 已有本地契约覆盖普通阻断、高风险确认、影响快照、路由适配和候选行校验；仍缺真实 HTTP、权限中间件、SQL migration、不可逆外部提交数据源、审计归档和生产级事务证据 | 阶段 6 |
 | 后续期间调整后端证据未闭合 | 已有前端原型、前端模型测试、文档合同、本地 API contract 测试、row-backed gateway 写入本地调整事实/幂等/事件/目标期间 voucher row 的证据，以及候选到正式凭证生命周期的本地桥接契约；本地 contract 已覆盖 `待制单` 阻断制单、`已制单` 阻断记账、`已记账` 后目标期间可结账。仍缺监听 HTTP、真实 auth middleware、SQL migration、真实凭证/调整事实 repository、数据库事务和生产总账持久化联动证据 | 阶段 6 |
 | 财务报表后端和现金流量表未闭合 | 已有前端只读正式报表承接、前端结账时会话内总账/报表快照、前端期间结账 `financial_statements` 映射缺口阻断、现金流量项目映射、会计科目只读映射呈现、本地后端目标契约测试、route adapter 测试和 HTTP 请求形态 gateway contract；正式报表本地契约已携带源总账 hash、现金流映射 hash 和按科目聚合的总账快照行；本地总账/科目余额 read contract 已覆盖 posted ledger rows、期初余额、试算平衡、source-ledger hash 和 gateway 分发；本地总账 SQL repository/migration contract 已覆盖科目、期初余额、总账分录表契约、查询索引、非破坏性迁移口径、row 校验和 route state 复用；本地财务报表 SQL repository/migration contract 已覆盖现金流量映射表、正式报表快照 rows、报表行、总账快照行、row 校验、闭期快照重放和 route state 复用；本地统一 SQL repository gateway contract 已把 row-backed 期间锁、总账 SQL rows 和报表 snapshot SQL rows 接到同一请求形态入口；candidate DB row contract 已声明并验证正式报表快照、报表行和总账快照行；row-backed HTTP gateway 已能把正式报表快照写入候选 rows 并重放既有快照；期间结账本地 route adapter 已用财务报表 readiness 派生 `financial_statements` 阻断项；仍缺真实监听 HTTP、真实 SQL driver/repository 集成、migration apply、数据库事务、归档和审计证据 | 阶段 7 |

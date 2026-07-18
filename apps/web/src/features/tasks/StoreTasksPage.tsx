@@ -6,7 +6,7 @@ import {
   StopOutlined,
   WarningOutlined
 } from '@ant-design/icons';
-import { Select, message } from 'antd';
+import { Input, Modal, Select, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { DateScopeFilter, getDateScopeMonthRange, getDateScopeRange } from '../../components/DateFilterFields';
 import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
@@ -16,6 +16,7 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
+import { usePerformanceResults } from '../performance/usePerformanceResults';
 import { useTaskConfigState } from '../system/TaskConfigState';
 import { useWorkCalendarState } from '../system/WorkCalendarState';
 import { TaskCreateDrawer } from './TaskCreateDrawer';
@@ -40,13 +41,16 @@ export function TaskListPage() {
   const { brandRows, customerRows, getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
   const { attendanceRecords, peopleRows } = usePeopleOrganizationState();
   const { performanceRuleRows } = usePerformanceRuleState();
+  const { publishedMonthlyRecords } = usePerformanceResults();
   const { taskConfigRows } = useTaskConfigState();
   const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
-  const { createStoreTask, saveStoreTask, storeTaskRows } = useTaskManagementState();
+  const { createStoreTask, reverseTaskAcceptance, saveStoreTask, storeTaskRows } = useTaskManagementState();
   const [filters, setFilters] = useState<TaskFilterState>(defaultTaskFilters);
   const [activeTask, setActiveTask] = useState<StoreTaskRecord>();
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [reversalTask, setReversalTask] = useState<StoreTaskRecord>();
+  const [reversalReason, setReversalReason] = useState('');
   const plannedDeliveryRange = useMemo(
     () => getDateScopeRange(filters.plannedDeliveryTime, taskListCurrentMonth),
     [filters.plannedDeliveryTime]
@@ -58,6 +62,7 @@ export function TaskListPage() {
     getCustomerById,
     peopleRows,
     performanceRuleRows,
+    publishedPerformanceRecords: publishedMonthlyRecords,
     storeRows,
     storeTaskRows,
     taskConfigRows,
@@ -77,7 +82,14 @@ export function TaskListPage() {
       return;
     }
 
-    const nextTask = createStoreTask(createInput.input);
+    let nextTask: StoreTaskRecord;
+
+    try {
+      nextTask = createStoreTask(createInput.input);
+    } catch (error) {
+      void messageApi.warning(error instanceof Error ? error.message : '当前任务暂不可创建');
+      return;
+    }
 
     setActiveTask(nextTask);
     setDetailOpen(true);
@@ -93,6 +105,30 @@ export function TaskListPage() {
 
   function handleTerminate(record: StoreTaskRecord) {
     updateActiveTask(buildTerminatedTaskRecord(record), '任务已中止');
+  }
+
+  function handleReverseAcceptance() {
+    if (!reversalTask || !reversalReason.trim()) {
+      return;
+    }
+
+    const result = reverseTaskAcceptance({
+      actor: '李明',
+      occurredAt: taskManagementNow,
+      reason: reversalReason,
+      taskId: reversalTask.id
+    });
+
+    if (!result.success) {
+      void messageApi.warning(result.message ?? '当前验收结果不可撤销');
+      return;
+    }
+
+    setReversalTask(undefined);
+    setReversalReason('');
+    setActiveTask(undefined);
+    setDetailOpen(false);
+    void messageApi.success('验收已撤销，任务已退回待验收');
   }
 
   const filteredTasks = useMemo(
@@ -194,8 +230,34 @@ export function TaskListPage() {
         task={activeTask}
         taskConfigRows={taskConfigRows}
         onClose={() => setDetailOpen(false)}
+        onReverseAcceptance={(record) => {
+          setReversalTask(record);
+          setReversalReason('');
+        }}
         onTerminate={handleTerminate}
       />
+
+      <Modal
+        cancelText="取消"
+        okButtonProps={{ danger: true, disabled: !reversalReason.trim() }}
+        okText="撤销验收"
+        open={Boolean(reversalTask)}
+        title="撤销验收"
+        onCancel={() => {
+          setReversalTask(undefined);
+          setReversalReason('');
+        }}
+        onOk={handleReverseAcceptance}
+      >
+        <Input.TextArea
+          autoSize={{ minRows: 3, maxRows: 6 }}
+          maxLength={200}
+          placeholder="填写撤销原因"
+          showCount
+          value={reversalReason}
+          onChange={(event) => setReversalReason(event.target.value)}
+        />
+      </Modal>
     </ManagementPageScaffold>
   );
 }

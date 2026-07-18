@@ -24,6 +24,7 @@ import { PayrollIitEmployeeDetailPanel } from './PayrollIitEmployeeDetailPanel';
 import { SocialInsuranceContributionDetailPanel } from './SocialInsuranceContributionDetailPanel';
 import { StampDutySourceDetailTable } from './StampDutySourceDetailTable';
 import { VatUnbilledIncomeDetailTable } from './VatUnbilledIncomeDetailTable';
+import type { AccountingVoucherRecord } from './financeAccountingVoucherModel';
 import type {
   FinanceDeclarationPreparationRecord,
   FinanceDeclarationUnbilledIncomeCandidate
@@ -47,6 +48,7 @@ import {
   type TaxMatterModuleScope
 } from './financeTaxMatterHandlingModel';
 import {
+  getTaxMatterEvidenceStatus,
   getTaxMatterSettlementDirection,
   type SocialInsuranceTaxMatterSummary
 } from './financeTaxMatterModel';
@@ -76,39 +78,60 @@ const taxMatterSourceColumns: TableColumnsType<FinanceTaxMatterSourceItem> = [
   }
 ];
 
-const declarationHistoryColumns: TableColumnsType<FinanceTaxMatterDeclarationHistoryRecord> = [
-  {
-    dataIndex: 'version',
-    render: (version: number, record) => <CompactCell primary={`第 ${version} 版`} secondary={record.action} />,
-    title: '版本',
-    width: 108
-  },
-  {
-    dataIndex: 'declarationStatus',
-    render: (status: FinanceTaxMatterDeclarationHistoryRecord['declarationStatus']) => (
-      <StatusTag toneMap={taxMatterDeclarationStatusTone} value={status} />
-    ),
-    title: '申报结果',
-    width: 112
-  },
-  {
-    key: 'settlement',
-    render: (_, record) => {
-      const refundableAmount = record.filedRefundableAmount ?? 0;
-      const direction = refundableAmount > 0 ? '应退' : record.filedPayableAmount > 0 ? '应缴' : '无需补退';
-      const amount = refundableAmount > 0 ? refundableAmount : record.filedPayableAmount;
-      return <CompactCell primary={direction} secondary={formatMoney(amount)} />;
+function getDeclarationHistoryColumns(
+  taxFilingVouchers: AccountingVoucherRecord[]
+): TableColumnsType<FinanceTaxMatterDeclarationHistoryRecord> {
+  return [
+    {
+      dataIndex: 'version',
+      render: (version: number, record) => <CompactCell primary={`第 ${version} 版`} secondary={record.action} />,
+      title: '版本',
+      width: 108
     },
-    title: '补退结果',
-    width: 136
-  },
-  {
-    dataIndex: 'reason',
-    render: (reason: string, record) => <CompactCell primary={reason} secondary={`${record.operatedBy} / ${record.operatedAt}`} />,
-    title: '调整原因',
-    width: 260
-  }
-];
+    {
+      dataIndex: 'declarationStatus',
+      render: (status: FinanceTaxMatterDeclarationHistoryRecord['declarationStatus']) => (
+        <StatusTag toneMap={taxMatterDeclarationStatusTone} value={status} />
+      ),
+      title: '申报结果',
+      width: 112
+    },
+    {
+      key: 'filingPeriod',
+      render: (_, record) => {
+        const voucher = taxFilingVouchers.find((candidate) => (
+          candidate.taxFilingContext?.declarationVersion === record.version
+        ));
+
+        return (
+          <CompactCell
+            primary={record.declarationDate ?? '-'}
+            secondary={voucher ? `入账期间 ${voucher.accountingPeriod}` : '无申报差额凭证'}
+          />
+        );
+      },
+      title: '申报与入账',
+      width: 178
+    },
+    {
+      key: 'settlement',
+      render: (_, record) => {
+        const refundableAmount = record.filedRefundableAmount ?? 0;
+        const direction = refundableAmount > 0 ? '应退' : record.filedPayableAmount > 0 ? '应缴' : '无需补退';
+        const amount = refundableAmount > 0 ? refundableAmount : record.filedPayableAmount;
+        return <CompactCell primary={direction} secondary={formatMoney(amount)} />;
+      },
+      title: '补退结果',
+      width: 136
+    },
+    {
+      dataIndex: 'reason',
+      render: (reason: string, record) => <CompactCell primary={reason} secondary={`${record.operatedBy} / ${record.operatedAt}`} />,
+      title: '调整原因',
+      width: 240
+    }
+  ];
+}
 
 export type FinanceTaxMatterDetailDrawerProps = {
   canAdjustDeclaration: boolean;
@@ -117,7 +140,7 @@ export type FinanceTaxMatterDetailDrawerProps = {
   canRecordPaymentResult: boolean;
   canRecordRefundResult: boolean;
   canSubmitRefundApplication: boolean;
-  canSupplementDeclarationReceipt: boolean;
+  canMaintainDeclarationEvidence: boolean;
   canUploadSocialReceipt: boolean;
   declarationDetailPreparation?: FinanceDeclarationPreparationRecord;
   declarationPreparation?: FinanceDeclarationPreparationRecord;
@@ -126,6 +149,7 @@ export type FinanceTaxMatterDetailDrawerProps = {
   record?: FinanceTaxMatterRecord;
   socialInsuranceEmployeeRows: SocialInsuranceEmployeeRecord[];
   socialInsuranceSummary?: SocialInsuranceTaxMatterSummary;
+  taxFilingVouchers: AccountingVoucherRecord[];
   vatUnbilledIncomeRows: FinanceDeclarationUnbilledIncomeCandidate[];
   onClose: () => void;
   onDownloadFile: (file: RelatedFileRecord) => void;
@@ -147,7 +171,7 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
     canRecordPaymentResult,
     canRecordRefundResult,
     canSubmitRefundApplication,
-    canSupplementDeclarationReceipt,
+    canMaintainDeclarationEvidence,
     canUploadSocialReceipt,
     declarationDetailPreparation,
     declarationPreparation,
@@ -163,6 +187,7 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
     record,
     socialInsuranceEmployeeRows,
     socialInsuranceSummary,
+    taxFilingVouchers,
     vatUnbilledIncomeRows
   } = props;
   const isSocialInsuranceModule = moduleScope === 'social';
@@ -179,7 +204,7 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
         canRecordPaymentResult,
         canRecordRefundResult,
         canSubmitRefundApplication,
-        canSupplementDeclarationReceipt,
+        canMaintainDeclarationEvidence,
         canUploadSocialReceipt,
         isSocialInsuranceModule,
         onOpenAction,
@@ -224,6 +249,7 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
               record,
               socialInsuranceEmployeeRows,
               socialInsuranceSummary,
+              taxFilingVouchers,
               vatUnbilledIncomeRows
             })}
             tabTestIdPrefix="finance-tax-detail-tab"
@@ -257,7 +283,7 @@ function getSummaryItems(record: FinanceTaxMatterRecord, moduleScope: TaxMatterM
       label: social ? '缴费类别' : '处理进度',
       value: social ? record.matterType : renderProcessStatus(record, moduleScope)
     },
-    { icon: <CalendarOutlined />, key: 'period', label: '所属期间', value: record.period },
+    { icon: <CalendarOutlined />, key: 'period', label: social ? '所属期间' : '所属税期', value: record.period },
     {
       icon: <AuditOutlined />,
       key: 'settlement',
@@ -283,7 +309,7 @@ function getPrimaryAction({
   canRecordPaymentResult,
   canRecordRefundResult,
   canSubmitRefundApplication,
-  canSupplementDeclarationReceipt,
+  canMaintainDeclarationEvidence,
   canUploadSocialReceipt,
   isSocialInsuranceModule,
   onOpenAction,
@@ -294,19 +320,19 @@ function getPrimaryAction({
   | 'canRecordPaymentResult'
   | 'canRecordRefundResult'
   | 'canSubmitRefundApplication'
-  | 'canSupplementDeclarationReceipt'
+  | 'canMaintainDeclarationEvidence'
   | 'canUploadSocialReceipt'
   | 'record'
   | 'onOpenAction'
 > & { isSocialInsuranceModule: boolean }) {
   if (canUploadSocialReceipt) return { icon: <UploadOutlined />, label: '上传凭证', testId: 'finance-tax-receipt-button', onClick: () => onOpenAction('social-receipt') };
   if (canRecordDeclarationResult) return { icon: <FileProtectOutlined />, label: '登记申报结果', testId: 'finance-tax-declaration-result-button', onClick: () => onOpenAction('declaration-result') };
-  if (canSupplementDeclarationReceipt) return { icon: <FileProtectOutlined />, label: '补充申报回执', testId: 'finance-tax-declaration-receipt-button', onClick: () => onOpenAction('declaration-receipt') };
   if (canRecordPaymentResult) return { icon: <WalletOutlined />, label: '登记缴款', testId: 'finance-tax-payment-result-button', onClick: () => onOpenAction('payment-result') };
   if (canSubmitRefundApplication) return { icon: <FileProtectOutlined />, label: '处理多缴税款', testId: 'finance-tax-refund-application-button', onClick: () => onOpenAction('refund-application') };
   if (canRecordRefundResult) return record?.overpaymentMethod === '抵缴'
     ? { icon: <WalletOutlined />, label: '登记抵缴结果', testId: 'finance-tax-offset-result-button', onClick: () => onOpenAction('offset-result') }
     : { icon: <WalletOutlined />, label: '登记退税到账', testId: 'finance-tax-refund-result-button', onClick: () => onOpenAction('refund-result') };
+  if (canMaintainDeclarationEvidence) return { icon: <FileProtectOutlined />, label: '维护申报材料', testId: 'finance-tax-declaration-evidence-button', onClick: () => onOpenAction('declaration-evidence') };
   if (!isSocialInsuranceModule && canAdjustDeclaration && record) {
     return { icon: <FileProtectOutlined />, label: '调整申报', testId: 'finance-tax-revision-button', onClick: () => onOpenAction('revision') };
   }
@@ -326,6 +352,7 @@ function getDetailTabs({
   record,
   socialInsuranceEmployeeRows,
   socialInsuranceSummary,
+  taxFilingVouchers,
   vatUnbilledIncomeRows
 }: Pick<FinanceTaxMatterDetailDrawerProps,
   | 'declarationDetailPreparation'
@@ -338,13 +365,21 @@ function getDetailTabs({
   | 'onStampDutySourceClick'
   | 'socialInsuranceEmployeeRows'
   | 'socialInsuranceSummary'
+  | 'taxFilingVouchers'
   | 'vatUnbilledIncomeRows'
 > & { isSocialInsuranceModule: boolean; record: FinanceTaxMatterRecord }) {
   return [
     {
-      children: <TaxMatterOverviewPanel declarationPreparation={declarationPreparation} moduleScope={moduleScope} record={record} />,
+      children: (
+        <TaxMatterOverviewPanel
+          declarationPreparation={declarationPreparation}
+          moduleScope={moduleScope}
+          record={record}
+          taxFilingVouchers={taxFilingVouchers}
+        />
+      ),
       key: 'basic',
-      label: isSocialInsuranceModule ? '缴费信息' : '办理信息'
+      label: isSocialInsuranceModule ? '缴费信息' : '申报结果'
     },
     ...(isSocialInsuranceModule ? [{
       children: (
@@ -375,12 +410,12 @@ function getDetailTabs({
     }] : []),
     {
       children: (
-        <DetailSection icon={<FileProtectOutlined />} title={isSocialInsuranceModule ? '缴费凭证' : '回执文件'}>
+        <DetailSection icon={<FileProtectOutlined />} title={isSocialInsuranceModule ? '缴费凭证' : '申报材料'}>
           <RelatedFileTable records={record.files} onDownload={onDownloadFile} onPreview={onPreviewFile} />
         </DetailSection>
       ),
       key: 'files',
-      label: isSocialInsuranceModule ? '缴费凭证' : '回执文件'
+      label: isSocialInsuranceModule ? '缴费凭证' : '申报材料'
     },
     {
       children: <OperationRecordSection icon={<CheckCircleOutlined />} records={record.operationRecords} title="操作记录" />,
@@ -393,17 +428,22 @@ function getDetailTabs({
 function TaxMatterOverviewPanel({
   declarationPreparation,
   moduleScope,
-  record
+  record,
+  taxFilingVouchers
 }: {
   declarationPreparation?: FinanceDeclarationPreparationRecord;
   moduleScope: TaxMatterModuleScope;
   record: FinanceTaxMatterRecord;
+  taxFilingVouchers: AccountingVoucherRecord[];
 }) {
   const social = moduleScope === 'social';
   const officialEntry = taxMatterOfficialHandlingEntries[record.matterType];
+  const currentFilingVoucher = taxFilingVouchers.find((candidate) => (
+    candidate.taxFilingContext?.declarationVersion === record.declarationVersion
+  ));
   return (
     <div className="detail-tab-stack">
-      <DetailSection icon={<AuditOutlined />} title={social ? '缴费信息' : '办理信息'}>
+      <DetailSection icon={<AuditOutlined />} title={social ? '缴费信息' : '申报结果'}>
         <DetailInfoGrid columns={3} items={social ? [
           { label: '缴费编号', value: record.matterNo },
           { label: '缴费类型', value: <StatusTag toneMap={taxMatterTypeTone} value={record.matterType} /> },
@@ -414,7 +454,7 @@ function TaxMatterOverviewPanel({
           { label: '涉及对象', value: record.participantSummary },
           { label: '办理截止日', value: record.declarationDueDate },
           { label: '缴纳截止日', value: record.paymentDueDate }
-        ] : getTaxMatterInfoItems(record, officialEntry.platform)} />
+        ] : getTaxMatterInfoItems(record, officialEntry.platform, currentFilingVoucher)} />
       </DetailSection>
       {!social ? (
         <DetailSection icon={<FileSearchOutlined />} title={declarationPreparation ? '申报数据' : '来源资料'}>
@@ -427,14 +467,23 @@ function TaxMatterOverviewPanel({
       ) : null}
       {!social && record.declarationHistory.length > 0 ? (
         <DetailSection icon={<AuditOutlined />} title="历史申报">
-          <CompactDetailTable<FinanceTaxMatterDeclarationHistoryRecord> columns={declarationHistoryColumns} dataSource={record.declarationHistory} rowKey="id" scrollX={608} />
+          <CompactDetailTable<FinanceTaxMatterDeclarationHistoryRecord>
+            columns={getDeclarationHistoryColumns(taxFilingVouchers)}
+            dataSource={record.declarationHistory}
+            rowKey="id"
+            scrollX={786}
+          />
         </DetailSection>
       ) : null}
     </div>
   );
 }
 
-function getTaxMatterInfoItems(record: FinanceTaxMatterRecord, platform: string) {
+function getTaxMatterInfoItems(
+  record: FinanceTaxMatterRecord,
+  platform: string,
+  currentFilingVoucher?: AccountingVoucherRecord
+) {
   const direction = getTaxMatterSettlementDirection(record);
   const preparedSettlement = getPreparedSettlement(record);
   const overpaymentMethod = record.overpaymentMethod;
@@ -442,6 +491,7 @@ function getTaxMatterInfoItems(record: FinanceTaxMatterRecord, platform: string)
     { label: '事项编号', value: record.matterNo },
     { label: '办理平台', value: platform },
     { label: '申报截止日', value: record.declarationDueDate },
+    { label: '当前申报版本', value: `第 ${record.declarationVersion} 版` },
     {
       label: record.declarationStatus === '待申报' ? '系统测算金额' : '办理金额',
       value: formatMoney(record.declarationStatus === '待申报'
@@ -450,7 +500,23 @@ function getTaxMatterInfoItems(record: FinanceTaxMatterRecord, platform: string)
     },
     ...(direction !== '无需补退' ? [{ label: direction === '应退' ? '退税办理期限' : '缴款截止日', value: record.paymentDueDate }] : []),
     ...(record.declarationDate ? [{ label: '实际申报日期', value: record.declarationDate }] : []),
-    ...(record.declarationReceiptNo ? [{ label: '申报凭证号', value: record.declarationReceiptNo }] : []),
+    ...(currentFilingVoucher
+      ? [{ label: '差额入账期间', value: currentFilingVoucher.accountingPeriod }]
+      : []),
+    ...(record.taxAuthorityDeclarationNo ? [{ label: '税务机关申报序号', value: record.taxAuthorityDeclarationNo }] : []),
+    ...(record.taxAuthorityAssessmentVoucherNo ? [{ label: '应征凭证序号', value: record.taxAuthorityAssessmentVoucherNo }] : []),
+    {
+      label: '申报材料',
+      value: <StatusTag
+        tone={getTaxMatterEvidenceStatus(record) === '已齐全'
+          ? 'green'
+          : getTaxMatterEvidenceStatus(record) === '核验不一致' ? 'red' : 'amber'}
+        value={getTaxMatterEvidenceStatus(record)}
+      />
+    },
+    { label: '核验结果', value: record.declarationVerificationStatus },
+    ...(record.declarationVerifiedAt ? [{ label: '核验记录', value: `${record.declarationVerifiedBy ?? '-'} / ${record.declarationVerifiedAt}` }] : []),
+    ...(record.declarationVerificationNote ? [{ label: '核验说明', value: record.declarationVerificationNote }] : []),
     ...(overpaymentMethod ? [{ label: '多缴处理方式', value: overpaymentMethod }] : []),
     ...(record.refundApplicationDate ? [{ label: overpaymentMethod === '抵缴' ? '抵缴申请日期' : '退税申请日期', value: record.refundApplicationDate }] : []),
     ...(record.refundApplicationReceiptNo ? [{ label: overpaymentMethod === '抵缴' ? '抵缴申请回执号' : '退税申请回执号', value: record.refundApplicationReceiptNo }] : []),

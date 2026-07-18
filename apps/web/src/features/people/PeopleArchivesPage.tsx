@@ -384,15 +384,7 @@ function createDraftArchiveMember(rows: PeopleMember[]): PeopleMember {
     taskAccessStatus: '暂停参与',
     taskRecords: [],
     wechat: '',
-    workCalendarId: defaultWorkCalendarId,
-    workEvaluationRecords: [],
-    workEvaluationSummary: {
-      acceptedTasks: 0,
-      level: '-',
-      month: '2026-06',
-      reworkTasks: 0,
-      score: 0
-    }
+    workCalendarId: defaultWorkCalendarId
   };
 }
 

@@ -18,8 +18,7 @@ import {
   ruleCategoryOptions,
   ruleStatusTone,
   type RuleDrawerAction,
-  type RuleRelatedFileRecord,
-  type RuleSignatureEmployeeRow
+  type RuleRelatedFileRecord
 } from './performanceRuleModel';
 import type {
   PerformanceRuleCategory,
@@ -34,7 +33,6 @@ type PerformanceRuleDrawerProps = {
   onClose: () => void;
   onDownloadFile: (file: RuleRelatedFileRecord) => void;
   onPreviewFile: (file: RuleRelatedFileRecord) => void;
-  onSignatureAction: (employee: RuleSignatureEmployeeRow, rule: PerformanceRulePreset) => void;
   rule: PerformanceRulePreset | null;
   taskConfigRows: TaskConfigRow[];
 };
@@ -45,7 +43,6 @@ export function PerformanceRuleDrawer({
   onClose,
   onDownloadFile,
   onPreviewFile,
-  onSignatureAction,
   rule,
   taskConfigRows
 }: PerformanceRuleDrawerProps) {
@@ -183,7 +180,6 @@ export function PerformanceRuleDrawer({
         taskConfigRows={taskConfigRows}
         onDownloadFile={onDownloadFile}
         onPreviewFile={onPreviewFile}
-        onSignatureAction={onSignatureAction}
       />
     )
   ) : null;

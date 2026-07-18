@@ -1,5 +1,6 @@
 import type { UploadFile } from 'antd/es/upload/interface';
 import type { BrandRecord } from '../customers/customerData';
+import type { PeopleMember } from '../people/peopleTypes';
 import type { PerformanceRulePreset } from '../performance/performanceTypes';
 import type { ClientFeedbackRecord, StoreTaskRecord, TaskPerformanceScoringRecord } from './TaskManagementState';
 import {
@@ -22,6 +23,7 @@ import { defaultTaskFilters, getFilteredStoreTasks } from './taskListFormModel';
 import { appendTaskOperation } from './taskOperationModel';
 import { buildPartTimeLaborAcceptanceRecord, buildPartTimeLaborSettlementBatches } from './partTimeLaborSettlementModel';
 import { applyTaskAcceptanceCommit } from './taskAcceptanceCommitModel';
+import { ensureTaskAcceptanceArchive } from './taskAcceptanceEvidenceModel';
 
 type UnitTest = {
   name: string;
@@ -53,7 +55,9 @@ function assertEqual<T>(actual: T, expected: T, message: string) {
 }
 
 function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
-  return {
+  const taskId = overrides.id ?? 'task-test-001';
+
+  const task: StoreTaskRecord = {
     acceptorId: 'member-acceptor',
     acceptorName: '验收人',
     brandId: 'brand-test',
@@ -63,7 +67,27 @@ function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
     executorId: 'member-executor',
     executorName: '执行人',
     files: [],
-    id: 'task-test-001',
+    customerBillingSnapshot: {
+      billable: true,
+      brandId: 'brand-test',
+      brandName: '测试品牌',
+      capturedAt: '2026-06-15 10:00',
+      contractAmount: null,
+      contractAmountMode: '无固定金额',
+      currency: 'CNY',
+      customerId: 'customer-test',
+      customerName: '测试客户',
+      id: `task-billing-snapshot-${taskId}`,
+      priceVersion: 1,
+      priceVersionId: 'brand-price-test-v1',
+      settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+      settlementPolicyVersion: 1,
+      settlementPolicyVersionId: 'brand-settlement-test-v1',
+      taskConfigId: 'task-type-floor-plan',
+      taskId,
+      unitPrice: 1000
+    },
+    id: taskId,
     name: '测试任务',
     note: '',
     operationRecords: [],
@@ -76,6 +100,10 @@ function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
     updatedAt: '2026-06-15 10:00',
     ...overrides
   };
+
+  return task.status === '已完成' && task.acceptedAt
+    ? ensureTaskAcceptanceArchive(task, task.acceptedAt, task.acceptorName)
+    : task;
 }
 
 function createPerformanceRule(overrides: Partial<PerformanceRulePreset> = {}): PerformanceRulePreset {
@@ -83,6 +111,7 @@ function createPerformanceRule(overrides: Partial<PerformanceRulePreset> = {}): 
     applicablePositions: ['空间设计师'],
     baseLineScore: 80,
     basePerformanceAmount: 1000,
+    belowBaselineFactor: 0.5,
     calculationSummary: '',
     category: '绘图任务制',
     categoryVersionState: '当前发布版本',
@@ -101,7 +130,7 @@ function createPerformanceRule(overrides: Partial<PerformanceRulePreset> = {}): 
     lockReason: '',
     monthlyResultFields: [],
     name: '绘图任务制V1',
-    payoutMode: '',
+    monthlyPrepayRatio: 0.5,
     performanceType: '任务制',
     personnelType: '全职',
     preservedClauses: [],
@@ -125,8 +154,8 @@ function createPerformanceRule(overrides: Partial<PerformanceRulePreset> = {}): 
       }
     ],
     qualityDimensions: [
-      { evidence: '图纸检查', focus: '准确性', id: 'quality-accuracy', name: '准确性', score: 60 },
-      { evidence: '交付检查', focus: '完整性', id: 'quality-complete', name: '完整性', score: 40 }
+      { evidence: '图纸检查', focus: '准确性', id: 'quality-accuracy', name: '准确性', score: 60, weight: 0.6 },
+      { evidence: '交付检查', focus: '完整性', id: 'quality-complete', name: '完整性', score: 40, weight: 0.4 }
     ],
     qualityScoreSummary: '',
     reviewCycle: '',
@@ -325,8 +354,9 @@ const tests: UnitTest[] = [
             name: '测试品牌',
             note: '',
             owner: '李明',
-            performanceRuleId: '',
-            status: '启用',
+          performanceRuleId: '',
+          settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+          status: '启用',
             storeCount: 1,
             taskConfigs: [],
             updatedAt: '2026-06-15'
@@ -393,8 +423,9 @@ const tests: UnitTest[] = [
             name: '测试品牌',
             note: '',
             owner: '李明',
-            performanceRuleId: '',
-            status: '启用',
+          performanceRuleId: '',
+          settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+          status: '启用',
             storeCount: 1,
             taskConfigs: [],
             updatedAt: '2026-06-15'
@@ -509,13 +540,17 @@ const tests: UnitTest[] = [
         status: '待验收',
         submittedAt: '2026-06-15 12:00'
       });
-      const brandRows = [{ id: 'brand-test', performanceRuleId: 'rule-drawing' }] as BrandRecord[];
       const ruleRows = [createPerformanceRule()];
-      const rule = getTaskPerformanceRule(task, brandRows, ruleRows);
+      const member = {
+        id: task.executorId,
+        personnelType: '全职',
+        position: '空间设计师'
+      } as PeopleMember;
+      const rule = getTaskPerformanceRule(task, member, ruleRows);
       const scoreItem = getTaskScoreItem(task, rule);
-      const draft = buildAcceptanceScoringDraft(task, brandRows, ruleRows);
+      const draft = buildAcceptanceScoringDraft(task, member, ruleRows);
 
-      assertEqual(rule?.id, 'rule-drawing', 'task should resolve brand performance rule');
+      assertEqual(rule?.id, 'rule-drawing', 'task should resolve the rule applicable to the employee and acceptance month');
       assertEqual(scoreItem?.id, 'score-floor-plan', 'task should resolve score item by task config id');
       assertEqual(getAcceptanceBlockers(task, draft).includes('质量评分'), true, 'empty quality scores should block acceptance');
       const completedDraft = {
@@ -525,13 +560,37 @@ const tests: UnitTest[] = [
       const completedScores = getCompletedDimensionScores(completedDraft);
 
       assertEqual(getAcceptanceBlockers(task, completedDraft).length, 0, 'completed scoring draft should unblock acceptance');
-      assertEqual(getQualityScore(completedScores ?? []), 100, 'quality score should sum completed dimensions');
+      assertEqual(getQualityScore(completedScores ?? [], ruleRows[0]?.qualityDimensions ?? []), 100, 'quality score should use configured dimension weights');
 
       const scoringRecord = buildTaskPerformanceScoringRecord(task, completedDraft, ruleRows);
 
       assertEqual(scoringRecord.taskId, task.id, 'scoring record should bind to task');
       assertEqual(scoringRecord.scoreItemName, '平面方案', 'scoring record should retain score item name');
       assertEqual(scoringRecord.qualityBand, '优秀', 'scoring record should resolve quality band');
+    }
+  },
+  {
+    name: 'acceptance model resolves the historical rule version by acceptance month',
+    run() {
+      const task = createTask({ executorId: 'member-history' });
+      const member = {
+        id: task.executorId,
+        personnelType: '全职',
+        position: '空间设计师'
+      } as PeopleMember;
+      const v1 = createPerformanceRule({ effectiveEndAt: '2026-06-30' });
+      const v2 = createPerformanceRule({
+        currentVersion: 'V2',
+        effectiveStartAt: '2026-07-01',
+        id: 'rule-drawing-v2',
+        name: '绘图任务制V2'
+      });
+
+      assertEqual(
+        getTaskPerformanceRule(task, member, [v1, v2])?.id,
+        v1.id,
+        'June acceptance must not use the rule that starts in July'
+      );
     }
   },
   {
@@ -656,6 +715,7 @@ const tests: UnitTest[] = [
       };
       const committedState = applyTaskAcceptanceCommit(
         {
+          customerTaskBillingFacts: [],
           partTimeLaborAcceptanceRows: [],
           storeTaskRows: [createTask({ id: task.id, status: '待验收' })],
           taskPerformanceScoringRows: []

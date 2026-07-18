@@ -1,5 +1,9 @@
 import type { PeopleArchiveStatus, PeopleMember } from '../people/peopleTypes';
-import type { SalaryMonthlyReport } from '../salary/salaryDomain';
+import type {
+  SalaryMonthlyReport,
+  SalaryOperationRecord,
+  SalarySettlementSourceRecord
+} from '../salary/salaryDomain';
 import type { StoreTaskRecord, TaskPerformanceScoringRecord } from '../tasks/TaskManagementState';
 import type { TaskDetailRole, TaskDetailTableRow } from '../tasks/components/TaskDetailTable';
 import { isOpenPersonTask, isPersonTaskOverdue } from '../tasks/personTaskViewModel';
@@ -39,12 +43,16 @@ export type MyWorkPerformanceTaskRow = {
   updatedAt: string;
 };
 
+export type MySalaryDisplayStatus = '待发放' | '已发放';
+
+export type MySalaryReport = SalaryMonthlyReport & {
+  employeeOperationRecords: SalaryOperationRecord[];
+  employeeSettlementSourceRecords: SalarySettlementSourceRecord[];
+  employeeStatus: MySalaryDisplayStatus;
+};
+
 export function getMyWorkMember(peopleRows: PeopleMember[], memberId = currentMyWorkMemberId) {
-  return (
-    peopleRows.find((member) => member.id === memberId) ??
-    peopleRows.find((member) => member.status === '试用期' || member.status === '在职' || member.status === '合作中') ??
-    peopleRows[0]
-  );
+  return peopleRows.find((member) => member.id === memberId);
 }
 
 export function toMyWorkArchiveStatus(status: PeopleArchiveStatus): MyWorkArchiveStatus {
@@ -120,13 +128,53 @@ export function buildMyWorkTaskSummary(memberId: string, storeTaskRows: StoreTas
   };
 }
 
-export function getLatestSalaryReport(reports: SalaryMonthlyReport[]) {
+export function getLatestSalaryReport(reports: MySalaryReport[]) {
   return [...reports].sort((left, right) => right.month.localeCompare(left.month))[0];
 }
 
-export function getMySalaryReports(memberId: string, reports: SalaryMonthlyReport[]) {
+const employeeVisibleSalaryActions = new Set([
+  '确认薪酬明细',
+  '关联发放流水',
+  '发放流水冲正'
+]);
+
+export function getMySalaryDisplayStatus(report: SalaryMonthlyReport): MySalaryDisplayStatus | undefined {
+  if (report.status === '已发放') {
+    return '已发放';
+  }
+
+  if (report.status === '已确认') {
+    return '待发放';
+  }
+
+  return undefined;
+}
+
+export function getMySalaryOperationRecords(report: SalaryMonthlyReport) {
+  return report.operationRecords.filter((record) => employeeVisibleSalaryActions.has(record.action));
+}
+
+export function getMySalarySettlementSourceRecords(report: SalaryMonthlyReport) {
+  return report.settlementSourceRecords.filter((record) => record.status !== '待确认');
+}
+
+export function getMySalaryReports(memberId: string, reports: SalaryMonthlyReport[]): MySalaryReport[] {
   return reports
     .filter((report) => report.member.id === memberId)
+    .flatMap((report) => {
+      const employeeStatus = getMySalaryDisplayStatus(report);
+
+      if (!employeeStatus) {
+        return [];
+      }
+
+      return [{
+        ...report,
+        employeeOperationRecords: getMySalaryOperationRecords(report),
+        employeeSettlementSourceRecords: getMySalarySettlementSourceRecords(report),
+        employeeStatus
+      }];
+    })
     .sort((left, right) => right.month.localeCompare(left.month));
 }
 

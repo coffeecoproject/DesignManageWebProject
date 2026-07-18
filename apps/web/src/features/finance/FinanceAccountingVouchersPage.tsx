@@ -198,12 +198,8 @@ function getIssueAction(issue: AccountingVoucherIssueCode) {
     return '需处理银行对账差异';
   }
 
-  if (issue === 'tax_matter_pending') {
-    return '需完成税务办理';
-  }
-
-  if (issue === 'tax_receipt_missing') {
-    return '需补齐税费回执';
+  if (issue === 'tax_declaration_evidence_pending') {
+    return '需核对申报材料';
   }
 
   if (issue === 'tax_basis_pending' || issue === 'tax_amount_missing') {
@@ -584,12 +580,19 @@ function AccountingVoucherDetailDrawer({
                         ? { label: '凭证号', value: record.voucherNo }
                         : { label: '来源单号', value: record.sourceNo },
                       { label: hasVoucherSnapshot ? '凭证日期' : '拟记账日期', value: record.voucherDate },
-                      { label: '归属月份', value: record.accountingPeriod },
+                      { label: '入账期间', value: record.accountingPeriod },
                       { label: '凭证字别', value: <StatusTag toneMap={voucherKindTone} value={record.kind} /> },
                       { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={record.businessType} /> },
                       ...(hasVoucherSnapshot ? [{ label: '来源单号', value: record.sourceNo }] : []),
                       { label: '业务对象', value: record.counterparty },
                       { label: '金额', value: formatMoney(record.amount) },
+                      ...(record.taxFilingContext
+                        ? [
+                            { label: '所属税期', value: record.taxFilingContext.taxPeriod },
+                            { label: '实际申报日期', value: record.taxFilingContext.declarationDate },
+                            { label: '申报版本', value: `第 ${record.taxFilingContext.declarationVersion} 版` }
+                          ]
+                        : []),
                       ...(record.bookedAt || record.bookedBy
                         ? [
                             { label: '记账人', value: record.bookedBy },
@@ -804,7 +807,7 @@ function AccountingVoucherReversalDrawer({
           columns={3}
           items={[
             { label: '凭证号', value: record.voucherNo },
-            { label: '归属月份', value: record.accountingPeriod },
+            { label: '入账期间', value: record.accountingPeriod },
             { label: '金额', value: formatMoney(record.amount) },
             { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={record.businessType} /> },
             { label: '业务对象', value: record.counterparty },
@@ -821,7 +824,7 @@ function AccountingVoucherReversalDrawer({
             items={[
               { label: '凭证号', value: voucherNo },
               { label: '凭证日期', value: reversalPreview.voucherDate },
-              { label: '归属月份', value: reversalPreview.accountingPeriod },
+              { label: '入账期间', value: reversalPreview.accountingPeriod },
               { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={reversalPreview.businessType} /> },
               { label: '凭证字别', value: <StatusTag toneMap={voucherKindTone} value={reversalPreview.kind} /> },
               { label: '金额', value: formatMoney(reversalPreview.amount) }
@@ -960,7 +963,7 @@ function AccountingVoucherLaterAdjustmentDrawer({
           columns={3}
           items={[
             { label: '凭证号', value: record.voucherNo },
-            { label: '原归属月份', value: record.accountingPeriod },
+            { label: '原入账期间', value: record.accountingPeriod },
             { label: '金额', value: formatMoney(record.amount) },
             { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={record.businessType} /> },
             { label: '业务对象', value: record.counterparty },
@@ -977,7 +980,7 @@ function AccountingVoucherLaterAdjustmentDrawer({
             items={[
               { label: '调整事项号', value: previewSource.adjustmentNo },
               { label: '凭证日期', value: adjustmentPreview.voucherDate },
-              { label: '归属月份', value: adjustmentPreview.accountingPeriod },
+              { label: '入账期间', value: adjustmentPreview.accountingPeriod },
               { label: '业务环节', value: <StatusTag toneMap={voucherBusinessTone} value={adjustmentPreview.businessType} /> },
               { label: '凭证字别', value: <StatusTag toneMap={voucherKindTone} value={adjustmentPreview.kind} /> },
               { label: '金额', value: formatMoney(adjustmentPreview.amount) }
@@ -1286,7 +1289,7 @@ export function FinanceAccountingVouchersPage() {
       }
     },
     {
-      title: '归属月份',
+      title: '入账期间',
       dataIndex: 'accountingPeriod',
       width: 112
     },
@@ -1321,7 +1324,7 @@ export function FinanceAccountingVouchersPage() {
           <FilterBar>
             <DateScopeFilter
               defaultMonth={accountingVoucherDefaultMonth}
-              label="归属月份"
+              label="入账期间"
               testIdPrefix="finance-accounting-voucher-period"
               value={filters.accountingPeriodTime}
               onChange={(accountingPeriodTime) => setFilters((current) => ({ ...current, accountingPeriodTime }))}

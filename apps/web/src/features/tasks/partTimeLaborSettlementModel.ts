@@ -22,6 +22,9 @@ export type PartTimeLaborAcceptanceRecord = {
   grossAmountSource?: PartTimeLaborGrossAmountSource;
   agreementVersion?: string;
   laborProjectId?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+  reversalReason?: string;
 };
 
 export type PartTimeLaborSettlementSource = {
@@ -229,7 +232,10 @@ export function buildPartTimeLaborSettlementBatches(
     };
   }
 
-  const acceptanceByTaskId = createGroupedIndex(input.acceptanceRecords, (record) => normalizeText(record.taskId));
+  const acceptanceByTaskId = createGroupedIndex(
+    input.acceptanceRecords.filter((record) => !record.reversedAt),
+    (record) => normalizeText(record.taskId)
+  );
   const peopleByEmployeeNo = createGroupedIndex(input.people, (person) => normalizeText(person.id));
   const blockers: PartTimeLaborSettlementBlocker[] = [];
   const sources: PartTimeLaborSettlementSource[] = [];

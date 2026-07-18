@@ -45,13 +45,13 @@ export const salaryOverviewEmployeeColumns: TableColumnsType<SalaryOverviewEmplo
     render: (_, row) => <CompactCell primary={row.memberName} secondary={`${row.memberId} / ${row.personnelType}`} />
   },
   {
-    title: '实发合计',
+    title: '实发测算',
     dataIndex: 'netSalary',
     width: 130,
     render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText>
   },
   {
-    title: '月均实发',
+    title: '月均实发测算',
     dataIndex: 'averageNetSalary',
     width: 130,
     render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText>

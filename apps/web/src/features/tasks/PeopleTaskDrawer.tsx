@@ -11,6 +11,7 @@ import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DetailDrawerShell } from '../../components/DrawerShell';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
+import { formatPublishedPerformanceScore } from '../performance/performanceResultConsumerModel';
 import type { StoreTaskRecord } from './TaskManagementState';
 import { TaskDetailTable } from './components/TaskDetailTable';
 import {
@@ -97,7 +98,10 @@ export function PeopleTaskDrawer({
                           { label: '人员状态', value: getPersonTaskStatusLabel(member) },
                           { label: '任务参与', value: member.taskAccessStatus },
                           { label: '任务能力', value: `${member.taskCapabilityIds.length} 项` },
-                          { label: '综合绩效', value: `${member.workEvaluationSummary.score} 分` },
+                          {
+                            label: '最近绩效',
+                            value: formatPublishedPerformanceScore(activeSummary.performanceScore)
+                          },
                           { label: '当前未闭环', value: `${activeSummary.involvedTasks.length} 项` },
                           { label: '已完成', value: `${activeSummary.completedTasks.length} 项` },
                           { label: '驳回次数', value: `${activeSummary.rejectionCount} 次` }

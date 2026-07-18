@@ -30,17 +30,20 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { TagChip } from '../../components/TagChip';
 import { CellText, CompactCell } from '../../components/TableCell';
-import type { PeopleArchiveFile, PeopleWorkEvaluationRecord } from '../people/peopleTypes';
-import type { SalaryCompositionLine, SalaryMonthlyReport, SalarySettlementSourceRecord } from '../salary/salaryDomain';
+import type { PeopleArchiveFile } from '../people/peopleTypes';
+import { formatPublishedPerformanceScore } from '../performance/performanceResultConsumerModel';
+import type { SalaryCompositionLine, SalarySettlementSourceRecord } from '../salary/salaryDomain';
 import { formatSalaryMoney } from '../salary/salaryDomain';
+import { getSalaryPayslipNo } from '../salary/salaryMonthlyDisplayModel';
 import type { StoreTaskRecord } from '../tasks/TaskManagementState';
 import { TaskDetailTable, type TaskDetailTableRow } from '../tasks/components/TaskDetailTable';
 import { TaskFilesSection } from '../tasks/components/TaskFilesSection';
 import { TaskScheduleCell } from '../tasks/components/TaskScheduleCell';
 import { TaskStatusTag } from '../tasks/components/TaskStatusTag';
 import { TaskAcceptanceWorkbench, TaskSubmitWorkbench } from '../tasks/TaskWorkflowPages';
+import { MyPerformancePage as MyPerformanceResultsPage } from './MyPerformancePage';
 import { useMyWorkData } from './MyWorkShared';
-import type { MyWorkPerformanceTaskRow } from './myWorkModel';
+import type { MySalaryReport } from './myWorkModel';
 
 const missingCurrentMemberId = '__missing-current-member__';
 
@@ -51,6 +54,8 @@ const statusToneMap: Record<string, StatusTagTone> = {
   结算中: 'amber',
   待确认: 'amber',
   已确认: 'blue',
+  待发放: 'blue',
+  已发放: 'green',
   已结算: 'green',
   已计入: 'green',
   不计入: 'gray',
@@ -78,7 +83,7 @@ function getArchiveFileTone(status: PeopleArchiveFile['status']): StatusTagTone 
 }
 
 function MyWorkProfileSummary() {
-  const { archiveSummary, latestSalaryReport, member, taskSummary } = useMyWorkData();
+  const { archiveSummary, latestSalaryReport, member, performanceSummary, taskSummary } = useMyWorkData();
 
   if (!member || !archiveSummary) {
     return null;
@@ -95,8 +100,8 @@ function MyWorkProfileSummary() {
           { label: '所在城市', value: member.city },
           { label: '当前任务', value: `${taskSummary.currentTaskCount} 项` },
           { label: '档案状态', value: <StatusTag tone={statusToneMap[archiveSummary.status]} value={archiveSummary.status} /> },
-          { label: '最近薪资', value: latestSalaryReport ? `${latestSalaryReport.month} / ${latestSalaryReport.status}` : '暂无' },
-          { label: '综合绩效', value: `${member.workEvaluationSummary.score} 分` }
+          { label: '最近薪资', value: latestSalaryReport ? `${latestSalaryReport.month} / ${latestSalaryReport.employeeStatus}` : '暂无' },
+          { label: '最近绩效', value: formatPublishedPerformanceScore(performanceSummary.score) }
         ]}
       />
     </DetailSection>
@@ -152,7 +157,7 @@ function SalarySection() {
         columns={4}
         items={[
           { label: '薪资月份', value: latestSalaryReport?.month },
-          { label: '结算状态', value: latestSalaryReport ? <StatusTag tone={statusToneMap[latestSalaryReport.status]} value={latestSalaryReport.status} /> : undefined },
+          { label: '发放状态', value: latestSalaryReport ? <StatusTag tone={statusToneMap[latestSalaryReport.employeeStatus]} value={latestSalaryReport.employeeStatus} /> : undefined },
           { label: '应发合计', value: latestSalaryReport ? formatSalaryMoney(latestSalaryReport.grossSalary) : undefined },
           { label: '实发工资', value: latestSalaryReport ? formatSalaryMoney(latestSalaryReport.netSalary) : undefined }
         ]}
@@ -162,23 +167,21 @@ function SalarySection() {
 }
 
 function PerformanceSection() {
-  const { member, performanceTaskRows } = useMyWorkData();
+  const { member, performanceSummary } = useMyWorkData();
 
   if (!member) {
     return null;
   }
-
-  const latestRecord = member.workEvaluationRecords[0] ?? member.workEvaluationSummary;
 
   return (
     <DetailSection icon={<BarChartOutlined />} title="绩效摘要">
       <DetailInfoGrid
         columns={4}
         items={[
-          { label: '综合绩效', value: `${member.workEvaluationSummary.score} 分` },
-          { label: '评级', value: member.workEvaluationSummary.level },
-          { label: '最近月份', value: latestRecord.month },
-          { label: '任务计分', value: `${performanceTaskRows.length} 条` }
+          { label: '最近绩效', value: formatPublishedPerformanceScore(performanceSummary.score) },
+          { label: '绩效月份', value: performanceSummary.period ?? '-' },
+          { label: '计分任务', value: `${performanceSummary.sourceTaskCount} 条` },
+          { label: '结果来源', value: performanceSummary.period ? '正式绩效结果' : '-' }
         ]}
       />
     </DetailSection>
@@ -186,7 +189,7 @@ function PerformanceSection() {
 }
 
 export function MyWorkOverviewPage() {
-  const { latestSalaryReport, member, taskRows, taskSummary } = useMyWorkData();
+  const { latestSalaryReport, performanceSummary, taskRows, taskSummary } = useMyWorkData();
 
   return (
     <ManagementPageScaffold
@@ -197,7 +200,7 @@ export function MyWorkOverviewPage() {
           <MetricCard icon={<CheckCircleOutlined />} label="待我验收" value={taskSummary.pendingMyAcceptanceCount} />
           <MetricCard icon={<WarningOutlined />} label="异常任务" value={taskSummary.overdueCount + taskSummary.rejectedCount} />
           <MetricCard icon={<BankOutlined />} label="薪资月份" value={latestSalaryReport?.month ?? '-'} />
-          <MetricCard icon={<BarChartOutlined />} label="综合绩效" value={member ? `${member.workEvaluationSummary.score} 分` : '-'} />
+          <MetricCard icon={<BarChartOutlined />} label="最近绩效" value={formatPublishedPerformanceScore(performanceSummary.score)} />
         </MetricGrid>
       }
     >
@@ -554,14 +557,13 @@ export function MyArchivePage() {
             }
           ]}
           testId="my-archive-detail-tabs"
-          variant="page-section"
         />
       </div>
     </ManagementPageScaffold>
   );
 }
 
-function MySalaryDrawer({ activeReport, onClose }: { activeReport?: SalaryMonthlyReport; onClose: () => void }) {
+function MySalaryDrawer({ activeReport, onClose }: { activeReport?: MySalaryReport; onClose: () => void }) {
   const compositionColumns = useMemo<TableColumnsType<SalaryCompositionLine>>(
     () => [
       { title: '项目', dataIndex: 'item', width: 136, render: (item: string) => <CellText>{item}</CellText> },
@@ -575,7 +577,6 @@ function MySalaryDrawer({ activeReport, onClose }: { activeReport?: SalaryMonthl
   const sourceColumns = useMemo<TableColumnsType<SalarySettlementSourceRecord>>(
     () => [
       { title: '来源', dataIndex: 'label', width: 120, render: (label: string) => <CellText>{label}</CellText> },
-      { title: '状态', dataIndex: 'status', align: 'center', width: 110, render: (status: string) => <StatusTag tone={statusToneMap[status]} value={status} /> },
       { title: '月份', dataIndex: 'sourceMonth', align: 'center', width: 110 },
       { title: '金额', dataIndex: 'amount', align: 'center', width: 120, render: (amount: number) => formatSalaryMoney(amount) },
       { title: '说明', dataIndex: 'note', width: 260 }
@@ -590,8 +591,8 @@ function MySalaryDrawer({ activeReport, onClose }: { activeReport?: SalaryMonthl
       title={
         activeReport ? (
           <DetailDrawerTitle
-            status={activeReport.status}
-            statusTone={statusToneMap[activeReport.status]}
+            status={activeReport.employeeStatus}
+            statusTone={statusToneMap[activeReport.employeeStatus]}
             subtitle="我的工作 / 我的薪资"
             title={`${activeReport.month} 薪资`}
           />
@@ -605,7 +606,7 @@ function MySalaryDrawer({ activeReport, onClose }: { activeReport?: SalaryMonthl
           items={[
             {
               key: 'summary',
-              label: '薪资明细',
+              label: '工资单',
               children: (
                 <>
                   <DetailSummaryCards
@@ -613,10 +614,41 @@ function MySalaryDrawer({ activeReport, onClose }: { activeReport?: SalaryMonthl
                     items={[
                       { icon: <BankOutlined />, key: 'gross', label: '应发合计', value: formatSalaryMoney(activeReport.grossSalary) },
                       { icon: <FileTextOutlined />, key: 'deduction', label: '扣减合计', value: formatSalaryMoney(activeReport.deductionAmount) },
-                      { icon: <BarChartOutlined />, key: 'performance', label: '绩效预发', value: formatSalaryMoney(activeReport.performancePayAmount) },
+                      { icon: <BarChartOutlined />, key: 'performance', label: '绩效薪酬', value: formatSalaryMoney(activeReport.performancePayAmount) },
                       { icon: <CheckCircleOutlined />, key: 'net', label: '实发工资', value: formatSalaryMoney(activeReport.netSalary) }
                     ]}
                   />
+                  <DetailSection icon={<FileTextOutlined />} title="工资单信息">
+                    <DetailInfoGrid
+                      columns={4}
+                      items={[
+                        { label: '工资单编号', value: getSalaryPayslipNo(activeReport) },
+                        { label: '薪酬月份', value: activeReport.month },
+                        { label: '员工', value: activeReport.member.name },
+                        { label: '工号', value: activeReport.member.id },
+                        { label: '岗位', value: activeReport.member.position },
+                        { label: '发放状态', value: <StatusTag tone={statusToneMap[activeReport.employeeStatus]} value={activeReport.employeeStatus} /> },
+                        { label: '确认时间', value: activeReport.workflow?.confirmedAt ?? '-' },
+                        { label: '实际发放时间', value: activeReport.workflow?.paidAt ?? '-' }
+                      ]}
+                    />
+                  </DetailSection>
+                  <DetailSection icon={<FileTextOutlined />} title="工资构成">
+                    <CompactDetailTable<SalaryCompositionLine>
+                      columns={compositionColumns}
+                      dataSource={activeReport.salaryCompositionLines}
+                      rowKey="id"
+                      scrollX={796}
+                    />
+                  </DetailSection>
+                </>
+              )
+            },
+            {
+              key: 'sources',
+              label: '计薪依据',
+              children: (
+                <>
                   <DetailSection icon={<ProfileOutlined />} title="计薪信息">
                     <DetailInfoGrid
                       columns={3}
@@ -630,42 +662,26 @@ function MySalaryDrawer({ activeReport, onClose }: { activeReport?: SalaryMonthl
                       ]}
                     />
                   </DetailSection>
+                  <DetailSection icon={<SafetyCertificateOutlined />} title="来源明细">
+                    <CompactDetailTable<SalarySettlementSourceRecord>
+                      columns={sourceColumns}
+                      dataSource={activeReport.employeeSettlementSourceRecords}
+                      rowKey="id"
+                      scrollX={620}
+                    />
+                  </DetailSection>
                 </>
               )
             },
             {
-              key: 'composition',
-              label: '工资构成',
-              children: (
-                <DetailSection icon={<FileTextOutlined />} title="工资构成">
-                  <CompactDetailTable<SalaryCompositionLine>
-                    columns={compositionColumns}
-                    dataSource={activeReport.salaryCompositionLines}
-                    rowKey="id"
-                    scrollX={796}
-                  />
-                </DetailSection>
-              )
-            },
-            {
-              key: 'sources',
-              label: '结算来源',
-              children: (
-                <DetailSection icon={<SafetyCertificateOutlined />} title="结算来源">
-                  <CompactDetailTable<SalarySettlementSourceRecord>
-                    columns={sourceColumns}
-                    dataSource={activeReport.settlementSourceRecords}
-                    rowKey="id"
-                    scrollX={740}
-                  />
-                </DetailSection>
-              )
-            },
-            {
               key: 'records',
-              label: '操作记录',
+              label: '发放记录',
               children: (
-                <OperationRecordSection icon={<AuditOutlined />} records={activeReport.operationRecords} title="操作记录" />
+                <OperationRecordSection
+                  icon={<AuditOutlined />}
+                  records={activeReport.employeeOperationRecords}
+                  title="发放记录"
+                />
               )
             }
           ]}
@@ -680,15 +696,14 @@ export function MySalaryPage() {
   const { latestSalaryReport, salaryReports } = useMyWorkData();
   const [activeReportId, setActiveReportId] = useState<string>();
   const activeReport = salaryReports.find((report) => report.id === activeReportId);
-  const columns = useMemo<TableColumnsType<SalaryMonthlyReport>>(
+  const columns = useMemo<TableColumnsType<MySalaryReport>>(
     () => [
       { title: '月份', dataIndex: 'month', width: 120, render: (month: string) => <CellText>{month}</CellText> },
-      { title: '状态', dataIndex: 'status', align: 'center', width: 112, render: (status: string) => <StatusTag tone={statusToneMap[status]} value={status} /> },
+      { title: '发放状态', dataIndex: 'employeeStatus', align: 'center', width: 112, render: (status: string) => <StatusTag tone={statusToneMap[status]} value={status} /> },
       { title: '应发合计', dataIndex: 'grossSalary', align: 'center', width: 130, render: (amount: number) => formatSalaryMoney(amount) },
       { title: '扣减合计', dataIndex: 'deductionAmount', align: 'center', width: 130, render: (amount: number) => formatSalaryMoney(amount) },
-      { title: '绩效预发', dataIndex: 'performancePayAmount', align: 'center', width: 130, render: (amount: number) => formatSalaryMoney(amount) },
-      { title: '实发工资', dataIndex: 'netSalary', align: 'center', width: 130, render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText> },
-      { title: '最近更新', dataIndex: ['workflow', 'updatedAt'], align: 'center', width: 150, render: (_, report) => report.workflow?.updatedAt ?? `${report.month}-17 09:00` }
+      { title: '绩效薪酬', dataIndex: 'performancePayAmount', align: 'center', width: 130, render: (amount: number) => formatSalaryMoney(amount) },
+      { title: '实发工资', dataIndex: 'netSalary', align: 'center', width: 130, render: (amount: number) => <CellText>{formatSalaryMoney(amount)}</CellText> }
     ],
     []
   );
@@ -699,16 +714,17 @@ export function MySalaryPage() {
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<BankOutlined />} label="最新月份" value={latestSalaryReport?.month ?? '-'} />
-          <MetricCard icon={<CheckCircleOutlined />} label="结算状态" value={latestSalaryReport?.status ?? '-'} />
+          <MetricCard icon={<CheckCircleOutlined />} label="发放状态" value={latestSalaryReport?.employeeStatus ?? '-'} />
           <MetricCard icon={<FileTextOutlined />} label="应发合计" value={latestSalaryReport ? formatSalaryMoney(latestSalaryReport.grossSalary) : '-'} />
           <MetricCard icon={<BankOutlined />} label="实发工资" value={latestSalaryReport ? formatSalaryMoney(latestSalaryReport.netSalary) : '-'} />
         </MetricGrid>
       }
     >
-      <ManagementTable<SalaryMonthlyReport>
+      <ManagementTable<MySalaryReport>
         columns={columns}
         count={{ unit: '个月', value: salaryReports.length }}
         dataSource={salaryReports}
+        emptyText="暂无工资单"
         rowKey="id"
         rowTestIdPrefix="my-salary-row"
         tableTestId="my-salary-table"
@@ -720,70 +736,7 @@ export function MySalaryPage() {
 }
 
 export function MyPerformancePage() {
-  const { member, performanceTaskRows } = useMyWorkData();
-  const evaluationColumns = useMemo<TableColumnsType<PeopleWorkEvaluationRecord>>(
-    () => [
-      { title: '月份', dataIndex: 'month', width: 120, render: (month: string) => <CellText>{month}</CellText> },
-      { title: '验收任务', dataIndex: 'acceptedTasks', align: 'center', width: 110, render: (value: number) => `${value} 项` },
-      { title: '返工任务', dataIndex: 'reworkTasks', align: 'center', width: 110, render: (value: number) => `${value} 项` },
-      { title: '综合评分', dataIndex: 'score', align: 'center', width: 120, render: (value: number) => `${value} 分` },
-      { title: '评级', dataIndex: 'level', align: 'center', width: 100 }
-    ],
-    []
-  );
-  const taskScoreColumns = useMemo<TableColumnsType<MyWorkPerformanceTaskRow>>(
-    () => [
-      {
-        title: '任务',
-        key: 'task',
-        width: 220,
-        render: (_, row) => <CompactCell primary={row.task?.name} secondary={row.task?.code} />
-      },
-      { title: '来源月份', dataIndex: 'sourceMonth', align: 'center', width: 120 },
-      { title: '任务分值', dataIndex: 'scoreValue', align: 'center', width: 120, render: (value?: number) => (value === undefined ? '-' : `${value} 分`) },
-      { title: '质量评分', dataIndex: 'qualityScore', align: 'center', width: 120, render: (value?: number) => (value === undefined ? '-' : `${value} 分`) },
-      { title: '状态', dataIndex: 'status', align: 'center', width: 110, render: (status: string) => <StatusTag tone={statusToneMap[status]} value={status} /> },
-      { title: '最近更新', dataIndex: 'updatedAt', align: 'center', width: 150 }
-    ],
-    []
-  );
-
-  if (!member) {
-    return null;
-  }
-
-  return (
-    <ManagementPageScaffold
-      metrics={
-        <MetricGrid columns={4}>
-          <MetricCard icon={<BarChartOutlined />} label="综合绩效" value={`${member.workEvaluationSummary.score} 分`} />
-          <MetricCard icon={<CheckCircleOutlined />} label="评级" value={member.workEvaluationSummary.level} />
-          <MetricCard icon={<FileTextOutlined />} label="任务计分" value={performanceTaskRows.length} />
-          <MetricCard icon={<ClockCircleOutlined />} label="最近月份" value={member.workEvaluationSummary.month} />
-        </MetricGrid>
-      }
-    >
-      <div className="rule-readonly-stack">
-        <DetailSection icon={<BarChartOutlined />} title="月度表现">
-          <CompactDetailTable<PeopleWorkEvaluationRecord>
-            columns={evaluationColumns}
-            dataSource={member.workEvaluationRecords}
-            rowKey="month"
-            scrollX={570}
-          />
-        </DetailSection>
-        <DetailSection icon={<FileTextOutlined />} title="任务计分">
-          <CompactDetailTable<MyWorkPerformanceTaskRow>
-            columns={taskScoreColumns}
-            dataSource={performanceTaskRows}
-            emptyText="暂无已计入任务评分"
-            rowKey="id"
-            scrollX={840}
-          />
-        </DetailSection>
-      </div>
-    </ManagementPageScaffold>
-  );
+  return <MyPerformanceResultsPage />;
 }
 
 export function MyWorkArchivePage() {

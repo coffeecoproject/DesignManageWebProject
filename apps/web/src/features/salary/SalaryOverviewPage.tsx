@@ -76,15 +76,15 @@ export function SalaryOverviewPage() {
         </FilterPanel>
       }
       metrics={
-        <MetricGrid>
+        <MetricGrid columns={4}>
           <MetricCard icon={<TeamOutlined />} label="薪酬人数" value={overview.summary.employeeCount} />
           <MetricCard icon={<FileSearchOutlined />} label="薪酬明细" value={overview.summary.recordCount} />
           <MetricCard icon={<WalletOutlined />} label="应发合计" value={formatSalaryMoney(overview.summary.grossSalary)} />
-          <MetricCard icon={<CalculatorOutlined />} label="人均应发" value={formatSalaryMoney(overview.summary.averageGrossSalary)} />
           <MetricCard icon={<WalletOutlined />} label="扣减合计" value={formatSalaryMoney(overview.summary.deductionAmount)} />
-          <MetricCard icon={<CalculatorOutlined />} label="人均扣减" value={formatSalaryMoney(overview.summary.averageDeductionAmount)} />
-          <MetricCard icon={<CheckCircleOutlined />} label="实发合计" value={formatSalaryMoney(overview.summary.netSalary)} />
-          <MetricCard icon={<CheckCircleOutlined />} label="人均实发" value={formatSalaryMoney(overview.summary.averageNetSalary)} />
+          <MetricCard icon={<CalculatorOutlined />} label="实发测算" value={formatSalaryMoney(overview.summary.netSalary)} />
+          <MetricCard icon={<WalletOutlined />} label="待发金额" value={formatSalaryMoney(overview.summary.pendingPaymentNetSalary)} />
+          <MetricCard icon={<CheckCircleOutlined />} label="已发放金额" value={formatSalaryMoney(overview.summary.paidNetSalary)} />
+          <MetricCard icon={<CheckCircleOutlined />} label="人均实发测算" value={formatSalaryMoney(overview.summary.averageNetSalary)} />
         </MetricGrid>
       }
       pageId="salary-overview"

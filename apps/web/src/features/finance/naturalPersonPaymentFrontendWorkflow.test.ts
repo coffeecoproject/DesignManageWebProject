@@ -500,11 +500,18 @@ const tests: UnitTest[] = [
       const seedTaxMatter = financeTaxMatterRecords.find((record) => record.matterType === '个人所得税');
 
       assert(seedTaxMatter, 'IIT tax matter seed must exist');
-      const declarationReceipt = {
-        id: 'np-15-original-declaration-receipt',
-        name: '2026-07 个税申报回执.pdf',
+      const declarationForm = {
+        id: 'np-15-original-declaration-form',
+        name: '2026-07 个税正式申报表.pdf',
         status: '已上传' as const,
-        type: '申报回执',
+        type: '正式申报表',
+        updatedAt: '2026-08-10'
+      };
+      const declarationResult = {
+        id: 'np-15-original-declaration-result',
+        name: '2026-07 个税申报结果回执.pdf',
+        status: '已上传' as const,
+        type: '申报结果回执',
         updatedAt: '2026-08-10'
       };
       const filedTaxMatter = {
@@ -512,11 +519,13 @@ const tests: UnitTest[] = [
         dataStatus: '已确认' as const,
         declarationDate: '2026-08-10',
         declarationDueDate: '2026-08-15',
-        declarationReceiptFileId: declarationReceipt.id,
-        declarationReceiptNo: 'IIT-202607-001',
+        declarationFormFileIds: [declarationForm.id],
+        declarationResultFileId: declarationResult.id,
+        declarationVerificationStatus: '人工核验一致' as const,
+        taxAuthorityDeclarationNo: 'IIT-202607-001',
         declarationStatus: '申报成功' as const,
         declarationVersion: 1,
-        files: [declarationReceipt],
+        files: [declarationForm, declarationResult],
         id: 'np-15-tax-matter',
         matterNo: 'TAX-202607-IIT',
         paidAmount: 480,
@@ -590,8 +599,8 @@ const tests: UnitTest[] = [
       assertEqual(correctedTaxMatter?.declarationHistory.length, 1, 'original declaration must be retained exactly once');
       assertEqual(correctedTaxMatter?.declarationHistory[0]?.filedPayableAmount, 480, 'history retains original official payable amount');
       assertEqual(
-        correctedTaxMatter?.declarationHistory[0]?.declarationReceiptFileId,
-        declarationReceipt.id,
+        correctedTaxMatter?.declarationHistory[0]?.declarationResultFileId,
+        declarationResult.id,
         'history retains original declaration receipt'
       );
 

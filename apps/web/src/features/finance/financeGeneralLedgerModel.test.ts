@@ -293,7 +293,6 @@ const tests: UnitTest[] = [
             pendingVoucherCount: 0,
             pendingReviewCashFlowCount: 0,
             socialInsurancePendingCount: 0,
-            taxHandlingPendingCount: 0,
             trialBalanceDifference: 0,
             trialBalanceStatus: '平衡',
             unbookedVoucherCount: 0,

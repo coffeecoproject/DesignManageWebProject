@@ -2,6 +2,8 @@ import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendar
 import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import type { PeopleAttendanceRecord } from '../people/PeopleOrganizationState';
 import type { PeopleMember } from '../people/peopleTypes';
+import { getLatestPublishedPerformanceSummary } from '../performance/performanceResultConsumerModel';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import { formatTaskDuration, normalizeTaskHourText, type StoreTaskRecord } from './TaskManagementState';
 import { taskWorkdayEndHour, taskWorkdayStartHour } from './taskScheduling';
 
@@ -18,7 +20,8 @@ export type TaskAssignmentCandidate = {
   currentTaskCount: number;
   kind: TaskAssignmentCandidateKind;
   member: PeopleMember;
-  performanceScore: number;
+  performancePeriod?: string;
+  performanceScore: number | null;
   reasons: string[];
   selectable: boolean;
   sortScore: number;
@@ -27,6 +30,7 @@ export type TaskAssignmentCandidate = {
 type BuildExecutorCandidatesInput = {
   attendanceRecords: PeopleAttendanceRecord[];
   peopleRows: PeopleMember[];
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeTaskRows: StoreTaskRecord[];
   taskConfigId: string;
   window?: TaskAssignmentWindow;
@@ -38,6 +42,7 @@ type BuildAcceptorCandidatesInput = {
   attendanceRecords: PeopleAttendanceRecord[];
   executorId: string;
   peopleRows: PeopleMember[];
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeTaskRows: StoreTaskRecord[];
   window?: TaskAssignmentWindow;
   annualExceptionRows: AnnualExceptionConfigRow[];
@@ -286,6 +291,7 @@ function buildBaseCandidate({
   attendanceRecords,
   annualExceptionRows,
   member,
+  publishedPerformanceRecords,
   storeTaskRows,
   window,
   workCalendarRows
@@ -293,6 +299,7 @@ function buildBaseCandidate({
   attendanceRecords: PeopleAttendanceRecord[];
   annualExceptionRows: AnnualExceptionConfigRow[];
   member: PeopleMember;
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeTaskRows: StoreTaskRecord[];
   window?: TaskAssignmentWindow;
   workCalendarRows: WorkCalendarRow[];
@@ -311,7 +318,11 @@ function buildBaseCandidate({
         warnings: [] as string[]
       };
   const currentTaskCount = getActiveTaskCount(member.id, storeTaskRows);
-  const performanceScore = member.workEvaluationSummary.score;
+  const performanceSummary = getLatestPublishedPerformanceSummary(
+    publishedPerformanceRecords,
+    member.id
+  );
+  const performanceScore = performanceSummary.score;
 
   if (!isActiveMember(member)) {
     blockers.push('人员状态不可用');
@@ -333,7 +344,7 @@ function buildBaseCandidate({
     warnings.push(`任务较多：进行中 ${currentTaskCount} 个`);
   }
 
-  if (performanceScore < lowPerformanceScore) {
+  if (performanceScore !== null && performanceScore < lowPerformanceScore) {
     warnings.push(`绩效偏低：${performanceScore} 分`);
   }
 
@@ -343,6 +354,7 @@ function buildBaseCandidate({
     blockers,
     calendarName: calendarResult.calendarName,
     currentTaskCount,
+    performancePeriod: performanceSummary.period,
     performanceScore,
     warnings
   };
@@ -354,7 +366,9 @@ function toCandidate(member: PeopleMember, base: ReturnType<typeof buildBaseCand
   const kind: TaskAssignmentCandidateKind = !selectable ? '不可选' : base.warnings.length > 0 ? '可选' : '推荐';
   const kindScore = kind === '推荐' ? 30 : kind === '可选' ? 15 : 0;
   const taskLoadPenalty = Math.min(base.currentTaskCount * 3, 18);
-  const performanceBonus = Math.max(0, base.performanceScore - 70) / 10;
+  const performanceBonus = base.performanceScore === null
+    ? 0
+    : Math.max(0, base.performanceScore - 70) / 10;
 
   return {
     blockers,
@@ -362,6 +376,7 @@ function toCandidate(member: PeopleMember, base: ReturnType<typeof buildBaseCand
     currentTaskCount: base.currentTaskCount,
     kind,
     member,
+    performancePeriod: base.performancePeriod,
     performanceScore: base.performanceScore,
     reasons: selectable ? base.warnings : blockers,
     selectable,
@@ -374,7 +389,8 @@ function sortCandidates(candidates: TaskAssignmentCandidate[]) {
     (left, right) =>
       right.sortScore - left.sortScore ||
       left.currentTaskCount - right.currentTaskCount ||
-      right.performanceScore - left.performanceScore ||
+      (right.performanceScore ?? Number.NEGATIVE_INFINITY)
+        - (left.performanceScore ?? Number.NEGATIVE_INFINITY) ||
       left.member.name.localeCompare(right.member.name)
   );
 }
@@ -383,6 +399,7 @@ export function buildTaskExecutorCandidates({
   attendanceRecords,
   annualExceptionRows,
   peopleRows,
+  publishedPerformanceRecords,
   storeTaskRows,
   taskConfigId,
   window,
@@ -394,6 +411,7 @@ export function buildTaskExecutorCandidates({
         attendanceRecords,
         annualExceptionRows,
         member,
+        publishedPerformanceRecords,
         storeTaskRows,
         window,
         workCalendarRows
@@ -410,6 +428,7 @@ export function buildTaskAcceptorCandidates({
   annualExceptionRows,
   executorId,
   peopleRows,
+  publishedPerformanceRecords,
   storeTaskRows,
   window,
   workCalendarRows
@@ -420,6 +439,7 @@ export function buildTaskAcceptorCandidates({
         attendanceRecords,
         annualExceptionRows,
         member,
+        publishedPerformanceRecords,
         storeTaskRows,
         window,
         workCalendarRows

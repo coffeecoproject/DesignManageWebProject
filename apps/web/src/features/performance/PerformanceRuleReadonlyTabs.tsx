@@ -8,33 +8,29 @@ import {
   SettingOutlined,
   TeamOutlined
 } from '@ant-design/icons';
-import { Button, Table } from 'antd';
+import { Table } from 'antd';
 import type { TableColumnsType } from 'antd';
 import type { ReactNode } from 'react';
-import { useMemo } from 'react';
 import { DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { RelatedFileTable } from '../../components/RelatedFileTable';
-import { CompactCell } from '../../components/TableCell';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import {
   formatEffectivePeriod,
+  formatPerformancePayoutMode,
   formatMoney,
   formatRatio,
   formatRulePositions,
   formatScore,
   getCoreAmountFormulaRows,
   getRuleRelatedFileRecords,
-  getRuleSignatureSummary,
   getRuleVersionOperationRecords,
   getTaskConfigName,
-  ruleSignatureEmployeeStatusTone,
   ruleTypeTone,
   type AmountFormulaRow,
-  type RuleRelatedFileRecord,
-  type RuleSignatureEmployeeRow
+  type RuleRelatedFileRecord
 } from './performanceRuleModel';
 import type {
   PerformanceExcessBand,
@@ -48,7 +44,6 @@ type RuleReadonlyTabsProps = {
   activeRule: PerformanceRulePreset;
   onDownloadFile: (file: RuleRelatedFileRecord) => void;
   onPreviewFile: (file: RuleRelatedFileRecord) => void;
-  onSignatureAction: (employee: RuleSignatureEmployeeRow, rule: PerformanceRulePreset) => void;
   taskConfigRows: TaskConfigRow[];
 };
 
@@ -173,9 +168,9 @@ function QualityDimensionFormList({ items }: { items: PerformanceQualityDimensio
           <div className="quality-dimension-main">
             <span className="quality-dimension-title">{item.name}</span>
             <span className="quality-dimension-score">
-              <span className="quality-dimension-score-label">最高分值</span>
+              <span className="quality-dimension-score-label">最高分值 / 权重</span>
               <span className="quality-dimension-score-value">{item.score}</span>
-              <span className="quality-dimension-score-unit">分</span>
+              <span className="quality-dimension-score-unit">分 / {formatRatio(item.weight)}</span>
             </span>
           </div>
           <div className="quality-dimension-content">
@@ -206,51 +201,11 @@ export function PerformanceRuleReadonlyTabs({
   activeRule,
   onDownloadFile,
   onPreviewFile,
-  onSignatureAction,
   taskConfigRows
 }: RuleReadonlyTabsProps) {
   const relatedFileRecords = getRuleRelatedFileRecords(activeRule.sourceFiles);
-  const signatureSummary = getRuleSignatureSummary(activeRule);
   const versionOperationRecords = getRuleVersionOperationRecords(activeRule);
   const coreAmountFormulaRows = getCoreAmountFormulaRows(activeRule);
-  const signatureEmployeeColumns = useMemo<TableColumnsType<RuleSignatureEmployeeRow>>(
-    () => [
-      {
-        title: '员工',
-        key: 'employee',
-        width: 142,
-        render: (_, record) => <CompactCell primary={record.employeeName} secondary={record.workNo} />
-      },
-      {
-        title: '岗位',
-        dataIndex: 'position',
-        width: 110
-      },
-      {
-        title: '签署状态',
-        key: 'ruleSignatureStatus',
-        width: 128,
-        render: (_, record) => <StatusTag toneMap={ruleSignatureEmployeeStatusTone} value={record.ruleSignatureStatus} />
-      },
-      {
-        title: '签署时间',
-        key: 'confirmedAt',
-        width: 132,
-        render: (_, record) => record.confirmedAt ?? '待确认'
-      },
-      {
-        title: '操作',
-        key: 'action',
-        width: 104,
-        render: (_, record) => (
-          <Button size="small" type="link" onClick={() => onSignatureAction(record, activeRule)}>
-            查看记录
-          </Button>
-        )
-      }
-    ],
-    [activeRule, onSignatureAction]
-  );
 
   return (
     <div className="rule-readonly-stack">
@@ -294,32 +249,12 @@ export function PerformanceRuleReadonlyTabs({
                       },
                       { label: '质量评分', value: '固定四项质量评分模板，验收时填写' },
                       { label: '金额计算', value: '基础绩效 + 超额激励，质量比例取自质量档位' },
-                      { label: '发放口径', value: `${activeRule.reviewCycle}，${activeRule.payoutMode}` }
+                      { label: '发放口径', value: formatPerformancePayoutMode(activeRule) }
                     ]}
                   />
                 </DetailSection>
               </>
             )
-          },
-          {
-            key: 'signatures',
-            label: '签署情况',
-            children:
-              signatureSummary.rows.length > 0 ? (
-                <DetailSection icon={<AuditOutlined />} title="员工签署明细">
-                  <Table
-                    className="detail-table"
-                    columns={signatureEmployeeColumns}
-                    dataSource={signatureSummary.rows}
-                    pagination={false}
-                    rowKey="id"
-                    scroll={{ x: 620 }}
-                    size="small"
-                  />
-                </DetailSection>
-              ) : (
-                <EmptyRuleBlock text={signatureSummary.batch ? '该规则版本暂无员工签署记录' : '该规则版本尚未形成签署统计'} />
-              )
           },
           {
             key: 'scoring',
@@ -368,6 +303,8 @@ export function PerformanceRuleReadonlyTabs({
                         { label: '满分', value: formatScore(activeRule.fullScore) },
                         { label: '达成线', value: formatScore(activeRule.baseLineScore) },
                         { label: '基础绩效金额', value: formatMoney(activeRule.basePerformanceAmount) },
+                        { label: '未达标系数', value: formatRatio(activeRule.belowBaselineFactor) },
+                        { label: '月度预发比例', value: formatRatio(activeRule.monthlyPrepayRatio) },
                         { label: '计分周期', value: activeRule.scoringCycle }
                       ]}
                     />
@@ -399,7 +336,7 @@ export function PerformanceRuleReadonlyTabs({
                       columns={2}
                       items={[
                         { label: '复核结算', value: activeRule.reviewCycle },
-                        { label: '发放方式', value: activeRule.payoutMode },
+                        { label: '发放方式', value: formatPerformancePayoutMode(activeRule) },
                         { label: '质量比例来源', value: '取自质量档位' }
                       ]}
                     />

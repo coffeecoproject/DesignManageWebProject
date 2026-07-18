@@ -3,7 +3,10 @@ import { Select } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { DetailDrawerTitle, DetailSection, ReadOnlyField } from '../../components/Detail';
 import { DrawerFormField, DrawerFormGrid, DrawerFormShell } from '../../components/DrawerForm';
-import type { PerformanceEmployeeSignatureArchive } from './performanceSignatureArchiveData';
+import type {
+  PerformanceEmployeeSignatureArchive,
+  PerformanceSignatureRuleOption
+} from './performanceSignatureArchiveData';
 import { PerformanceSignatureEmptyBlock } from './PerformanceSignatureEmptyBlock';
 import { PerformanceSignatureUploadSlot } from './PerformanceSignatureUploadSlot';
 import {
@@ -21,6 +24,7 @@ type PerformanceSignatureCreateDrawerProps = {
   onRuleChange: (ruleId: string) => void;
   onSubmit: () => void;
   open: boolean;
+  ruleOptions: PerformanceSignatureRuleOption[];
   value: SignatureCreateForm;
 };
 
@@ -32,10 +36,11 @@ export function PerformanceSignatureCreateDrawer({
   onRuleChange,
   onSubmit,
   open,
+  ruleOptions,
   value
 }: PerformanceSignatureCreateDrawerProps) {
   const selectedEmployee = employees.find((employee) => employee.id === value.employeeId);
-  const availableRules = getNewSignatureRuleOptions(selectedEmployee);
+  const availableRules = getNewSignatureRuleOptions(selectedEmployee, ruleOptions);
   const selectedRule = availableRules.find((rule) => rule.id === value.ruleId);
   const canSubmit = Boolean(selectedEmployee && selectedRule && value.fileName);
 
@@ -48,10 +53,10 @@ export function PerformanceSignatureCreateDrawer({
       primaryAction={{
         disabled: !canSubmit,
         icon: <UploadOutlined />,
-        label: '保存新增',
+        label: '保存档案',
         onClick: onSubmit
       }}
-      title={<DetailDrawerTitle subtitle="绩效管理 / 绩效签署" title="新增签署" />}
+      title={<DetailDrawerTitle subtitle="绩效管理 / 签署档案" title="新增签署档案" />}
       width={840}
       onClose={onClose}
     >
@@ -90,7 +95,7 @@ export function PerformanceSignatureCreateDrawer({
                 />
               </DrawerFormField>
               <ReadOnlyField label="绩效类别" value={selectedRule?.category} />
-              <ReadOnlyField label="当前状态" value="新增当前签署" />
+              <ReadOnlyField label="档案状态" value="当前档案" />
             </DrawerFormGrid>
             <PerformanceSignatureUploadSlot
               description="上传员工已签署完成文件，支持 PDF/JPG/PNG，20MB 内。"
@@ -100,7 +105,7 @@ export function PerformanceSignatureCreateDrawer({
             />
           </>
         ) : (
-          <PerformanceSignatureEmptyBlock text="该员工暂无可新增的绩效类别" />
+          <PerformanceSignatureEmptyBlock text="该员工暂无可归档的当前适用规则" />
         )}
       </DetailSection>
     </DrawerFormShell>

@@ -3,6 +3,7 @@ import { peopleMembers } from '../people/mockData';
 import {
   buildSalaryMonthlyReports,
   reverseSalaryPaymentByFinanceTransaction,
+  validateSalaryPaymentConfirmation,
   type SalaryMonthlyWorkflowRecord,
   type SalaryPaymentRecord,
   type SalaryPersonalIncomeTaxCumulativeSnapshot
@@ -11,8 +12,11 @@ import { confirmSalaryMonthlyReportState } from '../salary/salaryManagementWorkf
 import type { SalaryIitProfile } from '../salary/salaryPersonalIncomeTaxModel';
 import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
 import { buildSocialInsurancePayrollDeductions } from './financeSocialInsuranceModel';
-import { buildAccountingVoucherFromReceivablePayable } from './financeAccountingVoucherModel';
-import { financeTransactionRecords } from './financeData';
+import {
+  buildAccountingVoucherFromReceivablePayable,
+  buildAccountingVoucherFromTransaction
+} from './financeAccountingVoucherModel';
+import { financeTransactionRecords, getFinanceSeedPublicAccountRef } from './financeData';
 import {
   buildFinanceTransactionAdjustmentRecord,
   createFinanceTransactionAdjustmentForm
@@ -25,6 +29,11 @@ import { buildPayrollIitDeclarationEmployeeRows } from './financePayrollIitDecla
 import { commitPayrollIitCorrectionAfterPostedReversal } from './financePayrollIitCorrectionWorkflow';
 import { mergeSalaryReceivablePayableRecords } from './financeSalarySettlementModel';
 import {
+  buildFinanceReceivablePayableSettlementTransaction,
+  deriveFinanceReceivablePayableSettlementRows
+} from './financeReceivablesPayablesModel';
+import {
+  commitFinanceReceivablePayableSettlementRegistration,
   commitFinanceTransactionAdjustmentRegistration,
   commitFinanceTransactionReview
 } from './financeSettlementWorkflow';
@@ -246,8 +255,19 @@ function createPaidSalaryReversalFixture() {
     paidAt: payment.paidAt,
     paidBy: payment.paidBy,
     payrollNo: payment.payrollNo,
+    salaryCompositionLines: [
+      {
+        amount: 12000,
+        direction: '应发',
+        id: 'base-salary',
+        item: '基础薪资',
+        note: '五月确认快照',
+        source: '人员档案'
+      }
+    ],
     salarySettlementReferences: ['performance-result:may-prepay:v1'],
     settlementSnapshot,
+    settlementSourceRecords: [],
     status: '已发放',
     updatedAt: payment.paidAt
   };
@@ -332,6 +352,142 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'NP-19 FRONTEND-CHAIN registers, reviews and binds the net salary payment through one payroll number',
+    run: () => {
+      const month = '2026-07';
+      const profile = createIitProfile('2026');
+      const cumulativeSnapshots = [createIitSnapshot('2026-06')];
+      const report = buildSalaryMonthlyReports({
+        attendanceReports: [createAttendanceReport(month)],
+        performanceRecords: [],
+        personalIncomeTaxCumulativeSnapshots: cumulativeSnapshots,
+        personalIncomeTaxProfiles: [profile],
+        salaryAdjustments: [],
+        salaryMonthlyWorkflows: [],
+        socialInsuranceDeductions: buildSocialInsurancePayrollDeductions(
+          createSocialInsuranceRecords(month),
+          month
+        ),
+        socialInsuranceSourceRecords: createSocialInsuranceRecords(month)
+      })[0];
+
+      assert(report, 'salary payment workflow requires a monthly report');
+      const confirmation = confirmSalaryMonthlyReportState({
+        confirmedAt: '2026-07-31 10:30',
+        confirmedBy: '李明',
+        note: '七月薪酬明细已确认',
+        report,
+        salaryDetailMonths: [],
+        salaryMonthlyWorkflows: []
+      });
+
+      assert(confirmation.success, 'salary confirmation should succeed before payment');
+      const workflow = confirmation.salaryMonthlyWorkflows[0];
+      assert(workflow?.settlementSnapshot && workflow.payrollNo, 'confirmed salary should freeze a payroll number and settlement');
+      const payable = mergeSalaryReceivablePayableRecords({
+        payments: [],
+        people: [report.member],
+        records: [],
+        workflows: [workflow]
+      })[0];
+      const publicAccountRef = getFinanceSeedPublicAccountRef();
+
+      assert(payable, 'confirmed salary should derive the employee net payable');
+      const paymentTransaction = buildFinanceReceivablePayableSettlementTransaction(
+        payable,
+        {
+          amount: payable.amount,
+          files: [{
+            id: 'salary-payment-proof',
+            name: '七月工资付款回单.pdf',
+            status: '已选择',
+            type: '付款凭证',
+            updatedAt: '2026-08-15'
+          }],
+          note: '',
+          occurredAt: '2026-08-15',
+          publicAccountId: publicAccountRef.publicAccountId
+        },
+        [],
+        publicAccountRef
+      );
+
+      assertEqual(
+        paymentTransaction.sourceNo,
+        workflow.payrollNo,
+        'salary payment cash flow should retain the payroll number used by salary and IIT'
+      );
+      const registration = commitFinanceReceivablePayableSettlementRegistration(
+        { financeRows: [], receivablePayableRows: [payable] },
+        payable.id,
+        paymentTransaction
+      );
+
+      assert(registration.success, 'salary payment should register from the payable workbench');
+      const review = commitFinanceTransactionReview(registration, {
+        operationId: 'salary-payment-review',
+        reviewedAt: '2026-08-15 11:00',
+        reviewer: '财务复核',
+        transactionId: paymentTransaction.id
+      });
+
+      assert(review.success, 'salary payment should post through finance review');
+      const derivedPayable = deriveFinanceReceivablePayableSettlementRows(
+        review.receivablePayableRows,
+        review.financeRows
+      )[0];
+      assertEqual(derivedPayable?.settlementStatus, '已结清', 'posted salary payment should settle the employee net payable');
+      assertEqual(derivedPayable?.settledAmount, payable.amount, 'settled salary amount should equal employee net payable');
+      const postedTransaction = review.financeRows.find((row) => row.id === paymentTransaction.id);
+      assert(postedTransaction, 'review should retain the posted salary transaction');
+      const paymentVoucher = buildAccountingVoucherFromTransaction(postedTransaction, 0);
+      if (!paymentVoucher) {
+        throw new Error('posted salary transaction should derive a funds voucher');
+      }
+      assertEqual(paymentVoucher.sourceNo, postedTransaction.transactionNo, 'funds voucher should retain the reviewed transaction number');
+      assertEqual(paymentVoucher.status, '待记账', 'reviewed salary payment should enter the voucher workbench as ready to book');
+      assertEqual(paymentVoucher.amount, payable.amount, 'funds voucher amount should equal employee net payable');
+      assertEqual(
+        paymentVoucher.lines.find((line) => line.side === '借方')?.subjectCode,
+        '2211.01',
+        'salary payment should debit employee salary payable'
+      );
+      assertEqual(
+        paymentVoucher.lines.find((line) => line.side === '贷方')?.subjectCode,
+        '1002',
+        'salary payment should credit bank deposit'
+      );
+      const confirmedReport = {
+        ...report,
+        settlementSnapshot: workflow.settlementSnapshot,
+        status: '已确认' as const,
+        workflow
+      };
+      const paymentValidation = validateSalaryPaymentConfirmation({
+        evidence: {
+          accountName: postedTransaction.publicAccountSnapshot.displayName,
+          amount: postedTransaction.amount,
+          financeTransactionNo: postedTransaction.transactionNo,
+          occurredAt: postedTransaction.occurredAt,
+          payrollNo: postedTransaction.sourceNo,
+          status: '已入账'
+        },
+        personalIncomeTaxCumulativeSnapshots: cumulativeSnapshots,
+        personalIncomeTaxProfile: profile,
+        report: confirmedReport
+      });
+
+      if (!paymentValidation.allowed) {
+        throw new Error(`posted salary transaction should bind back to payroll: ${paymentValidation.reason}`);
+      }
+      assertEqual(
+        paymentValidation.payment.financeTransactionNo,
+        postedTransaction.transactionNo,
+        'salary payment fact should freeze the reviewed finance transaction number'
+      );
+    }
+  },
+  {
     name: 'NP-19 FRONTEND-CHAIN posts salary reversal before removing IIT source and reopens the frozen salary for repayment',
     run: () => {
       const { originTransaction, payment, workflow } = createPaidSalaryReversalFixture();
@@ -408,6 +564,16 @@ const tests: UnitTest[] = [
       assertEqual(salaryReversal.salaryMonthlyWorkflows[0]?.status, '已确认', 'salary should reopen at confirmed state for repayment');
       assertEqual(salaryReversal.salaryMonthlyWorkflows[0]?.paidAt, undefined, 'reopened salary should clear original paid time');
       assertEqual(
+        salaryReversal.salaryMonthlyWorkflows[0]?.paymentLifecycleRecords?.length,
+        2,
+        'reopened salary should retain both the original payment link and the reversal event'
+      );
+      assertEqual(
+        salaryReversal.salaryMonthlyWorkflows[0]?.paymentLifecycleRecords?.[1]?.action,
+        '发放流水冲正',
+        'salary lifecycle should identify the reversal explicitly'
+      );
+      assertEqual(
         salaryReversal.salaryMonthlyWorkflows[0]?.salarySettlementReferences?.[0],
         workflow.salarySettlementReferences?.[0],
         'reversal should preserve claimed performance settlement references'
@@ -416,6 +582,11 @@ const tests: UnitTest[] = [
         salaryReversal.salaryMonthlyWorkflows[0]?.settlementSnapshot,
         workflow.settlementSnapshot,
         'reversal should preserve the confirmed salary settlement snapshot'
+      );
+      assertEqual(
+        JSON.stringify(salaryReversal.salaryMonthlyWorkflows[0]?.salaryCompositionLines),
+        JSON.stringify(workflow.salaryCompositionLines),
+        'reversal should preserve the frozen payslip composition'
       );
     }
   },
@@ -457,11 +628,18 @@ const tests: UnitTest[] = [
       const seedTaxMatter = financeTaxMatterRecords.find((record) => record.matterType === '个人所得税');
 
       assert(seedTaxMatter, 'IIT tax matter seed should exist');
-      const declarationReceipt = {
-        id: 'np-19-salary-declaration-receipt',
-        name: '2026-06 个税申报回执.pdf',
+      const declarationForm = {
+        id: 'np-19-salary-declaration-form',
+        name: '2026-06 个税正式申报表.pdf',
         status: '已上传' as const,
-        type: '申报回执',
+        type: '正式申报表',
+        updatedAt: '2026-07-10'
+      };
+      const declarationResult = {
+        id: 'np-19-salary-declaration-result',
+        name: '2026-06 个税申报结果回执.pdf',
+        status: '已上传' as const,
+        type: '申报结果回执',
         updatedAt: '2026-07-10'
       };
       const filedTaxMatter = {
@@ -469,11 +647,13 @@ const tests: UnitTest[] = [
         dataStatus: '已确认' as const,
         declarationDate: '2026-07-10',
         declarationDueDate: '2026-07-15',
-        declarationReceiptFileId: declarationReceipt.id,
-        declarationReceiptNo: 'IIT-202606-001',
+        declarationFormFileIds: [declarationForm.id],
+        declarationResultFileId: declarationResult.id,
+        declarationVerificationStatus: '人工核验一致' as const,
+        taxAuthorityDeclarationNo: 'IIT-202606-001',
         declarationStatus: '申报成功' as const,
         declarationVersion: 1,
-        files: [declarationReceipt],
+        files: [declarationForm, declarationResult],
         id: 'np-19-salary-tax-matter',
         matterNo: 'TAX-202606-IIT',
         paidAmount: readyPreparation.iitSummary?.payableAmount ?? 0,

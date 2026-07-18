@@ -1,7 +1,8 @@
 import type { OperationRecord } from '../../components/OperationRecordTable';
+import type { PersonnelType } from '../people/peopleTypes';
 import type { PerformanceRuleCategory } from './performanceTypes';
 
-export type PerformanceSignatureRelationStatus = '当前签署' | '历史文件';
+export type PerformanceSignatureRelationStatus = '当前档案' | '历史档案';
 export type PerformanceArchiveEmployeeStatus = '在职' | '试用期' | '离职';
 
 export type PerformanceSignatureRuleOption = {
@@ -10,6 +11,7 @@ export type PerformanceSignatureRuleOption = {
   ruleName: string;
   ruleVersion: string;
   applicablePositions: string[];
+  personnelType: PersonnelType;
 };
 
 export type PerformanceSignatureFile = {
@@ -55,7 +57,7 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         category: '绘图任务制',
         ruleName: '绘图任务制V2',
         ruleVersion: 'V2',
-        relationStatus: '当前签署',
+        relationStatus: '当前档案',
         fileName: '赵倩_绘图任务制V2_绩效签署文件.pdf',
         signedAt: '2026-06-14',
         uploadedAt: '2026-06-14 10:18',
@@ -66,18 +68,18 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         category: '岗位职责考核',
         ruleName: '岗位职责考核V1',
         ruleVersion: 'V1',
-        relationStatus: '当前签署',
+        relationStatus: '历史档案',
         fileName: '赵倩_岗位职责考核V1_绩效签署文件.pdf',
         signedAt: '2026-06-14',
         uploadedAt: '2026-06-14 10:22',
-        note: '当前岗位职责考核关联文件'
+        note: '历史岗位职责考核签署文件'
       },
       {
         id: 'perf-file-20260004-draw-v1',
         category: '绘图任务制',
         ruleName: '绘图任务制V1',
         ruleVersion: 'V1',
-        relationStatus: '历史文件',
+        relationStatus: '历史档案',
         fileName: '赵倩_绘图任务制V1_绩效签署文件.pdf',
         signedAt: '2026-06-01',
         uploadedAt: '2026-06-01 16:30',
@@ -98,8 +100,8 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         time: '2026-06-14 10:18',
         actor: '李明',
         object: '绘图任务制V2',
-        action: '更新当前签署',
-        summary: '上传V2签署文件，V1转为历史文件'
+        action: '更新签署档案',
+        summary: '上传V2签署文件，V1转为历史档案'
       },
       {
         id: 'perf-op-20260004-3',
@@ -107,7 +109,7 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         actor: '李明',
         object: '岗位职责考核V1',
         action: '上传签署文件',
-        summary: '新增岗位职责考核当前签署文件'
+        summary: '上传岗位职责考核签署文件，现已归入历史档案'
       }
     ]
   },
@@ -127,7 +129,7 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         category: '绘图任务制',
         ruleName: '绘图任务制V1',
         ruleVersion: 'V1',
-        relationStatus: '当前签署',
+        relationStatus: '当前档案',
         fileName: '刘宇_绘图任务制V1_绩效签署文件.pdf',
         signedAt: '2026-06-13',
         uploadedAt: '2026-06-13 10:22',
@@ -138,7 +140,7 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         category: '项目奖金',
         ruleName: '项目奖金V1',
         ruleVersion: 'V1',
-        relationStatus: '历史文件',
+        relationStatus: '历史档案',
         fileName: '刘宇_项目奖金V1_绩效签署文件.pdf',
         signedAt: '2026-05-20',
         uploadedAt: '2026-05-20 15:45',
@@ -180,7 +182,7 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         category: '绘图任务制',
         ruleName: '绘图任务制V1',
         ruleVersion: 'V1',
-        relationStatus: '当前签署',
+        relationStatus: '当前档案',
         fileName: '陈思_绘图任务制V1_绩效签署文件.pdf',
         signedAt: '2026-06-14',
         uploadedAt: '2026-06-14 11:12',
@@ -191,11 +193,11 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         category: '岗位职责考核',
         ruleName: '岗位职责考核V1',
         ruleVersion: 'V1',
-        relationStatus: '当前签署',
+        relationStatus: '历史档案',
         fileName: '陈思_岗位职责考核V1_绩效签署文件.pdf',
         signedAt: '2026-06-14',
         uploadedAt: '2026-06-14 11:20',
-        note: '当前岗位职责考核关联文件'
+        note: '历史岗位职责考核签署文件'
       }
     ],
     operationRecords: [
@@ -213,39 +215,8 @@ export const performanceSignatureEmployees: PerformanceEmployeeSignatureArchive[
         actor: '李明',
         object: '岗位职责考核V1',
         action: '上传签署文件',
-        summary: '上传陈思岗位职责考核签署文件'
+        summary: '上传陈思岗位职责考核签署文件，现已归入历史档案'
       }
     ]
-  }
-];
-
-export const signatureRuleOptions: PerformanceSignatureRuleOption[] = [
-  {
-    id: 'rule-draw-v3',
-    category: '绘图任务制',
-    ruleName: '绘图任务制V3',
-    ruleVersion: 'V3',
-    applicablePositions: ['空间设计师', '主案设计师']
-  },
-  {
-    id: 'rule-draw-v2',
-    category: '绘图任务制',
-    ruleName: '绘图任务制V2',
-    ruleVersion: 'V2',
-    applicablePositions: ['空间设计师', '主案设计师']
-  },
-  {
-    id: 'rule-duty-v1',
-    category: '岗位职责考核',
-    ruleName: '岗位职责考核V1',
-    ruleVersion: 'V1',
-    applicablePositions: ['空间设计师', '主案设计师']
-  },
-  {
-    id: 'rule-bonus-v1',
-    category: '项目奖金',
-    ruleName: '项目奖金V1',
-    ruleVersion: 'V1',
-    applicablePositions: ['空间设计师']
   }
 ];

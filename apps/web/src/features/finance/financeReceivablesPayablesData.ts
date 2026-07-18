@@ -20,7 +20,7 @@ export type FinanceReceivablePayableTaxBasisSource = FinanceTaxBasisSource;
 export type FinanceReceivablePayableCounterpartyType = '客户' | '员工' | '外协' | '供应商' | '内部';
 export type FinanceReceivablePayableSourceType =
   | '合同应收'
-  | '项目阶段确认'
+  | '任务结算'
   | '薪酬发放'
   | '员工报销'
   | '外协结算'
@@ -28,6 +28,36 @@ export type FinanceReceivablePayableSourceType =
   | '运营费用';
 
 export type FinanceReceivablePayableTaxBasis = FinanceTaxBasis;
+
+export type FinanceCustomerTaskSettlementLine = {
+  acceptedAt: string;
+  acceptedBy: string;
+  amount: number;
+  acceptanceEvidence: RelatedFileRecord[];
+  priceVersion: number;
+  priceVersionId: string;
+  storeId: string;
+  storeName: string;
+  taskCode: string;
+  taskId: string;
+  taskName: string;
+  unitPrice: number;
+};
+
+export type FinanceCustomerTaskSettlementSnapshot = {
+  batchId: string;
+  brandId: string;
+  brandName: string;
+  contractCode?: string;
+  contractId?: string;
+  contractName?: string;
+  customerId: string;
+  customerName: string;
+  lineItems: FinanceCustomerTaskSettlementLine[];
+  recordKind: '原始结算' | '后续调整';
+  settlementMode: '按任务结算' | '按月汇总';
+  settlementPeriod: string;
+};
 
 export type FinanceReceivablePayableRecord = {
   accountingPeriod: string;
@@ -51,6 +81,7 @@ export type FinanceReceivablePayableRecord = {
   owner: string;
   reportAggregation: FinanceReportAggregation;
   salarySettlement?: SalarySettlementSnapshot;
+  taskSettlement?: FinanceCustomerTaskSettlementSnapshot;
   settledAmount: number;
   settlementStatus: FinanceReceivablePayableSettlementStatus;
   sourceNo: string;
@@ -251,7 +282,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settlementStatus: '未结清',
     sourceNo: 'PRJ-202606-003',
     sourceTitle: '光谷商业空间方案阶段',
-    sourceType: '项目阶段确认',
+    sourceType: '合同应收',
     updatedAt: '2026-06-12 16:20'
   },
   {
@@ -613,7 +644,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-012',
     sourceTitle: '美刻咖啡门店设计阶段款',
-    sourceType: '项目阶段确认',
+    sourceType: '合同应收',
     updatedAt: '2026-06-18 15:10'
   },
   {
@@ -654,7 +685,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-015',
     sourceTitle: '合众餐饮多门店设计结算款',
-    sourceType: '项目阶段确认',
+    sourceType: '合同应收',
     updatedAt: '2026-06-21 16:30'
   },
   {
@@ -695,7 +726,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settlementStatus: '未结清',
     sourceNo: 'PRJ-202606-007',
     sourceTitle: '光谷商业空间深化服务阶段',
-    sourceType: '项目阶段确认',
+    sourceType: '合同应收',
     updatedAt: '2026-06-20 14:15'
   },
   {
@@ -777,7 +808,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-005',
     sourceTitle: '示例客户 A 项目阶段款',
-    sourceType: '项目阶段确认',
+    sourceType: '合同应收',
     updatedAt: '2026-05-20 16:10'
   },
   {

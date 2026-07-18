@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react';
+import dayjs from 'dayjs';
 import { useFinanceSocialInsuranceState } from '../finance/FinanceSocialInsuranceState';
 import { buildSocialInsurancePayrollDeductions } from '../finance/financeSocialInsuranceModel';
-import { usePerformanceMonthlyRecords } from '../performance/usePerformanceMonthlyRecords';
+import { usePerformanceResultState } from '../performance/PerformanceResultState';
 import { buildAttendanceMonthlyReports } from '../people/peopleAttendanceMonthlyDomain';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { useWorkCalendarState } from '../system/WorkCalendarState';
@@ -10,6 +11,7 @@ import {
   getSalaryPerformanceSettlementMonths
 } from './salaryDomain';
 import { useSalaryManagementState } from './SalaryManagementState';
+import { buildSalaryPerformanceSourceRecords } from './salaryPerformanceConsumptionModel';
 
 export function useSalaryMonthlyReportBuilder() {
   const {
@@ -21,7 +23,15 @@ export function useSalaryMonthlyReportBuilder() {
   const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
   const salaryState = useSalaryManagementState();
   const { socialInsuranceRecords } = useFinanceSocialInsuranceState();
-  const performanceRecords = usePerformanceMonthlyRecords().categoryRecords;
+  const { formalResults } = usePerformanceResultState();
+  const performanceRecords = useMemo(
+    () => buildSalaryPerformanceSourceRecords({
+      asOf: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+      formalResults,
+      salaryMonthlyWorkflows: salaryState.salaryMonthlyWorkflows
+    }),
+    [formalResults, salaryState.salaryMonthlyWorkflows]
+  );
   const salaryReportMonths = useMemo(
     () => [
       ...new Set([

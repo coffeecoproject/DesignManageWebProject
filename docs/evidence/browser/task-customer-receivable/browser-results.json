@@ -1,0 +1,56 @@
+{
+  "brandEvidence": {
+    "hasContractSelector": true,
+    "hasPrice": true,
+    "hasSettlementPolicy": true,
+    "text": "星际空间\n客户管理 / 品牌管理\n可用任务\n3 项\n关联门店\n2 个\n品牌资料\n任务配置\n绩效方案\n绩效方案 *\n绘图任务制 / V2\n结算规则\n结算方式 *\n按任务结算\n按月汇总\n验收后到期天数 *\n适用任务\n当前已选择 3 项\n暂无可添加任务\n添加任务类型\n关联任务\t绩效分值\t计费\t结算单价\t依据合同\t操作\n\n关联任务\n\t\n绩效分值\n\t\n计费\n\t\n结算单价\n\t\n依据合同\n\t\n操作\n\n\n全套施工图\n设计交付\n\t2.2 分 / 套/门店\t\n是\n否\n\t\n¥\n\t\nCON-2026-001 / 星际空间年框合同\n\t\n移除\n\n\n平面方案\n设计交付\n\t3.8 分 / 套/门店\t\n是\n否\n\t\n¥\n\t\nCON-2026-001 / 星际空间年框合同\n\t\n移除\n\n\n门店P图\n图像处理\n\t1.2 分 / 套/门店\t\n是\n否\n\t\n¥\n\t\nCON-2026-001 / 星际空间年框合同\n\t\n移除\n取 消\n保存品牌",
+    "contractOptions": [
+      "CON-2026-001 / 星际空间年框合同"
+    ],
+    "otherCustomerContractExcluded": true
+  },
+  "browserErrors": [],
+  "contractPage": {
+    "hasTaskPricingUi": false,
+    "overflow": false
+  },
+  "financePage": {
+    "drawer": {
+      "hasAmount": true,
+      "hasBrand": true,
+      "hasContract": true,
+      "hasTask": true,
+      "hasAcceptance": true,
+      "text": "应收事项\nAR-202606-T7363 / 2026-06\n未结清\n往来对象\n湖北星际装饰有限公司\n应收金额\n12,000.00 元\n未收金额\n12,000.00 元\n到期日\n2026-07-07\n权责事项\n收款登记\n发票/票据\n确认依据\n操作记录\n权责事项\n任务验收自动生成，原事项只读\n收付方向\n应收\n结清状态\n未结清\n流水复核\n-\n结清比例\n0%\n归属月份\n2026-06\n确认日期\n2026-06-07\n到期日\n2026-07-07\n逾期风险\n未逾期\n财务类目\n设计服务收入\n权责记账科目\n科目已配置\n经办人\n李明\n业务来源\n任务结算\n来源单号\ntask-revenue:store-task-2026-008\n来源名称\n星际空间 武汉光谷店软装清单核对\n应收金额\n12,000.00 元\n品牌\n星际空间\n结算方式\n按任务结算\n依据合同\nCON-2026-001 / 星际空间年框合同\n已收金额\n0.00 元\n未收金额\n12,000.00 元\n备注\n根据内部验收结果自动确认任务收入。\n来源任务\t验收时间\t验收人\t价格版本\t结算金额\n\n来源任务\n\t\n验收时间\n\t\n验收人\n\t\n价格版本\n\t\n结算金额\n\n\n武汉光谷店软装清单核对\nTASK-2026-008 / 武汉光谷店\n\t2026-06-07 16:30\t示例全职 B\tV1\t12,000.00 元\n关 闭"
+    },
+    "overflow": false,
+    "taskReceivableRows": [
+      {
+        "id": "finance-rp-table-row-ar-task-revenue:store-task-2026-008",
+        "text": "应收 未结清 - AR-202606-T7363 设计服务收入 湖北星际装饰有限公司 客户 星际空间 武汉光谷店软装清单核对 任务结算 / task-revenue:store-task-2026-008 2026-06 2026-06-07 2026-07-07 12,000.00 元 0.00 元 12,000.00 元"
+      }
+    ]
+  },
+  "taskVisibility": [
+    {
+      "overflow": false,
+      "path": "/tasks/list",
+      "visibleForbiddenLabels": []
+    },
+    {
+      "overflow": false,
+      "path": "/tasks/people",
+      "visibleForbiddenLabels": []
+    },
+    {
+      "overflow": false,
+      "path": "/my-work/task-submit",
+      "visibleForbiddenLabels": []
+    },
+    {
+      "overflow": false,
+      "path": "/my-work/task-acceptance",
+      "visibleForbiddenLabels": []
+    }
+  ]
+}

@@ -26,7 +26,8 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
 import type { FinanceTransactionRecord } from '../finance/financeData';
 import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
-import type { PerformanceRulePreset } from '../performance/performanceTypes';
+import type { PerformanceMonthlyCategoryRecord, PerformanceRulePreset } from '../performance/performanceTypes';
+import { usePerformanceResults } from '../performance/usePerformanceResults';
 import { useWorkCalendarState, type AnnualExceptionConfigRow, type WorkCalendarRow } from '../system/WorkCalendarState';
 import { useTaskManagementState, type StoreTaskRecord } from '../tasks/TaskManagementState';
 import { peopleAttendanceToday, peopleOrganizationToday, usePeopleOrganizationState, type PeopleAttendanceRecord } from './PeopleOrganizationState';
@@ -51,7 +52,7 @@ import { getPeoplePerformanceRuleRiskLabels, peoplePerformanceTerminationRiskLab
 import { formatSalaryMoney } from '../salary/salaryDomain';
 import { useSalaryMonthlyReportBuilder } from '../salary/salaryReportBuilder';
 import type { SalaryMonthlyReport } from '../salary/salaryDomain';
-import type { PeopleFilters, PeopleMember, PeopleStatus, PeopleWorkEvaluationRecord } from './peopleTypes';
+import type { PeopleFilters, PeopleMember, PeopleStatus } from './peopleTypes';
 
 type PeopleExpiryRiskFilter = '全部' | '即将到期' | '已到期' | '无到期风险';
 
@@ -63,14 +64,13 @@ type PeopleSearchFilters = {
 };
 
 type PeopleOverviewSummary = {
-  averagePerformanceScore: number;
+  averagePerformanceScore: number | null;
   averageSalaryText: string;
   evaluationPeriodCount: number;
-  monthlyCompletedAverage: number;
+  monthlyCompletedAverage: number | null;
   monthlyCompletedTotal: number;
-  previousPerformanceRecord?: PeopleWorkEvaluationRecord;
+  previousPerformanceRecord?: PerformanceMonthlyCategoryRecord;
   previousPerformanceText: string;
-  reworkTotal: number;
   salaryMode: ReturnType<typeof getPeopleSalaryModeText>;
   salarySourceText: string;
 };
@@ -109,7 +109,6 @@ const riskTone: Record<string, StatusTagTone> = {
   合作将到期: 'amber',
   [peoplePerformanceTerminationRiskLabel]: 'red',
   平均绩效待关注: 'amber',
-  返工待关注: 'amber',
   任务参与暂停: 'amber'
 };
 
@@ -138,11 +137,19 @@ function formatMoney(value: number) {
   return Number.isFinite(value) && value > 0 ? `${moneyFormatter.format(Math.round(value * 100) / 100)} 元` : '-';
 }
 
-function formatScoreValue(score: number) {
+function formatScoreValue(score: number | null) {
+  if (score === null) {
+    return '-';
+  }
+
   return Number.isInteger(score) ? String(score) : score.toFixed(1);
 }
 
-function formatAverageCount(value: number) {
+function formatAverageCount(value: number | null) {
+  if (value === null) {
+    return '-';
+  }
+
   return Number.isInteger(value) ? `${value} 项` : `${value.toFixed(1)} 项`;
 }
 
@@ -176,6 +183,10 @@ function average(values: number[]) {
   return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
+function averageOrNull(values: number[]) {
+  return values.length > 0 ? average(values) : null;
+}
+
 function getOverviewStatusOptions(personnelType: PeopleFilters['personnelType']) {
   if (personnelType === '全职') {
     return ['全部', ...activeFulltimeStatuses];
@@ -200,7 +211,11 @@ function renderOverviewAvailabilityStatus(summary: PeopleOverviewAvailabilitySum
   return <StatusTag tone={summary.tone} value={summary.status} />;
 }
 
-function getPerformanceSignalClassName(score: number) {
+function getPerformanceSignalClassName(score: number | null) {
+  if (score === null) {
+    return 'performance-signal-value';
+  }
+
   if (score < 80) {
     return 'performance-signal-value performance-signal-value-amber';
   }
@@ -212,16 +227,28 @@ function getPerformanceSignalClassName(score: number) {
   return 'performance-signal-value performance-signal-value-blue';
 }
 
-function getPeopleOverviewSummary(member: PeopleMember): PeopleOverviewSummary {
-  const records = member.workEvaluationRecords.length > 0 ? member.workEvaluationRecords : [member.workEvaluationSummary];
-  const averagePerformanceScore = average(records.map((record) => record.score));
-  const monthlyCompletedAverage = average(records.map((record) => record.acceptedTasks));
-  const monthlyCompletedTotal = records.reduce((total, record) => total + record.acceptedTasks, 0);
-  const reworkTotal = records.reduce((total, record) => total + record.reworkTasks, 0);
+function getPeopleOverviewSummary(
+  member: PeopleMember,
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[] = []
+): PeopleOverviewSummary {
+  const records = publishedPerformanceRecords
+    .filter(
+      (record) => record.workNo === member.id && record.resultResponseStatus !== '有异议'
+    )
+    .sort((left, right) => right.performanceMonth.localeCompare(left.performanceMonth));
+  const performanceScores = records
+    .map((record) => record.qualityScore ?? record.taskScore)
+    .filter((score): score is number => typeof score === 'number');
+  const averagePerformanceScore = averageOrNull(performanceScores);
+  const monthlyCompletedAverage = averageOrNull(records.map((record) => record.sourceTaskCount));
+  const monthlyCompletedTotal = records.reduce((total, record) => total + record.sourceTaskCount, 0);
   const baseSalaryText = getPeopleBaseSalaryText(member);
   const salaryAmount = parseSalaryAmount(baseSalaryText);
   const salaryMode = getPeopleSalaryModeText(member);
-  const previousPerformanceRecord = records.find((record) => record.month === overviewPerformanceMonth);
+  const previousPerformanceRecord = records.find(
+    (record) => record.performanceMonth === overviewPerformanceMonth
+  );
+  const previousScore = previousPerformanceRecord?.qualityScore ?? previousPerformanceRecord?.taskScore;
 
   return {
     averagePerformanceScore,
@@ -230,10 +257,9 @@ function getPeopleOverviewSummary(member: PeopleMember): PeopleOverviewSummary {
     monthlyCompletedAverage,
     monthlyCompletedTotal,
     previousPerformanceRecord,
-    previousPerformanceText: previousPerformanceRecord
-      ? `${formatScoreValue(previousPerformanceRecord.score)} 分 / ${previousPerformanceRecord.level}`
+    previousPerformanceText: previousPerformanceRecord && typeof previousScore === 'number'
+      ? `${formatScoreValue(previousScore)} 分`
       : '-',
-    reworkTotal,
     salaryMode,
     salarySourceText: member.personnelType === '兼职' ? member.salaryProfile.taskRateRule ?? '按任务规则' : baseSalaryText
   };
@@ -318,21 +344,30 @@ function getExpiryRiskLabel(row: PeopleExpiryRow) {
   return row.status === '已逾期' ? '合作协议已逾期' : '合作将到期';
 }
 
-function getRiskItems(member: PeopleMember, expiryRows: PeopleExpiryRow[] = [], performanceRuleRows: PerformanceRulePreset[] = []) {
+function getRiskItems(
+  member: PeopleMember,
+  expiryRows: PeopleExpiryRow[] = [],
+  performanceRuleRows: PerformanceRulePreset[] = [],
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[] = []
+) {
   const risks: string[] = [];
-  const summary = getPeopleOverviewSummary(member);
+  const summary = getPeopleOverviewSummary(member, publishedPerformanceRecords);
   const expiryRiskItems = getExpiryRiskRows(expiryRows).map((row) => getExpiryRiskLabel(row));
-  const performanceRuleRiskItems = getPeoplePerformanceRuleRiskLabels(member, performanceRuleRows);
+  const performanceRuleRiskItems = getPeoplePerformanceRuleRiskLabels(
+    member,
+    performanceRuleRows,
+    publishedPerformanceRecords
+  );
 
   risks.push(...expiryRiskItems);
   risks.push(...performanceRuleRiskItems);
 
-  if (summary.averagePerformanceScore < 80) {
+  if (
+    summary.averagePerformanceScore !== null
+    && summary.averagePerformanceScore < 80
+    && performanceRuleRiskItems.length === 0
+  ) {
     risks.push('平均绩效待关注');
-  }
-
-  if (summary.reworkTotal >= 2) {
-    risks.push('返工待关注');
   }
 
   if (member.taskAccessStatus === '暂停参与') {
@@ -350,12 +385,27 @@ function comparePeopleMembers(
   left: PeopleMember,
   right: PeopleMember,
   expiryRowsByMemberId: Map<string, PeopleExpiryRow[]>,
-  performanceRuleRows: PerformanceRulePreset[]
+  performanceRuleRows: PerformanceRulePreset[],
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[]
 ) {
   return (
     (statusSortPriority[left.status] ?? 9) - (statusSortPriority[right.status] ?? 9) ||
-    getRiskSortWeight(getRiskItems(right, getMemberExpiryRows(expiryRowsByMemberId, right.id), performanceRuleRows)) -
-      getRiskSortWeight(getRiskItems(left, getMemberExpiryRows(expiryRowsByMemberId, left.id), performanceRuleRows)) ||
+    getRiskSortWeight(
+      getRiskItems(
+        right,
+        getMemberExpiryRows(expiryRowsByMemberId, right.id),
+        performanceRuleRows,
+        publishedPerformanceRecords
+      )
+    ) -
+      getRiskSortWeight(
+        getRiskItems(
+          left,
+          getMemberExpiryRows(expiryRowsByMemberId, left.id),
+          performanceRuleRows,
+          publishedPerformanceRecords
+        )
+      ) ||
     left.id.localeCompare(right.id)
   );
 }
@@ -381,6 +431,7 @@ function PeopleStatusDrawer({
   expiryRows,
   member,
   open,
+  performanceRecords,
   performanceRuleRows,
   storeTaskRows,
   workCalendarRows,
@@ -391,6 +442,7 @@ function PeopleStatusDrawer({
   expiryRows: PeopleExpiryRow[];
   member?: PeopleMember;
   open: boolean;
+  performanceRecords: PerformanceMonthlyCategoryRecord[];
   performanceRuleRows: PerformanceRulePreset[];
   storeTaskRows: StoreTaskRecord[];
   workCalendarRows: WorkCalendarRow[];
@@ -400,8 +452,8 @@ function PeopleStatusDrawer({
     return null;
   }
 
-  const summary = getPeopleOverviewSummary(member);
-  const risks = getRiskItems(member, expiryRows, performanceRuleRows);
+  const summary = getPeopleOverviewSummary(member, performanceRecords);
+  const risks = getRiskItems(member, expiryRows, performanceRuleRows, performanceRecords);
   const riskSummary = risks.length === 1 && risks[0] === '正常' ? '正常' : `${risks.length} 项`;
   const availabilitySummary = getPeopleOverviewAvailabilitySummary(member, attendanceRecords, workCalendarRows, annualExceptionRows, peopleAttendanceToday);
   const ongoingTaskCount = getPeopleOngoingTaskCount(member.id, storeTaskRows);
@@ -465,7 +517,7 @@ function PeopleStatusDrawer({
             )
           },
           {
-            description: '工作评价记录',
+            description: '已发布绩效结果',
             icon: <ClockCircleOutlined />,
             key: 'tasks',
             label: '月均完成任务',
@@ -538,9 +590,9 @@ function PeopleStatusDrawer({
                       },
                       { label: '统计期数', value: `${summary.evaluationPeriodCount} 期` },
                       { label: '上月绩效', value: summary.previousPerformanceText },
-                      { label: '绩效月份', value: summary.previousPerformanceRecord?.month ?? overviewPerformanceMonth },
-                      { label: '上月完成任务', value: summary.previousPerformanceRecord ? `${summary.previousPerformanceRecord.acceptedTasks} 项` : '-' },
-                      { label: '上月返工', value: summary.previousPerformanceRecord ? `${summary.previousPerformanceRecord.reworkTasks} 项` : '-' }
+                      { label: '绩效月份', value: summary.previousPerformanceRecord?.performanceMonth ?? overviewPerformanceMonth },
+                      { label: '上月绩效金额', value: summary.previousPerformanceRecord ? formatMoney(summary.previousPerformanceRecord.monthlyAmount) : '-' },
+                      { label: '上月来源任务', value: summary.previousPerformanceRecord ? `${summary.previousPerformanceRecord.sourceTaskCount} 项` : '-' }
                     ]}
                   />
                 </DetailSection>
@@ -559,8 +611,7 @@ function PeopleStatusDrawer({
                     { label: '在岗状态', value: renderOverviewAvailabilityStatus(availabilitySummary) },
                     { label: '进行中任务', value: `${ongoingTaskCount} 个` },
                     { label: '月均完成任务', value: formatAverageCount(summary.monthlyCompletedAverage) },
-                    { label: '累计完成任务', value: `${summary.monthlyCompletedTotal} 项` },
-                    { label: '返工合计', value: `${summary.reworkTotal} 项` }
+                    { label: '累计来源任务', value: summary.evaluationPeriodCount > 0 ? `${summary.monthlyCompletedTotal} 项` : '-' }
                   ]}
                 />
               </DetailSection>
@@ -597,6 +648,7 @@ export function PeopleOverviewPage() {
   const { attendanceRecords, peopleRows } = usePeopleOrganizationState();
   const { financeRows } = useFinanceManagement();
   const { performanceRuleRows } = usePerformanceRuleState();
+  const { publishedMonthlyRecords } = usePerformanceResults();
   const { storeTaskRows } = useTaskManagementState();
   const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
   const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
@@ -628,21 +680,32 @@ export function PeopleOverviewPage() {
 
   const metrics = useMemo(() => {
     const risk = overviewMembers.filter(
-      (member) => getRiskItems(member, getMemberExpiryRows(expiryRowsByMemberId, member.id), performanceRuleRows)[0] !== '正常'
+      (member) => getRiskItems(
+        member,
+        getMemberExpiryRows(expiryRowsByMemberId, member.id),
+        performanceRuleRows,
+        publishedMonthlyRecords
+      )[0] !== '正常'
     ).length;
     const fulltimeSalaryReports = overviewMembers
       .filter((member) => member.personnelType === '全职')
       .map((member) => salaryReportsByMemberId.get(member.id))
       .filter((report): report is SalaryMonthlyReport => Boolean(report));
-    const overviewSummaries = overviewMembers.map(getPeopleOverviewSummary);
+    const overviewSummaries = overviewMembers.map((member) => getPeopleOverviewSummary(member, publishedMonthlyRecords));
+    const performanceScores = overviewSummaries
+      .map((summary) => summary.averagePerformanceScore)
+      .filter((score): score is number => score !== null);
+    const taskVolumes = overviewSummaries
+      .map((summary) => summary.monthlyCompletedAverage)
+      .filter((value): value is number => value !== null);
     const parttimeActualPayAmounts = overviewMembers
       .filter((member) => member.personnelType === '兼职')
       .map((member) => getParttimeActualPayAmount(member, financeRows, currentSalaryMonth));
 
     return {
       averageFulltimeNetSalary: average(fulltimeSalaryReports.map((report) => report.netSalary)),
-      averagePerformance: average(overviewSummaries.map((summary) => summary.averagePerformanceScore)),
-      averageTaskVolume: average(overviewSummaries.map((summary) => summary.monthlyCompletedAverage)),
+      averagePerformance: averageOrNull(performanceScores),
+      averageTaskVolume: averageOrNull(taskVolumes),
       averageParttimeActualPay: average(parttimeActualPayAmounts),
       total: overviewMembers.length,
       fulltime: overviewMembers.filter((member) => member.personnelType === '全职').length,
@@ -650,7 +713,7 @@ export function PeopleOverviewPage() {
       risk,
       expiryWithin30Days: expiryMetrics.within30Days
     };
-  }, [currentSalaryMonth, expiryMetrics, expiryRowsByMemberId, financeRows, overviewMembers, performanceRuleRows, salaryReportsByMemberId]);
+  }, [currentSalaryMonth, expiryMetrics, expiryRowsByMemberId, financeRows, overviewMembers, performanceRuleRows, publishedMonthlyRecords, salaryReportsByMemberId]);
 
   const filteredMembers = useMemo(
     () =>
@@ -673,8 +736,14 @@ export function PeopleOverviewPage() {
 
           return matchesType && matchesStatus && matchesExpiryRisk && matchesKeyword;
         })
-        .sort((left, right) => comparePeopleMembers(left, right, expiryRowsByMemberId, performanceRuleRows)),
-    [expiryRowsByMemberId, filters, overviewMembers, performanceRuleRows]
+        .sort((left, right) => comparePeopleMembers(
+          left,
+          right,
+          expiryRowsByMemberId,
+          performanceRuleRows,
+          publishedMonthlyRecords
+        )),
+    [expiryRowsByMemberId, filters, overviewMembers, performanceRuleRows, publishedMonthlyRecords]
   );
 
   const columns = useMemo<TableColumnsType<PeopleMember>>(
@@ -704,7 +773,7 @@ export function PeopleOverviewPage() {
         key: 'averageSalary',
         align: 'right',
         width: 116,
-        render: (_, record) => <CellText>{getPeopleOverviewSummary(record).averageSalaryText}</CellText>
+        render: (_, record) => <CellText>{getPeopleOverviewSummary(record, publishedMonthlyRecords).averageSalaryText}</CellText>
       },
       {
         title: '社保',
@@ -724,7 +793,17 @@ export function PeopleOverviewPage() {
         title: '人员风险',
         key: 'risk',
         width: 170,
-        render: (_, record) => <RiskTags mode="table" risks={getRiskItems(record, getMemberExpiryRows(expiryRowsByMemberId, record.id), performanceRuleRows)} />
+        render: (_, record) => (
+          <RiskTags
+            mode="table"
+            risks={getRiskItems(
+              record,
+              getMemberExpiryRows(expiryRowsByMemberId, record.id),
+              performanceRuleRows,
+              publishedMonthlyRecords
+            )}
+          />
+        )
       },
       {
         title: '在岗状态',
@@ -742,7 +821,9 @@ export function PeopleOverviewPage() {
         key: 'averageCompletedTasks',
         align: 'center',
         width: 122,
-        render: (_, record) => <CellText>{formatAverageCount(getPeopleOverviewSummary(record).monthlyCompletedAverage)}</CellText>
+        render: (_, record) => (
+          <CellText>{formatAverageCount(getPeopleOverviewSummary(record, publishedMonthlyRecords).monthlyCompletedAverage)}</CellText>
+        )
       },
       {
         title: '平均绩效',
@@ -750,7 +831,7 @@ export function PeopleOverviewPage() {
         align: 'center',
         width: 108,
         render: (_, record) => {
-          const summary = getPeopleOverviewSummary(record);
+          const summary = getPeopleOverviewSummary(record, publishedMonthlyRecords);
 
           return (
             <CompactCell
@@ -766,7 +847,7 @@ export function PeopleOverviewPage() {
         }
       }
     ],
-    [annualExceptionRows, attendanceRecords, expiryRowsByMemberId, performanceRuleRows, workCalendarRows]
+    [annualExceptionRows, attendanceRecords, expiryRowsByMemberId, performanceRuleRows, publishedMonthlyRecords, workCalendarRows]
   );
 
   return (
@@ -872,6 +953,7 @@ export function PeopleOverviewPage() {
         expiryRows={activeMemberExpiryRows}
         member={activeMember}
         open={detailOpen}
+        performanceRecords={publishedMonthlyRecords}
         performanceRuleRows={performanceRuleRows}
         storeTaskRows={storeTaskRows}
         workCalendarRows={workCalendarRows}

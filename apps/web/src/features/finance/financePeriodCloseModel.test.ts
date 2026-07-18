@@ -93,9 +93,11 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord>): FinanceTax
     dataStatus: '已确认',
     declarationDate: '2026-07-10',
     declarationDueDate: '2026-07-15',
+    declarationFormFileIds: [],
     declarationHistory: [],
-    declarationReceiptNo: 'DECLARATION-RECEIPT-001',
+    taxAuthorityDeclarationNo: 'DECLARATION-RECEIPT-001',
     declarationStatus: '申报成功',
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     files: [],
     id: 'tax-matter-test-001',
@@ -228,7 +230,6 @@ const tests: UnitTest[] = [
           'financial_statements',
           'cash_review',
           'cash_reconciliation',
-          'tax_handling',
           'social_insurance_housing_fund'
         ].join(','),
         'period close should expose only the current close-check groups'
@@ -798,7 +799,6 @@ const tests: UnitTest[] = [
           pendingVoucherCount: 0,
           pendingReviewCashFlowCount: 0,
           socialInsurancePendingCount: 0,
-          taxHandlingPendingCount: 0,
           trialBalanceDifference: 0,
           trialBalanceStatus: '平衡',
           unbookedVoucherCount: 0,
@@ -1004,19 +1004,23 @@ const tests: UnitTest[] = [
         throw new Error('expected 2026-06 period');
       }
 
-      assertEqual(period.taxHandlingPendingCount, 0, 'later tax cash settlement must not be a period tax-accounting blocker');
       assertEqual(period.status, '可结账', 'declared and booked tax should allow close before the later payment date');
+      assertEqual(
+        period.checkItems.some((item) => item.title === '税务办理'),
+        false,
+        'external tax filing and payment should not appear as an accounting-period close check'
+      );
     }
   },
   {
-    name: 'blocks close when reviewed cash flow is not reconciled or tax matter is unfinished',
+    name: 'blocks close for unreconciled cash flow but not for unfinished external tax handling',
     run: () => {
       const rows = buildRows({
         financeRows: [createFinanceTransaction({ reconciliationStatus: '未对账' })],
         ledgerEntries: balancedLedgerEntries,
         taxMatterRows: [createTaxMatter({
-          declarationReceiptNo: undefined,
-          processStatus: '待补回执'
+          taxAuthorityDeclarationNo: undefined,
+          processStatus: '申报材料待核对'
         })],
         voucherRows: [createVoucher('已记账')]
       });
@@ -1026,19 +1030,13 @@ const tests: UnitTest[] = [
         throw new Error('expected 2026-06 period');
       }
 
-      assertEqual(period.status, '需处理', 'unreconciled cash flow and unfinished tax matters should block closing');
+      assertEqual(period.status, '需处理', 'unreconciled cash flow should block closing');
       assertEqual(period.unreconciledCashFlowCount, 1, 'unreconciled booked cash flow should be counted');
-      assertEqual(period.taxHandlingPendingCount, 1, 'unfinished tax handling matter should be counted');
       assertEqual(period.socialInsurancePendingCount, 0, 'tax handling matter should not be counted as social insurance');
       assertEqual(
         period.checkItems.some((item) => item.code === 'cash_reconciliation' && item.sourceSummary === '银行对账 / 1 条'),
         true,
         'cash reconciliation check should show row count instead of transaction number'
-      );
-      assertEqual(
-        period.checkItems.some((item) => item.code === 'tax_handling' && item.sourceSummary === '税务办理 / 1 项'),
-        true,
-        'tax handling check should show item count instead of tax matter number'
       );
       assertEqual(
         period.checkItems.some(
@@ -1048,16 +1046,14 @@ const tests: UnitTest[] = [
         'cash reconciliation blocker should expose the bank-reconciliation source route'
       );
       assertEqual(
-        period.checkItems.some(
-          (item) => item.code === 'tax_handling' && item.actionLabel === '去税务办理' && item.actionPath === '/tax/handling'
-        ),
-        true,
-        'tax handling blocker should expose the tax-handling source route'
+        period.checkItems.some((item) => item.title === '税务办理'),
+        false,
+        'unfinished external tax handling should not be duplicated in period-close checks'
       );
     }
   },
   {
-    name: 'splits tax handling from social-insurance matters during close checks',
+    name: 'keeps social-insurance matters as a close check without duplicating external tax handling',
     run: () => {
       const rows = buildRows({
         financeRows: [createFinanceTransaction({})],
@@ -1068,7 +1064,7 @@ const tests: UnitTest[] = [
           createTaxMatter({
             id: 'housing',
             matterType: '公积金缴纳',
-            processStatus: '待补回执',
+            processStatus: '申报材料待核对',
             sourceItems: [{
               id: 'housing-source-pending',
               name: '公积金缴费明细',
@@ -1086,12 +1082,11 @@ const tests: UnitTest[] = [
         throw new Error('expected 2026-06 period');
       }
 
-      assertEqual(period.taxHandlingPendingCount, 1, 'tax handling should only include non-social tax matters');
       assertEqual(period.socialInsurancePendingCount, 2, 'social insurance and housing fund should be counted separately');
       assertEqual(
-        period.checkItems.some((item) => item.code === 'tax_handling' && item.detail.includes('1 项税务办理')),
-        true,
-        'tax handling check should explain tax-only pending count'
+        period.checkItems.some((item) => item.title === '税务办理'),
+        false,
+        'non-social external tax handling should not become a close-check group'
       );
       assertEqual(
         period.checkItems.some((item) => item.code === 'social_insurance_housing_fund' && item.detail.includes('2 项社保公积金')),
@@ -1111,7 +1106,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'maps quarterly tax matters to the quarter-end accounting month',
+    name: 'does not turn a pending quarterly filing into a quarter-end close blocker',
     run: () => {
       const rows = buildRows({
         financeRows: [createFinanceTransaction({})],
@@ -1135,7 +1130,12 @@ const tests: UnitTest[] = [
       }
 
       assertEqual(quarterPeriod, undefined, 'quarter labels should not become accounting-period rows');
-      assertEqual(junePeriod.taxHandlingPendingCount, 1, 'Q2 tax matter should be attached to June close');
+      assertEqual(junePeriod.status, '可结账', 'Q2 external filing should not block June after the tax voucher is booked');
+      assertEqual(
+        junePeriod.checkItems.some((item) => item.title === '税务办理'),
+        false,
+        'quarterly filing status should stay in the tax module rather than period close'
+      );
     }
   },
   {
@@ -1226,7 +1226,6 @@ const tests: UnitTest[] = [
             pendingVoucherCount: 0,
             pendingReviewCashFlowCount: 0,
             socialInsurancePendingCount: 0,
-            taxHandlingPendingCount: 0,
             trialBalanceDifference: 0,
             trialBalanceStatus: '平衡',
             unbookedVoucherCount: 0,

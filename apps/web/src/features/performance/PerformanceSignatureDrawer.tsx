@@ -1,5 +1,4 @@
 import {
-  DeleteOutlined,
   EditOutlined,
   FileProtectOutlined,
   HistoryOutlined,
@@ -15,7 +14,7 @@ import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DrawerFormField, DrawerFormGrid, DrawerFormShell } from '../../components/DrawerForm';
 import { OperationRecordTable } from '../../components/OperationRecordTable';
-import type { PerformanceSignatureFile } from './performanceSignatureArchiveData';
+import type { PerformanceSignatureFile, PerformanceSignatureRuleOption } from './performanceSignatureArchiveData';
 import { PerformanceSignatureEmptyBlock } from './PerformanceSignatureEmptyBlock';
 import { PerformanceSignatureFileTable } from './PerformanceSignatureFileTable';
 import { PerformanceSignatureUploadSlot } from './PerformanceSignatureUploadSlot';
@@ -32,18 +31,20 @@ import type { PerformanceRuleCategory } from './performanceTypes';
 
 type PerformanceSignatureDrawerProps = {
   relation: PerformanceSignatureRelationRow | null;
+  ruleOptions: PerformanceSignatureRuleOption[];
   onAddRelation: (employeeId: string, ruleId: string, fileName: string) => void;
+  onArchiveRelation: (employeeId: string, category: PerformanceRuleCategory) => void;
   onClose: () => void;
-  onDisableRelation: (employeeId: string, category: PerformanceRuleCategory) => void;
   onFileAction: (action: PerformanceSignatureFileAction, file: PerformanceSignatureFile) => void;
   onUpdateRelation: (employeeId: string, category: PerformanceRuleCategory, ruleId: string, fileName: string) => void;
 };
 
 export function PerformanceSignatureDrawer({
   relation,
+  ruleOptions,
   onAddRelation,
+  onArchiveRelation,
   onClose,
-  onDisableRelation,
   onFileAction,
   onUpdateRelation
 }: PerformanceSignatureDrawerProps) {
@@ -57,16 +58,16 @@ export function PerformanceSignatureDrawer({
   const currentFile = relation?.currentFile;
   const historyFiles = relation?.historyFiles ?? [];
   const currentFiles = currentFile ? [currentFile] : [];
-  const sameCategoryRules = employee && relation ? getSameCategoryRuleOptions(employee, relation.category) : [];
+  const sameCategoryRules = employee && relation ? getSameCategoryRuleOptions(employee, relation.category, ruleOptions) : [];
   const updateRuleOptions = sameCategoryRules.filter((rule) => rule.ruleName !== currentFile?.ruleName);
-  const addRuleOptions = getNewSignatureRuleOptions(employee);
+  const addRuleOptions = getNewSignatureRuleOptions(employee, ruleOptions);
   const selectedUpdateRule = updateRuleOptions.find((rule) => rule.id === updateRuleId);
   const selectedAddRule = addRuleOptions.find((rule) => rule.id === addRuleId);
   const categoryRecords =
     employee && relation
       ? employee.operationRecords.filter((record) => record.object.includes(relation.category) || record.summary.includes(relation.category))
       : [];
-  const canEdit = relation?.relationStatus === '当前签署' && Boolean(currentFile);
+  const canEdit = relation?.relationStatus === '当前档案' && Boolean(currentFile);
   const canUpdateRelation = Boolean(employee && relation && selectedUpdateRule && updateFileName);
   const canAddRelation = Boolean(employee && selectedAddRule && addFileName);
 
@@ -74,16 +75,18 @@ export function PerformanceSignatureDrawer({
     const nextEmployee = relation?.employee;
     const nextUpdateRule =
       nextEmployee && relation
-        ? getSameCategoryRuleOptions(nextEmployee, relation.category).find((rule) => rule.ruleName !== relation.currentFile?.ruleName)
+        ? getSameCategoryRuleOptions(nextEmployee, relation.category, ruleOptions).find(
+            (rule) => rule.ruleName !== relation.currentFile?.ruleName
+          )
         : undefined;
-    const nextAddRule = getFirstNewSignatureRule(nextEmployee);
+    const nextAddRule = getFirstNewSignatureRule(nextEmployee, ruleOptions);
 
     setEditMode(false);
     setUpdateRuleId(nextUpdateRule?.id ?? '');
     setUpdateFileName(null);
     setAddRuleId(nextAddRule?.id ?? '');
     setAddFileName(null);
-  }, [relation?.id, relation?.employee, relation?.category, relation?.currentFile?.ruleName]);
+  }, [relation?.id, relation?.employee, relation?.category, relation?.currentFile?.ruleName, ruleOptions]);
 
   function handleSelectUpdateFile(file: UploadFile) {
     if (!employee || !selectedUpdateRule) {
@@ -116,15 +119,15 @@ export function PerformanceSignatureDrawer({
 
     onAddRelation(employee.id, selectedAddRule.id, addFileName);
     setAddFileName(null);
-    setAddRuleId(getFirstNewSignatureRule(employee)?.id ?? '');
+    setAddRuleId(getFirstNewSignatureRule(employee, ruleOptions)?.id ?? '');
   }
 
-  function handleDisable() {
+  function handleArchive() {
     if (!employee || !relation) {
       return;
     }
 
-    onDisableRelation(employee.id, relation.category);
+    onArchiveRelation(employee.id, relation.category);
   }
 
   return (
@@ -164,8 +167,8 @@ export function PerformanceSignatureDrawer({
       title={
         employee && relation ? (
           <DetailDrawerTitle
-            status={relation.relationStatus === '当前签署' ? '当前签署' : '历史签署'}
-            statusTone={relation.relationStatus === '当前签署' ? 'green' : 'gray'}
+            status={relation.relationStatus}
+            statusTone={relation.relationStatus === '当前档案' ? 'green' : 'gray'}
             subtitle={`${employee.workNo} / ${employee.position}`}
             title={`${employee.employeeName} / ${relation.category}`}
           />
@@ -180,7 +183,7 @@ export function PerformanceSignatureDrawer({
             items={[
               { icon: <FileProtectOutlined />, key: 'category', label: '绩效类别', value: relation.category },
               { icon: <HistoryOutlined />, key: 'currentVersion', label: '当前版本', value: currentFile?.ruleVersion ?? '-' },
-              { icon: <TeamOutlined />, key: 'historyFiles', label: '历史文件', value: `${historyFiles.length} 份` }
+              { icon: <TeamOutlined />, key: 'historyFiles', label: '历史档案', value: `${historyFiles.length} 份` }
             ]}
           />
 
@@ -211,7 +214,7 @@ export function PerformanceSignatureDrawer({
 
           {editMode ? (
             <>
-              <DetailSection icon={<EditOutlined />} title="编辑当前绩效">
+              <DetailSection icon={<EditOutlined />} title="更新签署档案">
                 {updateRuleOptions.length > 0 ? (
                   <>
                     <DrawerFormGrid>
@@ -229,7 +232,7 @@ export function PerformanceSignatureDrawer({
                         />
                       </DrawerFormField>
                       <ReadOnlyField label="当前版本" value={currentFile?.ruleName} />
-                      <ReadOnlyField label="更新动作" value="旧文件转历史，新文件成为当前签署" />
+                      <ReadOnlyField label="更新动作" value="旧文件转历史，新文件成为当前档案" />
                     </DrawerFormGrid>
                     <PerformanceSignatureUploadSlot
                       description="上传新规则版本对应的员工已签署文件。"
@@ -246,14 +249,14 @@ export function PerformanceSignatureDrawer({
                 ) : (
                   <PerformanceSignatureEmptyBlock text="当前绩效类别暂无可更新的其他规则版本" />
                 )}
-                <div className="drawer-section-actions drawer-section-actions-danger">
-                  <Button danger icon={<DeleteOutlined />} onClick={handleDisable}>
-                    停用当前绩效
+                <div className="drawer-section-actions">
+                  <Button icon={<HistoryOutlined />} onClick={handleArchive}>
+                    移入历史档案
                   </Button>
                 </div>
               </DetailSection>
 
-              <DetailSection icon={<PlusOutlined />} title="新增绩效类别">
+              <DetailSection icon={<PlusOutlined />} title="新增签署档案">
                 {addRuleOptions.length > 0 ? (
                   <>
                     <DrawerFormGrid>
@@ -271,7 +274,7 @@ export function PerformanceSignatureDrawer({
                         />
                       </DrawerFormField>
                       <ReadOnlyField label="新增类别" value={selectedAddRule?.category} />
-                      <ReadOnlyField label="当前状态" value="新增当前签署" />
+                      <ReadOnlyField label="档案状态" value="当前档案" />
                     </DrawerFormGrid>
                     <PerformanceSignatureUploadSlot
                       description="上传新增绩效类别对应的员工已签署文件。"
@@ -281,7 +284,7 @@ export function PerformanceSignatureDrawer({
                     />
                     <div className="drawer-section-actions">
                       <Button disabled={!canAddRelation} icon={<PlusOutlined />} type="primary" onClick={handleSaveAdd}>
-                        新增签署
+                        新增档案
                       </Button>
                     </div>
                   </>
@@ -299,22 +302,22 @@ export function PerformanceSignatureDrawer({
             items={[
               {
                 key: 'current',
-                label: '当前签署',
+                label: '当前档案',
                 children:
                   currentFiles.length > 0 ? (
                     <PerformanceSignatureFileTable files={currentFiles} mode="current" onFileAction={onFileAction} />
                   ) : (
-                    <PerformanceSignatureEmptyBlock text="该员工暂无当前签署文件" />
+                    <PerformanceSignatureEmptyBlock text="该员工暂无当前档案" />
                   )
               },
               {
                 key: 'history',
-                label: '历史签署',
+                label: '历史档案',
                 children:
                   historyFiles.length > 0 ? (
                     <PerformanceSignatureFileTable files={historyFiles} mode="history" onFileAction={onFileAction} />
                   ) : (
-                    <PerformanceSignatureEmptyBlock text="该员工该绩效类别暂无历史签署文件" />
+                    <PerformanceSignatureEmptyBlock text="该员工该绩效类别暂无历史档案" />
                   )
               },
               {
@@ -324,7 +327,7 @@ export function PerformanceSignatureDrawer({
                   categoryRecords.length > 0 ? (
                     <OperationRecordTable records={categoryRecords} scrollX={856} />
                   ) : (
-                    <PerformanceSignatureEmptyBlock text="该员工暂无绩效签署文件操作记录" />
+                    <PerformanceSignatureEmptyBlock text="该员工暂无签署档案操作记录" />
                   )
               }
             ]}

@@ -108,12 +108,12 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     title: '记账入总账'
   },
   {
-    currentEvidence: '月末事项、薪酬社保、税务办理、会计凭证和后续调整事项已由各自来源模块进入期间结账检查',
+    currentEvidence: '月末事项、薪酬社保、税费计提凭证和后续调整事项已由各自来源模块进入期间结账检查；外部申报和缴款不反向阻断原会计期间',
     currentEvidenceLevel: 'frontend_session',
     formalBackendGap: '缺后端来源状态汇总服务、来源到候选凭证的统一事实快照和跨模块闭期一致性校验',
     id: 'source-prerequisites-complete',
     order: 8,
-    ownerModule: '月末事项 / 薪酬社保 / 税务办理 / 会计凭证',
+    ownerModule: '月末事项 / 薪酬社保 / 会计凭证',
     ownerRoute: '/finance/month-end',
     title: '完成来源事项'
   },
@@ -128,21 +128,11 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     title: '总账试算平衡'
   },
   {
-    currentEvidence: '税务办理事项按会计期间进入期间结账检查',
-    currentEvidenceLevel: 'frontend_session',
-    formalBackendGap: '缺真实申报、缴款、回执 API 和税务事项持久化证据',
-    id: 'tax-handling-complete',
-    order: 10,
-    ownerModule: '税务办理',
-    ownerRoute: '/tax/handling',
-    title: '税务办理完成'
-  },
-  {
     currentEvidence: '社保/公积金缴费事项按会计期间进入期间结账检查',
     currentEvidenceLevel: 'frontend_session',
     formalBackendGap: '缺真实社保公积金确认、缴费、回单 API 和缴费事实持久化证据',
     id: 'social-insurance-complete',
-    order: 11,
+    order: 10,
     ownerModule: '社保公积金',
     ownerRoute: '/salary/social-insurance',
     title: '社保公积金完成'
@@ -153,7 +143,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺后端 close-checks 唯一权威、监听 server、稳定快照 hash 和服务端 canClose',
     id: 'close-checks-passed',
-    order: 12,
+    order: 11,
     ownerModule: '期间结账',
     ownerRoute: '/finance/period-close',
     title: 'close-checks 全部通过'
@@ -163,7 +153,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'frontend_session',
     formalBackendGap: '缺服务端连续期间锁校验、并发结账事务和历史锁顺序修复流程',
     id: 'prior-period-closed',
-    order: 13,
+    order: 12,
     ownerModule: '期间结账',
     ownerRoute: '/finance/period-close',
     title: '前序期间已结账'
@@ -173,7 +163,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺真实持久化期间锁、数据库 migration、SQL 事务、并发版本和操作人鉴权',
     id: 'period-close-confirmed',
-    order: 14,
+    order: 13,
     ownerModule: '期间结账',
     ownerRoute: '/finance/period-close',
     title: '确认结账'
@@ -183,7 +173,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺真实源单 API、数据库事务、权限中间件和直接 API 调用拒绝证据',
     id: 'closed-period-mutation-blocked',
-    order: 15,
+    order: 14,
     ownerModule: '各源单模块',
     ownerRoute: '/finance/period-close',
     title: '已结账期间禁止修改'
@@ -194,7 +184,7 @@ export const financePeriodCloseAcceptanceFlowSteps: readonly FinancePeriodCloseA
     currentEvidenceLevel: 'local_contract',
     formalBackendGap: '缺正式监听 HTTP、三张表查询 API、总账/科目余额查询 API、现金流量表项目映射持久化/补充资料、报表快照 repository、归档和审计证据',
     id: 'closed-period-report-readback',
-    order: 16,
+    order: 15,
     ownerModule: '总账 / 财务报表',
     ownerRoute: '/finance/financial-statements',
     title: '报表读取已结账结果'
@@ -245,13 +235,6 @@ export const financePeriodCloseCheckAcceptanceMatrix: readonly FinancePeriodClos
     title: '资金对账'
   },
   {
-    code: 'tax_handling',
-    ownerModule: '税务办理',
-    ownerRoute: '/tax/handling',
-    sourceActionPolicy: 'navigate_when_blocked',
-    title: '税务办理'
-  },
-  {
     code: 'social_insurance_housing_fund',
     ownerModule: '社保公积金',
     ownerRoute: '/salary/social-insurance',
@@ -296,13 +279,6 @@ export const financePeriodCloseExceptionAcceptanceMatrix: readonly FinancePeriod
     expected: '不能结账',
     id: 'unreconciled-cash-flow-blocks-close',
     title: '已复核流水未银行对账'
-  },
-  {
-    currentEvidence: 'tax-handling check counts unfinished non-social tax matters',
-    expected: '不能结账',
-    id: 'unfinished-tax-handling-blocks-close',
-    title: '税务办理未完成',
-    sourceMutationArea: 'tax_handling'
   },
   {
     currentEvidence: 'social-insurance check counts social-insurance and housing-fund matters separately',
@@ -366,6 +342,13 @@ export const financePeriodCloseExceptionAcceptanceMatrix: readonly FinancePeriod
     id: 'closed-ledger-initialization-write-rejected',
     sourceMutationArea: 'ledger_initialization',
     title: '已结账后调整账套初始化'
+  },
+  {
+    currentEvidence: '税费计提凭证留在原业务期间，外部申报、回执和缴退款按实际办理日期进入开放期间；已记账计提快照不被后续办理覆盖',
+    expected: '允许继续申报和补充回执；如与原计提有差异，只生成办理期间调整凭证，不回写已结账期间',
+    id: 'closed-tax-period-filing-uses-open-period-adjustment',
+    sourceMutationArea: 'tax_handling',
+    title: '已结账税款所属期继续申报或更正'
   },
   {
     currentEvidence: 'later-period adjustment frontend prototype and local contract skeleton',

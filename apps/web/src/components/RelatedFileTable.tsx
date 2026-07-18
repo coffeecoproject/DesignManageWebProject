@@ -6,9 +6,11 @@ import { FileActionButtons } from './FileActionButtons';
 export type RelatedFileRecord = {
   id: string;
   name: string;
+  source?: string;
   status: string;
   type: string;
   updatedAt: string;
+  url?: string;
 };
 
 type RelatedFileTableProps<T extends RelatedFileRecord> = {
@@ -80,6 +82,7 @@ export function RelatedFileTable<T extends RelatedFileRecord>({
       width: 148,
       render: (_, record) => (
         <FileActionButtons
+          downloadHref={!onDownload ? record.url : undefined}
           record={record}
           onDelete={onDelete}
           onDownload={onDownload}

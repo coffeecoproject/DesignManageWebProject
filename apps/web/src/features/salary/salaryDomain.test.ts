@@ -2,10 +2,7 @@ import type { AttendanceMonthlyReport } from '../people/peopleAttendanceMonthlyD
 import type { PeopleMember } from '../people/peopleTypes';
 import type { SocialInsuranceEmployeeRecord, SocialInsurancePayrollDeductionRecord } from '../finance/financeSocialInsuranceData';
 import { performanceRulePresets } from '../performance/performanceMockData';
-import {
-  attachPerformanceQuarterlyReviewFacts,
-  commitPerformanceQuarterlyReview
-} from '../performance/performanceQuarterlyReviewModel';
+import { buildPerformanceSalarySettlementReference } from '../performance/performanceMonthlyModel';
 import { buildTaskPerformanceMonthlySourceRecords } from '../performance/taskPerformanceMonthlySourceModel';
 import type { AcceptanceScoringDraft } from '../tasks/taskAcceptanceModel';
 import { applyTaskAcceptanceCommit } from '../tasks/taskAcceptanceCommitModel';
@@ -40,11 +37,55 @@ import {
   isSalaryIitProfileReady,
   type SalaryIitProfile
 } from './salaryPersonalIncomeTaxModel';
-import { getSalaryMonthlyAccountingPeriod } from './salaryMonthlyDisplayModel';
+import {
+  getSalaryMonthlyAccountingPeriod,
+  getSalaryPayslipNo,
+  getSalaryPayslipStatus,
+  getSalaryPerformanceSettlementRows
+} from './salaryMonthlyDisplayModel';
 import {
   buildSalaryOverview,
   getSalaryOverviewReportMonths
 } from './salaryOverviewModel';
+
+function attachQuarterlySalaryConsumerFixture({
+  confirmedAt,
+  finalAmount,
+  records,
+  resultKey
+}: {
+  confirmedAt: string;
+  finalAmount: number;
+  records: SalaryPerformanceSourceRecord[];
+  resultKey: string;
+}): SalaryPerformanceSourceRecord[] {
+  const sourceMonths = [...new Set(records.map((record) => record.performanceMonth))].sort();
+  const prepayAmount = Math.round(records.reduce((total, record) => total + record.prepayAmount, 0) * 100) / 100;
+  const salarySettlementReference = buildPerformanceSalarySettlementReference(
+    resultKey,
+    'quarterly-difference',
+    'v1'
+  );
+  const settlementMonth = sourceMonths.at(-1) ?? '';
+
+  return records.map((record, index) =>
+    index === 0
+      ? {
+          ...record,
+          quarterlyReviewResult: {
+            confirmedAt,
+            finalAmount,
+            prepayAmount,
+            reviewPeriod: resultKey.split(':')[2] ?? '',
+            salarySettlementReference,
+            settlementDate: `${settlementMonth}-01`,
+            sourceMonths,
+            sourceRecordIds: records.map((sourceRecord) => sourceRecord.id)
+          }
+        }
+      : record
+  );
+}
 
 type UnitTest = {
   name: string;
@@ -153,14 +194,6 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     taskCapabilityIds: [],
     taskRecords: [],
     wechat: 'test-wechat',
-    workEvaluationRecords: [],
-    workEvaluationSummary: {
-      acceptedTasks: 0,
-      level: 'A',
-      month: '2026-06',
-      reworkTasks: 0,
-      score: 90
-    },
     ...overrides
   };
 }
@@ -370,6 +403,8 @@ function createPerformanceRecord(overrides: Partial<SalaryPerformanceSourceRecor
 }
 
 function createAcceptedPerformanceTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
+  const taskId = overrides.id ?? 'task-performance-001';
+
   return {
     acceptedAt: '2026-06-13 18:00',
     acceptorId: '20260002',
@@ -381,7 +416,27 @@ function createAcceptedPerformanceTask(overrides: Partial<StoreTaskRecord> = {})
     executorId: '20260001',
     executorName: '测试人员',
     files: [],
-    id: 'task-performance-001',
+    customerBillingSnapshot: {
+      billable: true,
+      brandId: 'brand-test',
+      brandName: '测试品牌',
+      capturedAt: '2026-06-10 09:00',
+      contractAmount: null,
+      contractAmountMode: '无固定金额',
+      currency: 'CNY',
+      customerId: 'customer-test',
+      customerName: '测试客户',
+      id: `task-billing-snapshot-${taskId}`,
+      priceVersion: 1,
+      priceVersionId: 'brand-price-test-v1',
+      settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+      settlementPolicyVersion: 1,
+      settlementPolicyVersionId: 'brand-settlement-test-v1',
+      taskConfigId: 'task-type-floor-plan',
+      taskId,
+      unitPrice: 1000
+    },
+    id: taskId,
     name: '测试平面方案',
     note: '',
     operationRecords: [],
@@ -405,10 +460,24 @@ function createAcceptedPerformanceScoring(
     confirmedAt: '2026-06-13 18:00',
     confirmedBy: '验收人',
     id: 'score-task-performance-001',
-    operationRecords: [],
+    operationRecords: [
+      {
+        action: '验收计分',
+        actor: '验收人',
+        id: 'op-score-task-performance-001',
+        object: '测试平面方案',
+        summary: '验收完成并计入绩效',
+        time: '2026-06-13 18:00'
+      }
+    ],
     performanceCategory: '绘图任务制',
     qualityBand: '80-89分',
-    qualityDimensionScores: [],
+    qualityDimensionScores: [
+      { id: 'quality', maxScore: 40, name: '成果有效性与质量', score: 35 },
+      { id: 'timeliness', maxScore: 25, name: '交付时效', score: 22 },
+      { id: 'workflow', maxScore: 25, name: '流程闭环', score: 22 },
+      { id: 'collaboration', maxScore: 10, name: '项目配合与沟通归档', score: 9 }
+    ],
     qualityScore: 88,
     ruleId: 'perf-rule-space-design-2026-final',
     ruleName: '绘图任务制V1',
@@ -1020,6 +1089,7 @@ const tests: UnitTest[] = [
       assert(prepared.success, `full-time task acceptance should succeed: ${prepared.success ? '' : prepared.message}`);
       const committedTaskState = applyTaskAcceptanceCommit(
         {
+          customerTaskBillingFacts: [],
           partTimeLaborAcceptanceRows: [],
           storeTaskRows: [readyTask],
           taskPerformanceScoringRows: []
@@ -1028,6 +1098,7 @@ const tests: UnitTest[] = [
       );
       const performanceRecords = buildTaskPerformanceMonthlySourceRecords({
         peopleRows: [member],
+        performanceMonths: ['2026-06'],
         ruleRows: performanceRulePresets,
         scoringRows: committedTaskState.taskPerformanceScoringRows,
         taskRows: committedTaskState.storeTaskRows
@@ -1059,12 +1130,17 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'NP-02 FRONTEND-CHAIN confirms a quarterly performance fact and places its difference in the settlement-date salary month',
+    name: 'NP-02 FRONTEND-CHAIN consumes one published quarterly result in the quarter-end salary month',
     run: () => {
       const member = createMember({ position: '主案设计师' });
       const sourceRecord = buildTaskPerformanceMonthlySourceRecords({
         peopleRows: [member],
-        ruleRows: performanceRulePresets,
+        performanceMonths: ['2026-04'],
+        ruleRows: performanceRulePresets.map((rule) =>
+          rule.id === 'perf-rule-space-design-2026-final'
+            ? { ...rule, effectiveStartAt: '2026-04-01' }
+            : rule
+        ),
         scoringRows: [
           createAcceptedPerformanceScoring({
             confirmedAt: '2026-04-18 18:00',
@@ -1098,22 +1174,15 @@ const tests: UnitTest[] = [
           salarySettlementReference: `${sourceRecord.salarySettlementReference}-june`
         }
       ];
-      const reviewCommit = commitPerformanceQuarterlyReview({
-        facts: [],
-        input: {
-          confirmedAt: '2026-06-30 18:00',
-          confirmedBy: '绩效确认人',
-          finalAmount: 1500,
-          settlementDate: '2026-06-30'
-        },
-        policy: { payoutMode: '月度预发50%，季度复核后发放差额', reviewCycle: '季度复核' },
-        records: quarterSourceRecords
+      const reviewedRecords = attachQuarterlySalaryConsumerFixture({
+        confirmedAt: '2026-06-30 18:00',
+        finalAmount: 1500,
+        records: quarterSourceRecords,
+        resultKey: 'quarterly:20260001:2026-Q2:绘图任务制'
       });
-      assert(reviewCommit.success, 'quarterly review should commit through the production state workflow');
-      const reviewedRecords = attachPerformanceQuarterlyReviewFacts(quarterSourceRecords, reviewCommit.facts);
       const reviewedRecord = reviewedRecords[0];
-      assert(reviewedRecord?.quarterlyReviewResult, 'committed review fact should attach to the performance record');
-      assertEqual(reviewedRecord.quarterlyReviewResult.sourceMonths.length, 3, 'quarterly review should freeze all three source months');
+      assert(reviewedRecord?.quarterlyReviewResult, 'published quarter result should reach the salary consumer fixture');
+      assertEqual(reviewedRecord.quarterlyReviewResult.sourceMonths.length, 3, 'quarterly result should freeze all three source months');
 
       const report = buildSalaryMonthlyReports({
         attendanceReports: [createAttendanceReport({ member })],
@@ -1125,7 +1194,7 @@ const tests: UnitTest[] = [
         socialInsuranceSourceRecords: []
       })[0];
 
-      assertEqual(report.month, '2026-06', 'the salary report should use the quarterly settlement-date month');
+      assertEqual(report.month, '2026-06', 'the salary report should use the quarter-end salary month');
       assertEqual(report.performancePrepayAmount, sourceRecord.prepayAmount, 'only June monthly prepay should enter June salary once');
       assertEqual(
         report.performanceQuarterlyAdjustmentAmount,
@@ -1142,14 +1211,23 @@ const tests: UnitTest[] = [
         reviewedRecord.quarterlyReviewResult.salarySettlementReference,
         'quarterly salary should retain the committed review result reference'
       );
+      const settlementRows = getSalaryPerformanceSettlementRows(report);
+      const quarterlySettlementRow = settlementRows.find((row) => row.kind === '季度复核差额');
+      assertEqual(quarterlySettlementRow?.performancePeriod, '2026-Q2', 'salary detail should show the actual quarterly performance period');
+      assertEqual(
+        quarterlySettlementRow?.amount,
+        report.performanceQuarterlyAdjustmentAmount,
+        'salary detail should show the quarter difference actually carried by the salary batch'
+      );
     }
   },
   {
-    name: 'NP-03 FRONTEND-CHAIN defers committed post-payment performance differences without changing original salary',
+    name: 'NP-03 FRONTEND-CHAIN defers published post-payment performance differences without changing original salary',
     run: () => {
       const member = createMember({ position: '主案设计师' });
       const firstSource = buildTaskPerformanceMonthlySourceRecords({
         peopleRows: [member],
+        performanceMonths: ['2026-06'],
         ruleRows: performanceRulePresets,
         scoringRows: [createAcceptedPerformanceScoring()],
         taskRows: [createAcceptedPerformanceTask()]
@@ -1157,46 +1235,31 @@ const tests: UnitTest[] = [
       assert(firstSource, 'accepted task should create a performance source');
       const secondSource = {
         ...firstSource,
-        executionContract: firstSource.executionContract
+        ruleApplicability: firstSource.ruleApplicability
           ? {
-              ...firstSource.executionContract,
-              ruleId: `${firstSource.executionContract.ruleId ?? 'performance-rule'}-second`,
-              ruleName: `${firstSource.executionContract.ruleName} 补充规则`,
-              signedRuleName: `${firstSource.executionContract.signedRuleName ?? firstSource.executionContract.ruleName} 补充规则`
+              ...firstSource.ruleApplicability,
+              ruleId: `${firstSource.ruleApplicability.ruleId ?? 'performance-rule'}-second`,
+              ruleName: `${firstSource.ruleApplicability.ruleName} 补充规则`
             }
           : undefined,
         id: `${firstSource.id}-second`,
         ruleName: `${firstSource.ruleName} 补充规则`,
         salarySettlementReference: `${firstSource.salarySettlementReference}-second`
       };
-      const firstCommit = commitPerformanceQuarterlyReview({
-        facts: [],
-        input: {
+      const reviewedRecords = [
+        ...attachQuarterlySalaryConsumerFixture({
           confirmedAt: '2026-06-30 18:00',
-          confirmedBy: '绩效确认人',
           finalAmount: 1500,
-          settlementDate: '2026-06-30'
-        },
-        policy: { payoutMode: '月度预发50%，季度复核后发放差额', reviewCycle: '季度复核' },
-        records: [firstSource]
-      });
-      assert(firstCommit.success, 'positive quarterly difference should be committed');
-      const secondCommit = commitPerformanceQuarterlyReview({
-        facts: firstCommit.facts,
-        input: {
+          records: [firstSource],
+          resultKey: 'quarterly:20260001:2026-Q2:绘图任务制'
+        }),
+        ...attachQuarterlySalaryConsumerFixture({
           confirmedAt: '2026-06-30 18:05',
-          confirmedBy: '绩效确认人',
           finalAmount: 0,
-          settlementDate: '2026-06-30'
-        },
-        policy: { payoutMode: '月度预发50%，季度复核后发放差额', reviewCycle: '季度复核' },
-        records: [secondSource]
-      });
-      assert(secondCommit.success, 'negative quarterly difference should be committed');
-      const reviewedRecords = attachPerformanceQuarterlyReviewFacts(
-        [firstSource, secondSource],
-        secondCommit.facts
-      );
+          records: [secondSource],
+          resultKey: 'quarterly:20260001:2026-Q2:绘图任务制-补充'
+        })
+      ];
       const quarterlyReference = reviewedRecords[0]?.quarterlyReviewResult?.salarySettlementReference ?? '';
       const negativeQuarterlyReference = reviewedRecords[1]?.quarterlyReviewResult?.salarySettlementReference ?? '';
       const monthlyReference = firstSource.salarySettlementReference;
@@ -1242,44 +1305,30 @@ const tests: UnitTest[] = [
       assertEqual(deferredRecovery?.amount, secondSource.prepayAmount, 'a negative review difference should retain its absolute adjustment amount');
       assertEqual(deferredRecovery?.type, '误发追回', 'a negative review difference should become a performance recovery');
       assertEqual(deferredRecovery?.month, '2026-07', 'the recovery should enter the next unpaid salary month');
+      const deferredSettlementRows = getSalaryPerformanceSettlementRows(julyReport);
+      assert(
+        deferredSettlementRows.every((row) => row.note.includes('原薪酬已确认转入本月')),
+        'salary detail should explain why every deferred performance difference entered the current salary month'
+      );
     }
   },
   {
-    name: 'NP-18 FRONTEND-CHAIN blocks duplicate quarterly confirmation and one performance result entering two salary batches',
+    name: 'NP-18 FRONTEND-CHAIN blocks one quarterly result from entering two salary batches',
     run: () => {
       const performanceRecords = buildTaskPerformanceMonthlySourceRecords({
         peopleRows: [createMember({ position: '主案设计师' })],
+        performanceMonths: ['2026-06'],
         ruleRows: performanceRulePresets,
         scoringRows: [createAcceptedPerformanceScoring()],
         taskRows: [createAcceptedPerformanceTask()]
       });
       const sourceRecord = performanceRecords[0];
       assert(sourceRecord, 'accepted task should create a performance result');
-      const firstReview = commitPerformanceQuarterlyReview({
-        facts: [],
-        input: {
-          confirmedAt: '2026-06-30 18:00',
-          confirmedBy: '绩效确认人',
-          finalAmount: 100,
-          settlementDate: '2026-06-30'
-        },
-        policy: { payoutMode: '月度预发50%，季度复核后发放差额', reviewCycle: '季度复核' },
-        records: [sourceRecord]
-      });
-      assert(firstReview.success, 'first quarterly result confirmation should succeed');
-      const duplicateReview = commitPerformanceQuarterlyReview({
-        facts: firstReview.facts,
-        input: {
-          confirmedAt: '2026-06-30 18:10',
-          confirmedBy: '绩效确认人',
-          finalAmount: 120,
-          settlementDate: '2026-06-30'
-        },
-        policy: { payoutMode: '月度预发50%，季度复核后发放差额', reviewCycle: '季度复核' },
-        records: [sourceRecord]
-      });
-      assertEqual(duplicateReview.success, false, 'the same source result must not be confirmed twice');
-      const reference = performanceRecords[0]?.salarySettlementReference ?? '';
+      const reference = buildPerformanceSalarySettlementReference(
+        'quarterly:20260001:2026-Q2:绘图任务制',
+        'quarterly-difference',
+        'v1'
+      );
       const validation = validateSalaryPerformanceSettlementClaim({
         memberId: '20260001',
         month: '2026-07',
@@ -1301,11 +1350,14 @@ const tests: UnitTest[] = [
         memberId: '20260001',
         month: '2026-06',
         note: '确认',
+        salaryCompositionLines: [],
         salarySettlementReferences: [reference],
-        settlementSnapshot: createSalarySettlementSnapshot()
+        settlementSnapshot: createSalarySettlementSnapshot(),
+        settlementSourceRecords: []
       });
       const paidWorkflow = createPaidSalaryMonthlyWorkflow({
         existingWorkflow: confirmedWorkflow,
+        financeTransactionNo: 'FIN-SALARY-TEST-001',
         memberId: '20260001',
         month: '2026-06',
         note: '已发放',
@@ -1313,6 +1365,11 @@ const tests: UnitTest[] = [
         paidBy: '测试付款人'
       });
       assertEqual(paidWorkflow.salarySettlementReferences?.[0], reference, 'paying salary must preserve the immutable performance claim');
+      assertEqual(
+        paidWorkflow.paymentLifecycleRecords?.[0]?.financeTransactionNo,
+        'FIN-SALARY-TEST-001',
+        'paying salary must retain the linked finance transaction in the salary lifecycle'
+      );
     }
   },
   {
@@ -1341,7 +1398,9 @@ const tests: UnitTest[] = [
         memberId: '20260001',
         month: '2026-06',
         note: '薪酬明细已确认',
-        settlementSnapshot: draftReport.settlementSnapshot
+        salaryCompositionLines: draftReport.salaryCompositionLines,
+        settlementSnapshot: draftReport.settlementSnapshot,
+        settlementSourceRecords: draftReport.settlementSourceRecords
       });
       const reconfirmedWorkflow = createConfirmedSalaryMonthlyWorkflow({
         confirmedAt: '2026-06-18 10:35',
@@ -1350,7 +1409,9 @@ const tests: UnitTest[] = [
         memberId: '20260001',
         month: '2026-06',
         note: '薪酬明细重新确认',
-        settlementSnapshot: draftReport.settlementSnapshot
+        salaryCompositionLines: draftReport.salaryCompositionLines,
+        settlementSnapshot: draftReport.settlementSnapshot,
+        settlementSourceRecords: draftReport.settlementSourceRecords
       });
       const repairedWorkflow = createConfirmedSalaryMonthlyWorkflow({
         confirmedAt: '2026-06-18 10:40',
@@ -1359,11 +1420,33 @@ const tests: UnitTest[] = [
         memberId: '20260001',
         month: '2026-06',
         note: '修复历史空单号后重新确认',
-        settlementSnapshot: draftReport.settlementSnapshot
+        salaryCompositionLines: draftReport.salaryCompositionLines,
+        settlementSnapshot: draftReport.settlementSnapshot,
+        settlementSourceRecords: draftReport.settlementSourceRecords
       });
       const report = buildSalaryMonthlyReports({
         ...reportInput,
         salaryMonthlyWorkflows: [confirmedWorkflow]
+      })[0];
+      const frozenReportAfterSourceDrift = buildSalaryMonthlyReports({
+        ...reportInput,
+        attendanceReports: [createAttendanceReport({ leaveDays: 3, leaveHours: 24 })],
+        salaryMonthlyWorkflows: [confirmedWorkflow],
+        socialInsuranceSourceRecords: [
+          createSocialInsuranceSource({
+            category: '社保',
+            handlingStatus: '待确认',
+            personalAmount: 999,
+            reason: '当前源项发生变化'
+          }),
+          createSocialInsuranceSource({
+            category: '公积金',
+            handlingStatus: '待确认',
+            id: 'housing-source-drift',
+            personalAmount: 999,
+            reason: '当前源项发生变化'
+          })
+        ]
       })[0];
       const evidence = {
         accountName: '工资付款户',
@@ -1400,8 +1483,40 @@ const tests: UnitTest[] = [
       assertEqual(confirmedWorkflow.payrollNo, buildSalaryPayrollNo('2026-06', '20260001'), 'confirmation should assign the stable payroll number');
       assertEqual(reconfirmedWorkflow.payrollNo, confirmedWorkflow.payrollNo, 'reconfirmation should preserve the payroll number');
       assertEqual(repairedWorkflow.payrollNo, confirmedWorkflow.payrollNo, 'reconfirmation should repair an empty historical payroll number');
+      assertEqual(
+        getSalaryPayslipStatus({ ...draftReport, status: '结算中', workflow: undefined }),
+        '暂不可查看',
+        'processing salary should not expose a payslip'
+      );
+      assertEqual(
+        getSalaryPayslipNo({ ...draftReport, status: '结算中', workflow: undefined }),
+        '-',
+        'processing salary should not have a payslip number'
+      );
+      assertEqual(getSalaryPayslipStatus(draftReport), '预览', 'source-ready salary should expose preview status');
+      assertEqual(getSalaryPayslipNo(draftReport), '预览未编号', 'salary preview should not invent a formal payslip number');
+      assertEqual(getSalaryPayslipStatus(report), '待发放', 'confirmed salary should expose pending-payment status');
+      assertEqual(getSalaryPayslipNo(report), confirmedWorkflow.payrollNo, 'formal payslip should use the workflow payroll number');
+      assertEqual(getSalaryPayslipStatus({ ...report, status: '已发放' }), '已发放', 'paid salary should expose paid status');
+      assertEqual(
+        getSalaryPayslipNo({ ...report, status: '已发放' }),
+        confirmedWorkflow.payrollNo,
+        'paid payslip should preserve the confirmed payroll number'
+      );
       assertEqual(report.status, '已确认', 'confirmed workflow should make the salary report payable');
       assertEqual(report.canPay, true, 'confirmed salary should expose the payment action');
+      assertEqual(frozenReportAfterSourceDrift.status, '已确认', 'confirmed salary must not fall back to processing when current source data drifts');
+      assertEqual(frozenReportAfterSourceDrift.settlementPendingSourceLabels.length, 0, 'confirmed salary should not expose current source blockers');
+      assertEqual(
+        JSON.stringify(frozenReportAfterSourceDrift.salaryCompositionLines),
+        JSON.stringify(draftReport.salaryCompositionLines),
+        'confirmed salary should retain the frozen salary composition'
+      );
+      assertEqual(
+        JSON.stringify(frozenReportAfterSourceDrift.settlementSourceRecords),
+        JSON.stringify(draftReport.settlementSourceRecords),
+        'confirmed salary should retain the frozen settlement sources'
+      );
       assertEqual(paymentCandidates.length, 1, 'confirmed payroll number should match the posted salary payment candidate');
       assertEqual(validation.allowed, true, 'matched payment candidate should pass salary payment validation');
       assertEqual(payment.payrollNo, confirmedWorkflow.payrollNo, 'payment record should retain the confirmed payroll number');
@@ -2030,7 +2145,16 @@ const tests: UnitTest[] = [
             type: '误发追回'
           })
         ],
-        salaryMonthlyWorkflows: [createWorkflow({ memberId: memberA.id })],
+        salaryMonthlyWorkflows: [
+          createWorkflow({ memberId: memberA.id }),
+          createWorkflow({
+            id: 'salary-monthly-2026-06-member-b',
+            memberId: memberB.id,
+            paidAt: undefined,
+            paidBy: undefined,
+            status: '已确认'
+          })
+        ],
         socialInsuranceDeductions: [
           createSocialInsuranceDeduction({ employeeName: memberA.name, employeeNo: memberA.id, personalAmount: 800 }),
           createSocialInsuranceDeduction({
@@ -2051,13 +2175,58 @@ const tests: UnitTest[] = [
           })
         ]
       });
-      const overview = buildSalaryOverview(reports);
+      const overviewReports = reports.map((report) => ({
+        ...report,
+        status: report.member.id === memberA.id ? '已发放' as const : '已确认' as const
+      }));
+      const overview = buildSalaryOverview(overviewReports);
+      const overviewWithEmptyDraft = buildSalaryOverview([
+        ...overviewReports,
+        {
+          ...overviewReports[0],
+          attendanceDeductionAmount: 0,
+          attendanceIncreaseAmount: 0,
+          baseSalaryAmount: 0,
+          deductionAmount: 0,
+          grossSalary: 0,
+          id: '2026-06-member-empty',
+          member: createMember({ id: 'member-empty', name: '待完善人员' }),
+          netSalary: 0,
+          performancePrepayAmount: 0,
+          performanceQuarterlyAdjustmentAmount: 0,
+          personalIncomeTaxAmount: 0,
+          salaryAdjustmentDeductionAmount: 0,
+          salaryAdjustmentIncreaseAmount: 0,
+          socialInsuranceDeductionAmount: 0,
+          status: '结算中'
+        }
+      ]);
       const baseSalaryRow = overview.boardRows.find((row) => row.id === 'base-salary');
       const adjustmentDeductionRow = overview.boardRows.find((row) => row.id === 'salary-adjustment-deduction');
       const topEmployee = overview.employeeRows[0];
 
       assertEqual(overview.summary.employeeCount, 2, 'salary overview should count unique employees');
       assertEqual(overview.summary.recordCount, 2, 'salary overview should count salary detail rows');
+      assertEqual(
+        overviewWithEmptyDraft.summary.employeeCount,
+        overview.summary.employeeCount,
+        'salary overview must not count a zero-amount unresolved draft as a salary employee'
+      );
+      assertEqual(
+        overviewWithEmptyDraft.summary.recordCount,
+        overview.summary.recordCount,
+        'salary overview must keep zero-amount unresolved drafts in salary detail instead of statistics'
+      );
+      assertEqual(
+        overview.summary.paidNetSalary,
+        overviewReports.find((report) => report.member.id === memberA.id)?.netSalary,
+        'salary overview must count only paid reports as actual disbursement'
+      );
+      assertEqual(
+        overview.summary.pendingPaymentNetSalary,
+        overviewReports.find((report) => report.member.id === memberB.id)?.netSalary,
+        'salary overview must count confirmed reports as pending payment'
+      );
       assert(baseSalaryRow, 'salary overview should include base salary board row');
       assertEqual(
         baseSalaryRow.totalAmount,

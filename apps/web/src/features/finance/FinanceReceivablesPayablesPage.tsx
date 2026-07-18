@@ -1,5 +1,5 @@
 import { BankOutlined, CalendarOutlined, WalletOutlined, WarningOutlined } from '@ant-design/icons';
-import { message, Select } from 'antd';
+import { Alert, message, Select } from 'antd';
 import { useMemo, useState } from 'react';
 import { DateScopeFilter } from '../../components/DateFilterFields';
 import { useDrawerFormState } from '../../components/DrawerForm';
@@ -9,6 +9,7 @@ import { ManagementTable } from '../../components/ManagementTable';
 import { ManagementTableTabs } from '../../components/ManagementTableTabs';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
+import { FilePreviewModal } from '../../components/FilePreviewModal';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import {
   buildPublicAccountOptions,
@@ -120,6 +121,7 @@ function isInvoiceLinkedToReceivablePayable(
 export function FinanceReceivablesPayablesPage() {
   const {
     accountingVoucherLifecycleRows,
+    customerTaskSettlementIssues,
     invoiceBusinessAllocationRows,
     financeRows,
     getAccountingPeriodGuard,
@@ -132,6 +134,7 @@ export function FinanceReceivablesPayablesPage() {
   const [messageApi, messageContextHolder] = message.useMessage();
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [invoiceAssociationRecordId, setInvoiceAssociationRecordId] = useState<string>();
+  const [previewFile, setPreviewFile] = useState<RelatedFileRecord>();
   const [activeTab, setActiveTab] = useState<FinanceReceivablePayableListTabKey>('open');
   const [filters, setFilters] = useState<FinanceReceivablePayableFilters>(defaultFinanceReceivablePayableFilters);
   const [settlementForm, setSettlementForm] = useState<FinanceReceivablePayableSettlementFormValue>(() =>
@@ -236,11 +239,39 @@ export function FinanceReceivablesPayablesPage() {
   const activeRecordEditable = activeRecord
     ? canEditFinanceReceivablePayableRecord(activeRecord, linkedTransactionRows, activeRecordHasBookedVoucher) && !activeRecordLockedReason
     : false;
-  const activeRecordEditBlockedReason = activeRecordHasBookedVoucher
+  const activeRecordEditBlockedReason = activeRecord?.sourceType === '任务结算'
+    ? '任务验收自动生成，原事项只读'
+    : activeRecordHasBookedVoucher
     ? '已记账，需通过凭证调整'
     : activeRecordLockedReason
       ? '只读回看'
       : '已有收付进度，事项锁定';
+  const missingTaskSettlementSourceCount = customerTaskSettlementIssues.filter(
+    (issue) => issue.kind === '来源主数据缺失'
+  ).length;
+  const missingTaskSettlementSnapshotCount = customerTaskSettlementIssues.filter(
+    (issue) => issue.kind === '来源快照缺失'
+  ).length;
+  const changedTaskSettlementBatchCount = customerTaskSettlementIssues.filter(
+    (issue) => issue.kind === '批次差异'
+  ).length;
+  const reversedTaskSettlementCount = customerTaskSettlementIssues.filter(
+    (issue) => issue.kind === '来源撤销待财务更正'
+  ).length;
+  const customerTaskSettlementIssueMessage = [
+    missingTaskSettlementSourceCount > 0
+      ? `${missingTaskSettlementSourceCount} 条任务结算缺少来源档案，尚未生成应收`
+      : undefined,
+    missingTaskSettlementSnapshotCount > 0
+      ? `${missingTaskSettlementSnapshotCount} 条任务应收缺少来源快照`
+      : undefined,
+    changedTaskSettlementBatchCount > 0
+      ? `${changedTaskSettlementBatchCount} 条任务结算需后续调整`
+      : undefined,
+    reversedTaskSettlementCount > 0
+      ? `${reversedTaskSettlementCount} 条撤销验收需财务冲销或后续调整`
+      : undefined
+  ].filter((message): message is string => Boolean(message)).join('；');
   const activeRecordCanRegisterSettlement = activeRecord
     ? canRegisterFinanceReceivablePayableSettlement(activeRecord, linkedTransactionRows) && !activeRecordLockedReason
     : false;
@@ -340,11 +371,21 @@ export function FinanceReceivablesPayablesPage() {
   }
 
   function handlePreviewFile(file: RelatedFileRecord) {
-    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
+    if (!file.url) {
+      void messageApi.warning('当前文件缺少可预览地址');
+      return;
+    }
+
+    setPreviewFile(file);
   }
 
   function handleDownloadFile(file: RelatedFileRecord) {
-    void messageApi.success(`${file.name} 下载请求已记录`);
+    if (!file.url) {
+      void messageApi.warning('当前文件缺少可下载地址');
+      return;
+    }
+
+    window.open(file.url, '_blank', 'noopener,noreferrer');
   }
 
   function updateSettlementForm<K extends keyof FinanceReceivablePayableSettlementFormValue>(
@@ -508,6 +549,14 @@ export function FinanceReceivablesPayablesPage() {
       }
       pageId="finance-receivables-payables"
     >
+      {customerTaskSettlementIssues.length > 0 ? (
+        <Alert
+          data-testid="finance-rp-task-settlement-issue"
+          message={customerTaskSettlementIssueMessage}
+          showIcon
+          type="warning"
+        />
+      ) : null}
       <ManagementTableTabs
         activeKey={activeTab}
         items={listTabs}
@@ -563,6 +612,16 @@ export function FinanceReceivablesPayablesPage() {
         onCancel={formDrawer.cancel}
         onSave={handleSaveForm}
         onUpdate={formDrawer.updateForm}
+      />
+      <FilePreviewModal
+        file={previewFile ? {
+          category: previewFile.type,
+          name: previewFile.name,
+          status: previewFile.status,
+          updatedAt: previewFile.updatedAt
+        } : undefined}
+        title="文件预览"
+        onClose={() => setPreviewFile(undefined)}
       />
     </ManagementPageScaffold>
   );

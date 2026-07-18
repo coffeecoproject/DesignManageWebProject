@@ -1,7 +1,7 @@
 import { Tabs } from 'antd';
 import type { TabsProps } from 'antd';
 
-export type DetailTabsVariant = 'drawer' | 'workbench' | 'sticky-workbench' | 'page-section' | 'section' | 'nested-section';
+export type DetailTabsVariant = 'drawer' | 'workbench' | 'sticky-workbench';
 type DetailTabItem = NonNullable<TabsProps['items']>[number];
 
 type DetailTabsProps = Omit<TabsProps, 'className' | 'items'> & {

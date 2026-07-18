@@ -183,7 +183,10 @@ function hasBlankAccrualSourceValue(value?: string) {
 }
 
 function hasFinanceReceivablePayableOriginalEvidence(record: FinanceReceivablePayableRecord) {
-  return record.files.some((file) => acceptableAccrualEvidenceStatuses.has(file.status));
+  return record.files.some((file) =>
+    acceptableAccrualEvidenceStatuses.has(file.status)
+    && (record.sourceType !== '任务结算' || Boolean(file.url?.trim()))
+  );
 }
 
 export function getFinanceReceivablePayableRequiredAccountingRoles(
@@ -598,6 +601,7 @@ export function canEditFinanceReceivablePayableRecord(
 ) {
   return (
     !isFinanceReceivablePayableVoided(record)
+    && record.sourceType !== '任务结算'
     && !hasBookedVoucher
     && record.settledAmount <= 0
     && !hasFinanceReceivablePayableActiveSettlement(linkedTransactionRows)
@@ -724,15 +728,20 @@ function getSettlementTransactionSourceType(record: FinanceReceivablePayableReco
     return '报销单';
   }
 
-  if (record.sourceType === '项目阶段确认') {
-    return '合同应收';
-  }
-
   if (record.sourceType === '材料采购' || record.sourceType === '运营费用') {
     return '手工登记';
   }
 
   return record.sourceType;
+}
+
+export function getFinanceReceivablePayableSettlementSourceNo(
+  record: FinanceReceivablePayableRecord
+) {
+  // Salary payment must retain the payroll number because payroll and IIT use it
+  // as the stable payment-fact key. The linked transaction number still ties the
+  // cash flow back to this payable confirmation record.
+  return record.sourceType === '薪酬发放' ? record.sourceNo : record.documentNo;
 }
 
 export function buildFinanceReceivablePayableSettlementTransaction(
@@ -792,7 +801,7 @@ export function buildFinanceReceivablePayableSettlementTransaction(
     reconciliationStatus: '未对账',
     registeredBy: '李明',
     reviewDueAt: getDefaultFinanceReviewDueAt(form.occurredAt),
-    sourceNo: record.documentNo,
+    sourceNo: getFinanceReceivablePayableSettlementSourceNo(record),
     sourceTitle: record.sourceTitle,
     sourceType: getSettlementTransactionSourceType(record),
     status: '待复核',

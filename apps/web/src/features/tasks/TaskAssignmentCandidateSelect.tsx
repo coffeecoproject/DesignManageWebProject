@@ -2,6 +2,7 @@ import { Drawer, Empty, Input, Segmented } from 'antd';
 import { useMemo, useState } from 'react';
 import { DetailDrawerTitle, StatusTag, type StatusTagTone } from '../../components/Detail';
 import { TagChip } from '../../components/TagChip';
+import { formatPublishedPerformanceScore } from '../performance/performanceResultConsumerModel';
 import type { TaskAssignmentCandidate } from './taskAssignmentCandidates';
 
 type CandidateFilter = '可选' | '不可选' | '全部';
@@ -105,7 +106,7 @@ function CandidateCard({
       <div className="task-candidate-card-row">
         <div className="task-candidate-card-metrics">
           <span>进行中 {candidate.currentTaskCount} 个</span>
-          <span>绩效 {candidate.performanceScore} 分</span>
+          <span>绩效 {formatPublishedPerformanceScore(candidate.performanceScore)}</span>
         </div>
         <div className={candidate.selectable ? 'task-candidate-reason' : 'task-candidate-blocker'}>
           <CandidateReasonTags candidate={candidate} />

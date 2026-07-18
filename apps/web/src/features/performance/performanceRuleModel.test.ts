@@ -149,7 +149,8 @@ const tests: UnitTest[] = [
 
       assertEqual(publishedRule.status, '已发布', 'publish should move reviewing rule to published');
       assertEqual(publishedRule.effectiveStartAt, '2026-07-01', 'publish should default missing effective date');
-      assertEqual(oldRule?.categoryVersionState, '员工执行旧版', 'previous published rule should become legacy execution version');
+      assertEqual(oldRule?.categoryVersionState, '历史发布版本', 'previous published rule should become a historical version');
+      assertEqual(oldRule?.effectiveEndAt, '2026-06-30', 'previous published rule should end before the new version starts');
       assertEqual(newRule?.categoryVersionState, '当前发布版本', 'new published rule should become current category version');
     }
   },

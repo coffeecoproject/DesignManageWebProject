@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react';
 import { build } from 'vite';
 import { assertCorporateIncomeTaxAcceptanceEvidence } from './corporate-income-tax-acceptance.mjs';
 import { assertNaturalPersonPaymentAcceptanceEvidence } from './natural-person-payment-acceptance.mjs';
+import { assertPerformancePhase6ConsumerHardcut } from './performance-phase6-consumer-hardcut.mjs';
+import { assertPerformancePhase7ResidualHardcut } from './performance-phase7-residual-hardcut.mjs';
 import { assertStampDutyAcceptanceEvidence } from './stamp-duty-acceptance.mjs';
 import { assertTaxHandlingSettlementAcceptanceEvidence } from './tax-handling-settlement-acceptance.mjs';
 
@@ -18,9 +20,12 @@ const bundledTaskAssignmentCandidateTestFile = join(outDir, 'taskAssignmentCandi
 const bundledRegionSearchSelectTestFile = join(outDir, 'RegionSearchSelect.test.mjs');
 const bundledPublicAccountConfigStateTestFile = join(outDir, 'PublicAccountConfigState.test.mjs');
 const bundledTaskDomainModelTestFile = join(outDir, 'taskDomainModel.test.mjs');
+const bundledTaskCustomerBillingModelTestFile = join(outDir, 'taskCustomerBillingModel.test.mjs');
+const bundledBrandTaskPricingModelTestFile = join(outDir, 'brandTaskPricingModel.test.mjs');
 const bundledTaskFeedbackModelTestFile = join(outDir, 'taskFeedbackModel.test.mjs');
 const bundledPersonTaskViewModelTestFile = join(outDir, 'personTaskViewModel.test.mjs');
 const bundledSalaryDomainTestFile = join(outDir, 'salaryDomain.test.mjs');
+const bundledSalaryPerformanceConsumptionModelTestFile = join(outDir, 'salaryPerformanceConsumptionModel.test.mjs');
 const bundledFinanceSocialInsuranceModelTestFile = join(outDir, 'financeSocialInsuranceModel.test.mjs');
 const bundledFinanceTaxMatterModelTestFile = join(outDir, 'financeTaxMatterModel.test.mjs');
 const bundledFinanceStampDutyModelTestFile = join(outDir, 'financeStampDutyModel.test.mjs');
@@ -37,6 +42,8 @@ const bundledFinancePeriodCloseStageAuditMatrixTestFile = join(outDir, 'financeP
 const bundledFinancePeriodCloseSourceMutationMatrixTestFile = join(outDir, 'financePeriodCloseSourceMutationMatrix.test.mjs');
 const bundledFinanceCategoryAccountingMappingTestFile = join(outDir, 'financeCategoryAccountingMapping.test.mjs');
 const bundledFinanceReceivablesPayablesModelTestFile = join(outDir, 'financeReceivablesPayablesModel.test.mjs');
+const bundledFinanceCustomerTaskSettlementModelTestFile = join(outDir, 'financeCustomerTaskSettlementModel.test.mjs');
+const bundledTaskCustomerReceivableFrontendWorkflowTestFile = join(outDir, 'taskCustomerReceivableFrontendWorkflow.test.mjs');
 const bundledFinanceNaturalPersonPaymentModelTestFile = join(outDir, 'financeNaturalPersonPaymentModel.test.mjs');
 const bundledPartTimeLaborFrontendWorkflowTestFile = join(outDir, 'partTimeLaborFrontendWorkflow.test.mjs');
 const bundledNaturalPersonPaymentFrontendWorkflowTestFile = join(outDir, 'naturalPersonPaymentFrontendWorkflow.test.mjs');
@@ -56,6 +63,12 @@ const bundledPerformanceDashboardModelTestFile = join(outDir, 'performanceDashbo
 const bundledPerformanceMonthlyModelTestFile = join(outDir, 'performanceMonthlyModel.test.mjs');
 const bundledPerformanceRuleModelTestFile = join(outDir, 'performanceRuleModel.test.mjs');
 const bundledPerformanceSignatureModelTestFile = join(outDir, 'performanceSignatureModel.test.mjs');
+const bundledPerformanceResultDeadlineModelTestFile = join(outDir, 'performanceResultDeadlineModel.test.mjs');
+const bundledPerformanceResultModelTestFile = join(outDir, 'performanceResultModel.test.mjs');
+const bundledPerformanceResultWorkflowTestFile = join(outDir, 'performanceResultWorkflow.test.mjs');
+const bundledPerformanceQuarterlyResultModelTestFile = join(outDir, 'performanceQuarterlyResultModel.test.mjs');
+const bundledPerformanceRuleApplicabilityModelTestFile = join(outDir, 'performanceRuleApplicabilityModel.test.mjs');
+const bundledTaskPerformanceMonthlySourceModelTestFile = join(outDir, 'taskPerformanceMonthlySourceModel.test.mjs');
 
 const testModules = [
   {
@@ -94,6 +107,16 @@ const testModules = [
     runExport: 'runPublicAccountConfigStateTests'
   },
   {
+    bundledFile: bundledBrandTaskPricingModelTestFile,
+    entry: 'src/features/customers/brandTaskPricingModel.test.ts',
+    runExport: 'runBrandTaskPricingModelTests'
+  },
+  {
+    bundledFile: bundledTaskCustomerBillingModelTestFile,
+    entry: 'src/features/tasks/taskCustomerBillingModel.test.ts',
+    runExport: 'runTaskCustomerBillingModelTests'
+  },
+  {
     bundledFile: bundledTaskDomainModelTestFile,
     entry: 'src/features/tasks/taskDomainModel.test.ts',
     runExport: 'runTaskDomainModelTests'
@@ -112,6 +135,11 @@ const testModules = [
     bundledFile: bundledSalaryDomainTestFile,
     entry: 'src/features/salary/salaryDomain.test.ts',
     runExport: 'runSalaryDomainTests'
+  },
+  {
+    bundledFile: bundledSalaryPerformanceConsumptionModelTestFile,
+    entry: 'src/features/salary/salaryPerformanceConsumptionModel.test.ts',
+    runExport: 'runSalaryPerformanceConsumptionModelTests'
   },
   {
     bundledFile: bundledFinanceSocialInsuranceModelTestFile,
@@ -192,6 +220,16 @@ const testModules = [
     bundledFile: bundledFinanceReceivablesPayablesModelTestFile,
     entry: 'src/features/finance/financeReceivablesPayablesModel.test.ts',
     runExport: 'runFinanceReceivablesPayablesModelTests'
+  },
+  {
+    bundledFile: bundledFinanceCustomerTaskSettlementModelTestFile,
+    entry: 'src/features/finance/financeCustomerTaskSettlementModel.test.ts',
+    runExport: 'runFinanceCustomerTaskSettlementModelTests'
+  },
+  {
+    bundledFile: bundledTaskCustomerReceivableFrontendWorkflowTestFile,
+    entry: 'src/features/finance/taskCustomerReceivableFrontendWorkflow.test.ts',
+    runExport: 'runTaskCustomerReceivableFrontendWorkflowTests'
   },
   {
     bundledFile: bundledFinanceNaturalPersonPaymentModelTestFile,
@@ -287,6 +325,36 @@ const testModules = [
     bundledFile: bundledPerformanceSignatureModelTestFile,
     entry: 'src/features/performance/performanceSignatureModel.test.ts',
     runExport: 'runPerformanceSignatureModelTests'
+  },
+  {
+    bundledFile: bundledPerformanceResultDeadlineModelTestFile,
+    entry: 'src/features/performance/performanceResultDeadlineModel.test.ts',
+    runExport: 'runPerformanceResultDeadlineModelTests'
+  },
+  {
+    bundledFile: bundledPerformanceResultModelTestFile,
+    entry: 'src/features/performance/performanceResultModel.test.ts',
+    runExport: 'runPerformanceResultModelTests'
+  },
+  {
+    bundledFile: bundledPerformanceResultWorkflowTestFile,
+    entry: 'src/features/performance/performanceResultWorkflow.test.ts',
+    runExport: 'runPerformanceResultWorkflowTests'
+  },
+  {
+    bundledFile: bundledPerformanceQuarterlyResultModelTestFile,
+    entry: 'src/features/performance/performanceQuarterlyResultModel.test.ts',
+    runExport: 'runPerformanceQuarterlyResultModelTests'
+  },
+  {
+    bundledFile: bundledPerformanceRuleApplicabilityModelTestFile,
+    entry: 'src/features/performance/performanceRuleApplicabilityModel.test.ts',
+    runExport: 'runPerformanceRuleApplicabilityModelTests'
+  },
+  {
+    bundledFile: bundledTaskPerformanceMonthlySourceModelTestFile,
+    entry: 'src/features/performance/taskPerformanceMonthlySourceModel.test.ts',
+    runExport: 'runTaskPerformanceMonthlySourceModelTests'
   }
 ];
 
@@ -342,6 +410,8 @@ let naturalPersonAcceptanceResult;
 let corporateIncomeTaxAcceptanceResult;
 let stampDutyAcceptanceResult;
 let taxHandlingSettlementAcceptanceResult;
+let performancePhase6ConsumerHardcutResult;
+let performancePhase7ResidualHardcutResult;
 
 try {
   corporateIncomeTaxAcceptanceResult = assertCorporateIncomeTaxAcceptanceEvidence(
@@ -379,6 +449,18 @@ try {
   allFailures.push(`tax-handling settlement acceptance: ${error instanceof Error ? error.message : String(error)}`);
 }
 
+try {
+  performancePhase6ConsumerHardcutResult = await assertPerformancePhase6ConsumerHardcut(webRoot);
+} catch (error) {
+  allFailures.push(`performance phase 6 consumer hardcut: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+try {
+  performancePhase7ResidualHardcutResult = await assertPerformancePhase7ResidualHardcut(webRoot);
+} catch (error) {
+  allFailures.push(`performance phase 7 residual hardcut: ${error instanceof Error ? error.message : String(error)}`);
+}
+
 if (allFailures.length > 0) {
   console.error(`Unit tests failed: ${passed}/${total} passed`);
   for (const failure of allFailures) {
@@ -400,5 +482,11 @@ if (allFailures.length > 0) {
   console.log(`Natural-person named scenarios executed and passed: ${naturalPersonAcceptanceResult.executedScenarioCount}`);
   console.log(
     `Natural-person frontend-chain closure: ${naturalPersonAcceptanceResult.chainClosedIds.length}/${naturalPersonAcceptanceResult.total}`
+  );
+  console.log(
+    `Performance Phase 6 consumer hardcut: ${performancePhase6ConsumerHardcutResult.checkedFiles}/${performancePhase6ConsumerHardcutResult.checkedFiles}`
+  );
+  console.log(
+    `Performance Phase 7 residual hardcut: ${performancePhase7ResidualHardcutResult.checkedSourceFiles} source files, ${performancePhase7ResidualHardcutResult.sharedDrawerConsumers} shared consumers, ${performancePhase7ResidualHardcutResult.tabCount} tabs`
   );
 }

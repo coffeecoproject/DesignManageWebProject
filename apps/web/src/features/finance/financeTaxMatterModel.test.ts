@@ -38,6 +38,7 @@ import {
   getTaxMatterAccountingAmount,
   getTaxMatterAccountingDelta,
   getTaxMatterDeclarationRevisionValidationError,
+  getTaxMatterEvidenceStatus,
   getMissingTaxMatterReceiptTypes,
   getTaxMatterOutstandingAmount,
   getTaxMatterRefundOutstandingAmount,
@@ -54,7 +55,7 @@ import {
   recordTaxMatterRefundApplication,
   recordTaxMatterRefundResult,
   startTaxMatterDeclarationRevision,
-  supplementTaxMatterDeclarationReceipt
+  supplementTaxMatterDeclarationEvidence
 } from './financeTaxMatterModel';
 import {
   buildPayrollIitDeclarationEmployeeRows,
@@ -110,8 +111,10 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
   return {
     dataStatus: '待复核',
     declarationDueDate: '2026-07-20',
+    declarationFormFileIds: [],
     declarationHistory: [],
     declarationStatus: '待申报',
+    declarationVerificationStatus: '未核验',
     declarationVersion: 1,
     files: [],
     id: 'tax-matter-social',
@@ -133,6 +136,38 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
     title: '2026-06 社保缴纳',
     updatedAt: '2026-06-15',
     ...overrides
+  };
+}
+
+function createVerifiedTaxMatterEvidence(prefix: string): Partial<FinanceTaxMatterRecord> {
+  const formId = `${prefix}-form`;
+  const resultId = `${prefix}-result`;
+  return {
+    declarationFormFileIds: [formId],
+    declarationResultFileId: resultId,
+    declarationVerificationStatus: '人工核验一致',
+    declarationVerifiedAt: '2026-07-12 15:20',
+    declarationVerifiedBy: '李明',
+    files: [
+      { id: formId, name: `${prefix}正式申报表.pdf`, status: '已上传', type: '正式申报表', updatedAt: '2026-07-12' },
+      { id: resultId, name: `${prefix}申报结果回执.pdf`, status: '已上传', type: '申报结果回执', updatedAt: '2026-07-12' }
+    ]
+  };
+}
+
+function createDeclarationResultEvidence(prefix: string) {
+  return {
+    declarationFormFiles: [
+      { id: `${prefix}-form`, name: `${prefix}正式申报表.pdf`, status: '已上传' as const, type: '正式申报表', updatedAt: '2026-07-12' }
+    ],
+    declarationResultFile: {
+      id: `${prefix}-result`,
+      name: `${prefix}申报结果回执.pdf`,
+      status: '已上传' as const,
+      type: '申报结果回执',
+      updatedAt: '2026-07-12'
+    },
+    declarationVerificationStatus: '人工核验一致' as const
   };
 }
 
@@ -1260,7 +1295,7 @@ const tests: UnitTest[] = [
       const filedMatter = createTaxMatter({
         dataStatus: '已确认',
         declarationDate: '2026-07-10',
-        declarationReceiptNo: 'IIT-202606-001',
+        taxAuthorityDeclarationNo: 'IIT-202606-001',
         declarationStatus: '申报成功',
         declarationVersion: 1,
         matterType: '个人所得税',
@@ -1313,17 +1348,10 @@ const tests: UnitTest[] = [
         paymentStatus: '待缴纳',
         processStatus: '待申报'
       });
-      const receipt = {
-        id: 'cit-declaration-receipt',
-        name: '企业所得税季度预缴申报回执.pdf',
-        status: '已上传' as const,
-        type: '申报回执',
-        updatedAt: '2026-07-12'
-      };
       const result = recordTaxMatterDeclarationResult(source, {
         declarationDate: '2026-07-12',
-        declarationReceiptFile: receipt,
-        declarationReceiptNo: 'CIT-2026Q2-001',
+        ...createDeclarationResultEvidence('cit-quarterly'),
+        taxAuthorityDeclarationNo: 'CIT-2026Q2-001',
         declarationStatus: '申报成功',
         differenceReason: '电子税务局核定金额与系统测算存在尾差',
         settlementAmount: 5463,
@@ -1332,7 +1360,7 @@ const tests: UnitTest[] = [
 
       assertEqual(result.preparedPayableAmount, 5462.99, 'prepared estimate should remain as the comparison baseline');
       assertEqual(result.payableAmount, 5463, 'official payable amount should become the payment basis');
-      assertEqual(result.declarationReceiptFileId, receipt.id, 'declaration result should reference its receipt');
+      assertEqual(result.declarationResultFileId, 'cit-quarterly-result', 'declaration result should reference its result receipt');
       assertEqual(result.processStatus, '待缴款', 'declared payable matter should move to payment');
       assertEqual(result.declarationDifferenceReason, '电子税务局核定金额与系统测算存在尾差', 'official difference should remain auditable');
     }
@@ -1352,16 +1380,94 @@ const tests: UnitTest[] = [
         settlementAmount: 0,
         settlementDirection: '无需补退'
       });
-      const result = supplementTaxMatterDeclarationReceipt(declared, {
-        declarationReceiptNo: 'CIT-ZERO-2026Q2-001'
+      const result = supplementTaxMatterDeclarationEvidence(declared, {
+        declarationFormFiles: [{
+          id: 'cit-zero-form',
+          name: '企业所得税季度预缴正式申报表.pdf',
+          status: '已上传',
+          type: '正式申报表',
+          updatedAt: '2026-07-12'
+        }],
+        declarationResultFile: {
+          id: 'cit-zero-result',
+          name: '企业所得税季度预缴申报结果回执.pdf',
+          status: '已上传',
+          type: '申报结果回执',
+          updatedAt: '2026-07-12'
+        },
+        declarationVerificationStatus: '人工核验一致',
+        taxAuthorityDeclarationNo: 'CIT-ZERO-2026Q2-001'
       });
 
-      assertEqual(declared.processStatus, '待补回执', 'official filing without evidence should remain pending evidence');
+      assertEqual(declared.processStatus, '申报材料待核对', 'official filing without evidence should remain pending evidence');
       assertEqual(result.processStatus, '已完成', 'supplemented evidence should complete a zero filing');
       assertEqual(result.declarationStatus, declared.declarationStatus, 'supplementing evidence must not change filing status');
       assertEqual(result.payableAmount, declared.payableAmount, 'supplementing evidence must not change payable amount');
       assertEqual(result.settlementDirection, declared.settlementDirection, 'supplementing evidence must not change settlement direction');
-      assertEqual(result.operationRecords[0]?.action, '补充申报回执', 'evidence supplement should be independently auditable');
+      assertEqual(result.operationRecords[0]?.action, '维护申报材料', 'evidence supplement should be independently auditable');
+    }
+  },
+  {
+    name: 'keeps declaration materials pending until both files are manually verified',
+    run: () => {
+      const source = createTaxMatter({
+        dataStatus: '已确认',
+        declarationStatus: '待申报',
+        matterType: '企业所得税',
+        preparedPayableAmount: 0,
+        processStatus: '待申报'
+      });
+      const invalidVerifiedResult = recordTaxMatterDeclarationResult(source, {
+        declarationDate: '2026-07-12',
+        declarationStatus: '零申报',
+        declarationVerificationStatus: '人工核验一致',
+        settlementAmount: 0,
+        settlementDirection: '无需补退'
+      });
+      const declared = recordTaxMatterDeclarationResult(source, {
+        declarationDate: '2026-07-12',
+        declarationStatus: '零申报',
+        settlementAmount: 0,
+        settlementDirection: '无需补退'
+      });
+      const withFormOnly = supplementTaxMatterDeclarationEvidence(declared, {
+        declarationFormFiles: [{
+          id: 'pending-form',
+          name: '企业所得税季度预缴正式申报表.pdf',
+          status: '已上传',
+          type: '正式申报表',
+          updatedAt: '2026-07-12'
+        }],
+        declarationVerificationStatus: '未核验'
+      });
+      const withUnverifiedMaterials = supplementTaxMatterDeclarationEvidence(withFormOnly, {
+        declarationFormFiles: withFormOnly.files.filter((file) => withFormOnly.declarationFormFileIds.includes(file.id)),
+        declarationResultFile: {
+          id: 'pending-result',
+          name: '企业所得税季度预缴申报结果回执.pdf',
+          status: '已上传',
+          type: '申报结果回执',
+          updatedAt: '2026-07-12'
+        },
+        declarationVerificationStatus: '未核验'
+      });
+      const verified = supplementTaxMatterDeclarationEvidence(withUnverifiedMaterials, {
+        declarationFormFiles: withUnverifiedMaterials.files.filter((file) => withUnverifiedMaterials.declarationFormFileIds.includes(file.id)),
+        declarationResultFile: withUnverifiedMaterials.files.find((file) => file.id === withUnverifiedMaterials.declarationResultFileId),
+        declarationVerificationStatus: '人工核验一致'
+      });
+      const replaced = supplementTaxMatterDeclarationEvidence(verified, {
+        ...createDeclarationResultEvidence('replacement'),
+        taxAuthorityDeclarationNo: 'CIT-REPLACED-001'
+      });
+
+      assertEqual(invalidVerifiedResult, source, 'domain validation must reject a verified result without both required files');
+      assertEqual(getTaxMatterEvidenceStatus(declared), '材料待补', 'filing result without files should remain incomplete');
+      assertEqual(getTaxMatterEvidenceStatus(withFormOnly), '材料待补', 'a formal form alone should remain incomplete');
+      assertEqual(getTaxMatterEvidenceStatus(withUnverifiedMaterials), '待核验', 'complete files should still require verification');
+      assertEqual(getTaxMatterEvidenceStatus(verified), '已齐全', 'manual verification should complete both declaration materials');
+      assertEqual(verified.processStatus, '已完成', 'zero filing should complete only after evidence verification');
+      assertEqual(replaced.files.some((file) => file.id === 'pending-form' || file.id === 'pending-result'), false, 'replaced current-version evidence must not leave stale files');
     }
   },
   {
@@ -1378,13 +1484,13 @@ const tests: UnitTest[] = [
       const result = recordTaxMatterDeclarationResult({
         ...source,
         declarationStatus: '待申报',
-        declarationReceiptFileId: undefined,
-        declarationReceiptNo: undefined,
+        declarationResultFileId: undefined,
+        taxAuthorityDeclarationNo: undefined,
         paymentStatus: '待缴纳',
         processStatus: '待申报'
       }, {
         declarationDate: '2026-04-15',
-        declarationReceiptNo: 'VAT-Q1-OFFICIAL-001',
+        taxAuthorityDeclarationNo: 'VAT-Q1-OFFICIAL-001',
         declarationStatus: '申报成功',
         differenceReason: '电子税务局回执尾差',
         settlementAmount: 470,
@@ -1415,7 +1521,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(original, '更正', '电子税务局更正后调减销项税额');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-05-10',
-        declarationReceiptNo: 'VAT-Q1-REVISION-002',
+        taxAuthorityDeclarationNo: 'VAT-Q1-REVISION-002',
         declarationStatus: '申报成功',
         settlementAmount: 66.51,
         settlementDirection: '应退',
@@ -1483,13 +1589,7 @@ const tests: UnitTest[] = [
       });
       const result = recordTaxMatterDeclarationResult(source, {
         declarationDate: '2026-07-12',
-        declarationReceiptFile: {
-          id: 'vat-zero-receipt',
-          name: '增值税零申报回执.pdf',
-          status: '已上传',
-          type: '申报回执',
-          updatedAt: '2026-07-12'
-        },
+        ...createDeclarationResultEvidence('vat-zero'),
         declarationStatus: '零申报',
         settlementAmount: 0,
         settlementDirection: '无需补退'
@@ -1512,7 +1612,8 @@ const tests: UnitTest[] = [
         processStatus: '待申报'
       }), {
         declarationDate: '2026-07-12',
-        declarationReceiptNo: 'CIT-REFUND-001',
+        ...createDeclarationResultEvidence('cit-refund'),
+        taxAuthorityDeclarationNo: 'CIT-REFUND-001',
         declarationStatus: '申报成功',
         settlementAmount: 500,
         settlementDirection: '应退'
@@ -1607,8 +1708,9 @@ const tests: UnitTest[] = [
     name: 'CROSS-TAX-01 applies an approved overpayment only to a same-tax outstanding matter',
     run: () => {
       const source = createTaxMatter({
+        ...createVerifiedTaxMatterEvidence('cit-offset-source'),
         dataStatus: '已确认',
-        declarationReceiptNo: 'CIT-Q3-DECLARATION-001',
+        taxAuthorityDeclarationNo: 'CIT-Q3-DECLARATION-001',
         declarationStatus: '申报成功',
         matterNo: 'TAX-2025-CIT-ANNUAL',
         matterType: '企业所得税',
@@ -1618,8 +1720,9 @@ const tests: UnitTest[] = [
         settlementDirection: '应退'
       });
       const target = createTaxMatter({
+        ...createVerifiedTaxMatterEvidence('cit-offset-target'),
         dataStatus: '已确认',
-        declarationReceiptNo: 'CIT-Q3-DECLARATION-001',
+        taxAuthorityDeclarationNo: 'CIT-Q3-DECLARATION-001',
         declarationStatus: '申报成功',
         id: 'tax-matter-cit-offset-target',
         matterNo: 'TAX-2026Q3-CIT',
@@ -1703,7 +1806,7 @@ const tests: UnitTest[] = [
       });
       const mismatchedInput = {
         declarationDate: '2026-07-10',
-        declarationReceiptNo: 'IIT-202606-001',
+        taxAuthorityDeclarationNo: 'IIT-202606-001',
         declarationStatus: '申报成功' as const,
         settlementAmount: 500,
         settlementDirection: '应缴' as const
@@ -1733,8 +1836,8 @@ const tests: UnitTest[] = [
     name: 'supports multiple payment registrations until the official payable amount is fully paid',
     run: () => {
       const declared = createTaxMatter({
+        ...createVerifiedTaxMatterEvidence('cit-multiple-payment'),
         dataStatus: '已确认',
-        declarationReceiptFileId: 'cit-declaration-receipt',
         declarationStatus: '申报成功',
         matterType: '企业所得税',
         payableAmount: 1000,
@@ -1779,10 +1882,11 @@ const tests: UnitTest[] = [
       const declared = createTaxMatter({
         dataStatus: '已确认',
         declarationDate: '2026-07-12',
-        declarationReceiptFileId: 'cit-declaration-receipt',
-        declarationReceiptNo: 'CIT-2026Q2-001',
+        declarationResultFileId: 'cit-declaration-evidence',
+        taxAuthorityDeclarationNo: 'CIT-2026Q2-001',
         declarationStatus: '申报成功',
         declarationVersion: 1,
+        filingAdjustmentAccountingPeriod: '2026-07',
         matterType: '企业所得税',
         paidAmount: 1000,
         payableAmount: 1000,
@@ -1802,6 +1906,12 @@ const tests: UnitTest[] = [
       assertEqual(corrected.declarationHistory.length, 1, 'previous declaration should remain in history');
       assertEqual(corrected.declarationHistory[0]?.filedPayableAmount, 1000, 'history should retain the prior official amount');
       assertEqual(corrected.declarationHistory[0]?.reason, '发现纳税调整项目遗漏', 'history should retain the correction reason');
+      assertEqual(corrected.declarationHistory[0]?.filingAdjustmentAccountingPeriod, '2026-07', 'history should retain the prior filing accounting period');
+      assertEqual(
+        corrected.operationRecords[0]?.summary,
+        '第 1 版调整为第 2 版：发现纳税调整项目遗漏',
+        'correction operation should expose the declaration version relationship'
+      );
     }
   },
   {
@@ -1810,7 +1920,7 @@ const tests: UnitTest[] = [
       const source = createTaxMatter({
         dataStatus: '已确认',
         declarationStatus: '申报成功',
-        declarationReceiptFileId: 'receipt',
+        declarationResultFileId: 'receipt',
         matterType: '企业所得税',
         paidAmount: 0,
         payableAmount: 500
@@ -1835,17 +1945,24 @@ const tests: UnitTest[] = [
         paymentStatus: '无需缴纳'
       });
       const socialMatter = createTaxMatter({ matterType: '社保缴纳', payableAmount: 3075 });
-      const onlyDeclarationReceipt = [
+      const declarationMaterials = [
         {
-          id: 'receipt-declare',
-          name: '企业所得税预缴申报回执.pdf',
+          id: 'declaration-form',
+          name: '企业所得税预缴正式申报表.pdf',
           status: '已上传',
-          type: '申报回执',
+          type: '正式申报表',
+          updatedAt: '2026-07-15'
+        },
+        {
+          id: 'declaration-result',
+          name: '企业所得税预缴申报结果回执.pdf',
+          status: '已上传',
+          type: '申报结果回执',
           updatedAt: '2026-07-15'
         }
       ] satisfies FinanceTaxMatterRecord['files'];
       const completeReceipts = [
-        ...onlyDeclarationReceipt,
+        ...declarationMaterials,
         {
           id: 'receipt-payment',
           name: '企业所得税预缴缴款回单.pdf',
@@ -1857,13 +1974,13 @@ const tests: UnitTest[] = [
 
       assertDeepEqual(
         getTaxMatterRequiredReceiptTypes(payableCit),
-        ['申报回执', '缴款回单'],
-        'payable tax matters should require declaration receipt and payment voucher'
+        ['正式申报表', '申报结果回执', '缴款回单'],
+        'payable tax matters should require the formal declaration, result receipt and payment voucher'
       );
       assertDeepEqual(
         getTaxMatterRequiredReceiptTypes(zeroVat),
-        ['申报回执'],
-        'zero filing or no-payable tax matters should only require declaration receipt'
+        ['正式申报表', '申报结果回执'],
+        'zero filing or no-payable tax matters should require declaration materials'
       );
       assertDeepEqual(
         getTaxMatterRequiredReceiptTypes(socialMatter),
@@ -1871,7 +1988,7 @@ const tests: UnitTest[] = [
         'social-insurance payment matters should only require payment voucher'
       );
       assertDeepEqual(
-        getMissingTaxMatterReceiptTypes(onlyDeclarationReceipt, getTaxMatterRequiredReceiptTypes(payableCit)),
+        getMissingTaxMatterReceiptTypes(declarationMaterials, getTaxMatterRequiredReceiptTypes(payableCit)),
         ['缴款回单'],
         'payable tax matters should remain incomplete when payment voucher is missing'
       );
@@ -1888,16 +2005,13 @@ const tests: UnitTest[] = [
       const existingRow = createFinanceRow({ amount: 1000, transactionNo: 'FIN-202607-0001' });
       const matter = createTaxMatter({
         declarationDate: '2026-07-15',
-        files: [
-          { id: 'tax-file-declaration', name: '2026-06_社保申报回执.pdf', status: '已上传', type: '申报回执', updatedAt: '2026-07-15' },
-          { id: 'tax-file-payment', name: '2026-06_社保缴款回单.pdf', status: '已上传', type: '缴款回单', updatedAt: '2026-07-15' }
-        ],
+        files: [{ id: 'tax-file-payment', name: '2026-06_社保缴款回单.pdf', status: '已上传', type: '缴款回单', updatedAt: '2026-07-15' }],
         linkedTransactionNos: [existingRow.transactionNo],
         paidAmount: 3075,
         payableAmount: 3075,
         paymentDate: '2026-07-16',
         paymentStatus: '已缴纳',
-        processStatus: '待补回执'
+        processStatus: '申报材料待核对'
       });
       const transaction = buildTaxMatterPaymentTransaction({
         financeRows: [existingRow],
@@ -2078,13 +2192,13 @@ const tests: UnitTest[] = [
     name: 'does not build tax payment transaction before payment voucher exists',
     run: () => {
       const matter = createTaxMatter({
+        ...createVerifiedTaxMatterEvidence('cit-payment-no-voucher'),
         declarationDate: '2026-07-15',
-        files: [{ id: 'tax-file-declaration', name: '企业所得税申报回执.pdf', status: '已上传', type: '申报回执', updatedAt: '2026-07-15' }],
         paidAmount: 815,
         payableAmount: 815,
         paymentDate: '2026-07-15',
         paymentStatus: '已缴纳',
-        processStatus: '待补回执'
+        processStatus: '申报材料待核对'
       });
       const transaction = buildTaxMatterPaymentTransaction({
         financeRows: [],
@@ -2196,7 +2310,7 @@ const tests: UnitTest[] = [
       const original = createTaxMatter({
         dataStatus: '已确认',
         declarationDate: '2026-04-15',
-        declarationReceiptNo: 'CIT-Q1-001',
+        taxAuthorityDeclarationNo: 'CIT-Q1-001',
         declarationStatus: '申报成功',
         matterType: '企业所得税',
         paidAmount: 1000,
@@ -2209,7 +2323,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(original, '更正', '年度调整后形成退税');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-05-10',
-        declarationReceiptNo: 'CIT-Q1-REVISION-002',
+        taxAuthorityDeclarationNo: 'CIT-Q1-REVISION-002',
         declarationStatus: '申报成功',
         settlementAmount: 200,
         settlementDirection: '应退'
@@ -2343,7 +2457,7 @@ const tests: UnitTest[] = [
       });
       const filed = recordTaxMatterDeclarationResult(prepared, {
         declarationDate: '2026-07-10',
-        declarationReceiptNo: 'STAMP-2026Q2-001',
+        taxAuthorityDeclarationNo: 'STAMP-2026Q2-001',
         declarationStatus: '申报成功',
         settlementAmount: 10,
         settlementDirection: '应缴'
@@ -2361,7 +2475,7 @@ const tests: UnitTest[] = [
       const original = createTaxMatter({
         dataStatus: '已确认',
         declarationDate: '2026-07-10',
-        declarationReceiptNo: 'STAMP-2026Q2-001',
+        taxAuthorityDeclarationNo: 'STAMP-2026Q2-001',
         declarationStatus: '申报成功',
         filedAccountingAmount: 10,
         matterType: '印花税',
@@ -2377,7 +2491,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(original, '更正', '合同补充协议调减计税依据');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-08-08',
-        declarationReceiptNo: 'STAMP-2026Q2-REV-002',
+        taxAuthorityDeclarationNo: 'STAMP-2026Q2-REV-002',
         declarationStatus: '申报成功',
         differenceReason: '合同补充协议调减后形成退税 2 元',
         settlementAmount: 2,
@@ -2385,6 +2499,16 @@ const tests: UnitTest[] = [
       });
 
       assertEqual(Boolean(getTaxMatterDeclarationRevisionValidationError(original, '作废')), true, 'paid filing cannot be voided');
+      assertEqual(
+        getTaxMatterDeclarationRevisionValidationError(
+          { ...original, paidAmount: 0, paymentDate: undefined, paymentStatus: '待缴纳' },
+          '作废',
+          [original],
+          [{ id: `voucher-tax-${original.id}-filing-v${original.declarationVersion}`, status: '已记账' }]
+        ),
+        '本版申报差异已记账，不能直接作废；请通过更正申报形成后续调整',
+        'a booked filing adjustment should force the correction path instead of direct voiding'
+      );
       assertEqual(getTaxMatterAccountingAmount(corrected), 8, 'corrected cumulative stamp duty');
       assertEqual(getTaxMatterAccountingDelta(corrected), -2, 'correction voucher contains only the reduction');
       assertEqual(corrected.processStatus, '待退抵处理', 'correction overpayment enters refund flow');

@@ -12,6 +12,7 @@ import {
 import { financeReceivablePayableRecords, type FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import { buildSalaryReceivablePayableRecord } from './financeSalarySettlementModel';
 import { financeTaxMatterRecords, type FinanceTaxMatterRecord } from './financeTaxFilingData';
+import { financeDeclarationPreparationRecords } from './financeDeclarationPreparationData';
 import {
   buildTaxMatterPaymentTransaction,
   buildTaxMatterRefundTransaction,
@@ -28,10 +29,12 @@ import { financeFixedAssetRecords, financePrepaidExpenseRecords } from './financ
 import {
   applyAccountingPeriodCloseLock,
   applyAccountingVoucherLifecycle,
+  assignTaxFilingAdjustmentAccountingPeriod,
   buildAccountingLedgerEntries,
   buildAccountingVoucherMetrics,
   buildAccountingVoucherFromReceivablePayable,
   buildAccountingVoucherFromTaxMatter,
+  buildAccountingVouchersFromTaxMatter,
   buildAccountingVoucherFromTransaction,
   buildAccountingVouchers,
   buildAccountingVoucherFromLaterPeriodAdjustment,
@@ -120,6 +123,7 @@ function buildAccountingVouchersForTest(
     laterPeriodAdjustmentRows,
     {
       ...options,
+      declarationPreparationRows: options.declarationPreparationRows ?? financeDeclarationPreparationRecords,
       invoiceBusinessAllocationRows: options.invoiceBusinessAllocationRows ?? financeInvoiceBusinessAllocations
     }
   );
@@ -535,9 +539,18 @@ const tests: UnitTest[] = [
       const projectStageRecord = {
         ...financeReceivablePayableRecords[0]!,
         documentNo: 'AR-PROJECT-STAGE-SUMMARY',
+        files: [{
+          id: 'project-stage-acceptance',
+          name: '光谷商业空间方案阶段验收记录.pdf',
+          source: '业务服务器',
+          status: '已生成',
+          type: '验收记录',
+          updatedAt: '2026-06-18',
+          url: '/records/tasks/TASK-PROJECT-STAGE/acceptance/2026-06-18.pdf'
+        }],
         id: 'rp-project-stage-summary',
         sourceTitle: '光谷商业空间方案阶段',
-        sourceType: '项目阶段确认' as const
+        sourceType: '任务结算' as const
       };
       const vouchers = buildAccountingVouchersForTest(
         [projectStageRecord, ...financeReceivablePayableRecords],
@@ -546,7 +559,7 @@ const tests: UnitTest[] = [
       );
       const voucher = getVoucherBySourceNo(vouchers, projectStageRecord.documentNo);
 
-      assertEqual(voucher.summary, '项目阶段确认：光谷商业空间方案阶段', 'project stage summary should not append confirmation twice');
+      assertEqual(voucher.summary, '任务结算确认：光谷商业空间方案阶段', 'task settlement summary should use the source label once');
       assertEqual(voucher.summary.includes('确认确认'), false, 'project stage summary should not contain duplicated confirmation wording');
     }
   },
@@ -751,7 +764,7 @@ const tests: UnitTest[] = [
         ...getTaxMatterByNo('TAX-202606-IIT'),
         dataStatus: '已确认',
         declarationDate: '2026-07-10',
-        declarationReceiptNo: 'IIT-202606-001',
+        taxAuthorityDeclarationNo: 'IIT-202606-001',
         declarationStatus: '申报成功',
         payableAmount: 480,
         preparedPayableAmount: 480,
@@ -808,8 +821,8 @@ const tests: UnitTest[] = [
       assertEqual(vatVoucher.businessType, '税费凭证', 'completed tax matter should create tax voucher');
       assertEqual(vatVoucher.sourceType, '税费事项', 'tax voucher should retain tax matter source type');
       assertEqual(vatVoucher.accountingPeriod, '2026-03', 'Q1 tax accrual voucher should belong to the tax period end month');
-      assertEqual(vatVoucher.voucherDate, '2026-04-12', 'tax voucher should still display the declaration or confirmation date');
-      assertEqual(vatVoucher.status, '待记账', 'completed tax matter with receipts should be ready to prepare');
+      assertEqual(vatVoucher.voucherDate, '2026-03-31', 'tax accrual should use the quarter-end accounting date');
+      assertEqual(vatVoucher.status, '待记账', 'confirmed tax preparation should be ready before external filing and payment');
       assertEqual(vatVoucher.amount, 26.41, 'VAT tax matter voucher should accrue surcharge only');
       assertEqual(getLineSubjectCode(vatVoucher, '借方'), '5403', 'surcharge accrual should debit taxes and surcharges');
       assertEqual(
@@ -833,9 +846,9 @@ const tests: UnitTest[] = [
         'surcharge accrual should credit local education surcharge separately'
       );
       assertEqual(
-        vatVoucher.sourceRefs.some((sourceRef) => sourceRef.recordNo === 'FIN-202604-0009' && sourceRef.role === '资金结算依据'),
-        true,
-        'tax voucher should retain linked payment cash-flow as payment basis'
+        vatVoucher.sourceRefs.some((sourceRef) => sourceRef.role === '资金结算依据'),
+        false,
+        'tax accrual should not treat a later payment cash-flow as its accounting basis'
       );
       assertEqual(citVoucher.businessType, '税费凭证', 'enterprise income tax should create tax voucher');
       assertEqual(citVoucher.accountingPeriod, '2026-03', 'Q1 income-tax accrual voucher should belong to the tax period end month');
@@ -923,7 +936,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(original, '更正', '更正后调减增值税及附加');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-05-10',
-        declarationReceiptNo: 'VAT-Q1-REVISION-002',
+        taxAuthorityDeclarationNo: 'VAT-Q1-REVISION-002',
         declarationStatus: '申报成功',
         settlementAmount: 66.51,
         settlementDirection: '应退',
@@ -1082,12 +1095,12 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'keeps confirmed but unfinished tax matters waiting for generation',
+    name: 'allows tax accrual from confirmed preparation before external filing finishes',
     run: () => {
       const pendingTaxMatter = createTaxMatter({
         declarationDate: undefined,
-        declarationReceiptFileId: undefined,
-        declarationReceiptNo: undefined,
+        declarationResultFileId: undefined,
+        taxAuthorityDeclarationNo: undefined,
         declarationStatus: '待申报',
         files: [],
         id: 'tax-matter-pending-voucher',
@@ -1098,32 +1111,30 @@ const tests: UnitTest[] = [
       const vouchers = buildAccountingVouchersForTest([], [], [], [pendingTaxMatter]);
       const voucher = getVoucherBySourceNo(vouchers, pendingTaxMatter.matterNo);
 
-      assertEqual(voucher.status, '待生成', 'unfinished tax matter should wait for completion');
-      assertIncludes(
-        voucher.issueReasons,
-        'tax_matter_pending' satisfies AccountingVoucherIssueCode,
-        'unfinished tax matter should expose pending issue'
-      );
+      assertEqual(voucher.status, '待记账', 'confirmed preparation should create the period-end accrual before filing');
+      assertEqual(voucher.issueReasons.length, 0, 'external filing status should not create an accounting issue');
     }
   },
   {
-    name: 'marks completed tax matters missing required receipts as issue',
+    name: 'does not make declaration-result evidence a prerequisite of the period-end accrual',
     run: () => {
       const missingReceiptTaxMatter = createTaxMatter({
-        declarationReceiptFileId: undefined,
-        declarationReceiptNo: undefined,
-        files: getTaxMatterByNo('TAX-2026Q1-VAT').files.filter((file) => file.type !== '申报回执'),
+        declarationResultFileId: undefined,
+        taxAuthorityDeclarationNo: undefined,
+        declarationFormFileIds: [],
+        declarationVerificationStatus: '未核验',
+        files: getTaxMatterByNo('TAX-2026Q1-VAT').files.filter((file) => !['正式申报表', '申报结果回执'].includes(file.type)),
         id: 'tax-matter-missing-receipt-voucher',
         matterNo: 'TAX-MISSING-RECEIPT'
       });
       const vouchers = buildAccountingVouchersForTest([], [], [], [missingReceiptTaxMatter]);
       const voucher = getVoucherBySourceNo(vouchers, missingReceiptTaxMatter.matterNo);
 
-      assertEqual(voucher.status, '需处理', 'completed tax matter missing required receipt should require handling');
-      assertIncludes(
-        voucher.issueReasons,
-        'tax_receipt_missing' satisfies AccountingVoucherIssueCode,
-        'missing receipt should be exposed as tax voucher issue'
+      assertEqual(voucher.status, '待记账', 'period-end accrual should remain ready without a later filing receipt');
+      assertEqual(
+        voucher.issueReasons.includes('tax_declaration_evidence_pending' satisfies AccountingVoucherIssueCode),
+        false,
+        'missing filing receipt should stay in tax handling unless a filing adjustment is generated'
       );
     }
   },
@@ -1139,11 +1150,7 @@ const tests: UnitTest[] = [
       const voucher = getVoucherBySourceNo(vouchers, missingPaymentDateMatter.matterNo);
 
       assertEqual(voucher.status, '待记账', 'declared tax matter should be ready before the later cash payment');
-      assertEqual(
-        voucher.issueReasons.includes('tax_handling_date_missing' satisfies AccountingVoucherIssueCode),
-        false,
-        'cash payment date must not be an accrual-voucher prerequisite'
-      );
+      assertEqual(voucher.issueReasons.length, 0, 'cash payment date must not be an accrual-voucher prerequisite');
     }
   },
   {
@@ -1153,7 +1160,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(original, '更正', '补充纳税调整后更正申报');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-04-18',
-        declarationReceiptNo: 'CIT-Q1-REVISION-002',
+        taxAuthorityDeclarationNo: 'CIT-Q1-REVISION-002',
         declarationStatus: '申报成功',
         settlementAmount: 100,
         settlementDirection: '应缴'
@@ -1164,14 +1171,165 @@ const tests: UnitTest[] = [
         throw new Error('expected corrected tax declaration to create a difference voucher');
       }
 
-      assertEqual(voucher.id, `${original.id ? `voucher-tax-${original.id}` : ''}-v2`, 'corrected voucher should use an immutable versioned id');
+      assertEqual(voucher.id, `${original.id ? `voucher-tax-${original.id}` : ''}-filing-v2`, 'corrected voucher should use an immutable filing-adjustment id');
       assertEqual(voucher.amount, 100, 'corrected voucher should contain only the declaration difference');
+      assertEqual(voucher.accountingPeriod, '2026-04', 'declaration correction should enter the open filing month');
       assertEqual(getLineSubjectCode(voucher, '借方'), '5801', 'additional income tax should debit income tax expense');
       assertEqual(getLineSubjectCode(voucher, '贷方'), '2221.02', 'additional income tax should credit tax payable');
     }
   },
   {
-    name: 'does not create amount voucher for zero-declaration tax matters',
+    name: 'keeps the original tax accrual stable and creates only a filing-month difference voucher',
+    run: () => {
+      const original = getTaxMatterByNo('TAX-2026Q1-CIT');
+      const preparation = financeDeclarationPreparationRecords.find((record) => (
+        record.taxType === original.matterType &&
+        record.period === original.period &&
+        record.declarationScenario === original.declarationScenario
+      ));
+      const revision = startTaxMatterDeclarationRevision(original, '更正', '补充纳税调整后更正申报');
+      const corrected = recordTaxMatterDeclarationResult(revision, {
+        declarationDate: '2026-05-08',
+        taxAuthorityDeclarationNo: 'CIT-Q1-REVISION-OPEN-PERIOD',
+        declarationStatus: '申报成功',
+        settlementAmount: 100,
+        settlementDirection: '应缴'
+      });
+      const vouchers = buildAccountingVouchersFromTaxMatter(corrected, 0, preparation);
+      const accrual = vouchers.find((record) => record.id === `voucher-tax-${original.id}`);
+      const adjustment = vouchers.find((record) => record.id === `voucher-tax-${original.id}-filing-v2`);
+
+      if (!accrual || !adjustment) {
+        throw new Error('expected immutable accrual and filing adjustment vouchers');
+      }
+
+      assertEqual(accrual.accountingPeriod, '2026-03', 'original Q1 accrual should remain in the quarter-end month');
+      assertEqual(accrual.voucherDate, '2026-03-31', 'original Q1 accrual should keep the period-end date');
+      assertEqual(adjustment.accountingPeriod, '2026-05', 'filing difference should enter the actual open filing month');
+      assertEqual(adjustment.amount, 100, 'filing adjustment should contain only the declared difference');
+    }
+  },
+  {
+    name: 'routes a filing adjustment to the first open period without changing the declaration date',
+    run: () => {
+      const original = getTaxMatterByNo('TAX-2026Q1-CIT');
+      const revision = startTaxMatterDeclarationRevision(original, '更正', '已结账申报月补充纳税调整');
+      const corrected = recordTaxMatterDeclarationResult(revision, {
+        declarationDate: '2026-04-18',
+        taxAuthorityDeclarationNo: 'CIT-Q1-LOCKED-FILING-MONTH',
+        declarationStatus: '申报成功',
+        settlementAmount: 100,
+        settlementDirection: '应缴'
+      });
+      const assigned = assignTaxFilingAdjustmentAccountingPeriod(corrected, [
+        { accountingPeriod: '2026-04', status: '已结账' },
+        { accountingPeriod: '2026-05', status: '已结账' }
+      ]);
+      const voucher = buildAccountingVoucherFromTaxMatter(assigned, 0);
+
+      if (!voucher) {
+        throw new Error('expected a later-open-period filing adjustment voucher');
+      }
+
+      assertEqual(assigned.declarationDate, '2026-04-18', 'tax handling should retain the actual declaration date');
+      assertEqual(assigned.filingAdjustmentAccountingPeriod, '2026-06', 'closed months should roll to the first open period');
+      assertEqual(voucher.accountingPeriod, '2026-06', 'the adjustment should enter the first open period');
+      assertEqual(voucher.voucherDate, '2026-06-01', 'a rolled adjustment should use the open-period posting date');
+      assertEqual(voucher.taxFilingContext?.taxPeriod, original.period, 'voucher should retain the source tax period');
+      assertEqual(voucher.taxFilingContext?.declarationDate, '2026-04-18', 'voucher should retain the actual declaration date');
+      assertEqual(voucher.taxFilingContext?.declarationVersion, 2, 'voucher should retain the declaration version');
+      assertEqual(
+        assignTaxFilingAdjustmentAccountingPeriod(assigned, [
+          { accountingPeriod: '2026-04', status: '已结账' },
+          { accountingPeriod: '2026-05', status: '已结账' },
+          { accountingPeriod: '2026-06', status: '已结账' }
+        ]).filingAdjustmentAccountingPeriod,
+        '2026-06',
+        'an assigned version snapshot must not drift after a later period closes'
+      );
+      assertEqual(
+        startTaxMatterDeclarationRevision(assigned, '更正', '再次更正').declarationHistory.at(-1)?.filingAdjustmentAccountingPeriod,
+        '2026-06',
+        'the assigned accounting period should remain immutable in declaration history'
+      );
+    }
+  },
+  {
+    name: 'keeps every unbooked filing adjustment candidate after consecutive revisions',
+    run: () => {
+      const original = getTaxMatterByNo('TAX-2026Q1-CIT');
+      const secondVersion = recordTaxMatterDeclarationResult(
+        startTaxMatterDeclarationRevision(original, '更正', '第二版补充纳税调整'),
+        {
+          declarationDate: '2026-05-08',
+          taxAuthorityDeclarationNo: 'CIT-Q1-REVISION-002',
+          declarationStatus: '申报成功',
+          settlementAmount: 100,
+          settlementDirection: '应缴'
+        }
+      );
+      const thirdVersion = recordTaxMatterDeclarationResult(
+        startTaxMatterDeclarationRevision(secondVersion, '更正', '第三版再次补充纳税调整'),
+        {
+          declarationDate: '2026-06-09',
+          taxAuthorityDeclarationNo: 'CIT-Q1-REVISION-003',
+          declarationStatus: '申报成功',
+          settlementAmount: 50,
+          settlementDirection: '应缴'
+        }
+      );
+      const vouchers = buildAccountingVouchersFromTaxMatter(thirdVersion, 0);
+      const secondAdjustment = vouchers.find((record) => record.id === `voucher-tax-${original.id}-filing-v2`);
+      const thirdAdjustment = vouchers.find((record) => record.id === `voucher-tax-${original.id}-filing-v3`);
+
+      if (!secondAdjustment || !thirdAdjustment) {
+        throw new Error('expected both filing adjustment versions to remain available');
+      }
+
+      assertEqual(secondAdjustment.amount, 100, 'version 2 should retain its own declared difference');
+      assertEqual(secondAdjustment.accountingPeriod, '2026-05', 'version 2 should retain its filing period');
+      assertEqual(secondAdjustment.taxFilingContext?.declarationVersion, 2, 'version 2 voucher should retain its filing version');
+      assertEqual(thirdAdjustment.amount, 50, 'version 3 should contain only its incremental difference');
+      assertEqual(thirdAdjustment.accountingPeriod, '2026-06', 'version 3 should use its own filing period');
+      assertEqual(thirdAdjustment.taxFilingContext?.declarationVersion, 3, 'version 3 voucher should retain its filing version');
+    }
+  },
+  {
+    name: 'removes an unbooked filing adjustment candidate when that declaration version is voided',
+    run: () => {
+      const original = getTaxMatterByNo('TAX-2026Q1-CIT');
+      const voided = startTaxMatterDeclarationRevision(
+        { ...original, paidAmount: 0, paymentStatus: '待缴纳' },
+        '作废',
+        '电子税务局已作废本版申报'
+      );
+      const vouchers = buildAccountingVouchersFromTaxMatter(voided, 0);
+
+      assertEqual(
+        vouchers.some((record) => record.id === `voucher-tax-${original.id}-filing-v${original.declarationVersion}`),
+        false,
+        'a voided unbooked filing version must leave the accounting candidate set'
+      );
+    }
+  },
+  {
+    name: 'does not create an original-period accrual for annual CIT settlement',
+    run: () => {
+      const annualMatter = getTaxMatterByNo('TAX-2025-CIT-ANNUAL');
+      const vouchers = buildAccountingVouchersFromTaxMatter(annualMatter, 0);
+
+      assertEqual(
+        vouchers.some((record) => record.id === `voucher-tax-${annualMatter.id}`),
+        false,
+        'annual settlement should not rewrite the closed annual accounting period'
+      );
+      assertEqual(vouchers.length, 1, 'annual settlement difference should create one open-period adjustment');
+      assertEqual(vouchers[0]?.accountingPeriod, '2026-05', 'annual settlement difference should enter the filing month');
+      assertEqual(vouchers[0]?.businessType, '调整凭证', 'annual settlement should be represented as an adjustment voucher');
+    }
+  },
+  {
+    name: 'does not erase an existing period-end accrual only because the later filing is a zero declaration',
     run: () => {
       const zeroDeclarationTaxMatter = createTaxMatter({
         declarationStatus: '零申报',
@@ -1181,12 +1339,20 @@ const tests: UnitTest[] = [
         payableAmount: 0,
         paymentStatus: '无需缴纳'
       });
-      const vouchers = buildAccountingVouchersForTest([], [], [], [zeroDeclarationTaxMatter]);
+      const vouchers = buildAccountingVouchersFromTaxMatter(
+        zeroDeclarationTaxMatter,
+        0,
+        financeDeclarationPreparationRecords.find((record) => (
+          record.taxType === zeroDeclarationTaxMatter.matterType &&
+          record.period === zeroDeclarationTaxMatter.period &&
+          record.declarationScenario === zeroDeclarationTaxMatter.declarationScenario
+        ))
+      );
 
       assertEqual(
-        vouchers.some((record) => record.sourceNo === zeroDeclarationTaxMatter.matterNo),
-        false,
-        'zero-declaration tax matter should not create amount voucher'
+        vouchers.some((record) => record.id === `voucher-tax-${zeroDeclarationTaxMatter.id}`),
+        true,
+        'the accounting-period accrual should remain an independent immutable fact'
       );
     }
   },
@@ -1375,7 +1541,6 @@ const tests: UnitTest[] = [
           pendingVoucherCount: 0,
           pendingReviewCashFlowCount: 0,
           socialInsurancePendingCount: 0,
-          taxHandlingPendingCount: 0,
           trialBalanceDifference: 0,
           trialBalanceStatus: '平衡',
           unbookedVoucherCount: 0,
@@ -1409,7 +1574,6 @@ const tests: UnitTest[] = [
           pendingVoucherCount: 0,
           pendingReviewCashFlowCount: 0,
           socialInsurancePendingCount: 0,
-          taxHandlingPendingCount: 0,
           trialBalanceDifference: 10,
           trialBalanceStatus: '不平衡',
           unbookedVoucherCount: 0,
@@ -1943,7 +2107,7 @@ const tests: UnitTest[] = [
         ...seed,
         dataStatus: '已确认',
         declarationDate: '2026-07-10',
-        declarationReceiptNo: 'STAMP-ORIGINAL-001',
+        taxAuthorityDeclarationNo: 'STAMP-ORIGINAL-001',
         declarationStatus: '申报成功',
         filedAccountingAmount: 10,
         paidAmount: 10,
@@ -1957,7 +2121,7 @@ const tests: UnitTest[] = [
       const revision = startTaxMatterDeclarationRevision(original, '更正', '补充协议调减计税依据');
       const corrected = recordTaxMatterDeclarationResult(revision, {
         declarationDate: '2026-08-08',
-        declarationReceiptNo: 'STAMP-REVISION-002',
+        taxAuthorityDeclarationNo: 'STAMP-REVISION-002',
         declarationStatus: '申报成功',
         differenceReason: '补充协议调减后应退 2 元',
         settlementAmount: 2,

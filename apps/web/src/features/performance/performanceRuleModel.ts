@@ -1,7 +1,6 @@
 import type { UploadFile } from 'antd/es/upload/interface';
 import { positionOptions as allPositionOptions } from '../people/rolePermissionModel';
 import type { TaskConfigRow } from '../system/TaskConfigState';
-import { performanceSignatureBatches } from './performanceMockData';
 import type {
   PerformanceFormulaItem,
   PerformanceRuleCategory,
@@ -10,8 +9,6 @@ import type {
   PerformanceRuleStatus,
   PerformanceRuleType,
   PerformanceRuleVersionEvent,
-  PerformanceSignatureBatch,
-  PerformanceSignatureEmployee,
   PerformanceTaskScoreItem
 } from './performanceTypes';
 
@@ -36,16 +33,6 @@ export type RuleOperationRecord = {
   time: string;
 };
 export type AmountFormulaRow = Pick<PerformanceFormulaItem, 'id' | 'item' | 'method'>;
-export type RuleSignatureEmployeeStatus = '已签' | '不适用';
-export type RuleSignatureEmployeeRow = PerformanceSignatureEmployee & {
-  ruleSignatureStatus: RuleSignatureEmployeeStatus;
-  signatureBatchName: string;
-};
-export type RuleSignatureSummary = {
-  batch?: PerformanceSignatureBatch;
-  confirmedCount: number;
-  rows: RuleSignatureEmployeeRow[];
-};
 export type CreateRuleForm = {
   category: PerformanceRuleCategory;
   files: UploadFile[];
@@ -152,11 +139,6 @@ export const ruleTypeTone = {
   提成制: 'amber'
 } as const;
 
-export const ruleSignatureEmployeeStatusTone = {
-  已签: 'green',
-  不适用: 'gray'
-} as const;
-
 export function formatRatio(ratio: number) {
   return `${Math.round(ratio * 100)}%`;
 }
@@ -167,6 +149,16 @@ export function formatScore(score?: number) {
 
 export function formatMoney(amount?: number) {
   return typeof amount === 'number' ? `${amount.toLocaleString('zh-CN')} 元` : '-';
+}
+
+export function formatPerformancePayoutMode(
+  rule: Pick<PerformanceRulePreset, 'monthlyPrepayRatio' | 'reviewCycle'>
+) {
+  const prepayText = `月度预发${formatRatio(rule.monthlyPrepayRatio)}`;
+
+  return rule.reviewCycle === '季度复核'
+    ? `${prepayText}，季度复核后发放差额`
+    : `${prepayText}，${rule.reviewCycle}`;
 }
 
 export function getTaskConfigName(taskConfigId: string, taskConfigRows: TaskConfigRow[]) {
@@ -258,7 +250,15 @@ export function getRuleReviewBlockers(rule: PerformanceRulePreset) {
 
   if (
     rule.qualityDimensions.length === 0 ||
-    rule.qualityDimensions.some((item) => !hasText(item.name) || !hasPositiveNumber(item.score) || !hasText(item.focus) || !hasText(item.evidence))
+    rule.qualityDimensions.some(
+      (item) =>
+        !hasText(item.name) ||
+        !hasPositiveNumber(item.score) ||
+        !hasPositiveNumber(item.weight) ||
+        !hasText(item.focus) ||
+        !hasText(item.evidence)
+    ) ||
+    Math.abs(rule.qualityDimensions.reduce((total, item) => total + item.weight, 0) - 1) > 0.000001
   ) {
     blockers.push('质量评分');
   }
@@ -275,9 +275,14 @@ export function getRuleReviewBlockers(rule: PerformanceRulePreset) {
   if (
     !hasPositiveNumber(rule.baseLineScore) ||
     !hasPositiveNumber(rule.basePerformanceAmount) ||
+    !Number.isFinite(rule.belowBaselineFactor) ||
+    rule.belowBaselineFactor < 0 ||
+    rule.belowBaselineFactor > 1 ||
+    !Number.isFinite(rule.monthlyPrepayRatio) ||
+    rule.monthlyPrepayRatio < 0 ||
+    rule.monthlyPrepayRatio > 1 ||
     !hasText(rule.scoringCycle) ||
     !hasText(rule.reviewCycle) ||
-    !hasText(rule.payoutMode) ||
     rule.ruleParameterFields.some((item) => item.required && !hasText(item.example))
   ) {
     blockers.push('金额参数');
@@ -304,47 +309,6 @@ export function getRuleReviewBlockerText(rule: PerformanceRulePreset) {
   const blockers = getRuleReviewBlockers(rule);
 
   return blockers.length > 0 ? `待补全：${blockers.join('、')}` : '已满足提交审核条件';
-}
-
-export function getRuleSignatureBatch(rule: PerformanceRulePreset) {
-  return (
-    performanceSignatureBatches.find((batch) => batch.ruleId === rule.id) ??
-    performanceSignatureBatches.find((batch) => batch.ruleName === rule.name && batch.ruleVersion === rule.currentVersion)
-  );
-}
-
-export function getRuleSignatureStatus(employee: PerformanceSignatureEmployee): RuleSignatureEmployeeStatus {
-  if (employee.confirmStatus === '已确认') {
-    return '已签';
-  }
-
-  return '不适用';
-}
-
-export function getRuleSignatureSummary(rule: PerformanceRulePreset): RuleSignatureSummary {
-  const batch = getRuleSignatureBatch(rule);
-  const batchRows =
-    batch?.employees.map((employee) => ({
-      ...employee,
-      ruleSignatureStatus: getRuleSignatureStatus(employee),
-      signatureBatchName: batch.name
-    })) ?? [];
-  const rows = batchRows.filter((employee) => employee.ruleSignatureStatus === '已签');
-  const confirmedCount = batch?.confirmedCount ?? rows.length;
-
-  return {
-    batch,
-    confirmedCount,
-    rows
-  };
-}
-
-export function getRuleSignatureCountText(rule: PerformanceRulePreset, summary: RuleSignatureSummary) {
-  if (!summary.batch) {
-    return rule.status === '已发布' ? '未发起' : '发布后签署';
-  }
-
-  return `已签 ${summary.confirmedCount} 人`;
 }
 
 export function getRuleVersionNumber(rule: PerformanceRulePreset) {
@@ -415,9 +379,10 @@ export function createDraftRuleFromCategory({
     fullScore: templateRule?.fullScore ?? 100,
     baseLineScore: templateRule?.baseLineScore,
     basePerformanceAmount: templateRule?.basePerformanceAmount,
+    belowBaselineFactor: templateRule?.belowBaselineFactor ?? 0.5,
+    monthlyPrepayRatio: templateRule?.monthlyPrepayRatio ?? 0.5,
     scoringCycle: templateRule?.scoringCycle ?? '待确认',
     reviewCycle: templateRule?.reviewCycle ?? '待确认',
-    payoutMode: templateRule?.payoutMode ?? '待确认',
     taskScoreSummary: isTaskRule ? '任务制任务项可增删；每个任务维护绩效分值' : '提成制暂未开放',
     qualityScoreSummary: isTaskRule ? '任务制固定质量维度，不在方案中自定义' : '提成制暂未开放',
     calculationSummary: templateRule?.calculationSummary ?? '待配置金额计算方式',
@@ -634,8 +599,19 @@ export function publishPerformanceRule(rule: PerformanceRulePreset) {
     lockReason: '规则已发布，后续调整需新建并审核发布新版本',
     lastUpdatedAt: '2026-06-13',
     lastUpdatedBy: '李明',
-    versionEvents: appendRuleEvent(rule, '审核通过并发布', `${rule.name} 审核通过并发布`, '发布后可进入绩效签署，未签新版员工继续执行旧版')
+    versionEvents: appendRuleEvent(rule, '审核通过并发布', `${rule.name} 审核通过并发布`, '发布后按人员类型、岗位和生效期间自动适用')
   } satisfies PerformanceRulePreset;
+}
+
+function getPreviousDateText(dateText: string) {
+  const date = new Date(`${dateText}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  date.setDate(date.getDate() - 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 export function applyPublishedRule(ruleRows: PerformanceRulePreset[], publishedRule: PerformanceRulePreset): PerformanceRulePreset[] {
@@ -644,10 +620,22 @@ export function applyPublishedRule(ruleRows: PerformanceRulePreset[], publishedR
       return publishedRule;
     }
 
-    if (currentRule.category === publishedRule.category && currentRule.status === '已发布') {
+    if (
+      currentRule.category === publishedRule.category &&
+      currentRule.personnelType === publishedRule.personnelType &&
+      currentRule.status === '已发布'
+    ) {
+      const previousEndAt = publishedRule.effectiveStartAt
+        ? getPreviousDateText(publishedRule.effectiveStartAt)
+        : currentRule.effectiveEndAt;
+
       return {
         ...currentRule,
-        categoryVersionState: '员工执行旧版'
+        categoryVersionState: '历史发布版本',
+        effectiveEndAt: previousEndAt,
+        lockReason: previousEndAt
+          ? `历史发布版本，适用至${previousEndAt}`
+          : '历史发布版本，后续期间按当前发布版本自动适用'
       } satisfies PerformanceRulePreset;
     }
 

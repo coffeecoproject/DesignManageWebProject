@@ -140,7 +140,7 @@ const pageMeta: Record<string, { module: string; title: string }> = {
   },
   '/performance/signatures': {
     module: '绩效管理',
-    title: '绩效签署'
+    title: '签署档案'
   },
   '/performance/monthly': {
     module: '绩效管理',
@@ -676,7 +676,7 @@ export function AppShell() {
           {
             key: 'performance-signatures',
             icon: <UserSwitchOutlined />,
-            label: '绩效签署'
+            label: '签署档案'
           },
           {
             key: 'performance-monthly',

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { BrandRecord, CustomerRecord, StoreRecord } from '../customers/customerData';
 import type { PeopleAttendanceRecord } from '../people/PeopleOrganizationState';
 import type { PeopleMember } from '../people/peopleTypes';
-import type { PerformanceRulePreset } from '../performance/performanceTypes';
+import type { PerformanceMonthlyCategoryRecord, PerformanceRulePreset } from '../performance/performanceTypes';
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import {
@@ -38,6 +38,7 @@ type UseTaskCreateFormStateInput = {
   getCustomerById: (customerId: string) => CustomerRecord | undefined;
   peopleRows: PeopleMember[];
   performanceRuleRows: PerformanceRulePreset[];
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeRows: StoreRecord[];
   storeTaskRows: StoreTaskRecord[];
   taskConfigRows: TaskConfigRow[];
@@ -108,6 +109,7 @@ export function useTaskCreateFormState({
   getCustomerById,
   peopleRows,
   performanceRuleRows,
+  publishedPerformanceRecords,
   storeRows,
   storeTaskRows,
   taskConfigRows,
@@ -145,12 +147,13 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId: form.taskConfigId,
         window: assignmentWindow,
         workCalendarRows
       }),
-    [annualExceptionRows, assignmentWindow, attendanceRecords, form.taskConfigId, peopleRows, storeTaskRows, workCalendarRows]
+    [annualExceptionRows, assignmentWindow, attendanceRecords, form.taskConfigId, peopleRows, publishedPerformanceRecords, storeTaskRows, workCalendarRows]
   );
   const acceptorCandidates = useMemo(
     () =>
@@ -159,11 +162,12 @@ export function useTaskCreateFormState({
         attendanceRecords,
         executorId: form.executorId,
         peopleRows,
+        publishedPerformanceRecords,
         storeTaskRows,
         window: assignmentWindow,
         workCalendarRows
       }),
-    [annualExceptionRows, assignmentWindow, attendanceRecords, form.executorId, peopleRows, storeTaskRows, workCalendarRows]
+    [annualExceptionRows, assignmentWindow, attendanceRecords, form.executorId, peopleRows, publishedPerformanceRecords, storeTaskRows, workCalendarRows]
   );
   const selectedExecutorCandidate = executorCandidates.find((candidate) => candidate.member.id === form.executorId);
   const selectedAcceptorCandidate = acceptorCandidates.find((candidate) => candidate.member.id === form.acceptorId);
@@ -190,6 +194,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId,
         window: buildTaskAssignmentWindow(plannedDurationHours, workCalendarRows, annualExceptionRows),
@@ -242,6 +247,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId,
         window: buildTaskAssignmentWindow(currentForm.plannedDurationHours, workCalendarRows, annualExceptionRows),
@@ -275,6 +281,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId: currentForm.taskConfigId,
         window: nextWindow,
@@ -287,6 +294,7 @@ export function useTaskCreateFormState({
         attendanceRecords,
         executorId,
         peopleRows,
+        publishedPerformanceRecords,
         storeTaskRows,
         window: nextWindow,
         workCalendarRows

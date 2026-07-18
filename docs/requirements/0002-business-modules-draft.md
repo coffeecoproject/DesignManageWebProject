@@ -22,9 +22,9 @@ The target product is not limited to one customer or one brand. It must support 
 | Topic | Confirmed direction | Notes |
 | --- | --- | --- |
 | Customer and brand relationship | One customer can have many brands/projects | Customer -> brand/project is one-to-many. |
-| Order granularity | The execution unit is tasks under a store order | Store order is the business container; task is the operational unit. |
-| Customer dependency | Task types and whether a task exists depend on customer/contract | Do not hard-code a single task set globally. |
-| Store order contract binding | Each store order must bind to a contract/pricing version | Required for revenue and SLA traceability. |
+| Task granularity | The execution and customer-settlement unit is the store task | The existing store and task records provide the business container and execution unit; no separate store-order module is required in the current frontend. |
+| Brand dependency | Available task types and customer prices depend on the brand | Do not hard-code one task set or one customer price globally. |
+| Pricing contract binding | Each billable brand-task price must reference an effective contract for the same customer | Task creation resolves the current brand price and freezes its price/contract version automatically; task users do not select or view the contract. |
 | Store/service package types | No separate standard-store/light-renovation/special-store package layer for now | Pricing is by task, not by service package. |
 | Task staffing | A task usually has one direct owner; complex collaboration is handled by splitting tasks | Support main owner, collaborators, and reviewer roles where needed. |
 | Reviewer work | Reviewer workload/performance exists | Reviewer statistics and settlement rules must be modeled. |
@@ -40,13 +40,12 @@ The target product is not limited to one customer or one brand. It must support 
 
 ```text
 Customer
-  -> Brand / Project
-  -> Contract and pricing version
-  -> Customer task rules / SLA / acceptance rules
-  -> Store order
-  -> Store tasks
+  -> Contract
+  -> Brand task configuration and price version
+  -> Store tasks with frozen customer-billing snapshots
   -> Assignment / submission / review / rework / acceptance
-  -> Accepted task revenue
+  -> Accepted task customer-settlement fact
+  -> Receivable / invoice association / collection / accounting
   -> Personnel performance or service-fee settlement
   -> Operating finance
   -> Management reporting
@@ -63,8 +62,7 @@ Submodules:
 - Customer profiles
 - Brand/project profiles
 - Contract management
-- Contract version management
-- Task pricing versions
+- Brand task pricing versions
 - Customer task rules
 - SLA rules
 - Acceptance rules
@@ -73,30 +71,30 @@ Submodules:
 Key requirements:
 
 - A customer can own multiple brands/projects.
-- A contract or pricing version must be selectable when creating a store order.
-- Task rules are customer/contract scoped.
+- Brand task prices must reference an effective signed contract for the same customer.
+- Task creation automatically freezes the current brand task price and contract snapshot; no task-side price or contract selector is exposed.
 - Rule changes must be versioned and effective-date controlled.
 
-### 5.2 Store Order Center
+### 5.2 Store And Task Revenue Traceability
 
-Purpose: manage store-level business containers and revenue traceability.
+Purpose: use the existing store and task records for customer-revenue traceability without adding a separate store-order frontend module.
 
 Submodules:
 
-- Store order list
 - Store profile and site information
 - Customer system ID mapping
-- Contract/pricing version binding
-- Store order status
-- Store acceptance summary
+- Task customer-billing snapshot
+- Accepted-task settlement facts
+- Brand/contract/task source trace
 - Store revenue summary
 - Cross-month acceptance tracking
 
 Key requirements:
 
-- Store order is not the smallest execution unit.
-- Store orders contain task records generated from customer task rules or manually added under allowed rules.
-- Store-level revenue is derived from task-level accepted revenue.
+- Task is the customer-settlement fact unit; a store can aggregate multiple task facts.
+- Billable tasks require an effective brand price and same-customer contract before creation.
+- Internal acceptance creates the customer-settlement fact without adding customer confirmation or a manual settlement workbench.
+- Store-level revenue is derived from accepted task facts, either per task or by frozen monthly settlement batch.
 
 ### 5.3 Task Delivery Center
 
@@ -117,10 +115,11 @@ Submodules:
 
 Key requirements:
 
-- Task types depend on customer/contract rules.
+- Task types depend on the brand task configuration.
 - A task is normally owned by one executor; if multiple people participate, split the work into separate tasks where possible.
 - Reviewers must be tracked because reviewer workload and settlement can exist.
 - Task acceptance is the operating revenue recognition trigger.
+- Customer prices, pricing contracts, and receivable identifiers remain hidden from task execution and employee views.
 
 ### 5.4 Rule Engine Center
 
@@ -208,9 +207,9 @@ Key requirements:
 - Cross-month task acceptance must be attributed to the acceptance month unless a future rule says otherwise.
 - Manual adjustments require reason, operator, timestamp, and evidence.
 
-### 5.8 Operating Finance Center
+### 5.8 Finance And Accounting Center
 
-Purpose: support operating-management finance, not full statutory accounting in the first confirmed scope.
+Purpose: connect operating finance to a frontend accounting workflow covering source confirmations, cash settlement, accounting vouchers, general ledger, period close, financial statements, and tax preparation. This frontend workflow is not itself a statutory ledger or audit archive until authoritative backend persistence, authorization, period locks, and evidence storage exist.
 
 Submodules:
 
@@ -224,13 +223,20 @@ Submodules:
 - Operating cost allocation
 - Store/task profit view
 - Receivable/payable reminders
+- Accounting-subject master data
+- Accounting vouchers and corrections
+- General ledger and subject balances
+- Period close and later-period adjustments
+- Financial statements and report notes
 
 Key requirements:
 
-- The current scope is operating-management finance, not full accounting statements.
+- Operating facts and accounting facts remain linked through immutable source references rather than page-local copied amounts.
 - Revenue is recognized by accepted task.
 - Cash collection and revenue recognition can occur in different months.
 - Finance must connect accepted task revenue, personnel settlement, customer penalties, and operating costs.
+- Posted vouchers feed the general ledger; period close reads summarized blockers and freezes a frontend-session close snapshot.
+- Financial statements read booked general-ledger balances. They remain frontend evidence until backend accounting and archive controls are implemented.
 
 ### 5.9 Reporting And Governance Center
 
@@ -261,7 +267,7 @@ Key requirements:
 | Role | Primary needs |
 | --- | --- |
 | Owner / executive | See operating status, revenue, cost, profit, cash, penalties, customer/brand performance, and personnel efficiency. |
-| Project manager / delivery manager | Manage store orders, task assignment, progress, deadlines, review, rework, and acceptance. |
+| Project manager / delivery manager | Manage stores, task assignment, progress, deadlines, review, rework, and acceptance. |
 | Reviewer / design lead | Review submissions, score quality, record rework, and track reviewer workload. |
 | Finance / settlement operator | Manage receivables, invoices, collections, costs, personnel payables, and settlement close. |
 | HR / admin | Manage personnel profile, status, role, and settlement identity. |
@@ -275,13 +281,12 @@ This is not a final route contract. It is a business grouping draft for later ro
 | Route group | Main module |
 | --- | --- |
 | `/customers/*` | Customer Contract Center |
-| `/stores/*` | Store Order Center |
 | `/tasks/*` | Task Delivery Center |
 | `/rules/*` | Rule Engine Center |
 | `/people/*` | Personnel And Organization Center |
 | `/quality/*` | Quality And Exception Center |
 | `/settlements/*` | Performance And Settlement Center |
-| `/finance/*` | Operating Finance Center |
+| `/finance/*` | Finance And Accounting Center |
 | `/reports/*` | Reporting And Governance Center |
 | `/settings/*` | Cross-module system settings and permissions |
 
@@ -308,4 +313,3 @@ This draft does not claim:
 - legal or labor-compliance correctness
 - finance/accounting compliance correctness
 - production readiness
-

@@ -151,7 +151,7 @@ export const accountingSubjectSeedRows: AccountingSubjectRecord[] = [
     cashFlowItem: '销售商品、提供劳务收到的现金',
     code: '1122',
     name: '应收账款',
-    note: '承接合同、项目阶段确认形成的客户应收。',
+    note: '承接合同和任务结算形成的客户应收。',
     reportItem: '应收账款',
     sourceLinks: ['应收应付', '合同管理'],
     statementTarget: '资产负债表',

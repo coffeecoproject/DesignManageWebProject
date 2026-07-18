@@ -48,6 +48,8 @@ export type SalaryOverviewSummary = {
   employeeCount: number;
   grossSalary: number;
   netSalary: number;
+  paidNetSalary: number;
+  pendingPaymentNetSalary: number;
   recordCount: number;
   settledCount: number;
 };
@@ -128,7 +130,7 @@ const salaryOverviewBoardDefinitions: SalaryOverviewBoardDefinition[] = [
   },
   {
     id: 'net-salary',
-    label: '实发工资',
+    label: '实发测算',
     type: '实发',
     getAmount: (report) => report.netSalary
   }
@@ -303,14 +305,32 @@ function buildSalaryOverviewEmployeeRows(reports: SalaryMonthlyReport[]): Salary
 }
 
 export function buildSalaryOverview(reports: SalaryMonthlyReport[]): SalaryOverviewResult {
-  const employeeCount = new Set(reports.map((report) => report.member.id)).size;
-  const grossSalary = roundSalaryOverviewAmount(reports.reduce((total, report) => total + report.grossSalary, 0));
-  const deductionAmount = roundSalaryOverviewAmount(reports.reduce((total, report) => total + report.deductionAmount, 0));
-  const netSalary = roundSalaryOverviewAmount(reports.reduce((total, report) => total + report.netSalary, 0));
+  const overviewReports = reports.filter(
+    (report) =>
+      report.status === '已确认' ||
+      report.status === '已发放' ||
+      Math.abs(report.grossSalary) > 0.005 ||
+      Math.abs(report.deductionAmount) > 0.005 ||
+      Math.abs(report.netSalary) > 0.005
+  );
+  const employeeCount = new Set(overviewReports.map((report) => report.member.id)).size;
+  const grossSalary = roundSalaryOverviewAmount(overviewReports.reduce((total, report) => total + report.grossSalary, 0));
+  const deductionAmount = roundSalaryOverviewAmount(overviewReports.reduce((total, report) => total + report.deductionAmount, 0));
+  const netSalary = roundSalaryOverviewAmount(overviewReports.reduce((total, report) => total + report.netSalary, 0));
+  const paidNetSalary = roundSalaryOverviewAmount(
+    overviewReports
+      .filter((report) => report.status === '已发放')
+      .reduce((total, report) => total + report.netSalary, 0)
+  );
+  const pendingPaymentNetSalary = roundSalaryOverviewAmount(
+    overviewReports
+      .filter((report) => report.status === '已确认')
+      .reduce((total, report) => total + report.netSalary, 0)
+  );
 
   return {
-    boardRows: buildSalaryOverviewBoardRows(reports),
-    employeeRows: buildSalaryOverviewEmployeeRows(reports),
+    boardRows: buildSalaryOverviewBoardRows(overviewReports),
+    employeeRows: buildSalaryOverviewEmployeeRows(overviewReports),
     summary: {
       averageDeductionAmount: averageAmount(deductionAmount, employeeCount),
       averageGrossSalary: averageAmount(grossSalary, employeeCount),
@@ -319,8 +339,10 @@ export function buildSalaryOverview(reports: SalaryMonthlyReport[]): SalaryOverv
       employeeCount,
       grossSalary,
       netSalary,
-      recordCount: reports.length,
-      settledCount: reports.filter((report) => report.status === '已发放').length
+      paidNetSalary,
+      pendingPaymentNetSalary,
+      recordCount: overviewReports.length,
+      settledCount: overviewReports.filter((report) => report.status === '已发放').length
     }
   };
 }

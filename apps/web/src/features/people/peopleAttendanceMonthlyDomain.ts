@@ -116,6 +116,33 @@ function formatDateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function addMinuteToTimestamp(timestamp: string) {
+  const date = new Date(`${timestamp.replace(' ', 'T')}:00Z`);
+  date.setUTCMinutes(date.getUTCMinutes() + 1);
+
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hour = String(date.getUTCHours()).padStart(2, '0');
+  const minute = String(date.getUTCMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+export function getAttendanceMonthlyConfirmationTimestamp(
+  baseTimestamp: string,
+  adjustments: Pick<AttendanceMonthlyAdjustmentRecord, 'createdAt'>[]
+) {
+  const latestAdjustmentTimestamp = adjustments.reduce(
+    (latestTimestamp, adjustment) => adjustment.createdAt > latestTimestamp ? adjustment.createdAt : latestTimestamp,
+    baseTimestamp
+  );
+
+  return latestAdjustmentTimestamp === baseTimestamp
+    ? baseTimestamp
+    : addMinuteToTimestamp(latestAdjustmentTimestamp);
+}
+
 export function getAttendanceMonthRange(month: string) {
   const [yearText, monthText] = month.split('-');
   const year = Number(yearText);

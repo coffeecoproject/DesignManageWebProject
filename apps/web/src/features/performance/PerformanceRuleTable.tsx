@@ -8,8 +8,6 @@ import {
   formatEffectiveDate,
   formatRulePositionPreview,
   getRulePositions,
-  getRuleSignatureCountText,
-  getRuleSignatureSummary,
   ruleStatusTone,
   ruleTypeTone
 } from './performanceRuleModel';
@@ -58,17 +56,6 @@ export function PerformanceRuleTable({ records, onCreateRule, onRowClick }: Perf
         key: 'version',
         width: 92,
         render: (_, record) => <CellText>{record.currentVersion}</CellText>
-      },
-      {
-        title: '签署人数',
-        key: 'signature',
-        width: 148,
-        render: (_, record) => {
-          const summary = getRuleSignatureSummary(record);
-          const countText = getRuleSignatureCountText(record, summary);
-
-          return <CompactCell primary={countText} />;
-        }
       },
       {
         title: '依据文件',

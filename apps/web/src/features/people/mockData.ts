@@ -57,17 +57,6 @@ export const peopleMembers: PeopleMember[] = [
         acceptedAt: '2026-05-28',
       }
     ],
-    workEvaluationSummary: {
-      month: '2026-06',
-      acceptedTasks: 3,
-      reworkTasks: 1,
-      score: 86,
-      level: 'B+'
-    },
-    workEvaluationRecords: [
-      { month: '2026-06', acceptedTasks: 3, reworkTasks: 1, score: 86, level: 'B+' },
-      { month: '2026-05', acceptedTasks: 4, reworkTasks: 0, score: 91, level: 'A-' }
-    ],
     archiveFiles: [
       { id: 'FILE-20260001-001', name: '身份证人像面照片', category: '身份资料', status: '已上传', updatedAt: '2026-04-01' },
       { id: 'FILE-20260001-002', name: '身份证国徽面照片', category: '身份资料', status: '已上传', updatedAt: '2026-04-01' },
@@ -150,17 +139,6 @@ export const peopleMembers: PeopleMember[] = [
         acceptedAt: '2026-06-06',
       }
     ],
-    workEvaluationSummary: {
-      month: '2026-06',
-      acceptedTasks: 6,
-      reworkTasks: 0,
-      score: 58,
-      level: 'D'
-    },
-    workEvaluationRecords: [
-      { month: '2026-06', acceptedTasks: 6, reworkTasks: 0, score: 58, level: 'D' },
-      { month: '2026-05', acceptedTasks: 5, reworkTasks: 1, score: 89, level: 'B+' }
-    ],
     archiveFiles: [
       { id: 'FILE-20250018-001', name: '身份证人像面照片', category: '身份资料', status: '已上传', updatedAt: '2025-11-15' },
       { id: 'FILE-20250018-002', name: '身份证国徽面照片', category: '身份资料', status: '已上传', updatedAt: '2025-11-15' },
@@ -184,7 +162,7 @@ export const peopleMembers: PeopleMember[] = [
       note: '正式合同薪资约定'
     },
     auditRecords: [
-      { time: '2026-06-08 17:30', actor: '周倩', action: '查看工作评价', result: '成功', note: '查看工作评价摘要' },
+      { time: '2026-06-08 17:30', actor: '周倩', action: '查看人员档案', result: '成功', note: '查看基础档案' },
       { time: '2026-05-28 09:16', actor: '周倩', action: '更新联系方式', result: '成功', note: '替换备用联系方式' }
     ]
   },
@@ -240,17 +218,6 @@ export const peopleMembers: PeopleMember[] = [
         month: '2026-04',
         status: '返工中',
       }
-    ],
-    workEvaluationSummary: {
-      month: '2026-04',
-      acceptedTasks: 4,
-      reworkTasks: 2,
-      score: 72,
-      level: 'C'
-    },
-    workEvaluationRecords: [
-      { month: '2026-04', acceptedTasks: 4, reworkTasks: 2, score: 72, level: 'C' },
-      { month: '2026-03', acceptedTasks: 5, reworkTasks: 1, score: 84, level: 'B' }
     ],
     archiveFiles: [
       { id: 'FILE-20240009-001', name: '身份证人像面照片', category: '身份资料', status: '已归档', updatedAt: '2024-08-01' },
@@ -335,17 +302,6 @@ export const peopleMembers: PeopleMember[] = [
         status: '待验收',
       }
     ],
-    workEvaluationSummary: {
-      month: '2026-06',
-      acceptedTasks: 2,
-      reworkTasks: 0,
-      score: 90,
-      level: 'A-'
-    },
-    workEvaluationRecords: [
-      { month: '2026-06', acceptedTasks: 2, reworkTasks: 0, score: 90, level: 'A-' },
-      { month: '2026-05', acceptedTasks: 3, reworkTasks: 1, score: 86, level: 'B+' }
-    ],
     archiveFiles: [
       { id: 'FILE-20260006-001', name: '身份证人像面照片', category: '身份资料', status: '已上传', updatedAt: '2026-03-10' },
       { id: 'FILE-20260006-002', name: '身份证国徽面照片', category: '身份资料', status: '已上传', updatedAt: '2026-03-10' },
@@ -425,17 +381,6 @@ export const peopleMembers: PeopleMember[] = [
         status: '已验收',
         acceptedAt: '2026-05-21',
       }
-    ],
-    workEvaluationSummary: {
-      month: '2026-05',
-      acceptedTasks: 2,
-      reworkTasks: 0,
-      score: 88,
-      level: 'B+'
-    },
-    workEvaluationRecords: [
-      { month: '2026-05', acceptedTasks: 2, reworkTasks: 0, score: 88, level: 'B+' },
-      { month: '2026-04', acceptedTasks: 3, reworkTasks: 0, score: 90, level: 'A-' }
     ],
     archiveFiles: [
       { id: 'FILE-20250011-001', name: '身份证人像面照片', category: '身份资料', status: '已归档', updatedAt: '2025-09-01' },

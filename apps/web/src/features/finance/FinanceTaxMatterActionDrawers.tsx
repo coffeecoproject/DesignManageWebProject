@@ -13,7 +13,7 @@ import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { DrawerShell } from '../../components/DrawerShell';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { FinanceVoucherUploadPanel, type FinanceVoucherUploadFile } from './FinanceVoucherUploadPanel';
-import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
+import type { FinanceTaxDeclarationVerificationStatus, FinanceTaxMatterRecord } from './financeTaxFilingData';
 import {
   buildTaxMatterNo,
   buildTaxMatterReceiptFile,
@@ -37,7 +37,7 @@ import {
   getTaxMatterRequiredReceiptTypes,
   getTaxMatterSettlementDirection,
   getVatDeclarationVersionSettlement,
-  type TaxMatterDeclarationReceiptInput,
+  type TaxMatterDeclarationEvidenceInput,
   type TaxMatterDeclarationResultInput,
   type TaxMatterPaymentResultInput,
   type TaxMatterOffsetResultInput,
@@ -78,7 +78,7 @@ export function TaxMatterReceiptDrawer({
   const moduleScope = isSocialInsuranceMatter ? 'social' : 'tax';
   const requiredReceiptTypes = getTaxMatterRequiredReceiptTypes(formValue);
   const missingReceiptTypes = getMissingTaxMatterReceiptTypes(formFiles, requiredReceiptTypes);
-  const processStatus = missingReceiptTypes.length === 0 ? '已完成' : '待补回执';
+  const processStatus = missingReceiptTypes.length === 0 ? '已完成' : '申报材料待核对';
   const formError = missingReceiptTypes.length > 0
     ? `请上传${missingReceiptTypes.join('、')}`
     : getTaxMatterFormError(formValue);
@@ -99,7 +99,7 @@ export function TaxMatterReceiptDrawer({
       open
       primaryAction={{
         disabled: Boolean(formError),
-        label: isSocialInsuranceMatter ? '保存凭证' : '保存回执',
+        label: isSocialInsuranceMatter ? '保存凭证' : '保存申报材料',
         testId: 'finance-tax-process-save',
         onClick: () => !formError && onSave(buildTaxMatterRecord(formValue, allRecords, record, formFiles))
       }}
@@ -108,7 +108,7 @@ export function TaxMatterReceiptDrawer({
           status={getTaxMatterProcessStatusLabel(processStatus, moduleScope)}
           statusTone={taxMatterProcessStatusTone[processStatus]}
           subtitle={matterNo}
-          title={isSocialInsuranceMatter ? '上传凭证' : '上传回执'}
+          title={isSocialInsuranceMatter ? '上传凭证' : '维护申报材料'}
         />
       }
       width={820}
@@ -171,9 +171,13 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
   const [declarationStatus, setDeclarationStatus] = useState<TaxMatterDeclarationResultInput['declarationStatus']>('申报成功');
   const [settlementAmount, setSettlementAmount] = useState(0);
   const [settlementDirection, setSettlementDirection] = useState<TaxMatterDeclarationResultInput['settlementDirection']>('应缴');
-  const [receiptNo, setReceiptNo] = useState('');
+  const [taxAuthorityDeclarationNo, setTaxAuthorityDeclarationNo] = useState('');
+  const [taxAuthorityAssessmentVoucherNo, setTaxAuthorityAssessmentVoucherNo] = useState('');
   const [differenceReason, setDifferenceReason] = useState('');
-  const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
+  const [declarationFormFiles, setDeclarationFormFiles] = useState<RelatedFileRecord[]>([]);
+  const [declarationResultFile, setDeclarationResultFile] = useState<RelatedFileRecord>();
+  const [declarationVerificationStatus, setDeclarationVerificationStatus] = useState<FinanceTaxDeclarationVerificationStatus>('未核验');
+  const [declarationVerificationNote, setDeclarationVerificationNote] = useState('');
   const [vatBreakdown, setVatBreakdown] = useState({
     declaredVatAmount: 0,
     educationSurchargeAmount: 0,
@@ -201,11 +205,15 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
           ? record.preparedPayableAmount
           : 0
       : currentDirection === '应退' ? record.refundableAmount ?? 0 : record.payableAmount);
-    setReceiptNo(record.declarationReceiptNo ?? '');
+    setTaxAuthorityDeclarationNo(record.taxAuthorityDeclarationNo ?? '');
+    setTaxAuthorityAssessmentVoucherNo(record.taxAuthorityAssessmentVoucherNo ?? '');
     setDifferenceReason(record.declarationDifferenceReason ?? '');
-    setReceiptFile(record.declarationReceiptFileId
-      ? record.files.find((file) => file.id === record.declarationReceiptFileId)
+    setDeclarationFormFiles(record.files.filter((file) => record.declarationFormFileIds.includes(file.id)));
+    setDeclarationResultFile(record.declarationResultFileId
+      ? record.files.find((file) => file.id === record.declarationResultFileId)
       : undefined);
+    setDeclarationVerificationStatus(record.declarationVerificationStatus);
+    setDeclarationVerificationNote(record.declarationVerificationNote ?? '');
     const settlement = record.vatSettlement;
     setVatBreakdown(settlement?.officialBreakdown ?? {
       declaredVatAmount: settlement?.declaredVatAmount ?? 0,
@@ -256,17 +264,24 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
       || Math.abs(normalizedAmount - preparedAmount) > 0.01
   );
   const declarationResultError = getTaxMatterDeclarationResultValidationError(record, {
+    declarationFormFiles,
+    declarationResultFile,
     declarationStatus,
+    declarationVerificationNote,
+    declarationVerificationStatus,
     settlementAmount: normalizedAmount,
     settlementDirection: normalizedDirection,
     vatBreakdown: isVatMatter ? normalizedVatBreakdown : undefined
   });
+  const hasCompleteDeclarationMaterials = declarationFormFiles.length > 0 && Boolean(declarationResultFile);
   const formError = !declarationDate
     ? '请选择实际申报日期'
     : normalizedAmount < 0
       ? '办理金额不能小于 0'
-      : !receiptFile && !receiptNo.trim()
-        ? '请上传申报回执或填写申报凭证号'
+      : declarationVerificationStatus === '人工核验一致' && !hasCompleteDeclarationMaterials
+        ? '正式申报表和申报结果回执齐全后才能标记核验一致'
+      : declarationVerificationStatus === '核验不一致' && !declarationVerificationNote.trim()
+        ? '请填写核验不一致原因'
         : declarationResultError
           ?? (hasAmountDifference && !differenceReason.trim() ? '请填写测算差异说明' : undefined);
 
@@ -283,12 +298,16 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
         testId: 'finance-tax-declaration-result-save',
         onClick: () => !formError && onSave(record, {
           declarationDate,
-          declarationReceiptFile: receiptFile,
-          declarationReceiptNo: receiptNo,
+          declarationFormFiles,
+          declarationResultFile,
+          declarationVerificationNote,
+          declarationVerificationStatus,
           declarationStatus,
           differenceReason,
           settlementAmount: normalizedAmount,
           settlementDirection: normalizedDirection,
+          taxAuthorityAssessmentVoucherNo,
+          taxAuthorityDeclarationNo,
           vatBreakdown: isVatMatter ? normalizedVatBreakdown : undefined
         })
       }}
@@ -330,9 +349,6 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
               <InputNumber disabled={declarationStatus === '零申报' || settlementDirection === '无需补退'} min={0} precision={2} style={{ width: '100%' }} value={normalizedAmount} onChange={(value) => setSettlementAmount(Number(value ?? 0))} />
             </DrawerFormField>
           ) : null}
-          <DrawerFormField label="申报回执号">
-            <Input value={receiptNo} onChange={(event) => setReceiptNo(event.target.value)} />
-          </DrawerFormField>
         </DrawerFormGrid>
         {isVatMatter && declarationStatus !== '零申报' ? (
           <DrawerFormGrid>
@@ -364,47 +380,96 @@ export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDr
           </DrawerFormField>
         ) : null}
       </DetailSection>
-      <ReceiptUploadSection file={receiptFile} title="申报回执" onChange={setReceiptFile} />
+      <DeclarationEvidenceEditor
+        assessmentVoucherNo={taxAuthorityAssessmentVoucherNo}
+        declarationNo={taxAuthorityDeclarationNo}
+        formFiles={declarationFormFiles}
+        resultFile={declarationResultFile}
+        verificationNote={declarationVerificationNote}
+        verificationStatus={declarationVerificationStatus}
+        onAssessmentVoucherNoChange={setTaxAuthorityAssessmentVoucherNo}
+        onDeclarationNoChange={setTaxAuthorityDeclarationNo}
+        onFormFilesChange={setDeclarationFormFiles}
+        onResultFileChange={setDeclarationResultFile}
+        onVerificationNoteChange={setDeclarationVerificationNote}
+        onVerificationStatusChange={setDeclarationVerificationStatus}
+      />
     </DrawerShell>
   );
 }
 
-export function TaxDeclarationReceiptDrawer({ onClose, onSave, record }: CommonDrawerProps & {
-  onSave: (record: FinanceTaxMatterRecord, input: TaxMatterDeclarationReceiptInput) => void;
+export function TaxDeclarationEvidenceDrawer({ onClose, onSave, record }: CommonDrawerProps & {
+  onSave: (record: FinanceTaxMatterRecord, input: TaxMatterDeclarationEvidenceInput) => void;
 }) {
-  const [receiptNo, setReceiptNo] = useState('');
-  const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
+  const [taxAuthorityDeclarationNo, setTaxAuthorityDeclarationNo] = useState('');
+  const [taxAuthorityAssessmentVoucherNo, setTaxAuthorityAssessmentVoucherNo] = useState('');
+  const [declarationFormFiles, setDeclarationFormFiles] = useState<RelatedFileRecord[]>([]);
+  const [declarationResultFile, setDeclarationResultFile] = useState<RelatedFileRecord>();
+  const [declarationVerificationStatus, setDeclarationVerificationStatus] = useState<FinanceTaxDeclarationVerificationStatus>('未核验');
+  const [declarationVerificationNote, setDeclarationVerificationNote] = useState('');
 
   useEffect(() => {
     if (!record) return;
-    setReceiptNo(record.declarationReceiptNo ?? '');
-    setReceiptFile(record.declarationReceiptFileId
-      ? record.files.find((file) => file.id === record.declarationReceiptFileId)
+    setTaxAuthorityDeclarationNo(record.taxAuthorityDeclarationNo ?? '');
+    setTaxAuthorityAssessmentVoucherNo(record.taxAuthorityAssessmentVoucherNo ?? '');
+    setDeclarationFormFiles(record.files.filter((file) => record.declarationFormFileIds.includes(file.id)));
+    setDeclarationResultFile(record.declarationResultFileId
+      ? record.files.find((file) => file.id === record.declarationResultFileId)
       : undefined);
+    setDeclarationVerificationStatus(record.declarationVerificationStatus);
+    setDeclarationVerificationNote(record.declarationVerificationNote ?? '');
   }, [record]);
 
   if (!record) return null;
-  const originalFile = record.declarationReceiptFileId
-    ? record.files.find((file) => file.id === record.declarationReceiptFileId)
-    : undefined;
-  const hasEvidence = Boolean(receiptFile || receiptNo.trim());
-  const hasChanged = receiptNo.trim() !== (record.declarationReceiptNo ?? '') || receiptFile?.id !== originalFile?.id;
+  const originalFormFileIds = [...record.declarationFormFileIds].sort().join(',');
+  const currentFormFileIds = declarationFormFiles.map((file) => file.id).sort().join(',');
+  const hasEvidence = declarationFormFiles.length > 0 || Boolean(
+    declarationResultFile
+      || taxAuthorityDeclarationNo.trim()
+      || taxAuthorityAssessmentVoucherNo.trim()
+  );
+  const hasCompleteDeclarationMaterials = declarationFormFiles.length > 0 && Boolean(declarationResultFile);
+  const hasChanged = currentFormFileIds !== originalFormFileIds
+    || declarationResultFile?.id !== record.declarationResultFileId
+    || taxAuthorityDeclarationNo.trim() !== (record.taxAuthorityDeclarationNo ?? '')
+    || taxAuthorityAssessmentVoucherNo.trim() !== (record.taxAuthorityAssessmentVoucherNo ?? '')
+    || declarationVerificationStatus !== record.declarationVerificationStatus
+    || declarationVerificationNote.trim() !== (record.declarationVerificationNote ?? '');
+  const formError = !hasEvidence
+    ? '请补充申报材料或税务机关申报序号'
+    : declarationVerificationStatus === '人工核验一致' && !hasCompleteDeclarationMaterials
+      ? '正式申报表和申报结果回执齐全后才能标记核验一致'
+      : declarationVerificationStatus === '核验不一致' && !declarationVerificationNote.trim()
+        ? '请填写核验不一致原因'
+        : undefined;
 
   return (
     <DrawerShell
-      bodyTestId="finance-tax-declaration-receipt-drawer"
+      bodyTestId="finance-tax-declaration-evidence-drawer"
       cancelAction={{ label: '取消', onClick: onClose }}
       className="finance-tax-drawer"
       contentLayout="detail"
       open
       primaryAction={{
-        disabled: !hasEvidence || !hasChanged,
-        label: '保存回执',
-        testId: 'finance-tax-declaration-receipt-save',
-        onClick: () => hasEvidence && hasChanged && onSave(record, { declarationReceiptFile: receiptFile, declarationReceiptNo: receiptNo })
+        disabled: Boolean(formError) || !hasChanged,
+        label: '保存申报材料',
+        testId: 'finance-tax-declaration-evidence-save',
+        onClick: () => !formError && hasChanged && onSave(record, {
+          declarationFormFiles,
+          declarationResultFile,
+          declarationVerificationNote,
+          declarationVerificationStatus,
+          taxAuthorityAssessmentVoucherNo,
+          taxAuthorityDeclarationNo
+        })
       }}
-      title={<DetailDrawerTitle status="待补回执" statusTone="amber" subtitle={`${record.matterNo} / 第 ${record.declarationVersion} 版`} title="补充申报回执" />}
-      width={760}
+      title={<DetailDrawerTitle
+        status={record.declarationVerificationStatus}
+        statusTone={record.declarationVerificationStatus === '核验不一致' ? 'red' : 'amber'}
+        subtitle={`${record.matterNo} / 第 ${record.declarationVersion} 版`}
+        title="维护申报材料"
+      />}
+      width={820}
       onClose={onClose}
     >
       <DetailSection icon={<FileSearchOutlined />} title="申报结果">
@@ -415,19 +480,20 @@ export function TaxDeclarationReceiptDrawer({ onClose, onSave, record }: CommonD
           { label: '办理金额', value: formatMoney(getTaxMatterSettlementDirection(record) === '应退' ? record.refundableAmount ?? 0 : record.payableAmount) }
         ]} />
       </DetailSection>
-      <DetailSection icon={<FileProtectOutlined />} title="申报回执">
-        <DrawerFormField label="申报回执号">
-          <Input value={receiptNo} onChange={(event) => setReceiptNo(event.target.value)} />
-        </DrawerFormField>
-        <FinanceVoucherUploadPanel
-          description=""
-          emptyText="暂无申报回执"
-          files={receiptFile ? [receiptFile] : []}
-          title="申报回执"
-          onRemove={() => setReceiptFile(undefined)}
-          onSelect={(file) => setReceiptFile(buildTaxMatterReceiptFile(file, '申报回执'))}
-        />
-      </DetailSection>
+      <DeclarationEvidenceEditor
+        assessmentVoucherNo={taxAuthorityAssessmentVoucherNo}
+        declarationNo={taxAuthorityDeclarationNo}
+        formFiles={declarationFormFiles}
+        resultFile={declarationResultFile}
+        verificationNote={declarationVerificationNote}
+        verificationStatus={declarationVerificationStatus}
+        onAssessmentVoucherNoChange={setTaxAuthorityAssessmentVoucherNo}
+        onDeclarationNoChange={setTaxAuthorityDeclarationNo}
+        onFormFilesChange={setDeclarationFormFiles}
+        onResultFileChange={setDeclarationResultFile}
+        onVerificationNoteChange={setDeclarationVerificationNote}
+        onVerificationStatusChange={setDeclarationVerificationStatus}
+      />
     </DrawerShell>
   );
 }
@@ -787,6 +853,84 @@ function ReceiptUploadSection({
         title={title}
         onRemove={() => onChange(undefined)}
         onSelect={(selectedFile) => onChange(buildTaxMatterReceiptFile(selectedFile, title))}
+      />
+    </DetailSection>
+  );
+}
+
+function DeclarationEvidenceEditor({
+  assessmentVoucherNo,
+  declarationNo,
+  formFiles,
+  onAssessmentVoucherNoChange,
+  onDeclarationNoChange,
+  onFormFilesChange,
+  onResultFileChange,
+  onVerificationNoteChange,
+  onVerificationStatusChange,
+  resultFile,
+  verificationNote,
+  verificationStatus
+}: {
+  assessmentVoucherNo: string;
+  declarationNo: string;
+  formFiles: RelatedFileRecord[];
+  onAssessmentVoucherNoChange: (value: string) => void;
+  onDeclarationNoChange: (value: string) => void;
+  onFormFilesChange: (files: RelatedFileRecord[]) => void;
+  onResultFileChange: (file: RelatedFileRecord | undefined) => void;
+  onVerificationNoteChange: (value: string) => void;
+  onVerificationStatusChange: (status: FinanceTaxDeclarationVerificationStatus) => void;
+  resultFile?: RelatedFileRecord;
+  verificationNote: string;
+  verificationStatus: FinanceTaxDeclarationVerificationStatus;
+}) {
+  const addFormFile = (selectedFile: FinanceVoucherUploadFile) => {
+    const nextFile = buildTaxMatterReceiptFile(selectedFile, '正式申报表');
+    onFormFilesChange([nextFile, ...formFiles.filter((file) => file.id !== nextFile.id)]);
+  };
+
+  return (
+    <DetailSection icon={<FileProtectOutlined />} title="申报材料与核验">
+      <DrawerFormGrid>
+        <DrawerFormField label="税务机关申报序号">
+          <Input value={declarationNo} onChange={(event) => onDeclarationNoChange(event.target.value)} />
+        </DrawerFormField>
+        <DrawerFormField label="应征凭证序号">
+          <Input value={assessmentVoucherNo} onChange={(event) => onAssessmentVoucherNoChange(event.target.value)} />
+        </DrawerFormField>
+        <DrawerFormField label="核验状态" required>
+          <Select<FinanceTaxDeclarationVerificationStatus>
+            options={[
+              { label: '未核验', value: '未核验' },
+              { label: '人工核验一致', value: '人工核验一致' },
+              { label: '核验不一致', value: '核验不一致' }
+            ]}
+            value={verificationStatus}
+            onChange={onVerificationStatusChange}
+          />
+        </DrawerFormField>
+      </DrawerFormGrid>
+      {verificationStatus === '核验不一致' ? (
+        <DrawerFormField label="不一致原因" required>
+          <Input.TextArea rows={3} value={verificationNote} onChange={(event) => onVerificationNoteChange(event.target.value)} />
+        </DrawerFormField>
+      ) : null}
+      <FinanceVoucherUploadPanel
+        description=""
+        emptyText="暂无正式申报表"
+        files={formFiles}
+        title="正式申报表"
+        onRemove={(file) => onFormFilesChange(formFiles.filter((item) => item.id !== file.id))}
+        onSelect={addFormFile}
+      />
+      <FinanceVoucherUploadPanel
+        description=""
+        emptyText="暂无申报结果回执"
+        files={resultFile ? [resultFile] : []}
+        title="申报结果回执"
+        onRemove={() => onResultFileChange(undefined)}
+        onSelect={(selectedFile) => onResultFileChange(buildTaxMatterReceiptFile(selectedFile, '申报结果回执'))}
       />
     </DetailSection>
   );

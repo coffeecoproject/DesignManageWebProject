@@ -40,7 +40,6 @@ const requiredFlowStepIds = [
   'voucher-booked',
   'source-prerequisites-complete',
   'general-ledger-balanced',
-  'tax-handling-complete',
   'social-insurance-complete',
   'close-checks-passed',
   'prior-period-closed',
@@ -56,7 +55,6 @@ const requiredCheckCodes = [
   'general_ledger_trial_balance',
   'cash_review',
   'cash_reconciliation',
-  'tax_handling',
   'social_insurance_housing_fund'
 ];
 
@@ -64,7 +62,7 @@ const tests: UnitTest[] = [
   {
     name: 'keeps the industrial period-close acceptance flow ordered and complete',
     run: () => {
-      assertEqual(financePeriodCloseAcceptanceFlowSteps.length, 16, 'acceptance flow should keep the 16-step main workflow');
+      assertEqual(financePeriodCloseAcceptanceFlowSteps.length, 15, 'acceptance flow should keep the 15-step accounting-close workflow');
       assertSetEqual(
         financePeriodCloseAcceptanceFlowSteps.map((step) => step.id),
         requiredFlowStepIds,

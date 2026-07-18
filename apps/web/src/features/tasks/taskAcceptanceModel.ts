@@ -1,6 +1,12 @@
 import type { UploadFile } from 'antd/es/upload/interface';
-import type { BrandRecord, CustomerContactRecord, CustomerRecord } from '../customers/customerData';
-import type { PerformanceRulePreset } from '../performance/performanceTypes';
+import type { CustomerContactRecord, CustomerRecord } from '../customers/customerData';
+import type { PeopleMember } from '../people/peopleTypes';
+import { resolvePerformanceRuleForMember } from '../performance/performanceRuleApplicabilityModel';
+import type {
+  PerformanceQualityDimension,
+  PerformanceRulePreset
+} from '../performance/performanceTypes';
+import { calculateWeightedPerformanceQualityScore } from '../performance/performanceRuleCalculationModel';
 import {
   taskManagementNow,
   type ClientFeedbackChannel,
@@ -46,16 +52,27 @@ export function getAcceptedMonth(task: StoreTaskRecord) {
   return (task.acceptedAt ?? taskManagementNow).slice(0, 7);
 }
 
-export function getTaskPerformanceRule(task: StoreTaskRecord, brandRows: BrandRecord[], performanceRuleRows: PerformanceRulePreset[]) {
-  const brand = brandRows.find((record) => record.id === task.brandId);
+export function getTaskPerformanceRule(
+  task: StoreTaskRecord,
+  member: PeopleMember | undefined,
+  performanceRuleRows: PerformanceRulePreset[]
+) {
+  if (!member) {
+    return undefined;
+  }
 
-  return performanceRuleRows.find(
-    (rule) =>
-      rule.id === brand?.performanceRuleId &&
-      rule.performanceType === '任务制' &&
-      rule.status === '已发布' &&
-      rule.taskScoreItems.some((item) => item.taskConfigId === task.taskConfigId)
-  );
+  const resolution = resolvePerformanceRuleForMember({
+    category: '绘图任务制',
+    member,
+    performanceMonth: getAcceptedMonth(task),
+    ruleRows: performanceRuleRows
+  });
+
+  return resolution.applicability.status === '适用'
+    && resolution.rule?.performanceType === '任务制'
+    && resolution.rule.taskScoreItems.some((item) => item.taskConfigId === task.taskConfigId)
+    ? resolution.rule
+    : undefined;
 }
 
 export function getTaskScoreItem(task: StoreTaskRecord, rule: PerformanceRulePreset | undefined) {
@@ -89,8 +106,11 @@ export function getQualityBand(rule: PerformanceRulePreset | undefined, score: n
   return rule?.qualityBands.find((band) => score >= band.minScore && (typeof band.maxScore !== 'number' || score <= band.maxScore));
 }
 
-export function getQualityScore(dimensionScores: TaskPerformanceDimensionScore[]) {
-  return dimensionScores.reduce((total, item) => total + item.score, 0);
+export function getQualityScore(
+  dimensionScores: TaskPerformanceDimensionScore[],
+  qualityDimensions: PerformanceQualityDimension[]
+) {
+  return calculateWeightedPerformanceQualityScore(dimensionScores, qualityDimensions);
 }
 
 export function getCompletedDimensionScores(draft: AcceptanceScoringDraft | undefined): TaskPerformanceDimensionScore[] | undefined {
@@ -112,8 +132,12 @@ export function getCompletedDimensionScores(draft: AcceptanceScoringDraft | unde
   }));
 }
 
-export function buildAcceptanceScoringDraft(task: StoreTaskRecord, brandRows: BrandRecord[], performanceRuleRows: PerformanceRulePreset[]): AcceptanceScoringDraft {
-  const rule = getTaskPerformanceRule(task, brandRows, performanceRuleRows);
+export function buildAcceptanceScoringDraft(
+  task: StoreTaskRecord,
+  member: PeopleMember | undefined,
+  performanceRuleRows: PerformanceRulePreset[]
+): AcceptanceScoringDraft {
+  const rule = getTaskPerformanceRule(task, member, performanceRuleRows);
   const scoreItem = getTaskScoreItem(task, rule);
 
   return {
@@ -197,7 +221,7 @@ export function buildTaskPerformanceScoringRecord(
   const rule = performanceRuleRows.find((item) => item.id === draft.ruleId);
   const scoreItem = rule?.taskScoreItems.find((item) => item.id === draft.scoreItemId);
   const dimensionScores = getCompletedDimensionScores(draft) ?? [];
-  const qualityScore = getQualityScore(dimensionScores);
+  const qualityScore = getQualityScore(dimensionScores, rule?.qualityDimensions ?? []);
   const qualityBand = getQualityBand(rule, qualityScore);
 
   return {

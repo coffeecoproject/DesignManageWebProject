@@ -1,5 +1,6 @@
 import type { StatusTagTone } from '../../components/Detail';
 import type { CellTextTone } from '../../components/TableCell';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import { financeSecondaryCategorySeeds, getFinanceCategorySnapshot } from './financeData';
 import type {
   FinanceInvoiceDeclarationStatus,
@@ -13,7 +14,7 @@ import type {
 } from './financeData';
 import type { FinanceTransactionInvoiceAssociation, FinanceTransactionInvoiceAssociationStatus } from './financeInvoiceModel';
 
-export const financeToday = '2026-06-15';
+export const financeToday = frontendBusinessToday;
 export const financeReviewSlaDays = 1;
 
 export const directionTone = {
