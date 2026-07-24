@@ -1,14 +1,16 @@
-import type {
-  CustomerContractAmountMode,
-  CustomerContractAgreementChangeType,
-  CustomerContractAmountTaxMode,
-  CustomerContractBusinessNature,
-  CustomerContractFileRecord,
-  CustomerContractRecord,
-  CustomerContractStatus,
-  CustomerContractType,
-  CustomerRecord
+import {
+  deriveCustomerContractStatus,
+  type CustomerContractAmountMode,
+  type CustomerContractAgreementChangeType,
+  type CustomerContractAmountTaxMode,
+  type CustomerContractBusinessNature,
+  type CustomerContractFileRecord,
+  type CustomerContractRecord,
+  type CustomerContractStatus,
+  type CustomerContractType,
+  type CustomerRecord
 } from './customerData';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 
 export type ContractDraftFile = {
   id: string;
@@ -38,8 +40,6 @@ export type ContractForm = {
   vatAmount: string;
 };
 
-export type CustomerContractReceiptStatus = '未收' | '已收' | '部分已收' | '已收齐';
-
 export type ContractRelatedFileRecord = {
   id: string;
   name: string;
@@ -68,13 +68,6 @@ export type AddContractFormFileResult =
     };
 
 const maxContractFileSize = 20 * 1024 * 1024;
-
-export const contractReceiptStatusTone = {
-  未收: 'amber',
-  已收: 'green',
-  部分已收: 'blue',
-  已收齐: 'green'
-} as const;
 
 export function matchesContractKeyword(record: CustomerContractRecord, keyword: string, customers: CustomerRecord[]) {
   const normalizedKeyword = keyword.trim().toLowerCase();
@@ -300,45 +293,8 @@ export function getContractFiles(record: CustomerContractRecord): ContractRelate
   }));
 }
 
-export function getContractStatusByDate(expiresAt: string): CustomerContractStatus {
-  return expiresAt < '2026-06-14' ? '已到期' : '有效';
-}
-
-export function getContractReceiptStatus(
-  record: Pick<CustomerContractRecord, 'amount' | 'amountMode' | 'receivedAmount'>
-): CustomerContractReceiptStatus {
-  if (record.receivedAmount <= 0) {
-    return '未收';
-  }
-
-  if (record.amountMode === '无固定金额') {
-    return '已收';
-  }
-
-  if (record.amountMode === '固定金额' && record.amount !== null && record.receivedAmount >= record.amount) {
-    return '已收齐';
-  }
-
-  return '部分已收';
-}
-
-export function getContractUnreceivedAmount(record: Pick<CustomerContractRecord, 'amount' | 'amountMode' | 'receivedAmount'>) {
-  if (record.amountMode !== '固定金额' || record.amount === null) {
-    return null;
-  }
-
-  return Math.max(record.amount - record.receivedAmount, 0);
-}
-
-export function getContractReceiptCellDisplay(record: CustomerContractRecord) {
-  const status = getContractReceiptStatus(record);
-  const receivedText = record.receivedAmount > 0 ? `已收 ${formatContractMoney(record.receivedAmount)}` : '暂无收款';
-
-  return {
-    primary: record.amountMode === '无固定金额' ? '无固定金额' : `固定金额 / ${formatContractMoney(record.amount)}`,
-    secondary: `${receivedText} / ${status}`,
-    status
-  };
+export function getContractStatusByDate(expiresAt: string, evaluationDate = frontendBusinessToday): CustomerContractStatus {
+  return expiresAt < evaluationDate ? '已到期' : '有效';
 }
 
 function buildContractFilesForSave(form: ContractForm, code: string, signedAt: string): CustomerContractFileRecord[] {
@@ -394,9 +350,14 @@ export function buildContractRecordForSave({
   };
 
   if (editingContract) {
-    return {
+    const nextRecord = {
       ...editingContract,
       ...baseFields
+    };
+
+    return {
+      ...nextRecord,
+      status: deriveCustomerContractStatus(nextRecord, updatedAt)
     };
   }
 
@@ -413,10 +374,6 @@ export function buildContractRecordForSave({
     files,
     amountMode: form.amountMode,
     amount,
-    receivedAmount: 0,
-    latestReceiptAt: '-',
-    receiptNote: '收款信息由财务模块维护。',
-    receiptRecords: [],
     owner: form.owner.trim(),
     updatedAt,
     note: form.note.trim() || '已上传签署合同文件。'

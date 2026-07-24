@@ -51,7 +51,8 @@ export type BrandPricingContract = {
   stampDutyFacts?: {
     amountTaxMode: '价税分列' | '含税未分列' | '不涉及增值税';
   };
-  status: '有效' | '已到期';
+  status: '有效' | '已到期' | '已终止';
+  terminatedAt?: string;
 };
 
 export type BrandTaskPriceValidationCode =
@@ -88,6 +89,7 @@ export function isBrandPricingContractEligible(
   return (
     contract.customerId === customerId &&
     contract.status === '有效' &&
+    (!contract.terminatedAt || contract.terminatedAt > effectiveDate) &&
     contract.signedAt <= effectiveDate &&
     contract.expiresAt >= effectiveDate &&
     contract.files.some((file) => file.type === '已签署合同')

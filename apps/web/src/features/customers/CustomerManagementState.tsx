@@ -6,6 +6,7 @@ import {
   customerContractRecords,
   customerRecords,
   deriveCustomerStatus as deriveCustomerStatusFromContracts,
+  deriveCustomerContractStatus,
   storeRecords,
   type BrandRecord,
   type CustomerContractRecord,
@@ -23,8 +24,16 @@ import {
   type BrandTaskPriceVersionRecord,
   type BrandTaskPricingDraft
 } from './brandTaskPricingModel';
+import {
+  createInitialBrandAcceptancePolicies,
+  getBrandAcceptancePolicy,
+  upsertBrandAcceptancePolicy,
+  type BrandAcceptancePolicy,
+  type BrandAcceptancePolicyRecord
+} from './brandAcceptancePolicyModel';
 
 type CustomerManagementStateValue = {
+  brandAcceptancePolicyRows: BrandAcceptancePolicyRecord[];
   brandSettlementPolicyRows: BrandSettlementPolicyVersionRecord[];
   brandTaskPriceRows: BrandTaskPriceVersionRecord[];
   brandRows: BrandRecord[];
@@ -46,7 +55,9 @@ type CustomerManagementStateValue = {
     brandId: string,
     effectiveAt: string
   ) => BrandSettlementPolicyVersionRecord | undefined;
+  getBrandAcceptancePolicy: (brandId: string) => BrandAcceptancePolicyRecord | undefined;
   saveBrandConfiguration: (input: {
+    acceptancePolicy: BrandAcceptancePolicy;
     effectiveAt: string;
     pricingDrafts: BrandTaskPricingDraft[];
     record: BrandRecord;
@@ -55,6 +66,7 @@ type CustomerManagementStateValue = {
   saveContract: (record: CustomerContractRecord) => void;
   saveCustomer: (record: CustomerRecord) => void;
   saveStore: (record: StoreRecord) => void;
+  terminateContract: (contractId: string, terminatedAt: string, reason: string) => boolean;
 };
 
 const CustomerManagementStateContext = createContext<CustomerManagementStateValue | undefined>(undefined);
@@ -71,26 +83,45 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
   const [brandSettlementPolicyRows, setBrandSettlementPolicyRows] = useState<BrandSettlementPolicyVersionRecord[]>(() =>
     createInitialBrandSettlementPolicyVersions(brandRecords, '2026-01-01')
   );
+  const [brandAcceptancePolicyRows, setBrandAcceptancePolicyRows] = useState<BrandAcceptancePolicyRecord[]>(() =>
+    createInitialBrandAcceptancePolicies(brandRecords)
+  );
   const [brandTaskPriceRows, setBrandTaskPriceRows] = useState<BrandTaskPriceVersionRecord[]>(() => brandTaskPriceVersionRecords);
   const [storeRows, setStoreRows] = useState<StoreRecord[]>(() => storeRecords);
   const [contractRows, setContractRows] = useState<CustomerContractRecord[]>(() => customerContractRecords);
+  const effectiveContractRows = useMemo(
+    () => contractRows.map((record) => ({
+      ...record,
+      status: deriveCustomerContractStatus(record, frontendBusinessToday)
+    })),
+    [contractRows]
+  );
 
   const saveCustomer = useCallback((record: CustomerRecord) => {
     setCustomerRows((currentRows) => upsertById(currentRows, record));
   }, []);
 
   const saveBrandConfiguration = useCallback(({
+    acceptancePolicy,
     effectiveAt,
     pricingDrafts,
     record,
     settlementPolicyEffectiveAt
   }: {
+    acceptancePolicy: BrandAcceptancePolicy;
     effectiveAt: string;
     pricingDrafts: BrandTaskPricingDraft[];
     record: BrandRecord;
     settlementPolicyEffectiveAt: string;
   }) => {
     setBrandRows((currentRows) => upsertById(currentRows, record));
+    setBrandAcceptancePolicyRows((currentRows) =>
+      upsertBrandAcceptancePolicy({
+        brandId: record.id,
+        policy: acceptancePolicy,
+        policies: currentRows
+      })
+    );
     setBrandSettlementPolicyRows((currentRows) =>
       reconcileBrandSettlementPolicyVersions({
         asOfDate: frontendBusinessToday,
@@ -109,6 +140,15 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
       })
     );
   }, []);
+
+  const resolveBrandAcceptancePolicy = useCallback(
+    (brandId: string) =>
+      getBrandAcceptancePolicy({
+        brandId,
+        policies: brandAcceptancePolicyRows
+      }),
+    [brandAcceptancePolicyRows]
+  );
 
   const getActiveBrandSettlementPolicy = useCallback(
     (brandId: string, effectiveAt: string) =>
@@ -138,6 +178,32 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
   const saveContract = useCallback((record: CustomerContractRecord) => {
     setContractRows((currentRows) => upsertById(currentRows, record));
   }, []);
+
+  const terminateContract = useCallback((contractId: string, terminatedAt: string, reason: string) => {
+    if (!terminatedAt || !reason.trim()) {
+      return false;
+    }
+
+    const target = effectiveContractRows.find((record) => record.id === contractId);
+    if (!target || target.status !== '有效') {
+      return false;
+    }
+
+    setContractRows((currentRows) => currentRows.map((record) => {
+      if (record.id !== contractId) {
+        return record;
+      }
+
+      return {
+        ...record,
+        status: '已终止',
+        terminatedAt,
+        terminationReason: reason.trim(),
+        updatedAt: frontendBusinessToday
+      };
+    }));
+    return true;
+  }, [effectiveContractRows]);
 
   const getCustomerById = useCallback(
     (customerId: string | undefined) => {
@@ -177,20 +243,22 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
   );
 
   const deriveCustomerStatus = useCallback(
-    (customerId: string) => deriveCustomerStatusFromContracts(customerId, contractRows),
-    [contractRows]
+    (customerId: string) => deriveCustomerStatusFromContracts(customerId, effectiveContractRows),
+    [effectiveContractRows]
   );
 
   const value = useMemo<CustomerManagementStateValue>(
     () => ({
+      brandAcceptancePolicyRows,
       brandSettlementPolicyRows,
       brandTaskPriceRows,
       brandRows,
-      contractRows,
+      contractRows: effectiveContractRows,
       customerRows,
       storeRows,
       deriveCustomerStatus,
       getBrandById,
+      getBrandAcceptancePolicy: resolveBrandAcceptancePolicy,
       getActiveBrandSettlementPolicy,
       getActiveBrandTaskPrice,
       getBrandStoreCount,
@@ -200,17 +268,20 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
       saveBrandConfiguration,
       saveContract,
       saveCustomer,
-      saveStore
+      saveStore,
+      terminateContract
     }),
     [
       brandRows,
+      brandAcceptancePolicyRows,
       brandSettlementPolicyRows,
       brandTaskPriceRows,
-      contractRows,
+      effectiveContractRows,
       customerRows,
       storeRows,
       deriveCustomerStatus,
       getBrandById,
+      resolveBrandAcceptancePolicy,
       getActiveBrandSettlementPolicy,
       getActiveBrandTaskPrice,
       getBrandStoreCount,
@@ -220,7 +291,8 @@ export function CustomerManagementProvider({ children }: { children: ReactNode }
       saveBrandConfiguration,
       saveContract,
       saveCustomer,
-      saveStore
+      saveStore,
+      terminateContract
     ]
   );
 

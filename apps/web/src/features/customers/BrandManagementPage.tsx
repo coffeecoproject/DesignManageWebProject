@@ -16,7 +16,6 @@ import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../compon
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { ManagementTable } from '../../components/ManagementTable';
 import { MetricGrid } from '../../components/MetricGrid';
-import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
 import { useTaskConfigState } from '../system/TaskConfigState';
 import { useTaskManagementState } from '../tasks/TaskManagementState';
 import {
@@ -26,14 +25,11 @@ import {
   buildBrandTaskDisplayRows,
   buildBrandTaskFormDisplayRows,
   buildDefaultBrandForm,
-  getAddableBrandTaskScoreItems,
-  getAvailableBrandPerformanceRules,
+  getAddableBrandTaskConfigs,
   getDefaultBrandContactName,
-  getPerformanceRuleLabel,
   isBrandFormValid,
   matchesBrandKeyword,
   removeBrandTaskConfigFromForm,
-  setBrandPerformanceRule,
   updateBrandTaskPricing,
   type BrandForm
 } from './brandFormModel';
@@ -42,6 +38,7 @@ import {
   validateBrandTaskPricingDrafts
 } from './brandTaskPricingModel';
 import { BrandStoreTable } from './BrandStoreTable';
+import { BrandAcceptanceConfigPanel } from './BrandAcceptanceConfigPanel';
 import {
   BrandContractUsageTable,
   BrandTaskConfigEditor,
@@ -88,10 +85,8 @@ export function BrandManagementPage() {
   const [filters, setFilters] = useState<BrandFilters>(defaultFilters);
   const { customerTaskContractUsageSummaries } = useTaskManagementState();
   const { taskConfigRows } = useTaskConfigState();
-  const { performanceRuleRows } = usePerformanceRuleState();
-  const performanceRules = useMemo(() => getAvailableBrandPerformanceRules(performanceRuleRows), [performanceRuleRows]);
-  const defaultPerformanceRuleId = performanceRules[0]?.id ?? '';
   const {
+    brandAcceptancePolicyRows,
     brandTaskPriceRows,
     brandRows,
     contractRows,
@@ -99,6 +94,7 @@ export function BrandManagementPage() {
     storeRows,
     deriveCustomerStatus,
     getActiveBrandSettlementPolicy,
+    getBrandAcceptancePolicy,
     getBrandStoreCount,
     getCustomerById,
     saveBrandConfiguration
@@ -107,8 +103,13 @@ export function BrandManagementPage() {
   const [taskConfigIdToAdd, setTaskConfigIdToAdd] = useState<string>();
   const [messageApi, contextHolder] = message.useMessage();
   const brandFormDrawer = useDrawerFormState<BrandRecord, BrandForm>({
-    createForm: () => buildDefaultBrandForm({ brandRows, customerRows, defaultPerformanceRuleId }),
-    editForm: (record) => buildBrandForm(record, brandTaskPriceRows, brandConfigurationEffectiveAt),
+    createForm: () => buildDefaultBrandForm({ brandRows, customerRows }),
+    editForm: (record) => buildBrandForm(
+      record,
+      brandTaskPriceRows,
+      brandAcceptancePolicyRows,
+      brandConfigurationEffectiveAt
+    ),
     onCancelEdit: setActiveBrand
   });
   const brandDrawerMode = brandFormDrawer.mode;
@@ -128,12 +129,10 @@ export function BrandManagementPage() {
   const previewCustomerStatus = previewCustomer ? deriveCustomerStatus(previewCustomer.id) : undefined;
   const previewCustomerContact = previewCustomer ? getPrimaryCustomerContact(previewCustomer) : undefined;
   const previewStoreRows = activeBrand ? storeRows.filter((store) => store.brandId === activeBrand.id) : [];
-  const previewPerformanceRule = activeBrand ? performanceRules.find((rule) => rule.id === activeBrand.performanceRuleId) : undefined;
   const previewTaskConfigRows = activeBrand
     ? buildBrandTaskDisplayRows(
         activeBrand,
         taskConfigRows,
-        performanceRules,
         brandTaskPriceRows,
         contractRows,
         brandConfigurationEffectiveAt
@@ -142,6 +141,9 @@ export function BrandManagementPage() {
   const previewSettlementPolicy = activeBrand
     ? getActiveBrandSettlementPolicy(activeBrand.id, brandConfigurationEffectiveAt)?.policy
     : undefined;
+  const previewAcceptancePolicy = activeBrand
+    ? getBrandAcceptancePolicy(activeBrand.id)?.policy
+    : undefined;
   const previewContractUsageRows = activeBrand
     ? customerTaskContractUsageSummaries.filter((row) => row.brandIds.includes(activeBrand.id))
     : [];
@@ -149,11 +151,9 @@ export function BrandManagementPage() {
   const selectedCustomerStatus = selectedCustomer ? deriveCustomerStatus(selectedCustomer.id) : undefined;
   const selectedCustomerContact = selectedCustomer ? getPrimaryCustomerContact(selectedCustomer) : undefined;
   const editingStoreRows = editingBrand ? storeRows.filter((store) => store.brandId === editingBrand.id) : [];
-  const selectedPerformanceRule = performanceRules.find((rule) => rule.id === brandForm.performanceRuleId);
   const configuredTaskFormRows = buildBrandTaskFormDisplayRows(
     brandForm.taskConfigs,
     taskConfigRows,
-    selectedPerformanceRule,
     contractRows
   );
   const eligibleContracts = getEligibleBrandPricingContracts(
@@ -161,9 +161,8 @@ export function BrandManagementPage() {
     brandForm.customerId,
     brandConfigurationEffectiveAt
   );
-  const addableTaskScoreItems = getAddableBrandTaskScoreItems({
+  const addableTaskConfigs = getAddableBrandTaskConfigs({
     form: brandForm,
-    performanceRule: selectedPerformanceRule,
     taskConfigRows
   });
   const contactOptions =
@@ -183,7 +182,6 @@ export function BrandManagementPage() {
     setBrandForm((current) =>
       addBrandTaskConfigToForm({
         form: current,
-        performanceRule: selectedPerformanceRule,
         taskConfigId: taskConfigIdToAdd,
         taskConfigRows
       })
@@ -238,6 +236,7 @@ export function BrandManagementPage() {
       form: brandForm
     });
     saveBrandConfiguration({
+      acceptancePolicy: brandForm.acceptancePolicy,
       effectiveAt: brandConfigurationEffectiveAt,
       pricingDrafts: brandForm.taskConfigs,
       record: nextBrand,
@@ -250,7 +249,7 @@ export function BrandManagementPage() {
     void messageApi.success(
       brandDrawerMode === 'create'
         ? '已新增品牌'
-        : `已保存品牌，结算规则自 ${getNextMonthStart(brandConfigurationEffectiveAt)} 生效`
+        : `已保存品牌；验收配置已更新，结算规则自 ${getNextMonthStart(brandConfigurationEffectiveAt)} 生效`
     );
   }
 
@@ -274,13 +273,6 @@ export function BrandManagementPage() {
       width: 96
     },
     {
-      title: '绩效方案',
-      key: 'performanceRule',
-      align: 'center',
-      width: 150,
-      render: (_, record) => getPerformanceRuleLabel(performanceRules.find((rule) => rule.id === record.performanceRuleId))
-    },
-    {
       title: '适用任务',
       key: 'taskConfigs',
       align: 'center',
@@ -290,7 +282,6 @@ export function BrandManagementPage() {
           rows={buildBrandTaskDisplayRows(
             record,
             taskConfigRows,
-            performanceRules,
             brandTaskPriceRows,
             contractRows,
             brandConfigurationEffectiveAt
@@ -432,16 +423,6 @@ export function BrandManagementPage() {
                   label: '任务配置',
                   children: (
                     <>
-                      <CustomerDetailSection icon={<FileProtectOutlined />} title="绩效方案">
-                        <CustomerInfoGrid
-                          columns={2}
-                          items={[
-                            { label: '绑定方案', value: getPerformanceRuleLabel(previewPerformanceRule) },
-                            { label: '适用任务', value: previewTaskConfigRows.length > 0 ? `已选择 ${previewTaskConfigRows.length} 项` : '未选择' }
-                          ]}
-                        />
-                      </CustomerDetailSection>
-
                       <CustomerDetailSection icon={<AppstoreOutlined />} title="结算规则">
                         <CustomerInfoGrid
                           columns={2}
@@ -471,6 +452,11 @@ export function BrandManagementPage() {
                       </CustomerDetailSection>
                     </>
                   )
+                },
+                {
+                  key: 'acceptance-config',
+                  label: '验收配置',
+                  children: <BrandAcceptanceConfigPanel policy={previewAcceptancePolicy} />
                 }
               ]}
             />
@@ -569,21 +555,6 @@ export function BrandManagementPage() {
               label: '任务配置',
               children: (
                 <>
-                  <CustomerDetailSection icon={<FileProtectOutlined />} title="绩效方案">
-                    <DrawerFormGrid>
-                      <DrawerFormField label="绩效方案" required wide>
-                        <Select
-                          value={brandForm.performanceRuleId}
-                          options={performanceRules.map((rule) => ({ label: getPerformanceRuleLabel(rule), value: rule.id }))}
-                          onChange={(performanceRuleId) => {
-                            setBrandForm((current) => setBrandPerformanceRule(current, performanceRuleId));
-                            setTaskConfigIdToAdd(undefined);
-                          }}
-                        />
-                      </DrawerFormField>
-                    </DrawerFormGrid>
-                  </CustomerDetailSection>
-
                   <CustomerDetailSection icon={<AppstoreOutlined />} title="结算规则">
                     <DrawerFormGrid>
                       <DrawerFormField label="结算方式" required wide>
@@ -602,7 +573,7 @@ export function BrandManagementPage() {
                         />
                       </DrawerFormField>
                       {brandForm.settlementPolicy.mode === '按任务结算' ? (
-                        <DrawerFormField label="验收后到期天数" required>
+                        <DrawerFormField label="甲方验收后到期天数" required>
                           <InputNumber
                             min={0}
                             precision={0}
@@ -636,9 +607,8 @@ export function BrandManagementPage() {
 
                   <CustomerDetailSection icon={<AppstoreOutlined />} title="适用任务">
                     <BrandTaskConfigEditor
-                      addableTaskScoreItems={addableTaskScoreItems}
+                      addableTaskConfigs={addableTaskConfigs}
                       eligibleContracts={eligibleContracts}
-                      performanceRule={selectedPerformanceRule}
                       rows={configuredTaskFormRows}
                       selectedTaskConfigId={taskConfigIdToAdd}
                       taskConfigRows={taskConfigRows}
@@ -649,6 +619,17 @@ export function BrandManagementPage() {
                     />
                   </CustomerDetailSection>
                 </>
+              )
+            },
+            {
+              key: 'acceptance-config',
+              label: '验收配置',
+              children: (
+                <BrandAcceptanceConfigPanel
+                  editable
+                  policy={brandForm.acceptancePolicy}
+                  onChange={(acceptancePolicy) => updateBrandForm('acceptancePolicy', acceptancePolicy)}
+                />
               )
             }
           ]}

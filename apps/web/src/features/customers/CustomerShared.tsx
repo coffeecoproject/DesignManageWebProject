@@ -21,6 +21,7 @@ export const customerStatusTone = {
   合作中: 'green',
   待签约: 'amber',
   已到期: 'gray',
+  已终止: 'gray',
   无合同: 'blue'
 } satisfies Record<CustomerStatus, StatusTagTone>;
 
@@ -39,7 +40,8 @@ export const storeStatusTone = {
 
 export const customerContractStatusTone = {
   有效: 'green',
-  已到期: 'gray'
+  已到期: 'gray',
+  已终止: 'gray'
 } satisfies Record<CustomerContractStatus, StatusTagTone>;
 
 export const customerMetricIcons = {

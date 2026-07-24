@@ -5,30 +5,44 @@ import {
   FileDoneOutlined,
   FileTextOutlined,
   ReloadOutlined,
-  ShopOutlined
+  ShopOutlined,
+  StarOutlined
 } from '@ant-design/icons';
+import { DatePicker, Input, InputNumber, Segmented } from 'antd';
+import dayjs from 'dayjs';
+import { useEffect, useState } from 'react';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DetailDrawerShell } from '../../components/DrawerShell';
+import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
+import { TagChip } from '../../components/TagChip';
 import type { StoreRecord } from '../customers/customerData';
-import type { TaskConfigRow } from '../system/TaskConfigState';
 import { formatTaskDuration, type StoreTaskRecord } from './TaskManagementState';
 import { getTaskStoreContext, getTaskTypeName, isTaskClosed, taskStatusTone } from './taskDisplayModel';
 import { TaskFilesSection } from './components/TaskFilesSection';
 import { TaskDeadlineStatus, TaskStatusTag } from './components/TaskStatusTag';
+import {
+  getCustomerTaskAcceptanceStatus,
+  getCustomerTaskAcceptanceValidationMessage,
+  type CustomerTaskAcceptanceInput
+} from './taskCustomerAcceptanceModel';
+import {
+  calculateBrandAcceptance,
+  type BrandAcceptanceTimelinessResult
+} from '../customers/brandAcceptancePolicyModel';
 
 type TaskDetailDrawerProps = {
   getBrandName: (brandId: string) => string;
   getCustomerName: (customerId: string) => string;
   onClose: () => void;
   onReverseAcceptance: (record: StoreTaskRecord) => void;
+  onSaveCustomerAcceptance: (record: StoreTaskRecord, input: CustomerTaskAcceptanceInput) => boolean;
   onTerminate: (record: StoreTaskRecord) => void;
   open: boolean;
   storeRows: StoreRecord[];
   task?: StoreTaskRecord;
-  taskConfigRows: TaskConfigRow[];
 };
 
 export function TaskDetailDrawer({
@@ -36,21 +50,112 @@ export function TaskDetailDrawer({
   getCustomerName,
   onClose,
   onReverseAcceptance,
+  onSaveCustomerAcceptance,
   onTerminate,
   open,
   storeRows,
-  task,
-  taskConfigRows
+  task
 }: TaskDetailDrawerProps) {
+  const [activeTab, setActiveTab] = useState('profile');
+  const [customerAcceptanceEditing, setCustomerAcceptanceEditing] = useState(false);
+  const [customerAcceptanceForm, setCustomerAcceptanceForm] = useState<CustomerTaskAcceptanceInput>({
+    acceptedOn: '',
+    correctionReason: '',
+    remark: '',
+    score: null,
+    timelinessResult: null
+  });
   const storeContext = task ? getTaskStoreContext(storeRows, task.storeId) : undefined;
+  const customerAcceptanceStatus = task ? getCustomerTaskAcceptanceStatus(task) : '不适用';
+  const customerAcceptanceValidation = task
+    ? getCustomerTaskAcceptanceValidationMessage(task, customerAcceptanceForm)
+    : '未找到任务记录';
+
+  useEffect(() => {
+    setActiveTab('profile');
+    setCustomerAcceptanceEditing(false);
+    setCustomerAcceptanceForm({
+      acceptedOn: task?.customerAcceptance?.acceptedOn ?? task?.acceptedAt?.slice(0, 10) ?? '',
+      correctionReason: '',
+      remark: task?.customerAcceptance?.remark ?? '',
+      score: task?.customerAcceptance?.score ?? null,
+      timelinessResult: task?.customerAcceptance?.timelinessResult ?? null
+    });
+  }, [open, task?.id]);
+
+  function startCustomerAcceptanceEdit() {
+    if (!task) {
+      return;
+    }
+
+    setCustomerAcceptanceForm({
+      acceptedOn: task.customerAcceptance?.acceptedOn ?? task.acceptedAt?.slice(0, 10) ?? '',
+      correctionReason: '',
+      remark: task.customerAcceptance?.remark ?? '',
+      score: task.customerAcceptance?.score ?? null,
+      timelinessResult: task.customerAcceptance?.timelinessResult ?? null
+    });
+    setActiveTab('customerAcceptance');
+    setCustomerAcceptanceEditing(true);
+  }
+
+  function cancelCustomerAcceptanceEdit() {
+    setCustomerAcceptanceEditing(false);
+    setCustomerAcceptanceForm({
+      acceptedOn: task?.customerAcceptance?.acceptedOn ?? task?.acceptedAt?.slice(0, 10) ?? '',
+      correctionReason: '',
+      remark: task?.customerAcceptance?.remark ?? '',
+      score: task?.customerAcceptance?.score ?? null,
+      timelinessResult: task?.customerAcceptance?.timelinessResult ?? null
+    });
+  }
+
+  function saveCustomerAcceptance() {
+    if (!task || customerAcceptanceValidation || !onSaveCustomerAcceptance(task, customerAcceptanceForm)) {
+      return;
+    }
+
+    setCustomerAcceptanceEditing(false);
+  }
+
+  const standardAmount = task?.customerBillingSnapshot?.unitPrice ?? 0;
+  const editingCalculation = customerAcceptanceEditing
+    && task?.customerBillingSnapshot
+    && customerAcceptanceForm.score !== null
+    && customerAcceptanceForm.timelinessResult
+      ? calculateBrandAcceptance({
+          policy: task.customerBillingSnapshot.acceptancePolicy,
+          score: customerAcceptanceForm.score,
+          standardAmount,
+          timelinessResult: customerAcceptanceForm.timelinessResult
+        })
+      : undefined;
+  const deductionAmount = editingCalculation?.deductionAmount ?? task?.customerAcceptance?.deductionAmount ?? 0;
+  const finalAmount = editingCalculation?.finalAmount ?? task?.customerAcceptance?.finalAmount ?? standardAmount;
+  const money = (value: number) => `${value.toFixed(2)} 元`;
 
   return (
     <DetailDrawerShell
       className="task-list-drawer"
-      closeAction={{ label: '关闭', onClick: onClose }}
+      closeAction={customerAcceptanceEditing ? undefined : { label: '关闭', onClick: onClose }}
+      cancelAction={customerAcceptanceEditing ? { label: '取消', onClick: cancelCustomerAcceptanceEdit } : undefined}
       open={open}
+      primaryAction={
+        task && customerAcceptanceStatus !== '不适用'
+          ? customerAcceptanceEditing
+            ? {
+                disabled: Boolean(customerAcceptanceValidation),
+                label: '保存甲方验收',
+                onClick: saveCustomerAcceptance
+              }
+            : {
+                label: task.customerAcceptance ? '更正甲方验收' : '录入甲方验收',
+                onClick: startCustomerAcceptanceEdit
+              }
+          : undefined
+      }
       secondaryAction={
-        task?.status === '已完成'
+        !customerAcceptanceEditing && task?.status === '已完成'
           ? {
               danger: true,
               label: '撤销验收',
@@ -86,8 +191,10 @@ export function TaskDetailDrawer({
           />
 
           <DetailTabs
+            activeKey={activeTab}
             tabTestIdPrefix="task-store-detail-tab"
             testId="task-store-detail-tabs"
+            onChange={setActiveTab}
             items={[
               {
                 key: 'profile',
@@ -102,7 +209,7 @@ export function TaskDetailDrawer({
                           { label: '品牌', value: getBrandName(task.brandId) },
                           { label: '门店', value: storeContext?.storeCityLabel ?? '-' },
                           { label: '任务编号', value: task.code },
-                          { label: '任务类型', value: getTaskTypeName(task.taskConfigId, taskConfigRows) },
+                          { label: '任务类型', value: getTaskTypeName(task) },
                           { label: '执行人', value: task.executorName ?? '-' },
                           { label: '验收人', value: task.acceptorName ?? '-' }
                         ]}
@@ -151,6 +258,121 @@ export function TaskDetailDrawer({
                       title="相关文件"
                     />
                   </>
+                )
+              },
+              {
+                key: 'customerAcceptance',
+                label: '甲方验收',
+                children: (
+                  <DetailSection icon={<StarOutlined />} title="甲方验收">
+                    {customerAcceptanceEditing ? (
+                      <>
+                        <DetailInfoGrid
+                          columns={4}
+                          items={[
+                            { label: '标准结算金额', value: money(standardAmount) },
+                            { label: '质量扣罚', value: `${editingCalculation?.qualityPenaltyPoints ?? 0} 分` },
+                            { label: '时效扣罚', value: `${editingCalculation?.timelinessPenaltyPoints ?? 0} 分` },
+                            { label: '累计扣罚', value: `${editingCalculation?.totalPenaltyPoints ?? 0} 分` },
+                            { label: '扣款比例', value: `${Math.round((editingCalculation?.deductionRate ?? 0) * 100)}%` },
+                            { label: '扣款金额', value: money(deductionAmount) },
+                            { label: '最终结算金额', value: money(finalAmount) }
+                          ]}
+                        />
+                        <DrawerFormGrid>
+                          <DrawerFormField label="甲方验收日期" required>
+                            <DatePicker
+                              allowClear={false}
+                              value={customerAcceptanceForm.acceptedOn ? dayjs(customerAcceptanceForm.acceptedOn) : null}
+                              onChange={(value) => setCustomerAcceptanceForm((current) => ({
+                                ...current,
+                                acceptedOn: value?.format('YYYY-MM-DD') ?? ''
+                              }))}
+                            />
+                          </DrawerFormField>
+                          <DrawerFormField label="甲方评分" required>
+                            <InputNumber
+                              max={100}
+                              min={0}
+                              precision={0}
+                              value={customerAcceptanceForm.score}
+                              onChange={(score) => setCustomerAcceptanceForm((current) => ({ ...current, score }))}
+                            />
+                          </DrawerFormField>
+                          <DrawerFormField label="时效结果" required>
+                            <Segmented
+                              block
+                              options={['未超时', '超时', '不计时']}
+                              value={customerAcceptanceForm.timelinessResult ?? undefined}
+                              onChange={(timelinessResult) => setCustomerAcceptanceForm((current) => ({
+                                ...current,
+                                timelinessResult: timelinessResult as BrandAcceptanceTimelinessResult
+                              }))}
+                            />
+                          </DrawerFormField>
+                          <DrawerFormField
+                            label="备注"
+                            required={(editingCalculation?.totalPenaltyPoints ?? 0) > 0 || customerAcceptanceForm.timelinessResult === '不计时'}
+                            wide
+                          >
+                            <Input.TextArea
+                              autoSize={{ minRows: 3, maxRows: 6 }}
+                              maxLength={200}
+                              showCount
+                              value={customerAcceptanceForm.remark}
+                              onChange={(event) => setCustomerAcceptanceForm((current) => ({
+                                ...current,
+                                remark: event.target.value
+                              }))}
+                            />
+                          </DrawerFormField>
+                          {task.customerAcceptance ? (
+                            <DrawerFormField label="更正原因" required wide>
+                              <Input.TextArea
+                                autoSize={{ minRows: 3, maxRows: 6 }}
+                                maxLength={200}
+                                showCount
+                                value={customerAcceptanceForm.correctionReason}
+                                onChange={(event) => setCustomerAcceptanceForm((current) => ({
+                                  ...current,
+                                  correctionReason: event.target.value
+                                }))}
+                              />
+                            </DrawerFormField>
+                          ) : null}
+                        </DrawerFormGrid>
+                      </>
+                    ) : (
+                      <DetailInfoGrid
+                        columns={3}
+                        items={[
+                          {
+                            label: '验收状态',
+                            value: customerAcceptanceStatus === '不适用'
+                              ? '-'
+                              : <TagChip
+                                  label={customerAcceptanceStatus}
+                                  tone={customerAcceptanceStatus === '已完成' ? 'green' : 'amber'}
+                                />
+                          },
+                          { label: '甲方评分', value: task.customerAcceptance ? `${task.customerAcceptance.score} 分` : '-' },
+                          { label: '时效结果', value: task.customerAcceptance?.timelinessResult ?? '-' },
+                          { label: '标准结算金额', value: customerAcceptanceStatus === '不适用' ? '-' : money(standardAmount) },
+                          { label: '质量扣罚', value: task.customerAcceptance ? `${task.customerAcceptance.qualityPenaltyPoints} 分` : '-' },
+                          { label: '时效扣罚', value: task.customerAcceptance ? `${task.customerAcceptance.timelinessPenaltyPoints} 分` : '-' },
+                          { label: '累计扣罚', value: task.customerAcceptance ? `${task.customerAcceptance.totalPenaltyPoints} 分` : '-' },
+                          { label: '扣款比例', value: task.customerAcceptance ? `${Math.round(task.customerAcceptance.deductionRate * 100)}%` : '-' },
+                          { label: '扣款金额', value: task.customerAcceptance ? money(task.customerAcceptance.deductionAmount) : '-' },
+                          { label: '最终结算金额', value: task.customerAcceptance ? money(finalAmount) : '-' },
+                          { label: '甲方验收日期', value: task.customerAcceptance?.acceptedOn ?? '-' },
+                          { label: '备注', value: task.customerAcceptance?.remark || '-' },
+                          ...(task.customerAcceptance?.correctionReason
+                            ? [{ label: '最近更正原因', value: task.customerAcceptance.correctionReason }]
+                            : [])
+                        ]}
+                      />
+                    )}
+                  </DetailSection>
                 )
               },
               {

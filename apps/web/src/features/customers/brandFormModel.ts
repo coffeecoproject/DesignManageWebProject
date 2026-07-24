@@ -1,4 +1,3 @@
-import type { PerformanceRulePreset, PerformanceTaskScoreItem } from '../performance/performanceTypes';
 import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import { getPrimaryCustomerContact, type BrandRecord, type BrandTaskConfigRecord, type CustomerContractRecord, type CustomerRecord } from './customerData';
@@ -10,16 +9,24 @@ import {
   type BrandTaskPriceVersionRecord,
   type BrandTaskPricingDraft
 } from './brandTaskPricingModel';
+import {
+  cloneBrandAcceptancePolicy,
+  defaultBrandAcceptancePolicy,
+  isBrandAcceptancePolicyValid,
+  getBrandAcceptancePolicy,
+  type BrandAcceptancePolicy,
+  type BrandAcceptancePolicyRecord
+} from './brandAcceptancePolicyModel';
 
 export type BrandTaskConfigForm = BrandTaskPricingDraft;
 
 export type BrandForm = {
+  acceptancePolicy: BrandAcceptancePolicy;
   code: string;
   contactName: string;
   customerId: string;
   name: string;
   note: string;
-  performanceRuleId: string;
   settlementPolicy: BrandSettlementPolicy;
   taskConfigs: BrandTaskConfigForm[];
 };
@@ -31,9 +38,7 @@ export type BrandTaskDisplayRow = {
   billable: boolean;
   contractId?: string;
   contractName: string;
-  score: number;
   unitPrice: number;
-  unit: string;
 };
 
 export type BrandTaskFormDisplayRow = Omit<BrandTaskDisplayRow, 'id'> & {
@@ -75,14 +80,6 @@ export function getDefaultBrandContactName(customerId: string, customers: Custom
   return customer ? getPrimaryCustomerContact(customer)?.name ?? '' : '';
 }
 
-export function getAvailableBrandPerformanceRules(ruleRows: PerformanceRulePreset[]) {
-  return ruleRows.filter((rule) => rule.performanceType === '任务制' && rule.status === '已发布' && rule.taskScoreItems.length > 0);
-}
-
-export function getPerformanceRuleLabel(rule: PerformanceRulePreset | undefined) {
-  return rule ? `${rule.category} / ${rule.currentVersion}` : '未绑定';
-}
-
 export function getTaskConfigName(taskConfigId: string, taskConfigRows: TaskConfigRow[]) {
   return taskConfigRows.find((taskConfigRow) => taskConfigRow.id === taskConfigId)?.name ?? '未配置任务类型';
 }
@@ -90,15 +87,20 @@ export function getTaskConfigName(taskConfigId: string, taskConfigRows: TaskConf
 export function buildBrandForm(
   record: BrandRecord,
   priceVersions: readonly BrandTaskPriceVersionRecord[],
+  acceptancePolicies: readonly BrandAcceptancePolicyRecord[],
   effectiveAt = frontendBusinessToday
 ): BrandForm {
+  const acceptancePolicy = getBrandAcceptancePolicy({
+    brandId: record.id,
+    policies: acceptancePolicies
+  })?.policy ?? defaultBrandAcceptancePolicy;
   return {
+    acceptancePolicy: cloneBrandAcceptancePolicy(acceptancePolicy),
     code: record.code,
     contactName: record.contactName,
     customerId: record.customerId,
     name: record.name,
     note: record.note,
-    performanceRuleId: record.performanceRuleId,
     settlementPolicy: record.settlementPolicy,
     taskConfigs: getCurrentBrandTaskPricingDrafts({
       brandId: record.id,
@@ -111,22 +113,20 @@ export function buildBrandForm(
 
 export function buildDefaultBrandForm({
   brandRows,
-  customerRows,
-  defaultPerformanceRuleId
+  customerRows
 }: {
   brandRows: BrandRecord[];
   customerRows: CustomerRecord[];
-  defaultPerformanceRuleId: string;
 }): BrandForm {
   const customerId = customerRows[0]?.id ?? '';
 
   return {
+    acceptancePolicy: cloneBrandAcceptancePolicy(defaultBrandAcceptancePolicy),
     code: getNextBrandCode(brandRows),
     contactName: getDefaultBrandContactName(customerId, customerRows),
     customerId,
     name: '',
     note: '',
-    performanceRuleId: defaultPerformanceRuleId,
     settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: []
   };
@@ -137,7 +137,7 @@ export function isBrandFormValid(form: BrandForm) {
     form.customerId &&
       form.name.trim() &&
       form.contactName.trim() &&
-      form.performanceRuleId &&
+      isBrandAcceptancePolicyValid(form.acceptancePolicy) &&
       isBrandSettlementPolicyValid(form.settlementPolicy) &&
       form.taskConfigs.every((taskConfig) => !taskConfig.billable || (taskConfig.unitPrice > 0 && taskConfig.contractId))
   );
@@ -150,17 +150,12 @@ function normalizeBrandTaskConfigs(brandCode: string, taskConfigs: BrandTaskConf
   }));
 }
 
-function findRuleTaskScoreItem(rule: PerformanceRulePreset | undefined, taskConfigId: string) {
-  return rule?.taskScoreItems.find((item) => item.taskConfigId === taskConfigId);
-}
-
 function toBrandTaskDisplayRow({
   billable,
   contractId,
   contracts,
   taskConfigId,
   taskConfigRows,
-  taskScoreItem,
   unitPrice
 }: {
   billable: boolean;
@@ -168,12 +163,11 @@ function toBrandTaskDisplayRow({
   contracts: readonly CustomerContractRecord[];
   taskConfigId: string;
   taskConfigRows: TaskConfigRow[];
-  taskScoreItem: PerformanceTaskScoreItem | undefined;
   unitPrice: number;
 }): Omit<BrandTaskDisplayRow, 'id'> | undefined {
   const taskType = taskConfigRows.find((taskConfigRow) => taskConfigRow.id === taskConfigId);
 
-  if (!taskType || !taskScoreItem) {
+  if (!taskType) {
     return undefined;
   }
 
@@ -183,22 +177,17 @@ function toBrandTaskDisplayRow({
     contractId,
     contractName: contracts.find((contract) => contract.id === contractId)?.name ?? '-',
     name: taskType.name,
-    score: taskScoreItem.score,
-    unitPrice,
-    unit: taskScoreItem.unit
+    unitPrice
   };
 }
 
 export function buildBrandTaskDisplayRows(
   record: BrandRecord,
   taskConfigRows: TaskConfigRow[],
-  performanceRules: PerformanceRulePreset[],
   priceVersions: readonly BrandTaskPriceVersionRecord[],
   contracts: readonly CustomerContractRecord[],
   effectiveAt = frontendBusinessToday
 ): BrandTaskDisplayRow[] {
-  const performanceRule = performanceRules.find((rule) => rule.id === record.performanceRuleId);
-
   return record.taskConfigs
     .map((taskConfig) => {
       const priceVersion = resolveActiveBrandTaskPriceVersion({
@@ -213,7 +202,6 @@ export function buildBrandTaskDisplayRows(
         contracts,
         taskConfigId: taskConfig.taskConfigId,
         taskConfigRows,
-        taskScoreItem: findRuleTaskScoreItem(performanceRule, taskConfig.taskConfigId),
         unitPrice: priceVersion?.unitPrice ?? 0
       });
 
@@ -232,7 +220,6 @@ export function buildBrandTaskDisplayRows(
 export function buildBrandTaskFormDisplayRows(
   taskConfigs: BrandTaskConfigForm[],
   taskConfigRows: TaskConfigRow[],
-  performanceRule: PerformanceRulePreset | undefined,
   contracts: readonly CustomerContractRecord[]
 ): BrandTaskFormDisplayRow[] {
   return taskConfigs
@@ -243,7 +230,6 @@ export function buildBrandTaskFormDisplayRows(
         contracts,
         taskConfigId: taskConfig.taskConfigId,
         taskConfigRows,
-        taskScoreItem: findRuleTaskScoreItem(performanceRule, taskConfig.taskConfigId),
         unitPrice: taskConfig.unitPrice
       });
 
@@ -259,38 +245,30 @@ export function buildBrandTaskFormDisplayRows(
     .filter((row): row is BrandTaskFormDisplayRow => Boolean(row));
 }
 
-export function getAddableBrandTaskScoreItems({
+export function getAddableBrandTaskConfigs({
   form,
-  performanceRule,
   taskConfigRows
 }: {
   form: BrandForm;
-  performanceRule: PerformanceRulePreset | undefined;
   taskConfigRows: TaskConfigRow[];
 }) {
-  return (
-    performanceRule?.taskScoreItems.filter((taskScoreItem) => {
-      const taskConfig = taskConfigRows.find((taskConfigRow) => taskConfigRow.id === taskScoreItem.taskConfigId);
-      return taskConfig?.status === '启用' && !form.taskConfigs.some((taskConfigItem) => taskConfigItem.taskConfigId === taskScoreItem.taskConfigId);
-    }) ?? []
+  return taskConfigRows.filter(
+    (taskConfig) => taskConfig.status === '启用' && !form.taskConfigs.some((item) => item.taskConfigId === taskConfig.id)
   );
 }
 
 export function addBrandTaskConfigToForm({
   form,
-  performanceRule,
   taskConfigId,
   taskConfigRows
 }: {
   form: BrandForm;
-  performanceRule: PerformanceRulePreset | undefined;
   taskConfigId: string | undefined;
   taskConfigRows: TaskConfigRow[];
 }): BrandForm {
-  const taskScoreItem = performanceRule?.taskScoreItems.find((item) => item.taskConfigId === taskConfigId);
   const taskConfigRow = taskConfigRows.find((currentTaskConfigRow) => currentTaskConfigRow.id === taskConfigId);
 
-  if (!taskScoreItem || !taskConfigRow || taskConfigRow.status !== '启用') {
+  if (!taskConfigRow || taskConfigRow.status !== '启用') {
     return form;
   }
 
@@ -336,21 +314,12 @@ export function updateBrandTaskPricing(
   };
 }
 
-export function setBrandPerformanceRule(form: BrandForm, performanceRuleId: string): BrandForm {
-  return {
-    ...form,
-    performanceRuleId,
-    taskConfigs: []
-  };
-}
-
 export function buildBrandRecordForSave({ editingBrand, form, updatedAt = '2026-06-14' }: BuildBrandRecordInput): BrandRecord {
   const normalizedForm = {
     contactName: form.contactName.trim(),
     customerId: form.customerId,
     name: form.name.trim(),
     note: form.note.trim() || '暂无备注。',
-    performanceRuleId: form.performanceRuleId,
     settlementPolicy: form.settlementPolicy,
     taskConfigs: normalizeBrandTaskConfigs(form.code, form.taskConfigs)
   };

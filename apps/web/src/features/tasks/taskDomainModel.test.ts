@@ -2,6 +2,8 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import type { BrandRecord } from '../customers/customerData';
 import type { PeopleMember } from '../people/peopleTypes';
 import type { PerformanceRulePreset } from '../performance/performanceTypes';
+import { defaultBrandAcceptancePolicy } from '../customers/brandAcceptancePolicyModel';
+import { buildTaskDefinitionSnapshot, type TaskConfigRow } from '../system/TaskConfigState';
 import type { ClientFeedbackRecord, StoreTaskRecord, TaskPerformanceScoringRecord } from './TaskManagementState';
 import {
   buildAcceptanceFeedbackDraft,
@@ -19,11 +21,17 @@ import {
 import { buildTaskDashboardData, buildTaskDashboardPeriodRange } from './taskDashboardModel';
 import { getTaskDeadlineState, getTaskSearchText, getTaskStoreContext, getTaskTypeName, isTaskClosed, isTaskOverdue } from './taskDisplayModel';
 import { buildTaskFilesFromDrafts, buildTaskReworkScreenshotFiles, hasPartialTaskFileDraft, normalizeCompletedTaskFileDrafts } from './taskFileModel';
-import { defaultTaskFilters, getFilteredStoreTasks } from './taskListFormModel';
+import { defaultTaskFilters, getBrandTaskOptions, getFilteredStoreTasks } from './taskListFormModel';
 import { appendTaskOperation } from './taskOperationModel';
 import { buildPartTimeLaborAcceptanceRecord, buildPartTimeLaborSettlementBatches } from './partTimeLaborSettlementModel';
-import { applyTaskAcceptanceCommit } from './taskAcceptanceCommitModel';
+import { applyTaskAcceptanceCommit, applyTaskAcceptanceReversal } from './taskAcceptanceCommitModel';
 import { ensureTaskAcceptanceArchive } from './taskAcceptanceEvidenceModel';
+import {
+  applyCustomerTaskAcceptance,
+  getCustomerTaskAcceptanceStatus,
+  getCustomerTaskAcceptanceValidationMessage
+} from './taskCustomerAcceptanceModel';
+import { getTaskCreationBlockingMessage } from './taskCreationEligibilityModel';
 
 type UnitTest = {
   name: string;
@@ -68,6 +76,7 @@ function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
     executorName: '执行人',
     files: [],
     customerBillingSnapshot: {
+      acceptancePolicy: defaultBrandAcceptancePolicy,
       billable: true,
       brandId: 'brand-test',
       brandName: '测试品牌',
@@ -98,7 +107,10 @@ function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
     storeId: 'store-test',
     taskConfigId: 'task-type-floor-plan',
     updatedAt: '2026-06-15 10:00',
-    ...overrides
+    ...overrides,
+    taskDefinitionSnapshot: overrides.taskDefinitionSnapshot ?? {
+      capturedAt: overrides.createdAt ?? '2026-06-15 10:00', category: '设计交付', code: 'TASK-FLOOR', deliveryHints: [], id: overrides.taskConfigId ?? 'task-type-floor-plan', name: '平面方案'
+    }
   };
 
   return task.status === '已完成' && task.acceptedAt
@@ -189,6 +201,89 @@ function createPerformanceRule(overrides: Partial<PerformanceRulePreset> = {}): 
 
 const tests: UnitTest[] = [
   {
+    name: 'task definition snapshot freezes display metadata and delivery hints',
+    run: () => {
+      const config: TaskConfigRow = {
+        category: '设计交付',
+        code: 'TT-2026-099',
+        deliveryHints: ['建议提供图纸'],
+        id: 'task-type-test',
+        name: '原任务名称',
+        note: '',
+        status: '启用',
+        updatedAt: '2026-06-15'
+      };
+      const snapshot = buildTaskDefinitionSnapshot(config, '2026-06-15 10:00');
+
+      config.name = '新任务名称';
+      config.deliveryHints.push('后续新增提示');
+
+      assertEqual(snapshot.name, '原任务名称', 'renaming master data should not rewrite an existing task snapshot');
+      assertEqual(snapshot.deliveryHints.length, 1, 'delivery hints should be copied into the task snapshot');
+    }
+  },
+  {
+    name: 'brand task options are controlled by brand binding and global task status only',
+    run: () => {
+      const brand: BrandRecord = {
+        code: 'BR-TEST',
+        contactName: '甲方',
+        customerId: 'customer-test',
+        id: 'brand-test',
+        name: '测试品牌',
+        note: '',
+        owner: '李明',
+        settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+        status: '启用',
+        storeCount: 1,
+        taskConfigs: [{ id: 'brand-task-test', taskConfigId: 'task-type-test' }],
+        updatedAt: '2026-06-15'
+      };
+      const enabledTask: TaskConfigRow = {
+        category: '设计交付', code: 'TT-TEST', deliveryHints: [], id: 'task-type-test', name: '测试任务', note: '', status: '启用', updatedAt: '2026-06-15'
+      };
+
+      assertEqual(getBrandTaskOptions(brand, [enabledTask]).length, 1, 'brand-bound enabled task should be publishable without a brand performance rule');
+      assertEqual(getBrandTaskOptions({ ...brand, taskConfigs: [] }, [enabledTask]).length, 0, 'removing brand binding should remove the task from new-task options');
+      assertEqual(getBrandTaskOptions(brand, [{ ...enabledTask, status: '停用' }]).length, 0, 'globally disabled task should not be publishable');
+    }
+  },
+  {
+    name: 'task creation requires available customer, master data and people relationships',
+    run: () => {
+      const validInput = {
+        acceptorAvailable: true,
+        brandAvailable: true,
+        brandTaskAvailable: true,
+        customerStatus: '合作中',
+        executorAvailable: true,
+        storeAvailable: true,
+        taskConfigAvailable: true
+      };
+      assertEqual(getTaskCreationBlockingMessage(validInput), undefined, 'valid task context should pass');
+      assertEqual(
+        getTaskCreationBlockingMessage({ ...validInput, brandTaskAvailable: false }),
+        '当前品牌未配置该任务类型',
+        'task type outside the brand configuration should be blocked'
+      );
+      assertEqual(
+        getTaskCreationBlockingMessage({ ...validInput, customerStatus: '已终止' }),
+        '当前客户没有生效中的合同，不能新增任务',
+        'terminated customer should be blocked'
+      );
+      assertEqual(
+        getTaskCreationBlockingMessage({ ...validInput, taskConfigAvailable: false }),
+        '当前任务类型已停用',
+        'disabled task type should be blocked'
+      );
+      assertEqual(
+        getTaskCreationBlockingMessage({ ...validInput, executorAvailable: false }),
+        '当前执行人不可承接任务',
+        'inactive executor should be blocked'
+      );
+    }
+  },
+  {
     name: 'task deadline state uses closed and overdue rules consistently',
     run() {
       assertEqual(isTaskClosed(createTask({ status: '已完成' })), true, 'completed task should be closed');
@@ -216,7 +311,20 @@ const tests: UnitTest[] = [
       );
 
       assertEqual(storeContext.storeCityLabel, '武汉光谷店 / 武汉市', 'store label should include name and city');
-      assertEqual(getTaskTypeName('task-type-floor-plan', [{ id: 'task-type-floor-plan', name: '平面方案' }]), '平面方案', 'task type should resolve by id');
+      assertEqual(
+        getTaskTypeName(createTask({
+          taskDefinitionSnapshot: {
+            capturedAt: '2026-06-15 10:00',
+            category: '设计交付',
+            code: 'TASK-FLOOR',
+            deliveryHints: [],
+            id: 'task-type-floor-plan',
+            name: '历史平面方案'
+          }
+        })),
+        '历史平面方案',
+        'task type should resolve from the frozen definition snapshot'
+      );
       assert(
         getTaskSearchText({
           acceptorName: '验收人',
@@ -271,19 +379,7 @@ const tests: UnitTest[] = [
             updatedAt: '2026-06-15'
           }
         ],
-        storeTaskRows: [inRangeTask, outOfRangeTask],
-        taskConfigRows: [
-          {
-            category: '设计交付',
-            code: 'TT-TEST-001',
-            deliveryFileRequirements: ['平面方案文件'],
-            id: 'task-type-floor-plan',
-            name: '平面方案',
-            note: '',
-            status: '启用',
-            updatedAt: '2026-06-15'
-          }
-        ]
+        storeTaskRows: [inRangeTask, outOfRangeTask]
       });
 
       assertEqual(rows.length, 1, 'only tasks planned inside selected range should remain');
@@ -354,9 +450,8 @@ const tests: UnitTest[] = [
             name: '测试品牌',
             note: '',
             owner: '李明',
-          performanceRuleId: '',
-          settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
-          status: '启用',
+            settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+            status: '启用',
             storeCount: 1,
             taskConfigs: [],
             updatedAt: '2026-06-15'
@@ -394,7 +489,6 @@ const tests: UnitTest[] = [
           }
         ],
         storeTaskRows: [overdueTask, pendingAcceptanceTask, completedTask],
-        taskConfigRows: [{ id: 'task-type-floor-plan', name: '平面方案' }],
         today: '2026-06-15',
         now: '2026-06-15 10:00'
       });
@@ -423,9 +517,8 @@ const tests: UnitTest[] = [
             name: '测试品牌',
             note: '',
             owner: '李明',
-          performanceRuleId: '',
-          settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
-          status: '启用',
+            settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
+            status: '启用',
             storeCount: 1,
             taskConfigs: [],
             updatedAt: '2026-06-15'
@@ -467,7 +560,6 @@ const tests: UnitTest[] = [
           }
         ],
         storeTaskRows: [overdueTask, pendingAcceptanceTask, completedTask],
-        taskConfigRows: [{ id: 'task-type-floor-plan', name: '平面方案' }],
         today: '2026-06-15',
         now: '2026-06-15 10:00'
       });
@@ -544,7 +636,15 @@ const tests: UnitTest[] = [
       const member = {
         id: task.executorId,
         personnelType: '全职',
-        position: '空间设计师'
+        position: '空间设计师',
+        positionAssignments: [{
+          effectiveFrom: '2026-01-01',
+          id: 'assignment-task-domain',
+          isPrimary: true,
+          positionId: 'position-space-designer',
+          positionName: '空间设计师',
+          status: '生效中'
+        }]
       } as PeopleMember;
       const rule = getTaskPerformanceRule(task, member, ruleRows);
       const scoreItem = getTaskScoreItem(task, rule);
@@ -576,7 +676,15 @@ const tests: UnitTest[] = [
       const member = {
         id: task.executorId,
         personnelType: '全职',
-        position: '空间设计师'
+        position: '空间设计师',
+        positionAssignments: [{
+          effectiveFrom: '2026-01-01',
+          id: 'assignment-task-history',
+          isPrimary: true,
+          positionId: 'position-space-designer',
+          positionName: '空间设计师',
+          status: '生效中'
+        }]
       } as PeopleMember;
       const v1 = createPerformanceRule({ effectiveEndAt: '2026-06-30' });
       const v2 = createPerformanceRule({
@@ -670,8 +778,8 @@ const tests: UnitTest[] = [
       assertEqual(feedbackDraft.feedbackBy, '周岚', 'feedback draft should default to primary contact');
       assertEqual(isAcceptanceFeedbackReady(feedbackDraft), false, 'empty content should not be ready');
       assertEqual(isAcceptanceFeedbackReady(readyFeedback), true, 'content should make feedback ready');
-      assertEqual(getReworkBlockers('', '', false).join('、'), '甲方反馈、驳回原因、整改要求', 'rework should require client feedback and internal rejection fields');
-      assertEqual(getReworkBlockers('尺寸错误', '调整门头', true).length, 0, 'complete rework fields should pass');
+      assertEqual(getReworkBlockers('', '').join('、'), '驳回原因、整改要求', 'rework should require internal rejection fields');
+      assertEqual(getReworkBlockers('尺寸错误', '调整门头').length, 0, 'internal rework should not require client feedback');
       assertEqual(feedbackRows[0]?.id, 'feedback-new', 'feedback rows should sort latest first');
     }
   },
@@ -682,7 +790,7 @@ const tests: UnitTest[] = [
         acceptedAt: '2026-06-18 16:00',
         code: 'TASK-PT-001',
         executorId: '20260006',
-        executorName: '示例兼职 B',
+        executorName: '林悦',
         id: 'task-part-time-001',
         laborAgreement: {
           agreedGrossAmount: 3200,
@@ -693,7 +801,7 @@ const tests: UnitTest[] = [
       });
       const person = {
         id: '20260006',
-        name: '示例兼职 B',
+        name: '林悦',
         personnelType: '兼职' as const,
         taxIdentityProfile: { identityType: '居民个人' as const, status: '已确认' as const }
       };
@@ -741,6 +849,27 @@ const tests: UnitTest[] = [
       assertEqual(result.batches[0]?.sources[0]?.taskNo, 'TASK-PT-001', 'source should retain task number');
       assertEqual(result.batches[0]?.sources[0]?.acceptedAt, '2026-06-18 16:00', 'source should retain acceptance time');
       assertEqual(result.batches[0]?.sources[0]?.grossAmountSource.recordId, `${task.id}/labor-agreement`, 'source should retain amount fact identity');
+
+      const reversedState = applyTaskAcceptanceReversal(committedState, {
+        actor: '验收人',
+        occurredAt: '2026-06-19 09:00',
+        reason: '验收归档内容有误',
+        taskId: task.id
+      });
+      const reacceptedState = applyTaskAcceptanceCommit(reversedState, {
+        laborAcceptance: acceptanceResult.acceptanceRecord,
+        scoringRecord,
+        task
+      });
+
+      assertEqual(reversedState.customerTaskBillingFacts[0]?.status, '已冲销', 'acceptance reversal should void the customer billing fact');
+      assertEqual(
+        reacceptedState.customerTaskBillingFacts[0]?.status,
+        '待甲方验收',
+        'reacceptance should replace the reversed fact and await a new customer acceptance result'
+      );
+      assertEqual(reacceptedState.customerTaskBillingFacts.length, 1, 'reacceptance must reuse the deterministic billing identity without duplication');
+      assertEqual(reacceptedState.partTimeLaborAcceptanceRows[0]?.reversedAt, undefined, 'reacceptance should replace the reversed labor fact');
     }
   },
   {
@@ -783,7 +912,7 @@ const tests: UnitTest[] = [
       const people = [
         {
           id: '20260006',
-          name: '示例兼职 B',
+          name: '林悦',
           personnelType: '兼职' as const,
           taxIdentityProfile: { identityType: '居民个人' as const, status: '已确认' as const }
         }
@@ -869,8 +998,8 @@ const tests: UnitTest[] = [
           }
         ],
         people: [
-          { id: '20260006', name: '示例兼职 B', personnelType: '兼职', taxIdentityProfile: { identityType: '居民个人', status: '待确认' } },
-          { id: '20260007', name: '示例兼职 C', personnelType: '兼职', taxIdentityProfile: { identityType: '居民个人', status: '已确认' } }
+          { id: '20260006', name: '林悦', personnelType: '兼职', taxIdentityProfile: { identityType: '居民个人', status: '待确认' } },
+          { id: '20260007', name: '高远', personnelType: '兼职', taxIdentityProfile: { identityType: '居民个人', status: '已确认' } }
         ],
         settlementPeriod: '2026-06',
         tasks: [identityPendingTask, amountMissingTask]
@@ -879,6 +1008,69 @@ const tests: UnitTest[] = [
       assertEqual(result.batches.length, 0, 'blocked sources must not silently produce settlement batches');
       assert(result.blockers.some((blocker) => blocker.code === 'TAX_IDENTITY_UNCONFIRMED'), 'pending tax identity should return an explicit blocker');
       assert(result.blockers.some((blocker) => blocker.code === 'GROSS_AMOUNT_MISSING'), 'missing gross amount should return an explicit blocker');
+    }
+  },
+  {
+    name: 'TR-40 customer acceptance validates score deduction and required remark',
+    run() {
+      const task = createTask({ acceptedAt: '2026-06-18 16:00', status: '已完成' });
+
+      assertEqual(getCustomerTaskAcceptanceStatus(task), '待录入', 'billable internally accepted task should await customer acceptance');
+      assertEqual(
+        getCustomerTaskAcceptanceValidationMessage(task, { acceptedOn: '2026-06-19', correctionReason: '', remark: '', score: 82, timelinessResult: '未超时' }),
+        '存在扣罚或不计时时备注必填',
+        'rule-calculated customer deduction should require a remark'
+      );
+      assertEqual(
+        getCustomerTaskAcceptanceValidationMessage(task, { acceptedOn: '2026-06-19', correctionReason: '', remark: '', score: 101, timelinessResult: '未超时' }),
+        '甲方评分需为 0 至 100 分',
+        'customer score must remain within the accepted range'
+      );
+    }
+  },
+  {
+    name: 'TR-41 customer acceptance records one auditable result and supports correction',
+    run() {
+      const task = createTask({ acceptedAt: '2026-06-18 16:00', status: '已完成' });
+      const accepted = applyCustomerTaskAcceptance(
+        task,
+        { acceptedOn: '2026-06-19', correctionReason: '', remark: '甲方评分触发扣罚', score: 82, timelinessResult: '未超时' },
+        { actor: '李明', occurredAt: '2026-06-19 10:00' }
+      );
+      assertEqual(
+        getCustomerTaskAcceptanceValidationMessage(
+          accepted,
+          { acceptedOn: '2026-06-19', correctionReason: '重复提交', remark: '甲方评分触发扣罚', score: 82, timelinessResult: '未超时' }
+        ),
+        '甲方验收结果未发生变化',
+        'unchanged customer acceptance must not create a correction audit'
+      );
+      assertEqual(
+        getCustomerTaskAcceptanceValidationMessage(
+          accepted,
+          { acceptedOn: '2026-06-18', correctionReason: '', remark: '', score: 90, timelinessResult: '未超时' }
+        ),
+        '请填写更正原因',
+        'existing customer acceptance must not be corrected without a reason'
+      );
+      const corrected = applyCustomerTaskAcceptance(
+        accepted,
+        { acceptedOn: '2026-06-18', correctionReason: '甲方复核后更正评分', remark: '', score: 90, timelinessResult: '未超时' },
+        { actor: '李明', occurredAt: '2026-06-19 11:00' }
+      );
+
+      assertEqual(getCustomerTaskAcceptanceStatus(accepted), '已完成', 'recorded customer acceptance should be complete');
+      assertEqual(accepted.customerAcceptance?.deductionAmount, 200, 'customer acceptance should calculate deduction from the frozen rule');
+      assertEqual(accepted.customerAcceptance?.totalPenaltyPoints, 10, 'customer acceptance should retain calculated penalty points');
+      assertEqual(corrected.customerAcceptance?.score, 90, 'correction should replace the current customer result');
+      assertEqual(corrected.customerAcceptance?.deductionAmount, 0, 'correction should recalculate the deduction instead of retaining manual input');
+      assertEqual(corrected.customerAcceptance?.acceptedOn, '2026-06-18', 'correction should update the business acceptance date');
+      assertEqual(corrected.customerAcceptance?.recordedAt, '2026-06-19 10:00', 'correction must preserve initial recording audit');
+      assertEqual(corrected.customerAcceptance?.updatedAt, '2026-06-19 11:00', 'correction should record latest update audit');
+      assertEqual(corrected.customerAcceptance?.correctionReason, '甲方复核后更正评分', 'correction should retain its reason');
+      assertEqual(corrected.operationRecords.length, 2, 'initial entry and correction should both remain in operation history');
+      assertEqual(corrected.operationRecords[0]?.action, '更正甲方验收', 'latest operation should identify the correction');
+      assert(corrected.operationRecords[0]?.summary.includes('82 分') && corrected.operationRecords[0]?.summary.includes('90 分'), 'correction audit should retain before and after values');
     }
   },
   {

@@ -5,8 +5,14 @@ import {
   type BrandSettlementPolicy,
   type BrandTaskPriceVersionRecord
 } from '../customers/brandTaskPricingModel';
+import {
+  cloneBrandAcceptancePolicy,
+  type BrandAcceptancePolicy,
+  type BrandAcceptanceTimelinessResult
+} from '../customers/brandAcceptancePolicyModel';
 
 export type TaskCustomerBillingSnapshot = {
+  acceptancePolicy: BrandAcceptancePolicy;
   billable: boolean;
   brandId: string;
   brandName: string;
@@ -31,7 +37,7 @@ export type TaskCustomerBillingSnapshot = {
   unitPrice: number;
 };
 
-export type CustomerTaskBillingFactStatus = '有效' | '不计费' | '已冲销';
+export type CustomerTaskBillingFactStatus = '待甲方验收' | '有效' | '不计费' | '已冲销';
 
 export type CustomerTaskAcceptanceEvidence = {
   id: string;
@@ -47,6 +53,16 @@ export type CustomerTaskBillingFact = {
   acceptedAt: string;
   acceptedBy: string;
   amount: number;
+  customerAcceptanceCorrectionReason?: string;
+  customerAcceptanceRemark?: string;
+  customerAcceptedOn?: string;
+  customerAcceptanceRecordedAt?: string;
+  customerAcceptanceRecordedBy?: string;
+  customerAcceptanceUpdatedAt?: string;
+  customerAcceptanceUpdatedBy?: string;
+  customerScore?: number;
+  deductionRate: number;
+  deductionAmount: number;
   acceptanceEvidence: CustomerTaskAcceptanceEvidence[];
   billingSnapshot: TaskCustomerBillingSnapshot;
   brandId: string;
@@ -57,6 +73,11 @@ export type CustomerTaskBillingFact = {
   reversalReason?: string;
   settlementPeriod: string;
   status: CustomerTaskBillingFactStatus;
+  standardAmount: number;
+  qualityPenaltyPoints: number;
+  timelinessPenaltyPoints: number;
+  timelinessResult?: BrandAcceptanceTimelinessResult;
+  totalPenaltyPoints: number;
   storeId: string;
   taskCode: string;
   taskId: string;
@@ -88,8 +109,23 @@ export type CustomerTaskSettlementLine = {
   acceptedBy: string;
   amount: number;
   acceptanceEvidence: CustomerTaskAcceptanceEvidence[];
+  customerAcceptanceCorrectionReason?: string;
+  customerAcceptanceRemark: string;
+  customerAcceptedOn: string;
+  customerAcceptanceRecordedAt: string;
+  customerAcceptanceRecordedBy: string;
+  customerAcceptanceUpdatedAt: string;
+  customerAcceptanceUpdatedBy: string;
+  customerScore: number;
+  deductionRate: number;
+  deductionAmount: number;
   priceVersion: number;
   priceVersionId: string;
+  standardAmount: number;
+  qualityPenaltyPoints: number;
+  timelinessPenaltyPoints: number;
+  timelinessResult: BrandAcceptanceTimelinessResult;
+  totalPenaltyPoints: number;
   storeId: string;
   taskCode: string;
   taskId: string;
@@ -160,6 +196,7 @@ function getNextMonthDueDate(period: string, dueDay: number) {
 }
 
 export function buildTaskCustomerBillingSnapshot({
+  acceptancePolicy,
   brandId,
   brandName,
   capturedAt,
@@ -171,6 +208,7 @@ export function buildTaskCustomerBillingSnapshot({
   taskConfigId,
   taskId
 }: {
+  acceptancePolicy: BrandAcceptancePolicy | undefined;
   brandId: string;
   brandName: string;
   capturedAt: string;
@@ -182,7 +220,7 @@ export function buildTaskCustomerBillingSnapshot({
   taskConfigId: string;
   taskId: string;
 }): TaskCustomerBillingSnapshot | undefined {
-  if (!priceVersion || !settlementPolicyVersion) {
+  if (!acceptancePolicy || !priceVersion || !settlementPolicyVersion) {
     return undefined;
   }
 
@@ -198,6 +236,7 @@ export function buildTaskCustomerBillingSnapshot({
   }
 
   return {
+    acceptancePolicy: cloneBrandAcceptancePolicy(acceptancePolicy),
     billable: priceVersion.billable,
     brandId,
     brandName,
@@ -228,6 +267,22 @@ export function buildCustomerTaskBillingFact(task: {
   acceptorName?: string;
   code: string;
   customerBillingSnapshot?: TaskCustomerBillingSnapshot;
+  customerAcceptance?: {
+    acceptedOn: string;
+    correctionReason?: string;
+    deductionAmount: number;
+    deductionRate: number;
+    recordedAt: string;
+    recordedBy: string;
+    remark: string;
+    score: number;
+    qualityPenaltyPoints: number;
+    timelinessPenaltyPoints: number;
+    timelinessResult: BrandAcceptanceTimelinessResult;
+    totalPenaltyPoints: number;
+    updatedAt: string;
+    updatedBy: string;
+  };
   files?: Array<{
     id: string;
     name: string;
@@ -264,36 +319,80 @@ export function buildCustomerTaskBillingFact(task: {
   }
 
   const snapshot = task.customerBillingSnapshot;
+  const customerAcceptance = task.customerAcceptance;
+  const deductionAmount = snapshot.billable ? customerAcceptance?.deductionAmount ?? 0 : 0;
   return {
     acceptedAt: task.acceptedAt,
     acceptedBy: task.acceptorName ?? '系统验收人',
-    amount: snapshot.billable ? snapshot.unitPrice : 0,
+    amount: snapshot.billable ? Math.max(0, snapshot.unitPrice - deductionAmount) : 0,
     acceptanceEvidence,
     billingSnapshot: snapshot,
     brandId: snapshot.brandId,
     customerId: snapshot.customerId,
+    customerAcceptanceCorrectionReason: customerAcceptance?.correctionReason,
+    customerAcceptanceRemark: customerAcceptance?.remark,
+    customerAcceptedOn: customerAcceptance?.acceptedOn,
+    customerAcceptanceRecordedAt: customerAcceptance?.recordedAt,
+    customerAcceptanceRecordedBy: customerAcceptance?.recordedBy,
+    customerAcceptanceUpdatedAt: customerAcceptance?.updatedAt,
+    customerAcceptanceUpdatedBy: customerAcceptance?.updatedBy,
+    customerScore: customerAcceptance?.score,
+    deductionRate: customerAcceptance?.deductionRate ?? 0,
+    deductionAmount,
     id: `task-billing-fact-${task.id}`,
-    settlementPeriod: task.acceptedAt.slice(0, 7),
-    status: snapshot.billable ? '有效' : '不计费',
+    settlementPeriod: customerAcceptance?.acceptedOn.slice(0, 7) ?? task.acceptedAt.slice(0, 7),
+    status: snapshot.billable ? (customerAcceptance ? '有效' : '待甲方验收') : '不计费',
+    standardAmount: snapshot.billable ? snapshot.unitPrice : 0,
+    qualityPenaltyPoints: customerAcceptance?.qualityPenaltyPoints ?? 0,
     storeId: task.storeId,
     taskCode: task.code,
     taskId: task.id,
-    taskName: task.name
+    taskName: task.name,
+    timelinessPenaltyPoints: customerAcceptance?.timelinessPenaltyPoints ?? 0,
+    timelinessResult: customerAcceptance?.timelinessResult,
+    totalPenaltyPoints: customerAcceptance?.totalPenaltyPoints ?? 0
   };
 }
 
 function buildBatchLine(fact: CustomerTaskBillingFact): CustomerTaskSettlementLine {
+  if (
+    !fact.customerAcceptedOn
+    || !fact.customerAcceptanceRecordedAt
+    || !fact.customerAcceptanceRecordedBy
+    || !fact.customerAcceptanceUpdatedAt
+    || !fact.customerAcceptanceUpdatedBy
+    || fact.customerScore === undefined
+    || !fact.timelinessResult
+  ) {
+    throw new Error('有效客户结算事实缺少甲方验收信息');
+  }
+
   return {
     acceptedAt: fact.acceptedAt,
     acceptedBy: fact.acceptedBy,
     amount: fact.amount,
     acceptanceEvidence: fact.acceptanceEvidence.map((file) => ({ ...file })),
+    customerAcceptanceCorrectionReason: fact.customerAcceptanceCorrectionReason,
+    customerAcceptanceRemark: fact.customerAcceptanceRemark ?? '',
+    customerAcceptedOn: fact.customerAcceptedOn,
+    customerAcceptanceRecordedAt: fact.customerAcceptanceRecordedAt,
+    customerAcceptanceRecordedBy: fact.customerAcceptanceRecordedBy,
+    customerAcceptanceUpdatedAt: fact.customerAcceptanceUpdatedAt,
+    customerAcceptanceUpdatedBy: fact.customerAcceptanceUpdatedBy,
+    customerScore: fact.customerScore,
+    deductionRate: fact.deductionRate,
+    deductionAmount: fact.deductionAmount,
     priceVersion: fact.billingSnapshot.priceVersion,
     priceVersionId: fact.billingSnapshot.priceVersionId,
+    standardAmount: fact.standardAmount,
+    qualityPenaltyPoints: fact.qualityPenaltyPoints,
     storeId: fact.storeId,
     taskCode: fact.taskCode,
     taskId: fact.taskId,
     taskName: fact.taskName,
+    timelinessPenaltyPoints: fact.timelinessPenaltyPoints,
+    timelinessResult: fact.timelinessResult!,
+    totalPenaltyPoints: fact.totalPenaltyPoints,
     unitPrice: fact.billingSnapshot.unitPrice
   };
 }
@@ -325,7 +424,7 @@ export function buildCustomerTaskSettlementBatches({
         contractName: snapshot.contractName,
         customerId: fact.customerId,
         customerName: snapshot.customerName,
-        dueDate: addDays(fact.acceptedAt, snapshot.settlementPolicy.perTaskDueDays ?? 0),
+        dueDate: addDays(fact.customerAcceptedOn!, snapshot.settlementPolicy.perTaskDueDays ?? 0),
         generatedAt: toDateOnly(asOfDate),
         id: `task-revenue:${fact.taskId}`,
         lineItems: [buildBatchLine(fact)],
@@ -369,7 +468,9 @@ export function buildCustomerTaskSettlementBatches({
       dueDate: getNextMonthDueDate(first.settlementPeriod, snapshot.settlementPolicy.monthlyDueDay ?? 1),
       generatedAt: toDateOnly(asOfDate),
       id: `task-revenue:${first.settlementPeriod}:${first.customerId}:${first.brandId}:${snapshot.contractId ?? 'no-contract'}:${snapshot.settlementPolicyVersionId}`,
-      lineItems: group.map(buildBatchLine).sort((left, right) => left.acceptedAt.localeCompare(right.acceptedAt)),
+      lineItems: group
+        .map(buildBatchLine)
+        .sort((left, right) => left.customerAcceptedOn.localeCompare(right.customerAcceptedOn)),
       settlementMode: '按月汇总',
       settlementPolicyVersionId: snapshot.settlementPolicyVersionId,
       settlementPeriod: first.settlementPeriod

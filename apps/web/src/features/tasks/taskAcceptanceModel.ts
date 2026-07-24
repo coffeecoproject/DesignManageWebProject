@@ -195,12 +195,8 @@ export function getAcceptanceBlockers(task: StoreTaskRecord, draft: AcceptanceSc
   return blockers;
 }
 
-export function getReworkBlockers(reason: string, requirement: string, hasClientFeedback: boolean) {
+export function getReworkBlockers(reason: string, requirement: string) {
   const blockers: string[] = [];
-
-  if (!hasClientFeedback) {
-    blockers.push('甲方反馈');
-  }
 
   if (!reason.trim()) {
     blockers.push('驳回原因');

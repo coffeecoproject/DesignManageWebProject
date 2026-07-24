@@ -257,7 +257,7 @@ export function CustomerArchivePage() {
             <FilterField label="合作状态">
               <Select
                 value={filters.status}
-                options={(['全部', '合作中', '待签约', '已到期', '无合同'] satisfies CustomerArchiveFilters['status'][]).map((status) => ({
+                options={(['全部', '合作中', '待签约', '已到期', '已终止', '无合同'] satisfies CustomerArchiveFilters['status'][]).map((status) => ({
                   label: status,
                   value: status
                 }))}

@@ -109,6 +109,25 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'TR-04A excludes a terminated contract from new brand pricing',
+    run() {
+      const terminatedContract: BrandPricingContract = {
+        ...contracts[0],
+        status: '已终止',
+        terminatedAt: '2026-06-10'
+      };
+      const eligible = getEligibleBrandPricingContracts([terminatedContract], 'customer-a', '2026-06-15');
+      assertEqual(eligible.length, 0, 'terminated contract must not remain an eligible pricing source');
+      const issues = validateBrandTaskPricingDrafts({
+        contracts: [terminatedContract],
+        customerId: 'customer-a',
+        effectiveAt: '2026-06-15',
+        pricingDrafts: [{ billable: true, contractId: terminatedContract.id, taskConfigId: 'task-floor-plan', unitPrice: 3000 }]
+      });
+      assert(issues.some((issue) => issue.code === 'CONTRACT_INELIGIBLE'), 'terminated contract should be rejected');
+    }
+  },
+  {
     name: 'TR-05 changing a price creates a new version and preserves history',
     run() {
       const next = reconcileBrandTaskPriceVersions({

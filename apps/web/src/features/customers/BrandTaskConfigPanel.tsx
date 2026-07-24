@@ -4,7 +4,6 @@ import type { TableColumnsType } from 'antd';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { StatusTag, type StatusTagTone } from '../../components/Detail';
 import { CellText, CompactCell } from '../../components/TableCell';
-import type { PerformanceRulePreset, PerformanceTaskScoreItem } from '../performance/performanceTypes';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import type { BrandPricingContract } from './brandTaskPricingModel';
 import {
@@ -41,13 +40,6 @@ const taskConfigColumns: TableColumnsType<BrandTaskDisplayRow> = [
     key: 'name',
     width: 160,
     render: (_, record) => <CompactCell primary={record.name} secondary={record.category} />
-  },
-  {
-    title: '绩效分值',
-    key: 'score',
-    align: 'center',
-    width: 130,
-    render: (_, record) => `${record.score} 分 / ${record.unit}`
   },
   {
     title: '结算方式',
@@ -147,9 +139,8 @@ export function BrandContractUsageTable({ rows }: { rows: BrandContractUsageRow[
 }
 
 export function BrandTaskConfigEditor({
-  addableTaskScoreItems,
+  addableTaskConfigs,
   eligibleContracts,
-  performanceRule,
   rows,
   selectedTaskConfigId,
   taskConfigRows,
@@ -158,9 +149,8 @@ export function BrandTaskConfigEditor({
   onRemove,
   onSelectTaskConfig
 }: {
-  addableTaskScoreItems: PerformanceTaskScoreItem[];
+  addableTaskConfigs: TaskConfigRow[];
   eligibleContracts: BrandPricingContract[];
-  performanceRule: PerformanceRulePreset | undefined;
   rows: BrandTaskFormDisplayRow[];
   selectedTaskConfigId: string | undefined;
   taskConfigRows: TaskConfigRow[];
@@ -178,13 +168,6 @@ export function BrandTaskConfigEditor({
       key: 'name',
       width: 170,
       render: (_, record) => <CompactCell primary={record.name} secondary={record.category} />
-    },
-    {
-      title: '绩效分值',
-      key: 'score',
-      align: 'center',
-      width: 130,
-      render: (_, record) => `${record.score} 分 / ${record.unit}`
     },
     {
       title: '计费',
@@ -253,12 +236,12 @@ export function BrandTaskConfigEditor({
         <div className="brand-task-config-editor__actions">
           <Select
             className="brand-task-config-editor__select"
-            disabled={!performanceRule || addableTaskScoreItems.length === 0}
-            placeholder={performanceRule ? (addableTaskScoreItems.length > 0 ? '选择任务类型' : '暂无可添加任务') : '先选择绩效方案'}
+            disabled={addableTaskConfigs.length === 0}
+            placeholder={addableTaskConfigs.length > 0 ? '选择任务类型' : '暂无可添加任务'}
             value={selectedTaskConfigId}
-            options={addableTaskScoreItems.map((taskScoreItem) => ({
-              label: getTaskConfigName(taskScoreItem.taskConfigId, taskConfigRows),
-              value: taskScoreItem.taskConfigId
+            options={addableTaskConfigs.map((taskConfig) => ({
+              label: getTaskConfigName(taskConfig.id, taskConfigRows),
+              value: taskConfig.id
             }))}
             onChange={onSelectTaskConfig}
           />
@@ -278,7 +261,7 @@ export function BrandTaskConfigEditor({
       ) : (
         <div className="brand-task-config-editor__empty">
           <CellText>暂未选择适用任务</CellText>
-          <CellText tone="subtle">从已绑定绩效方案中添加任务；任务分值只读。</CellText>
+          <CellText tone="subtle">从系统启用的任务类型中添加。</CellText>
         </div>
       )}
     </div>

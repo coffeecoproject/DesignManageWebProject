@@ -24,7 +24,6 @@ import { CellText } from '../../components/TableCell';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
-import { useTaskConfigState } from '../system/TaskConfigState';
 import {
   buildAcceptanceFeedbackDraft,
   buildAcceptanceScoringDraft,
@@ -106,7 +105,6 @@ function getSubmitTaskStatusLabel(status: StoreTaskStatus) {
 function useTaskContext() {
   const { brandRows, getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
   const { performanceRuleRows } = usePerformanceRuleState();
-  const { taskConfigRows } = useTaskConfigState();
   const { peopleRows } = usePeopleOrganizationState();
   const { clientFeedbackRows, commitTaskAcceptance, createClientFeedback, saveStoreTask, storeTaskRows } = useTaskManagementState();
 
@@ -121,14 +119,13 @@ function useTaskContext() {
     peopleRows,
     saveStoreTask,
     storeRows,
-    storeTaskRows,
-    taskConfigRows
+    storeTaskRows
   };
 }
 
 export function TaskSubmitWorkbench({ memberId, renderScaffold = false }: TaskWorkflowWorkbenchProps = {}) {
   const [messageApi, contextHolder] = message.useMessage();
-  const { getBrandById, getCustomerById, peopleRows, performanceRuleRows, saveStoreTask, storeRows, storeTaskRows, taskConfigRows } = useTaskContext();
+  const { getBrandById, getCustomerById, peopleRows, performanceRuleRows, saveStoreTask, storeRows, storeTaskRows } = useTaskContext();
   const [activeTaskId, setActiveTaskId] = useState<string>();
   const [deliveryDrafts, setDeliveryDrafts] = useState<TaskFileDraft[]>(() => [createTaskFileDraft('压缩包')]);
   const [submitNote, setSubmitNote] = useState('');
@@ -259,7 +256,7 @@ export function TaskSubmitWorkbench({ memberId, renderScaffold = false }: TaskWo
                       {getBrandById(record.brandId)?.name ?? '-'} / {storeText}
                     </span>
                     <span className="task-submit-card-line">
-                      <span>类型：{getTaskTypeName(record.taskConfigId, taskConfigRows)}</span>
+                      <span>类型：{getTaskTypeName(record)}</span>
                       <span>执行：{record.executorName ?? '-'}</span>
                     </span>
                     <span className="task-submit-card-foot">
@@ -297,7 +294,7 @@ export function TaskSubmitWorkbench({ memberId, renderScaffold = false }: TaskWo
                 <div className="task-submit-summary-strip">
                   {[
                     { label: '品牌', value: getBrandById(selectedTask.brandId)?.name },
-                    { label: '任务类型', value: getTaskTypeName(selectedTask.taskConfigId, taskConfigRows) },
+                    { label: '任务类型', value: getTaskTypeName(selectedTask) },
                     { label: '绩效分数', value: formatScore(selectedScoreItem?.score) },
                     { label: '执行人', value: selectedTask.executorName ?? '-' },
                     { label: '验收人', value: selectedTask.acceptorName },
@@ -405,8 +402,7 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
     peopleRows,
     saveStoreTask,
     storeRows,
-    storeTaskRows,
-    taskConfigRows
+    storeTaskRows
   } = useTaskContext();
   const [activeTaskId, setActiveTaskId] = useState<string>();
   const [activeAcceptanceTab, setActiveAcceptanceTab] = useState('overview');
@@ -433,8 +429,6 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
   const selectedCustomer = selectedTask ? getCustomerById(selectedTask.customerId) : undefined;
   const selectedTaskFeedbackRows = useMemo(() => (selectedTask ? getTaskClientFeedbackRows(selectedTask, clientFeedbackRows) : []), [clientFeedbackRows, selectedTask]);
   const latestClientFeedback = selectedTaskFeedbackRows[0];
-  const feedbackReady = isAcceptanceFeedbackReady(feedbackDraft);
-  const reworkHasClientFeedback = selectedTaskFeedbackRows.length > 0 || feedbackReady;
   const selectedRule = performanceRuleRows.find((rule) => rule.id === scoringDraft?.ruleId);
   const selectedScoreItem = selectedRule?.taskScoreItems.find((item) => item.id === scoringDraft?.scoreItemId);
   const completedDimensionScores = getCompletedDimensionScores(scoringDraft);
@@ -444,7 +438,7 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
   const qualityBand = typeof qualityScore === 'number' ? getQualityBand(selectedRule, qualityScore) : undefined;
   const acceptanceBlockers = selectedTask ? getAcceptanceBlockers(selectedTask, scoringDraft) : [];
   const acceptanceReady = selectedTask ? acceptanceBlockers.length === 0 : false;
-  const reworkBlockers = selectedTask ? getReworkBlockers(reworkReason, reworkRequirement, reworkHasClientFeedback) : [];
+  const reworkBlockers = selectedTask ? getReworkBlockers(reworkReason, reworkRequirement) : [];
   const reworkReady = selectedTask ? reworkBlockers.length === 0 : false;
   const metrics = useMemo(
     () => ({
@@ -607,8 +601,7 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
   function handleRework(record: StoreTaskRecord) {
     const normalizedReason = reworkReason.trim();
     const normalizedRequirement = reworkRequirement.trim();
-    const hasClientFeedback = getTaskClientFeedbackRows(record, clientFeedbackRows).length > 0 || feedbackReady;
-    const blockers = getReworkBlockers(normalizedReason, normalizedRequirement, hasClientFeedback);
+    const blockers = getReworkBlockers(normalizedReason, normalizedRequirement);
 
     if (blockers.length > 0) {
       setActiveAcceptanceTab('overview');
@@ -667,7 +660,7 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
                       {getBrandById(record.brandId)?.name ?? '-'} / {storeText}
                     </span>
                     <span className="task-submit-card-line">
-                      <span>类型：{getTaskTypeName(record.taskConfigId, taskConfigRows)}</span>
+                      <span>类型：{getTaskTypeName(record)}</span>
                       <span>执行：{record.executorName ?? '-'}</span>
                     </span>
                     <span className="task-submit-card-foot">
@@ -716,7 +709,7 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
                           <div className="task-submit-summary-strip">
                             {[
                               { label: '品牌', value: getBrandById(selectedTask.brandId)?.name },
-                              { label: '任务类型', value: getTaskTypeName(selectedTask.taskConfigId, taskConfigRows) },
+                              { label: '任务类型', value: getTaskTypeName(selectedTask) },
                               { label: '执行人', value: selectedTask.executorName ?? '-' },
                               { label: '验收人', value: selectedTask.acceptorName },
                               { label: '计划时效', value: formatTaskDuration(selectedTask.plannedDurationHours) },
@@ -774,14 +767,8 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
                                     <span>确认驳回前需完成：{reworkBlockers.join('、')}</span>
                                   </div>
                                 ) : null}
-                                {!reworkHasClientFeedback ? (
-                                  <div className="task-submit-reject-note task-rework-feedback-required">
-                                    <CommentOutlined />
-                                    <span>驳回前需补充甲方反馈。</span>
-                                  </div>
-                                ) : null}
                                 <div className="task-rework-subsection">
-                                  <div className="task-rework-subsection-title">甲方反馈</div>
+                                  <div className="task-rework-subsection-title">甲方反馈（可选）</div>
                                   {latestClientFeedback ? (
                                     <div className="task-submit-reject-note task-acceptance-feedback-latest">
                                       <CommentOutlined />
@@ -829,7 +816,6 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
                                           <Input.TextArea
                                             autoSize={{ minRows: 3, maxRows: 5 }}
                                             placeholder="记录甲方反馈原文或沟通摘要"
-                                            status={selectedTaskFeedbackRows.length > 0 || feedbackDraft.content.trim() ? undefined : 'warning'}
                                             value={feedbackDraft.content}
                                             onChange={(event) => updateFeedbackDraft('content', event.target.value)}
                                           />
@@ -942,7 +928,7 @@ export function TaskAcceptanceWorkbench({ memberId, renderScaffold = false }: Ta
                                   { label: '绩效方案', value: selectedRule ? `${selectedRule.performanceType} / ${selectedRule.category} / ${selectedRule.currentVersion}` : '-' },
                                   {
                                     label: '任务类型',
-                                    value: selectedScoreItem ? `${getTaskTypeName(selectedScoreItem.taskConfigId, taskConfigRows)} / ${formatScore(scoringDraft.scoreValue)}` : '-'
+                                    value: selectedScoreItem ? `${selectedTask.taskDefinitionSnapshot.name} / ${formatScore(scoringDraft.scoreValue)}` : '-'
                                   },
                                   { label: '归属月份', value: scoringDraft.sourceMonth },
                                   { label: '任务分', value: formatScore(scoringDraft.scoreValue) },

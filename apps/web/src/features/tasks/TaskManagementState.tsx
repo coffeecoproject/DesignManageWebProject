@@ -8,7 +8,16 @@ import type {
   BrandSettlementPolicyVersionRecord,
   BrandTaskPriceVersionRecord
 } from '../customers/brandTaskPricingModel';
+import type { BrandAcceptancePolicyRecord } from '../customers/brandAcceptancePolicyModel';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import { isPeopleRelationshipActive } from '../people/peopleDomain';
+import {
+  buildTaskDefinitionSnapshot,
+  seedTaskConfigRows,
+  useTaskConfigState,
+  type TaskDefinitionSnapshot
+} from '../system/TaskConfigState';
+import { getTaskCreationBlockingMessage } from './taskCreationEligibilityModel';
 import {
   buildPartTimeLaborSettlementBatches,
   type PartTimeLaborAcceptanceRecord,
@@ -24,6 +33,11 @@ import {
   type TaskWorkflowState
 } from './taskAcceptanceCommitModel';
 import { ensureTaskAcceptanceArchive } from './taskAcceptanceEvidenceModel';
+import {
+  applyCustomerTaskAcceptance,
+  type CustomerTaskAcceptanceInput,
+  type CustomerTaskAcceptanceRecord
+} from './taskCustomerAcceptanceModel';
 import {
   buildCustomerTaskBillingFact,
   buildCustomerTaskContractUsageSummaries,
@@ -54,9 +68,11 @@ export type StoreTaskRecord = {
   code: string;
   customerId: string;
   customerBillingSnapshot?: TaskCustomerBillingSnapshot;
+  customerAcceptance?: CustomerTaskAcceptanceRecord;
   brandId: string;
   storeId: string;
   taskConfigId: string;
+  taskDefinitionSnapshot: TaskDefinitionSnapshot;
   name: string;
   executorId?: string;
   executorName?: string;
@@ -172,6 +188,11 @@ type TaskManagementStateValue = {
   createClientFeedback: (input: ClientFeedbackCreateInput) => ClientFeedbackRecord;
   createStoreTask: (input: StoreTaskCreateInput) => StoreTaskRecord;
   commitTaskAcceptance: (input: TaskAcceptanceCommitInput) => TaskAcceptanceCommitValidation;
+  commitCustomerTaskAcceptance: (input: CustomerTaskAcceptanceCommitInput) => {
+    message?: string;
+    success: boolean;
+    task?: StoreTaskRecord;
+  };
   reverseTaskAcceptance: (input: TaskAcceptanceReversalInput) => { message?: string; success: boolean };
   customerTaskBillingFacts: CustomerTaskBillingFact[];
   customerTaskContractUsageSummaries: CustomerTaskContractUsageSummary[];
@@ -190,6 +211,10 @@ export type TaskAcceptanceCommitInput = {
   laborAcceptance?: PartTimeLaborAcceptanceRecord;
   scoringRecord: TaskPerformanceScoringRecord;
   task: StoreTaskRecord;
+};
+
+export type CustomerTaskAcceptanceCommitInput = CustomerTaskAcceptanceInput & {
+  taskId: string;
 };
 
 export const taskManagementToday = frontendBusinessToday;
@@ -250,11 +275,11 @@ export function formatTaskDuration(hours: number) {
   return `${days} 天 ${remainingHours} 小时`;
 }
 
-const seedStoreTaskRows: StoreTaskRecord[] = [
+const seedStoreTaskRowsWithoutDefinition: Omit<StoreTaskRecord, 'taskDefinitionSnapshot'>[] = [
   {
     acceptedAt: undefined,
     acceptorId: '20250018',
-    acceptorName: '示例全职 B',
+    acceptorName: '陈浩',
     brandId: 'brand-starry-space',
     code: 'TASK-2026-001',
     createdAt: '2026-06-09 10:00',
@@ -263,7 +288,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'task-file-2026-001-delivery',
         name: '武汉光谷店全套施工图.zip',
-        registeredBy: '示例全职 A',
+        registeredBy: '李明',
         source: '飞书云盘',
         stage: '交付文件',
         status: '已登记',
@@ -285,12 +310,12 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     ],
     id: 'store-task-2026-001',
     name: '武汉光谷店全套施工图交付',
-    note: '按品牌当前交付标准执行，待客户验收。',
+    note: '按品牌当前交付标准执行，待内部验收。',
     operationRecords: [
       {
         id: 'op-task-2026-001-submit',
         action: '提交交付',
-        actor: '示例全职 A',
+        actor: '李明',
         object: '武汉光谷店全套施工图交付',
         summary: '登记施工图飞书链接并提交验收',
         time: '2026-06-14 17:40'
@@ -305,7 +330,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     executorId: '20260001',
-    executorName: '示例全职 A',
+    executorName: '李明',
     plannedDurationHours: 128,
     plannedDeliveryAt: '2026-06-14 18:00',
     reworkCount: 0,
@@ -347,9 +372,9 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     acceptorId: '20260001',
-    acceptorName: '示例全职 A',
+    acceptorName: '李明',
     executorId: '20260006',
-    executorName: '示例兼职 B',
+    executorName: '林悦',
     laborAgreement: {
       agreedGrossAmount: 1200,
       agreementVersion: 'HZ-PT-2026-0006/V1',
@@ -372,7 +397,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'task-file-2026-003-delivery',
         name: '长沙岳麓首店平面方案-v1.pdf',
-        registeredBy: '示例全职 B',
+        registeredBy: '陈浩',
         source: '飞书云盘',
         stage: '交付文件',
         status: '已登记',
@@ -398,16 +423,16 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-003-submit',
         action: '提交交付',
-        actor: '示例全职 B',
+        actor: '陈浩',
         object: '长沙岳麓首店平面方案',
         summary: '提交首版平面方案',
         time: '2026-06-11 18:10'
       }
     ],
     acceptorId: '20260001',
-    acceptorName: '示例全职 A',
+    acceptorName: '李明',
     executorId: '20250018',
-    executorName: '示例全职 B',
+    executorName: '陈浩',
     plannedDurationHours: 80,
     plannedDeliveryAt: '2026-06-11 18:00',
     reworkCount: 1,
@@ -425,11 +450,30 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     code: 'TASK-2026-004',
     createdAt: '2026-06-06 10:00',
     customerId: 'customer-starry',
+    customerAcceptance: {
+      acceptedOn: '2026-06-11',
+      deductionAmount: 320,
+      deductionRate: 0.2,
+      finalAmount: 1280,
+      id: 'store-task-2026-004/customer-acceptance',
+      recordedAt: '2026-06-11 10:00',
+      recordedBy: '李明',
+      remark: '甲方确认局部细节扣减',
+      qualityPenaltyPoints: 10,
+      score: 82,
+      standardAmount: 1600,
+      taskId: 'store-task-2026-004',
+      timelinessPenaltyPoints: 0,
+      timelinessResult: '未超时',
+      totalPenaltyPoints: 10,
+      updatedAt: '2026-06-11 10:00',
+      updatedBy: '李明'
+    },
     files: [
       {
         id: 'task-file-2026-004-delivery',
         name: '星际轻装门店快图交付.zip',
-        registeredBy: '示例兼职 B',
+        registeredBy: '林悦',
         source: '飞书云盘',
         stage: '交付文件',
         status: '已登记',
@@ -455,7 +499,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-004-resubmit',
         action: '提交交付',
-        actor: '示例兼职 B',
+        actor: '林悦',
         object: '星际轻装门店快图交付',
         summary: '按驳回要求重新提交门店快图',
         time: '2026-06-10 15:00'
@@ -470,7 +514,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     executorId: '20260006',
-    executorName: '示例兼职 B',
+    executorName: '林悦',
     laborAgreement: {
       agreedGrossAmount: 1800,
       agreementVersion: 'HZ-PT-2026-0006/V1',
@@ -493,11 +537,30 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
     code: 'TASK-2026-006',
     createdAt: '2026-06-10 09:30',
     customerId: 'customer-nova',
+    customerAcceptance: {
+      acceptedOn: '2026-06-14',
+      deductionAmount: 0,
+      deductionRate: 0,
+      finalAmount: 5000,
+      id: 'store-task-2026-006/customer-acceptance',
+      recordedAt: '2026-06-14 09:20',
+      recordedBy: '李明',
+      remark: '',
+      qualityPenaltyPoints: 0,
+      score: 92,
+      standardAmount: 5000,
+      taskId: 'store-task-2026-006',
+      timelinessPenaltyPoints: 0,
+      timelinessResult: '未超时',
+      totalPenaltyPoints: 0,
+      updatedAt: '2026-06-14 09:20',
+      updatedBy: '李明'
+    },
     files: [
       {
         id: 'task-file-2026-006-delivery-v2',
         name: '长沙岳麓首店吧台深化图-v2.pdf',
-        registeredBy: '示例全职 B',
+        registeredBy: '陈浩',
         source: '飞书云盘',
         stage: '交付文件',
         status: '已登记',
@@ -534,7 +597,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-006-resubmit-v2',
         action: '提交交付',
-        actor: '示例全职 B',
+        actor: '陈浩',
         object: '长沙岳麓首店吧台深化图归档',
         summary: '按二次驳回要求补充点位变更说明并重新提交',
         time: '2026-06-13 17:20'
@@ -550,7 +613,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-006-resubmit-v1',
         action: '提交交付',
-        actor: '示例全职 B',
+        actor: '陈浩',
         object: '长沙岳麓首店吧台深化图归档',
         summary: '提交吧台深化图首轮调整稿',
         time: '2026-06-12 18:20'
@@ -573,7 +636,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     executorId: '20250018',
-    executorName: '示例全职 B',
+    executorName: '陈浩',
     plannedDurationHours: 104,
     plannedDeliveryAt: '2026-06-13 18:00',
     reworkCount: 2,
@@ -595,7 +658,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'task-file-2026-007-delivery',
         name: '武汉汉口店灯光调整图.pdf',
-        registeredBy: '示例兼职 B',
+        registeredBy: '林悦',
         source: '飞书云盘',
         stage: '交付文件',
         status: '已登记',
@@ -621,7 +684,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-007-resubmit',
         action: '提交交付',
-        actor: '示例兼职 B',
+        actor: '林悦',
         object: '武汉汉口店灯光调整图',
         summary: '补充灯光控制回路说明后重新提交',
         time: '2026-06-08 16:50'
@@ -644,7 +707,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     executorId: '20260006',
-    executorName: '示例兼职 B',
+    executorName: '林悦',
     laborAgreement: {
       agreedGrossAmount: 1400,
       agreementVersion: 'HZ-PT-2026-0006/V1',
@@ -662,16 +725,35 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
   {
     acceptedAt: '2026-06-07 16:30',
     acceptorId: '20250018',
-    acceptorName: '示例全职 B',
+    acceptorName: '陈浩',
     brandId: 'brand-starry-space',
     code: 'TASK-2026-008',
     createdAt: '2026-06-04 10:00',
     customerId: 'customer-starry',
+    customerAcceptance: {
+      acceptedOn: '2026-06-08',
+      deductionAmount: 0,
+      deductionRate: 0,
+      finalAmount: 12000,
+      id: 'store-task-2026-008/customer-acceptance',
+      recordedAt: '2026-06-08 10:10',
+      recordedBy: '李明',
+      remark: '',
+      qualityPenaltyPoints: 0,
+      score: 95,
+      standardAmount: 12000,
+      taskId: 'store-task-2026-008',
+      timelinessPenaltyPoints: 0,
+      timelinessResult: '未超时',
+      totalPenaltyPoints: 0,
+      updatedAt: '2026-06-08 10:10',
+      updatedBy: '李明'
+    },
     files: [
       {
         id: 'task-file-2026-008-delivery',
         name: '武汉光谷店软装清单.xlsx',
-        registeredBy: '示例全职 A',
+        registeredBy: '李明',
         source: '飞书云盘',
         stage: '交付文件',
         status: '已登记',
@@ -687,7 +769,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-008-accept',
         action: '验收通过',
-        actor: '示例全职 B',
+        actor: '陈浩',
         object: '武汉光谷店软装清单核对',
         summary: '软装清单核对完成并验收通过',
         time: '2026-06-07 16:30'
@@ -695,7 +777,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       {
         id: 'op-task-2026-008-submit',
         action: '提交交付',
-        actor: '示例全职 A',
+        actor: '李明',
         object: '武汉光谷店软装清单核对',
         summary: '提交软装清单核对结果',
         time: '2026-06-07 15:40'
@@ -710,7 +792,7 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     executorId: '20260001',
-    executorName: '示例全职 A',
+    executorName: '李明',
     plannedDurationHours: 80,
     plannedDeliveryAt: '2026-06-07 18:00',
     reworkCount: 0,
@@ -740,9 +822,9 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
       }
     ],
     acceptorId: '20260001',
-    acceptorName: '示例全职 A',
+    acceptorName: '李明',
     executorId: '20260006',
-    executorName: '示例兼职 B',
+    executorName: '林悦',
     laborAgreement: {
       agreedGrossAmount: 1600,
       agreementVersion: 'HZ-PT-2026-0006/V1',
@@ -758,7 +840,19 @@ const seedStoreTaskRows: StoreTaskRecord[] = [
   }
 ];
 
-const seedClientFeedbackRows: ClientFeedbackRecord[] = [
+export const seedStoreTaskRows: StoreTaskRecord[] = seedStoreTaskRowsWithoutDefinition.map((task) => {
+  const taskConfig = seedTaskConfigRows.find((row) => row.id === task.taskConfigId);
+  if (!taskConfig) {
+    throw new Error(`任务 ${task.code} 缺少任务类型配置`);
+  }
+
+  return {
+    ...task,
+    taskDefinitionSnapshot: buildTaskDefinitionSnapshot(taskConfig, task.createdAt)
+  };
+});
+
+export const seedClientFeedbackRows: ClientFeedbackRecord[] = [
   {
     brandId: 'brand-starry-space',
     channel: '电话',
@@ -1007,17 +1101,17 @@ const seedClientFeedbackRows: ClientFeedbackRecord[] = [
   }
 ];
 
-const seedTaskPerformanceScoringRows: TaskPerformanceScoringRecord[] = [
+export const seedTaskPerformanceScoringRows: TaskPerformanceScoringRecord[] = [
   {
     adjustmentReason: '',
     confirmedAt: '2026-06-07 16:30',
-    confirmedBy: '示例全职 B',
+    confirmedBy: '陈浩',
     id: 'score-store-task-2026-008',
     operationRecords: [
       {
         id: 'op-score-store-task-2026-008-create',
         action: '验收计分',
-        actor: '示例全职 B',
+        actor: '陈浩',
         object: '武汉光谷店软装清单核对',
         summary: '绘图任务制V1 / 全套施工图 / 质量分 88',
         time: '2026-06-07 16:30'
@@ -1115,7 +1209,7 @@ const seedTaskPerformanceScoringRows: TaskPerformanceScoringRecord[] = [
   }
 ];
 
-const seedPartTimeLaborAcceptanceRows: PartTimeLaborAcceptanceRecord[] = [
+export const seedPartTimeLaborAcceptanceRows: PartTimeLaborAcceptanceRecord[] = [
   {
     acceptedAt: '2026-06-10 16:00',
     agreementVersion: 'HZ-PT-2026-0006/V1',
@@ -1206,6 +1300,7 @@ function attachCustomerBillingSnapshot(
       brandId: string,
       effectiveAt: string
     ) => BrandSettlementPolicyVersionRecord | undefined;
+    getBrandAcceptancePolicy: (brandId: string) => BrandAcceptancePolicyRecord | undefined;
   }
 ) {
   if (task.customerBillingSnapshot) {
@@ -1216,9 +1311,11 @@ function attachCustomerBillingSnapshot(
   const customer = context.customerRows.find((row) => row.id === task.customerId);
   const priceVersion = context.getActiveBrandTaskPrice(task.brandId, task.taskConfigId, task.createdAt);
   const settlementPolicyVersion = context.getActiveBrandSettlementPolicy(task.brandId, task.createdAt);
+  const acceptancePolicy = context.getBrandAcceptancePolicy(task.brandId)?.policy;
   const contract = context.contractRows.find((row) => row.id === priceVersion?.contractId);
   const customerBillingSnapshot = brand && customer
     ? buildTaskCustomerBillingSnapshot({
+        acceptancePolicy,
         brandId: task.brandId,
         brandName: brand.name,
         capturedAt: task.createdAt,
@@ -1243,6 +1340,7 @@ function attachTaskAcceptanceArchive(task: StoreTaskRecord) {
 
 export function TaskManagementProvider({ children }: { children: ReactNode }) {
   const { peopleRows } = usePeopleOrganizationState();
+  const { taskConfigRows } = useTaskConfigState();
   const customerManagementState = useCustomerManagementState();
   const [taskWorkflowState, setTaskWorkflowState] = useState<TaskWorkflowState>(() => ({
     customerTaskBillingFacts: seedStoreTaskRows
@@ -1320,12 +1418,40 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
         return nextRecord;
       },
       createStoreTask(input) {
+        const customer = customerManagementState.customerRows.find((row) => row.id === input.customerId);
+        const brand = customerManagementState.getBrandById(input.brandId);
+        const store = customerManagementState.storeRows.find((row) => row.id === input.storeId);
+        const taskConfig = taskConfigRows.find((row) => row.id === input.taskConfigId);
+        const executor = peopleRows.find((row) => row.id === input.executorId);
+        const acceptor = peopleRows.find((row) => row.id === input.acceptorId);
+
+        const blockingMessage = getTaskCreationBlockingMessage({
+          acceptorAvailable: Boolean(
+            acceptor && isPeopleRelationshipActive(acceptor) && acceptor.taskAccessStatus !== '已关闭'
+          ),
+          brandAvailable: Boolean(brand && customer && brand.customerId === customer.id && brand.status === '启用'),
+          brandTaskAvailable: Boolean(brand?.taskConfigs.some((item) => item.taskConfigId === input.taskConfigId)),
+          customerStatus: customer ? customerManagementState.deriveCustomerStatus(customer.id) : undefined,
+          executorAvailable: Boolean(
+            executor && isPeopleRelationshipActive(executor) && executor.taskAccessStatus === '可参与任务'
+          ),
+          storeAvailable: Boolean(
+            store && brand && customer && store.brandId === brand.id && store.customerId === customer.id && !['暂停', '闭店'].includes(store.status)
+          ),
+          taskConfigAvailable: taskConfig?.status === '启用'
+        });
+
+        if (blockingMessage) {
+          throw new Error(blockingMessage);
+        }
+        if (!taskConfig) {
+          throw new Error('未找到任务类型配置');
+        }
+
         const sequence = getNextTaskSequence(storeTaskRows);
         const paddedSequence = String(sequence).padStart(3, '0');
         const code = `TASK-2026-${paddedSequence}`;
         const taskId = `store-task-2026-${paddedSequence}`;
-        const brand = customerManagementState.getBrandById(input.brandId);
-        const customer = customerManagementState.customerRows.find((row) => row.id === input.customerId);
         const priceVersion = customerManagementState.getActiveBrandTaskPrice(
           input.brandId,
           input.taskConfigId,
@@ -1335,9 +1461,11 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
           input.brandId,
           taskManagementNow
         );
+        const acceptancePolicy = customerManagementState.getBrandAcceptancePolicy(input.brandId)?.policy;
         const contract = customerManagementState.contractRows.find((row) => row.id === priceVersion?.contractId);
         const customerBillingSnapshot = brand && customer
           ? buildTaskCustomerBillingSnapshot({
+              acceptancePolicy,
               brandId: input.brandId,
               brandName: brand.name,
               capturedAt: taskManagementNow,
@@ -1364,6 +1492,7 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
           operationRecords: [buildCreateOperation(input.name)],
           reworkCount: 0,
           status: '进行中',
+          taskDefinitionSnapshot: buildTaskDefinitionSnapshot(taskConfig, taskManagementNow),
           updatedAt: taskManagementNow
         };
 
@@ -1381,6 +1510,37 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
 
         setTaskWorkflowState((currentState) => applyTaskAcceptanceCommit(currentState, input));
         return validation;
+      },
+      commitCustomerTaskAcceptance(input) {
+        const task = storeTaskRows.find((record) => record.id === input.taskId);
+        if (!task) {
+          return { message: '未找到任务记录', success: false };
+        }
+
+        try {
+          const nextTask = applyCustomerTaskAcceptance(task, input, {
+            actor: '李明',
+            occurredAt: taskManagementNow
+          });
+          const nextBillingFact = buildCustomerTaskBillingFact(nextTask);
+          if (!nextBillingFact) {
+            return { message: '当前任务缺少有效结算事实', success: false };
+          }
+
+          setTaskWorkflowState((currentState) => ({
+            ...currentState,
+            customerTaskBillingFacts: currentState.customerTaskBillingFacts.some((fact) => fact.id === nextBillingFact.id)
+              ? currentState.customerTaskBillingFacts.map((fact) => fact.id === nextBillingFact.id ? nextBillingFact : fact)
+              : [nextBillingFact, ...currentState.customerTaskBillingFacts],
+            storeTaskRows: currentState.storeTaskRows.map((record) => record.id === nextTask.id ? nextTask : record)
+          }));
+          return { success: true, task: nextTask };
+        } catch (error) {
+          return {
+            message: error instanceof Error ? error.message : '甲方验收暂不可保存',
+            success: false
+          };
+        }
       },
       reverseTaskAcceptance(input) {
         try {
@@ -1438,7 +1598,9 @@ export function TaskManagementProvider({ children }: { children: ReactNode }) {
       customerTaskSettlementResult,
       partTimeLaborAcceptanceRows,
       partTimeLaborSettlementResult,
+      peopleRows,
       storeTaskRows,
+      taskConfigRows,
       taskPerformanceScoringRows
     ]
   );

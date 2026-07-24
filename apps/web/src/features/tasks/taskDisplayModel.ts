@@ -1,6 +1,5 @@
 import type { StatusTagTone } from '../../components/Detail';
 import type { StoreRecord } from '../customers/customerData';
-import type { TaskConfigRow } from '../system/TaskConfigState';
 import { isTaskHourBefore, taskManagementNow, type StoreTaskFileStage, type StoreTaskRecord, type StoreTaskStatus } from './TaskManagementState';
 
 export type TaskDeadlineState = '已中止' | '已关闭' | '逾期' | '未逾期';
@@ -44,8 +43,8 @@ export function getTaskDeadlineState(record: StoreTaskRecord, now = taskManageme
   return isTaskOverdue(record, now) ? '逾期' : '未逾期';
 }
 
-export function getTaskTypeName(taskConfigId: string, taskConfigRows: Pick<TaskConfigRow, 'id' | 'name'>[]) {
-  return taskConfigRows.find((row) => row.id === taskConfigId)?.name ?? '未配置任务类型';
+export function getTaskTypeName(task: Pick<StoreTaskRecord, 'taskDefinitionSnapshot'>) {
+  return task.taskDefinitionSnapshot.name;
 }
 
 export function getTaskStoreContext(storeRows: Pick<StoreRecord, 'city' | 'id' | 'name' | 'province'>[], storeId: string) {

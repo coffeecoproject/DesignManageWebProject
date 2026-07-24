@@ -1,6 +1,5 @@
 import type { BrandRecord, StoreRecord } from '../customers/customerData';
 import type { DateRangeFilterValue, DateScopeFilterValue } from '../../components/DateFilterFields';
-import type { PerformanceRulePreset, PerformanceTaskScoreItem } from '../performance/performanceTypes';
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import { getFirstSelectableCandidateId, type TaskAssignmentWindow, type TaskAssignmentCandidate } from './taskAssignmentCandidates';
@@ -15,10 +14,15 @@ import { createTaskFileDraft, type TaskFileDraft } from './TaskFileDraftEditor';
 import { getTaskSearchText, getTaskStoreContext, getTaskTypeName, isTaskOverdue } from './taskDisplayModel';
 import { buildTaskFilesFromDrafts } from './taskFileModel';
 import { appendTaskOperation } from './taskOperationModel';
+import {
+  getCustomerTaskAcceptanceStatus,
+  type CustomerTaskAcceptanceStatus
+} from './taskCustomerAcceptanceModel';
 import { addTaskWorkingHours } from './taskScheduling';
 
 export type TaskFilterState = {
   brandId: '全部' | string;
+  customerAcceptanceStatus: '全部' | Exclude<CustomerTaskAcceptanceStatus, '不适用'>;
   keyword: string;
   plannedDeliveryTime: DateScopeFilterValue;
   status: '全部' | StoreTaskStatus;
@@ -37,8 +41,6 @@ export type StoreTaskForm = {
 };
 
 export type BrandTaskOption = {
-  performanceRule: PerformanceRulePreset;
-  scoreItem: PerformanceTaskScoreItem;
   taskConfig: TaskConfigRow;
 };
 
@@ -58,6 +60,7 @@ export type TaskCreateValidationState = {
 
 export const defaultTaskFilters: TaskFilterState = {
   brandId: '全部',
+  customerAcceptanceStatus: '全部',
   keyword: '',
   plannedDeliveryTime: { mode: 'all' },
   status: '全部'
@@ -73,35 +76,18 @@ const taskStatusSortPriority: Record<StoreTaskStatus, number> = {
   已中止: 9
 };
 
-export function getBrandPerformanceRule(brand: BrandRecord | undefined, performanceRuleRows: PerformanceRulePreset[]) {
-  if (!brand) {
-    return undefined;
-  }
-
-  return performanceRuleRows.find((rule) => rule.id === brand.performanceRuleId && rule.performanceType === '任务制' && rule.status === '已发布');
-}
-
 export function getBrandTaskOptions(
   brand: BrandRecord | undefined,
-  taskConfigRows: TaskConfigRow[],
-  performanceRuleRows: PerformanceRulePreset[]
+  taskConfigRows: TaskConfigRow[]
 ): BrandTaskOption[] {
   if (!brand) {
-    return [];
-  }
-
-  const performanceRule = getBrandPerformanceRule(brand, performanceRuleRows);
-
-  if (!performanceRule) {
     return [];
   }
 
   return brand.taskConfigs
     .map((brandTaskConfig) => {
       const taskConfig = taskConfigRows.find((row) => row.id === brandTaskConfig.taskConfigId && row.status === '启用');
-      const scoreItem = performanceRule.taskScoreItems.find((item) => item.taskConfigId === brandTaskConfig.taskConfigId);
-
-      return taskConfig && scoreItem ? { performanceRule, scoreItem, taskConfig } : undefined;
+      return taskConfig ? { taskConfig } : undefined;
     })
     .filter((item): item is BrandTaskOption => Boolean(item));
 }
@@ -134,20 +120,18 @@ export function buildGeneratedTaskName(store: StoreRecord | undefined, taskConfi
 
 export function buildDefaultTaskForm({
   brandRows,
-  performanceRuleRows,
   storeRows,
   taskConfigRows
 }: {
   brandRows: BrandRecord[];
-  performanceRuleRows: PerformanceRulePreset[];
   storeRows: StoreRecord[];
   taskConfigRows: TaskConfigRow[];
 }): StoreTaskForm {
   const brand =
-    brandRows.find((row) => storeRows.some((store) => store.brandId === row.id) && getBrandTaskOptions(row, taskConfigRows, performanceRuleRows).length > 0) ??
+    brandRows.find((row) => storeRows.some((store) => store.brandId === row.id) && getBrandTaskOptions(row, taskConfigRows).length > 0) ??
     brandRows[0];
   const store = storeRows.find((row) => row.brandId === brand?.id);
-  const taskConfigId = getBrandTaskOptions(brand, taskConfigRows, performanceRuleRows)[0]?.taskConfig.id ?? '';
+  const taskConfigId = getBrandTaskOptions(brand, taskConfigRows)[0]?.taskConfig.id ?? '';
 
   return {
     acceptorId: '',
@@ -323,8 +307,8 @@ export function removeTaskFormMaterial(form: StoreTaskForm, materialId: string):
   };
 }
 
-export function getTaskUnavailableMessage(selectedPerformanceRule: PerformanceRulePreset | undefined) {
-  return selectedPerformanceRule ? '该品牌未选择适用任务，请先到品牌管理配置。' : '该品牌未绑定绩效方案，请先到品牌管理配置。';
+export function getTaskUnavailableMessage() {
+  return '该品牌未选择适用任务，请先到品牌管理配置。';
 }
 
 export function getFilteredStoreTasks({
@@ -333,8 +317,7 @@ export function getFilteredStoreTasks({
   filters,
   plannedDeliveryRange,
   storeRows,
-  storeTaskRows,
-  taskConfigRows
+  storeTaskRows
 }: {
   brandRows: Pick<BrandRecord, 'id' | 'name'>[];
   customerRows: { id: string; name: string }[];
@@ -342,17 +325,19 @@ export function getFilteredStoreTasks({
   plannedDeliveryRange?: DateRangeFilterValue;
   storeRows: StoreRecord[];
   storeTaskRows: StoreTaskRecord[];
-  taskConfigRows: TaskConfigRow[];
 }) {
   return storeTaskRows
     .filter((record) => {
       const customer = customerRows.find((row) => row.id === record.customerId);
       const brand = brandRows.find((row) => row.id === record.brandId);
       const storeContext = getTaskStoreContext(storeRows, record.storeId);
-      const taskTypeName = getTaskTypeName(record.taskConfigId, taskConfigRows);
+      const taskTypeName = getTaskTypeName(record);
       const keyword = filters.keyword.trim().toLowerCase();
 
       const matchesStatus = filters.status === '全部' || record.status === filters.status;
+      const matchesCustomerAcceptance =
+        filters.customerAcceptanceStatus === '全部'
+        || getCustomerTaskAcceptanceStatus(record) === filters.customerAcceptanceStatus;
       const matchesBrand = filters.brandId === '全部' || record.brandId === filters.brandId;
       const plannedDeliveryDate = record.plannedDeliveryAt.slice(0, 10);
       const matchesPlannedDelivery =
@@ -373,7 +358,7 @@ export function getFilteredStoreTasks({
           .toLowerCase()
           .includes(keyword);
 
-      return matchesStatus && matchesBrand && matchesPlannedDelivery && matchesKeyword;
+      return matchesStatus && matchesCustomerAcceptance && matchesBrand && matchesPlannedDelivery && matchesKeyword;
     })
     .sort(
       (left, right) =>

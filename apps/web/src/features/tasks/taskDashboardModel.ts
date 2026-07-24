@@ -1,5 +1,4 @@
 import type { BrandRecord, CustomerRecord, StoreRecord } from '../customers/customerData';
-import type { TaskConfigRow } from '../system/TaskConfigState';
 import type { ClientFeedbackRecord, StoreTaskRecord } from './TaskManagementState';
 import { taskManagementNow, taskManagementToday } from './TaskManagementState';
 import { getTaskStoreContext, getTaskTypeName, isTaskClosed, isTaskOverdue } from './taskDisplayModel';
@@ -81,7 +80,6 @@ type TaskDashboardSource = {
   periodRange?: TaskDashboardPeriodRange;
   storeRows: StoreRecord[];
   storeTaskRows: StoreTaskRecord[];
-  taskConfigRows: Pick<TaskConfigRow, 'id' | 'name'>[];
   today?: string;
 };
 
@@ -423,7 +421,6 @@ export function buildTaskDashboardData({
   periodRange,
   storeRows,
   storeTaskRows,
-  taskConfigRows,
   today = taskManagementToday
 }: TaskDashboardSource): TaskDashboardData {
   const activePeriodRange = periodRange ?? buildTaskDashboardPeriodRange('month', today);
@@ -459,7 +456,7 @@ export function buildTaskDashboardData({
     period: activePeriodRange,
     riskRows: buildRiskRows({ brandRows, clientFeedbackRows: periodFeedbackRows, now, storeRows, storeTaskRows: periodTaskRows }),
     statusDistribution: buildDistribution(countByLabel(periodTaskRows, (task) => task.status)),
-    taskTypeDistribution: buildDistribution(countByLabel(periodTaskRows, (task) => getTaskTypeName(task.taskConfigId, taskConfigRows))),
+    taskTypeDistribution: buildDistribution(countByLabel(periodTaskRows, (task) => getTaskTypeName(task))),
     trend
   };
 }

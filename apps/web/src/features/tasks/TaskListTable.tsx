@@ -3,12 +3,12 @@ import type { TableColumnsType } from 'antd';
 import { ManagementTable } from '../../components/ManagementTable';
 import { TagChip } from '../../components/TagChip';
 import { CellText, CompactCell } from '../../components/TableCell';
-import type { TaskConfigRow } from '../system/TaskConfigState';
 import { type StoreTaskRecord, type StoreTaskStatus } from './TaskManagementState';
 import { getTaskStoreContext, getTaskTypeName } from './taskDisplayModel';
 import { TaskScheduleCell } from './components/TaskScheduleCell';
 import { TaskStatusTag } from './components/TaskStatusTag';
 import type { StoreRecord } from '../customers/customerData';
+import { getCustomerTaskAcceptanceStatus } from './taskCustomerAcceptanceModel';
 
 type TaskListTableProps = {
   getBrandName: (brandId: string) => string;
@@ -16,7 +16,6 @@ type TaskListTableProps = {
   onRowClick: (record: StoreTaskRecord) => void;
   records: StoreTaskRecord[];
   storeRows: StoreRecord[];
-  taskConfigRows: TaskConfigRow[];
 };
 
 export function TaskListTable({
@@ -25,7 +24,6 @@ export function TaskListTable({
   onRowClick,
   records,
   storeRows,
-  taskConfigRows
 }: TaskListTableProps) {
   const columns: TableColumnsType<StoreTaskRecord> = [
     {
@@ -55,7 +53,7 @@ export function TaskListTable({
       key: 'taskType',
       align: 'center',
       width: 126,
-      render: (_, record) => <TagChip label={getTaskTypeName(record.taskConfigId, taskConfigRows)} />
+      render: (_, record) => <TagChip label={getTaskTypeName(record)} />
     },
     {
       title: '执行人',
@@ -84,6 +82,19 @@ export function TaskListTable({
       align: 'center',
       width: 106,
       render: (status: StoreTaskStatus) => <TaskStatusTag status={status} />
+    },
+    {
+      title: '甲方验收',
+      key: 'customerAcceptance',
+      align: 'center',
+      width: 106,
+      render: (_, record) => {
+        const status = getCustomerTaskAcceptanceStatus(record);
+
+        return status === '不适用'
+          ? <CellText tone="subtle">-</CellText>
+          : <TagChip label={status} tone={status === '已完成' ? 'green' : 'amber'} />;
+      }
     },
     {
       title: '驳回次数',

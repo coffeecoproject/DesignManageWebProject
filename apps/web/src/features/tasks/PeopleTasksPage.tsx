@@ -16,7 +16,6 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { usePerformanceResults } from '../performance/usePerformanceResults';
-import { useTaskConfigState } from '../system/TaskConfigState';
 import { taskManagementNow, type StoreTaskRecord, useTaskManagementState } from './TaskManagementState';
 import { PeopleTaskDrawer } from './PeopleTaskDrawer';
 import { PeopleTaskTable } from './PeopleTaskTable';
@@ -36,7 +35,6 @@ export function PeopleTasksPage() {
   const { getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
   const { peopleRows } = usePeopleOrganizationState();
   const { publishedMonthlyRecords } = usePerformanceResults();
-  const { taskConfigRows } = useTaskConfigState();
   const { storeTaskRows } = useTaskManagementState();
   const [filters, setFilters] = useState<PeopleTaskFilterState>(defaultPeopleTaskFilters);
   const [activeSummaryId, setActiveSummaryId] = useState<string>();
@@ -70,7 +68,7 @@ export function PeopleTasksPage() {
   }
 
   function getTaskTypeName(task: StoreTaskRecord) {
-    return resolveTaskTypeName(task.taskConfigId, taskConfigRows);
+    return resolveTaskTypeName(task);
   }
 
   return (

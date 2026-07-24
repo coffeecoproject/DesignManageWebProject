@@ -1,9 +1,10 @@
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import type { BrandSettlementPolicy, BrandTaskPriceVersionRecord } from './brandTaskPricingModel';
 
-export type CustomerStatus = '合作中' | '待签约' | '已到期' | '无合同';
+export type CustomerStatus = '合作中' | '待签约' | '已到期' | '已终止' | '无合同';
 export type BrandStatus = '启用' | '暂停' | '停用';
 export type StoreStatus = '筹备中' | '营业中' | '暂停' | '闭店';
-export type CustomerContractStatus = '有效' | '已到期';
+export type CustomerContractStatus = '有效' | '已到期' | '已终止';
 export type CustomerContractType = '年框合同' | '项目合同';
 export type CustomerContractAmountMode = '固定金额' | '无固定金额';
 export type CustomerContractReceiptMethod = '银行转账' | '现金' | '其他';
@@ -89,13 +90,11 @@ export type CustomerContractRecord = {
   files: CustomerContractFileRecord[];
   amountMode: CustomerContractAmountMode;
   amount: number | null;
-  receivedAmount: number;
-  latestReceiptAt: string;
-  receiptNote: string;
-  receiptRecords: CustomerContractReceiptRecord[];
   owner: string;
   updatedAt: string;
   note: string;
+  terminatedAt?: string;
+  terminationReason?: string;
 };
 
 export type BrandRecord = {
@@ -106,7 +105,6 @@ export type BrandRecord = {
   status: BrandStatus;
   owner: string;
   contactName: string;
-  performanceRuleId: string;
   settlementPolicy: BrandSettlementPolicy;
   taskConfigs: BrandTaskConfigRecord[];
   storeCount: number;
@@ -279,27 +277,6 @@ export const customerContractRecords: CustomerContractRecord[] = [
     ],
     amountMode: '无固定金额',
     amount: null,
-    receivedAmount: 86000,
-    latestReceiptAt: '2026-06-06',
-    receiptNote: '年框合同按实际门店项目收款。',
-    receiptRecords: [
-      {
-        id: 'receipt-starry-001',
-        amount: 56000,
-        method: '银行转账',
-        note: '星际空间门店施工图阶段收款',
-        receivedAt: '2026-04-18',
-        recorder: '李明'
-      },
-      {
-        id: 'receipt-starry-002',
-        amount: 30000,
-        method: '银行转账',
-        note: '星际轻装门店资料补充收款',
-        receivedAt: '2026-06-06',
-        recorder: '李明'
-      }
-    ],
     owner: '李明',
     updatedAt: '2026-06-12',
     note: '覆盖星际空间及星际轻装品牌的年度合作。'
@@ -333,10 +310,6 @@ export const customerContractRecords: CustomerContractRecord[] = [
     ],
     amountMode: '固定金额',
     amount: 15000,
-    receivedAmount: 0,
-    latestReceiptAt: '-',
-    receiptNote: '补充协议新增金额待后续收款。',
-    receiptRecords: [],
     owner: '李明',
     updatedAt: '2026-06-12',
     note: '仅对补充协议新增金额形成独立税源。'
@@ -367,19 +340,6 @@ export const customerContractRecords: CustomerContractRecord[] = [
     ],
     amountMode: '固定金额',
     amount: 58000,
-    receivedAmount: 20000,
-    latestReceiptAt: '2026-06-12',
-    receiptNote: '项目首款已收，尾款待验收后收取。',
-    receiptRecords: [
-      {
-        id: 'receipt-nova-001',
-        amount: 20000,
-        method: '银行转账',
-        note: '项目启动款',
-        receivedAt: '2026-06-12',
-        recorder: '王芳'
-      }
-    ],
     owner: '王芳',
     updatedAt: '2026-06-10',
     note: '客户已确认项目范围，签署合同已归档。'
@@ -409,27 +369,6 @@ export const customerContractRecords: CustomerContractRecord[] = [
     ],
     amountMode: '固定金额',
     amount: 120000,
-    receivedAmount: 120000,
-    latestReceiptAt: '2026-04-20',
-    receiptNote: '年度合作款已收齐。',
-    receiptRecords: [
-      {
-        id: 'receipt-urban-001',
-        amount: 80000,
-        method: '银行转账',
-        note: '年度合作首款',
-        receivedAt: '2025-10-15',
-        recorder: '李明'
-      },
-      {
-        id: 'receipt-urban-002',
-        amount: 40000,
-        method: '银行转账',
-        note: '年度合作尾款',
-        receivedAt: '2026-04-20',
-        recorder: '李明'
-      }
-    ],
     owner: '李明',
     updatedAt: '2026-05-28',
     note: '合同仍在有效期内，保留合同档案与客户资料。'
@@ -459,19 +398,6 @@ export const customerContractRecords: CustomerContractRecord[] = [
     ],
     amountMode: '固定金额',
     amount: 46000,
-    receivedAmount: 46000,
-    latestReceiptAt: '2024-06-15',
-    receiptNote: '历史项目已收款完成。',
-    receiptRecords: [
-      {
-        id: 'receipt-old-001',
-        amount: 46000,
-        method: '银行转账',
-        note: '项目结清',
-        receivedAt: '2024-06-15',
-        recorder: '赵敏'
-      }
-    ],
     owner: '赵敏',
     updatedAt: '2026-04-30',
     note: '历史合同，仅保留查看。'
@@ -487,7 +413,6 @@ export const brandRecords: BrandRecord[] = [
     status: '启用',
     owner: '李明',
     contactName: '周岚',
-    performanceRuleId: 'perf-rule-space-design-v2-draft',
     settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: [
       {
@@ -515,7 +440,6 @@ export const brandRecords: BrandRecord[] = [
     status: '启用',
     owner: '王芳',
     contactName: '邓可',
-    performanceRuleId: 'perf-rule-space-design-v2-draft',
     settlementPolicy: { mode: '按月汇总', monthlyDueDay: 15 },
     taskConfigs: [
       {
@@ -539,7 +463,6 @@ export const brandRecords: BrandRecord[] = [
     status: '暂停',
     owner: '王芳',
     contactName: '陈思',
-    performanceRuleId: 'perf-rule-space-design-v2-draft',
     settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: [
       {
@@ -563,7 +486,6 @@ export const brandRecords: BrandRecord[] = [
     status: '停用',
     owner: '李明',
     contactName: '刘晨',
-    performanceRuleId: 'perf-rule-space-design-v2-draft',
     settlementPolicy: { mode: '按月汇总', monthlyDueDay: 20 },
     taskConfigs: [
       {
@@ -583,7 +505,6 @@ export const brandRecords: BrandRecord[] = [
     status: '停用',
     owner: '赵敏',
     contactName: '唐青',
-    performanceRuleId: 'perf-rule-space-design-v2-draft',
     settlementPolicy: { mode: '按任务结算', perTaskDueDays: 30 },
     taskConfigs: [],
     storeCount: 1,
@@ -763,29 +684,45 @@ export function getCustomerById(customerId: string) {
   return customerRecords.find((customer) => customer.id === customerId);
 }
 
-const STATUS_EVALUATION_DATE = '2026-06-13';
-
 export function getCustomerContracts(customerId: string, contracts: CustomerContractRecord[] = customerContractRecords) {
   return contracts.filter((contract) => contract.customerId === customerId);
+}
+
+export function deriveCustomerContractStatus(
+  contract: CustomerContractRecord,
+  evaluationDate = frontendBusinessToday
+): CustomerContractStatus {
+  if (contract.terminatedAt && contract.terminatedAt <= evaluationDate) {
+    return '已终止';
+  }
+
+  return contract.expiresAt < evaluationDate ? '已到期' : '有效';
+}
+
+export function isCustomerContractAvailable(
+  contract: CustomerContractRecord,
+  evaluationDate = frontendBusinessToday
+) {
+  return contract.signedAt <= evaluationDate && deriveCustomerContractStatus(contract, evaluationDate) === '有效';
 }
 
 export function deriveCustomerStatus(
   customerId: string,
   contracts: CustomerContractRecord[] = customerContractRecords,
-  evaluationDate = STATUS_EVALUATION_DATE
+  evaluationDate = frontendBusinessToday
 ): CustomerStatus {
   const customerContracts = getCustomerContracts(customerId, contracts);
 
-  if (
-    customerContracts.some(
-      (contract) =>
-        contract.status === '有效' &&
-        contract.signedAt !== '-' &&
-        contract.signedAt <= evaluationDate &&
-        contract.expiresAt >= evaluationDate
-    )
-  ) {
+  if (customerContracts.some((contract) => isCustomerContractAvailable(contract, evaluationDate))) {
     return '合作中';
+  }
+
+  if (customerContracts.some((contract) => !contract.terminatedAt && contract.signedAt > evaluationDate)) {
+    return '待签约';
+  }
+
+  if (customerContracts.length > 0 && customerContracts.every((contract) => deriveCustomerContractStatus(contract, evaluationDate) === '已终止')) {
+    return '已终止';
   }
 
   if (customerContracts.length > 0) {

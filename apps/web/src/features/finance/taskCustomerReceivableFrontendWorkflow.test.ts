@@ -3,6 +3,7 @@ import {
   customerRecords,
   storeRecords
 } from '../customers/customerData';
+import { deriveCustomerContractReceiptViews } from '../customers/contractReceiptModel';
 import { peopleMembers } from '../people/mockData';
 import {
   applyTaskAcceptanceCommit,
@@ -11,10 +12,12 @@ import {
   type TaskWorkflowState
 } from '../tasks/taskAcceptanceCommitModel';
 import {
+  buildCustomerTaskBillingFact,
   buildCustomerTaskSettlementBatches,
   buildTaskCustomerBillingSnapshot
 } from '../tasks/taskCustomerBillingModel';
 import { buildTaskAcceptanceArchiveFile } from '../tasks/taskAcceptanceEvidenceModel';
+import { applyCustomerTaskAcceptance } from '../tasks/taskCustomerAcceptanceModel';
 import type {
   StoreTaskRecord,
   TaskPerformanceScoringRecord
@@ -24,9 +27,16 @@ import {
   buildPartTimeLaborSettlementBatches
 } from '../tasks/partTimeLaborSettlementModel';
 import type { BrandSettlementPolicyVersionRecord } from '../customers/brandTaskPricingModel';
+import { defaultBrandAcceptancePolicy } from '../customers/brandAcceptancePolicyModel';
 import { getFinanceSeedPublicAccountRef } from './financeData';
 import { mergeCustomerTaskReceivablePayableRecords } from './financeCustomerTaskSettlementModel';
-import { buildAccountingVoucherFromReceivablePayable } from './financeAccountingVoucherModel';
+import {
+  applyAccountingVoucherLifecycle,
+  buildAccountingLedgerEntries,
+  buildAccountingVoucherFromReceivablePayable,
+  buildAccountingVoucherFromTransaction,
+  createAccountingVoucherLifecycleRecord
+} from './financeAccountingVoucherModel';
 import {
   buildInvoiceBusinessAllocations,
   buildInvoiceBusinessAssociationCandidates
@@ -65,23 +75,41 @@ const contract = {
   code: 'CON-2026-001',
   customerId: 'customer-starry',
   expiresAt: '2026-12-31',
-  files: [{ type: '已签署合同' }],
+  files: [{
+    id: 'contract-starry-framework-file',
+    name: '星际空间设计服务框架合同.pdf',
+    status: '已上传' as const,
+    type: '已签署合同' as const,
+    updatedAt: '2026-01-01'
+  }],
   id: 'contract-starry-framework',
   name: '星际空间设计服务框架合同',
+  note: '任务结算测试合同',
+  owner: '李明',
   signedAt: '2026-01-01',
-  status: '有效' as const
+  stampDutyFacts: {
+    amountTaxMode: '价税分列' as const,
+    businessNature: '设计及咨询服务' as const,
+    signedVersionNo: 'V1.0',
+    vatAmount: 0
+  },
+  status: '有效' as const,
+  type: '项目合同' as const,
+  updatedAt: '2026-06-01'
 };
 
 assert(customer, 'customer fixture should exist');
 assert(brand, 'brand fixture should exist');
 
 function createTask({
+  customerAccepted = true,
   executorId = '20260001',
-  executorName = '示例全职 A',
+  executorName = '李明',
   id,
   laborAgreement,
   unitPrice
 }: {
+  customerAccepted?: boolean;
   executorId?: string;
   executorName?: string;
   id: string;
@@ -97,6 +125,7 @@ function createTask({
     version: 1
   };
   const customerBillingSnapshot = buildTaskCustomerBillingSnapshot({
+    acceptancePolicy: defaultBrandAcceptancePolicy,
     brandId: brand.id,
     brandName: brand.name,
     capturedAt: '2026-06-10 09:00',
@@ -125,17 +154,38 @@ function createTask({
   return {
     acceptedAt: '2026-06-18 16:00',
     acceptorId: '20250018',
-    acceptorName: '示例全职 B',
+    acceptorName: '陈浩',
     brandId: brand.id,
     code: `TASK-${id}`,
     createdAt: '2026-06-10 09:00',
     customerBillingSnapshot,
+    customerAcceptance: customerAccepted
+      ? {
+          acceptedOn: '2026-06-19',
+          deductionAmount: 0,
+          deductionRate: 0,
+          finalAmount: unitPrice,
+          id: `${id}/customer-acceptance`,
+          recordedAt: '2026-06-19 10:00',
+          recordedBy: '李明',
+          remark: '',
+          qualityPenaltyPoints: 0,
+          score: 95,
+          standardAmount: unitPrice,
+          taskId: id,
+          timelinessPenaltyPoints: 0,
+          timelinessResult: '未超时',
+          totalPenaltyPoints: 0,
+          updatedAt: '2026-06-19 10:00',
+          updatedBy: '李明'
+        }
+      : undefined,
     customerId: customer.id,
     executorId,
     executorName,
     files: [buildTaskAcceptanceArchiveFile({
       acceptedAt: '2026-06-18 16:00',
-      acceptedBy: '示例全职 B',
+      acceptedBy: '陈浩',
       task: { code: `TASK-${id}`, id }
     })],
     id,
@@ -149,6 +199,9 @@ function createTask({
     status: '已完成',
     storeId: 'store-wh-optics',
     taskConfigId: 'task-type-store-image',
+    taskDefinitionSnapshot: {
+      capturedAt: '2026-06-10 09:00', category: '设计交付', code: 'TASK-IMAGE', deliveryHints: [], id: 'task-type-store-image', name: '门店图'
+    },
     updatedAt: '2026-06-18 16:00'
   };
 }
@@ -184,7 +237,7 @@ const tests: UnitTest[] = [
     run() {
       const task = createTask({
         executorId: '20260006',
-        executorName: '示例兼职 B',
+        executorName: '林悦',
         id: 'reversed-task',
         laborAgreement: {
           agreedGrossAmount: 1200,
@@ -275,6 +328,7 @@ const tests: UnitTest[] = [
       const records = mergeCustomerTaskReceivablePayableRecords({
         batches,
         brands: brandRecords,
+        canDirectCorrect: () => true,
         customers: customerRecords,
         records: [],
         stores: storeRecords
@@ -290,7 +344,7 @@ const tests: UnitTest[] = [
     run() {
       const task = createTask({
         executorId: '20260006',
-        executorName: '示例兼职 B',
+        executorName: '林悦',
         id: 'part-time-task',
         laborAgreement: {
           agreedGrossAmount: 1200,
@@ -320,6 +374,7 @@ const tests: UnitTest[] = [
       const withReceivable = mergeCustomerTaskReceivablePayableRecords({
         batches: customerBatches,
         brands: brandRecords,
+        canDirectCorrect: () => true,
         customers: customerRecords,
         records: [],
         stores: storeRecords
@@ -337,6 +392,49 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'TR-39 customer acceptance activates the net task receivable after internal completion',
+    run() {
+      const internallyAcceptedTask = createTask({
+        customerAccepted: false,
+        id: 'customer-acceptance-task',
+        unitPrice: 1600
+      });
+      const internalWorkflow = applyTaskAcceptanceCommit(createEmptyWorkflow(internallyAcceptedTask), {
+        scoringRecord: createScoring(internallyAcceptedTask),
+        task: internallyAcceptedTask
+      });
+      const pendingBatches = buildCustomerTaskSettlementBatches({
+        asOfDate: '2026-07-17',
+        facts: internalWorkflow.customerTaskBillingFacts
+      }).batches;
+      const customerAcceptedTask = applyCustomerTaskAcceptance(
+        internallyAcceptedTask,
+        { acceptedOn: '2026-06-19', correctionReason: '', remark: '评分触发规则扣款', score: 82, timelinessResult: '未超时' },
+        { actor: '李明', occurredAt: '2026-06-19 10:00' }
+      );
+      const effectiveFact = buildCustomerTaskBillingFact(customerAcceptedTask);
+
+      assertEqual(pendingBatches.length, 0, 'internal completion alone must not create customer receivable batches');
+      assert(effectiveFact, 'customer acceptance should retain the current billing fact');
+      const records = mergeCustomerTaskReceivablePayableRecords({
+        batches: buildCustomerTaskSettlementBatches({ asOfDate: '2026-07-17', facts: [effectiveFact] }).batches,
+        brands: brandRecords,
+        canDirectCorrect: () => true,
+        customers: customerRecords,
+        records: [],
+        stores: storeRecords
+      });
+
+      assertEqual(records.length, 1, 'customer acceptance should activate one customer receivable');
+      assertEqual(records[0]?.amount, 1280, 'customer receivable should use the rule-calculated net amount');
+      assertEqual(
+        internalWorkflow.taskPerformanceScoringRows[0]?.status,
+        '已计入',
+        'internal performance should remain independent from customer acceptance'
+      );
+    }
+  },
+  {
     name: 'TR-25 task receivable remains consumable by invoice settlement and voucher workflows',
     run() {
       const task = createTask({ id: 'downstream-task', unitPrice: 1600 });
@@ -351,6 +449,7 @@ const tests: UnitTest[] = [
       const records = mergeCustomerTaskReceivablePayableRecords({
         batches,
         brands: brandRecords,
+        canDirectCorrect: () => true,
         customers: customerRecords,
         records: [],
         stores: storeRecords
@@ -440,8 +539,58 @@ const tests: UnitTest[] = [
 
       assertEqual(settledReceivable?.settlementStatus, '已结清', 'posted collection should settle the task receivable');
       assertEqual(settledReceivable?.settledAmount, 1600, 'settled amount should equal the task receivable amount');
+      const contractReceipt = deriveCustomerContractReceiptViews({
+        contracts: [contract],
+        financeRows: review.financeRows,
+        receivablePayableRows: review.receivablePayableRows
+      })[0];
+      assertEqual(contractReceipt?.receivedAmount, 1600, 'posted task collection should enter the linked contract receipt summary');
+      assertEqual(contractReceipt?.receiptRecords.length, 1, 'linked contract should expose one posted receipt record');
       assert(voucher, 'task receivable with invoice basis should generate an accrual voucher');
       assertEqual(voucher.sourceNo, receivable.documentNo, 'voucher should retain the task receivable document number');
+      const postedTransaction = review.financeRows.find((row) => row.id === transaction.id);
+
+      assert(postedTransaction, 'reviewed task collection should retain the posted transaction');
+      const collectionVoucher = buildAccountingVoucherFromTransaction(postedTransaction, 1);
+
+      assert(collectionVoucher, 'reviewed task collection should generate a funds voucher');
+      assertEqual(
+        buildAccountingLedgerEntries([voucher, collectionVoucher]).length,
+        0,
+        'pending-booking task vouchers must not enter the general ledger'
+      );
+
+      const bookedVouchers = applyAccountingVoucherLifecycle(
+        [voucher, collectionVoucher],
+        [
+          createAccountingVoucherLifecycleRecord(voucher, '记-202606-101', '李明', '2026-06-25 15:10'),
+          createAccountingVoucherLifecycleRecord(collectionVoucher, '记-202606-102', '李明', '2026-06-25 15:15')
+        ]
+      );
+      const ledgerEntries = buildAccountingLedgerEntries(bookedVouchers);
+
+      assertEqual(
+        ledgerEntries.length,
+        voucher.lines.length + collectionVoucher.lines.length,
+        'booked accrual and collection vouchers should create one ledger entry per accounting line'
+      );
+      assertEqual(
+        ledgerEntries.filter((entry) => entry.subjectCode === '1122').length,
+        2,
+        'task revenue ledger should debit and later clear accounts receivable'
+      );
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '5001' && entry.creditAmount === invoice.netAmount),
+        'task acceptance revenue should enter operating revenue at the tax-exclusive amount after booking'
+      );
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '2221.01' && entry.creditAmount === invoice.taxAmount),
+        'task acceptance accrual should retain output VAT separately from operating revenue'
+      );
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '1002' && entry.debitAmount === 1600),
+        'reviewed customer collection should enter bank deposit after booking'
+      );
     }
   }
 ];

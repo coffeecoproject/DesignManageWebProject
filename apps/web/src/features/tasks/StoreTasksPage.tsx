@@ -14,8 +14,9 @@ import { ManagementPageScaffold } from '../../components/ManagementPageScaffold'
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
+import { useAuthorizationState } from '../auth/AuthorizationState';
+import { canAccessTask } from '../auth/authorizationModel';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
-import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
 import { usePerformanceResults } from '../performance/usePerformanceResults';
 import { useTaskConfigState } from '../system/TaskConfigState';
 import { useWorkCalendarState } from '../system/WorkCalendarState';
@@ -38,13 +39,26 @@ const taskListCurrentMonthRange = getDateScopeMonthRange(taskListCurrentMonth);
 
 export function TaskListPage() {
   const [messageApi, contextHolder] = message.useMessage();
-  const { brandRows, customerRows, getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
+  const { authorization } = useAuthorizationState();
+  const {
+    brandRows,
+    customerRows,
+    deriveCustomerStatus,
+    getBrandById,
+    getCustomerById,
+    storeRows
+  } = useCustomerManagementState();
   const { attendanceRecords, peopleRows } = usePeopleOrganizationState();
-  const { performanceRuleRows } = usePerformanceRuleState();
   const { publishedMonthlyRecords } = usePerformanceResults();
   const { taskConfigRows } = useTaskConfigState();
   const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
-  const { createStoreTask, reverseTaskAcceptance, saveStoreTask, storeTaskRows } = useTaskManagementState();
+  const {
+    commitCustomerTaskAcceptance,
+    createStoreTask,
+    reverseTaskAcceptance,
+    saveStoreTask,
+    storeTaskRows
+  } = useTaskManagementState();
   const [filters, setFilters] = useState<TaskFilterState>(defaultTaskFilters);
   const [activeTask, setActiveTask] = useState<StoreTaskRecord>();
   const [detailOpen, setDetailOpen] = useState(false);
@@ -55,13 +69,27 @@ export function TaskListPage() {
     () => getDateScopeRange(filters.plannedDeliveryTime, taskListCurrentMonth),
     [filters.plannedDeliveryTime]
   );
+  const availableBrandRows = useMemo(
+    () =>
+      brandRows.filter(
+        (brand) =>
+          brand.status === '启用' &&
+          deriveCustomerStatus(brand.customerId) === '合作中' &&
+          storeRows.some(
+            (store) =>
+              store.brandId === brand.id &&
+              store.customerId === brand.customerId &&
+              !['暂停', '闭店'].includes(store.status)
+          )
+      ),
+    [brandRows, deriveCustomerStatus, storeRows]
+  );
   const taskCreateForm = useTaskCreateFormState({
     annualExceptionRows,
     attendanceRecords,
-    brandRows,
+    brandRows: availableBrandRows,
     getCustomerById,
     peopleRows,
-    performanceRuleRows,
     publishedPerformanceRecords: publishedMonthlyRecords,
     storeRows,
     storeTaskRows,
@@ -128,7 +156,7 @@ export function TaskListPage() {
     setReversalReason('');
     setActiveTask(undefined);
     setDetailOpen(false);
-    void messageApi.success('验收已撤销，任务已退回待验收');
+    void messageApi.success('验收已撤销，相关绩效与结算来源已同步处理');
   }
 
   const filteredTasks = useMemo(
@@ -139,13 +167,16 @@ export function TaskListPage() {
         filters,
         plannedDeliveryRange,
         storeRows,
-        storeTaskRows,
-        taskConfigRows
+        storeTaskRows: storeTaskRows.filter((task) => canAccessTask(authorization, task))
       }),
-    [brandRows, customerRows, filters, plannedDeliveryRange, storeRows, storeTaskRows, taskConfigRows]
+    [authorization, brandRows, customerRows, filters, plannedDeliveryRange, storeRows, storeTaskRows]
   );
 
-  const metrics = useMemo(() => getTaskListMetrics(storeTaskRows), [storeTaskRows]);
+  const visibleTaskRows = useMemo(
+    () => storeTaskRows.filter((task) => canAccessTask(authorization, task)),
+    [authorization, storeTaskRows]
+  );
+  const metrics = useMemo(() => getTaskListMetrics(visibleTaskRows), [visibleTaskRows]);
 
   return (
     <ManagementPageScaffold
@@ -189,6 +220,15 @@ export function TaskListPage() {
                 onChange={(status: TaskFilterState['status']) => setFilters((current) => ({ ...current, status }))}
               />
             </FilterField>
+            <FilterField label="甲方验收">
+              <Select
+                options={['全部', '待录入', '已完成'].map((status) => ({ label: status, value: status }))}
+                value={filters.customerAcceptanceStatus}
+                onChange={(customerAcceptanceStatus: TaskFilterState['customerAcceptanceStatus']) =>
+                  setFilters((current) => ({ ...current, customerAcceptanceStatus }))
+                }
+              />
+            </FilterField>
             <KeywordFilter
               allowClear
               placeholder="任务 / 门店 / 执行人 / 验收人"
@@ -203,7 +243,6 @@ export function TaskListPage() {
       <TaskListTable
         records={filteredTasks}
         storeRows={storeRows}
-        taskConfigRows={taskConfigRows}
         getBrandName={(brandId) => getBrandById(brandId)?.name ?? '-'}
         onCreate={openCreateDrawer}
         onRowClick={(record) => {
@@ -213,7 +252,7 @@ export function TaskListPage() {
       />
 
       <TaskCreateDrawer
-        brandRows={brandRows}
+        brandRows={availableBrandRows}
         formState={taskCreateForm}
         materialTypeOptions={taskMaterialTypeOptions}
         open={createOpen}
@@ -228,8 +267,18 @@ export function TaskListPage() {
         open={detailOpen}
         storeRows={storeRows}
         task={activeTask}
-        taskConfigRows={taskConfigRows}
         onClose={() => setDetailOpen(false)}
+        onSaveCustomerAcceptance={(record, input) => {
+          const result = commitCustomerTaskAcceptance({ ...input, taskId: record.id });
+          if (!result.success || !result.task) {
+            void messageApi.warning(result.message ?? '甲方验收暂不可保存');
+            return false;
+          }
+
+          setActiveTask(result.task);
+          void messageApi.success(record.customerAcceptance ? '甲方验收已更正' : '甲方验收已录入');
+          return true;
+        }}
         onReverseAcceptance={(record) => {
           setReversalTask(record);
           setReversalReason('');
@@ -249,6 +298,9 @@ export function TaskListPage() {
         }}
         onOk={handleReverseAcceptance}
       >
+        <div className="task-acceptance-reversal-impact">
+          撤销后任务退回待验收，相关绩效与结算来源同步撤销；已进入开票、收付、记账或锁期的事项保留原记录并转入财务更正。
+        </div>
         <Input.TextArea
           autoSize={{ minRows: 3, maxRows: 6 }}
           maxLength={200}

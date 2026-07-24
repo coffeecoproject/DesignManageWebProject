@@ -7,7 +7,6 @@ import { ManagementPageScaffold } from '../../components/ManagementPageScaffold'
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
-import { useTaskConfigState } from '../system/TaskConfigState';
 import { feedbackChannelOptions } from './TaskClientFeedbackShared';
 import { taskManagementNow, type StoreTaskRecord, useTaskManagementState } from './TaskManagementState';
 import { TaskFeedbackDrawer } from './TaskFeedbackDrawer';
@@ -27,7 +26,6 @@ const taskFeedbackCurrentMonthRange = getDateScopeMonthRange(taskFeedbackCurrent
 
 export function TaskFeedbackPage() {
   const { brandRows, customerRows, getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
-  const { taskConfigRows } = useTaskConfigState();
   const { clientFeedbackRows, storeTaskRows } = useTaskManagementState();
   const [filters, setFilters] = useState<TaskFeedbackFilterState>(defaultTaskFeedbackFilters);
   const [activeSummaryId, setActiveSummaryId] = useState<string>();
@@ -58,10 +56,10 @@ export function TaskFeedbackPage() {
         return store ? `${store.name} / ${store.city}` : '-';
       },
       getTaskTypeName(task: StoreTaskRecord) {
-        return getTaskTypeName(task.taskConfigId, taskConfigRows);
+        return getTaskTypeName(task);
       }
     }),
-    [getBrandById, getCustomerById, storeRows, taskConfigRows]
+    [getBrandById, getCustomerById, storeRows]
   );
   const filteredSummaries = useMemo(
     () => filterTaskFeedbackSummaries(summaries, filters, lookup, feedbackRange),

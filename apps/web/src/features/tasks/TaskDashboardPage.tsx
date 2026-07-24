@@ -21,7 +21,6 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
-import { useTaskConfigState } from '../system/TaskConfigState';
 import { taskManagementNow, taskManagementToday, useTaskManagementState } from './TaskManagementState';
 import {
   buildTaskDashboardData,
@@ -161,7 +160,6 @@ function TaskDistributionPanel({
 
 export function TaskDashboardPage() {
   const { brandRows, customerRows, storeRows } = useCustomerManagementState();
-  const { taskConfigRows } = useTaskConfigState();
   const { clientFeedbackRows, storeTaskRows } = useTaskManagementState();
   const [periodMode, setPeriodMode] = useState<TaskDashboardPeriodMode>(defaultTaskDashboardPeriodMode);
   const [customRange, setCustomRange] = useState<TaskDashboardCustomRange>(() => ({
@@ -186,10 +184,9 @@ export function TaskDashboardPage() {
         customerRows,
         periodRange: selectedPeriodRange,
         storeRows,
-        storeTaskRows,
-        taskConfigRows
+        storeTaskRows
       }),
-    [brandRows, clientFeedbackRows, customerRows, selectedPeriodRange, storeRows, storeTaskRows, taskConfigRows]
+    [brandRows, clientFeedbackRows, customerRows, selectedPeriodRange, storeRows, storeTaskRows]
   );
 
   const riskColumns = useMemo<TableColumnsType<TaskDashboardRiskRow>>(

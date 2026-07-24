@@ -3,6 +3,15 @@ import type {
   BrandTaskPriceVersionRecord
 } from '../customers/brandTaskPricingModel';
 import {
+  calculateBrandAcceptance,
+  defaultBrandAcceptancePolicy,
+  getBrandAcceptancePolicy,
+  isBrandAcceptancePolicyValid,
+  upsertBrandAcceptancePolicy,
+  type BrandAcceptancePolicyRecord,
+  type BrandAcceptanceTimelinessResult
+} from '../customers/brandAcceptancePolicyModel';
+import {
   buildCustomerTaskBillingFact,
   buildCustomerTaskContractUsageSummaries,
   buildCustomerTaskSettlementBatches,
@@ -28,6 +37,48 @@ const priceVersion: BrandTaskPriceVersionRecord = {
   version: 1
 };
 
+const acceptancePolicyRecord: BrandAcceptancePolicyRecord = {
+  brandId: 'brand-a',
+  policy: defaultBrandAcceptancePolicy
+};
+
+function createCustomerAcceptance({
+  acceptedOn,
+  correctionReason,
+  occurredAt,
+  remark = '',
+  score = 95,
+  standardAmount = 4800,
+  timelinessResult = '未超时'
+}: {
+  acceptedOn: string;
+  correctionReason?: string;
+  occurredAt: string;
+  remark?: string;
+  score?: number;
+  standardAmount?: number;
+  timelinessResult?: BrandAcceptanceTimelinessResult;
+}) {
+  const calculation = calculateBrandAcceptance({
+    policy: defaultBrandAcceptancePolicy,
+    score,
+    standardAmount,
+    timelinessResult
+  });
+  return {
+    acceptedOn,
+    ...calculation,
+    correctionReason,
+    recordedAt: occurredAt,
+    recordedBy: '李明',
+    remark,
+    score,
+    timelinessResult,
+    updatedAt: occurredAt,
+    updatedBy: '李明'
+  };
+}
+
 function createSettlementPolicyVersion(
   mode: '按任务结算' | '按月汇总'
 ): BrandSettlementPolicyVersionRecord {
@@ -47,6 +98,7 @@ function createSnapshot(
   resolvedPriceVersion: BrandTaskPriceVersionRecord = priceVersion
 ) {
   return buildTaskCustomerBillingSnapshot({
+    acceptancePolicy: acceptancePolicyRecord.policy,
     brandId: 'brand-a',
     brandName: '品牌 A',
     capturedAt: '2026-06-01 10:00',
@@ -75,6 +127,7 @@ function createFact(taskId: string, acceptedAt: string, mode: '按任务结算' 
   const fact = buildCustomerTaskBillingFact({
     acceptedAt,
     code: `TASK-${taskId}`,
+    customerAcceptance: createCustomerAcceptance({ acceptedOn: acceptedAt.slice(0, 10), occurredAt: acceptedAt }),
     customerBillingSnapshot: createSnapshot(taskId, mode),
     files: [buildTaskAcceptanceArchiveFile({
       acceptedAt,
@@ -91,6 +144,66 @@ function createFact(taskId: string, acceptedAt: string, mode: '按任务结算' 
 }
 
 const tests: UnitTest[] = [
+  {
+    name: 'TR-45 brand acceptance policy calculates cumulative quality and timeliness penalties',
+    run() {
+      const noPenalty = calculateBrandAcceptance({
+        policy: defaultBrandAcceptancePolicy,
+        score: 90,
+        standardAmount: 4800,
+        timelinessResult: '未超时'
+      });
+      const qualityPenalty = calculateBrandAcceptance({
+        policy: defaultBrandAcceptancePolicy,
+        score: 82,
+        standardAmount: 4800,
+        timelinessResult: '未超时'
+      });
+      const cumulativePenalty = calculateBrandAcceptance({
+        policy: defaultBrandAcceptancePolicy,
+        score: 82,
+        standardAmount: 4800,
+        timelinessResult: '超时'
+      });
+
+      assertEqual(noPenalty.deductionAmount, 0, 'qualified and on-time acceptance should not deduct settlement');
+      assertEqual(qualityPenalty.totalPenaltyPoints, 10, 'mid-band score should contribute ten penalty points');
+      assertEqual(qualityPenalty.finalAmount, 3840, 'ten penalty points should retain eighty percent of settlement');
+      assertEqual(cumulativePenalty.totalPenaltyPoints, 20, 'quality and overdue points should accumulate');
+      assertEqual(cumulativePenalty.finalAmount, 2400, 'twenty cumulative points should retain fifty percent of settlement');
+    }
+  },
+  {
+    name: 'TR-46 brand keeps one acceptance policy while existing tasks retain their frozen snapshot',
+    run() {
+      const currentSnapshot = createSnapshot('task-before-acceptance-policy-change');
+      const changedPolicy = {
+        ...defaultBrandAcceptancePolicy,
+        noPenaltyScoreMinimum: 90
+      };
+      const policies = upsertBrandAcceptancePolicy({
+        brandId: 'brand-a',
+        policy: changedPolicy,
+        policies: [acceptancePolicyRecord]
+      });
+      const currentPolicy = getBrandAcceptancePolicy({
+        brandId: 'brand-a',
+        policies
+      });
+      const reopenedPolicies = upsertBrandAcceptancePolicy({
+        brandId: 'brand-a',
+        policy: { ...changedPolicy, overduePenaltyPoints: 20 },
+        policies
+      });
+
+      assert(currentPolicy, 'saved brand policy should remain available');
+      assertEqual(reopenedPolicies.length, 1, 'repeated saves should update the single current configuration instead of creating versions');
+      assertEqual(currentSnapshot?.acceptancePolicy.noPenaltyScoreMinimum, 85, 'existing task should retain original acceptance threshold');
+      assertEqual(currentPolicy.policy.noPenaltyScoreMinimum, 90, 'brand should expose the newly saved single policy to new tasks');
+      assertEqual(reopenedPolicies[0]?.policy.overduePenaltyPoints, 20, 'reopened brand configuration should save over the current policy');
+      assertEqual(isBrandAcceptancePolicyValid({ ...changedPolicy, standardPenaltyScoreMinimum: 95 }), false, 'overlapping score bands must be rejected');
+    }
+  },
   {
     name: 'TR-06 task snapshot freezes the resolved price version',
     run() {
@@ -110,11 +223,115 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'TR-07 completed task creates one customer billing fact',
+    name: 'TR-07 customer-accepted task creates one effective customer billing fact',
     run() {
       const fact = createFact('task-a', '2026-06-15 12:00');
       assertEqual(fact.amount, 4800, 'fact amount should come from snapshot');
       assertEqual(fact.id, 'task-billing-fact-task-a', 'fact id should be stable');
+    }
+  },
+  {
+    name: 'TR-38 internal acceptance remains pending until customer acceptance is recorded',
+    run() {
+      const acceptedAt = '2026-06-15 12:00';
+      const fact = buildCustomerTaskBillingFact({
+        acceptedAt,
+        code: 'TASK-PENDING-CUSTOMER',
+        customerBillingSnapshot: createSnapshot('task-pending-customer'),
+        files: [buildTaskAcceptanceArchiveFile({
+          acceptedAt,
+          acceptedBy: '验收人',
+          task: { code: 'TASK-PENDING-CUSTOMER', id: 'task-pending-customer' }
+        })],
+        id: 'task-pending-customer',
+        name: '待甲方验收任务',
+        status: '已完成',
+        storeId: 'store-a'
+      });
+
+      assert(fact, 'internal acceptance should retain a traceable billing fact');
+      assertEqual(fact.status, '待甲方验收', 'internal acceptance alone must not activate customer settlement');
+      assertEqual(
+        buildCustomerTaskSettlementBatches({ asOfDate: '2026-07-17', facts: [fact] }).batches.length,
+        0,
+        'pending customer acceptance must not create receivable batches'
+      );
+    }
+  },
+  {
+    name: 'TR-39 customer deduction produces the final net settlement amount',
+    run() {
+      const acceptedAt = '2026-06-15 12:00';
+      const fact = buildCustomerTaskBillingFact({
+        acceptedAt,
+        code: 'TASK-CUSTOMER-DEDUCTION',
+        customerAcceptance: createCustomerAcceptance({
+          acceptedOn: '2026-06-16',
+          correctionReason: '甲方复核后调整评分',
+          occurredAt: '2026-06-16 10:00',
+          remark: '评分触发规则扣款',
+          score: 82
+        }),
+        customerBillingSnapshot: createSnapshot('task-customer-deduction'),
+        files: [buildTaskAcceptanceArchiveFile({
+          acceptedAt,
+          acceptedBy: '验收人',
+          task: { code: 'TASK-CUSTOMER-DEDUCTION', id: 'task-customer-deduction' }
+        })],
+        id: 'task-customer-deduction',
+        name: '甲方扣款任务',
+        status: '已完成',
+        storeId: 'store-a'
+      });
+
+      assert(fact, 'customer acceptance should activate the billing fact');
+      assertEqual(fact.status, '有效', 'customer-accepted fact should become effective');
+      assertEqual(fact.standardAmount, 4800, 'fact should retain the frozen standard amount');
+      assertEqual(fact.deductionAmount, 960, 'fact should retain the rule-calculated deduction');
+      assertEqual(fact.amount, 3840, 'settlement amount should equal standard amount minus rule-calculated deduction');
+      assertEqual(fact.customerAcceptanceCorrectionReason, '甲方复核后调整评分', 'billing fact should retain the correction reason');
+      assertEqual(
+        buildCustomerTaskSettlementBatches({ asOfDate: '2026-07-17', facts: [fact] }).batches[0]?.amount,
+        3840,
+        'receivable batch should use the final net amount'
+      );
+      const batch = buildCustomerTaskSettlementBatches({ asOfDate: '2026-07-17', facts: [fact] }).batches[0];
+      assertEqual(batch?.dueDate, '2026-07-16', 'per-task due date should start from customer acceptance');
+      assertEqual(batch?.lineItems[0]?.standardAmount, 4800, 'settlement line should retain standard amount');
+      assertEqual(batch?.lineItems[0]?.deductionAmount, 960, 'settlement line should retain customer deduction');
+      assertEqual(batch?.lineItems[0]?.deductionRate, 0.2, 'settlement line should retain the applied rule rate');
+      assertEqual(batch?.lineItems[0]?.customerScore, 82, 'settlement line should retain customer score');
+      assertEqual(batch?.lineItems[0]?.customerAcceptanceCorrectionReason, '甲方复核后调整评分', 'settlement line should retain the correction reason');
+    }
+  },
+  {
+    name: 'TR-42 customer acceptance date controls settlement period across month boundary',
+    run() {
+      const acceptedAt = '2026-06-30 16:00';
+      const fact = buildCustomerTaskBillingFact({
+        acceptedAt,
+        code: 'TASK-CROSS-MONTH',
+        customerAcceptance: createCustomerAcceptance({
+          acceptedOn: '2026-06-30',
+          occurredAt: '2026-07-01 09:30',
+          score: 90
+        }),
+        customerBillingSnapshot: createSnapshot('task-cross-month'),
+        files: [buildTaskAcceptanceArchiveFile({
+          acceptedAt,
+          acceptedBy: '验收人',
+          task: { code: 'TASK-CROSS-MONTH', id: 'task-cross-month' }
+        })],
+        id: 'task-cross-month',
+        name: '跨月甲方验收任务',
+        status: '已完成',
+        storeId: 'store-a'
+      });
+
+      assert(fact, 'customer-accepted task should create a billing fact');
+      assertEqual(fact.settlementPeriod, '2026-06', 'settlement period should follow the actual customer acceptance date');
+      const batch = buildCustomerTaskSettlementBatches({ asOfDate: '2026-07-02', facts: [fact] }).batches[0];
+      assertEqual(batch?.dueDate, '2026-07-30', 'per-task due date should use the actual customer acceptance date');
     }
   },
   {
@@ -327,6 +544,7 @@ const tests: UnitTest[] = [
     name: 'TR-18 expired contract cannot create a new billing snapshot',
     run() {
       const snapshot = buildTaskCustomerBillingSnapshot({
+        acceptancePolicy: acceptancePolicyRecord.policy,
         brandId: 'brand-a',
         brandName: '品牌 A',
         capturedAt: '2027-01-02 09:00',

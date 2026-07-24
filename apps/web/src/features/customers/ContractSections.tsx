@@ -8,15 +8,18 @@ import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { FileSlot } from '../../components/FileSlot';
 import { RelatedFileTable } from '../../components/RelatedFileTable';
 import {
-  contractReceiptStatusTone,
   formatContractMoney,
   getContractFiles,
-  getContractReceiptStatus,
-  getContractUnreceivedAmount,
   type ContractDraftFile,
   type ContractForm,
   type ContractRelatedFileRecord
 } from './contractFormModel';
+import {
+  contractReceiptStatusTone,
+  getContractReceiptStatus,
+  getContractUnreceivedAmount,
+  type CustomerContractReceiptView
+} from './contractReceiptModel';
 import type {
   CustomerContractAmountMode,
   CustomerContractAgreementChangeType,
@@ -96,6 +99,12 @@ export function ContractProfileSection({
           { label: '合同状态', value: <StatusTag toneMap={customerContractStatusTone} value={contract.status} /> },
           { label: '签署日期', value: contract.signedAt },
           { label: '到期日期', value: contract.expiresAt },
+          ...(contract.terminatedAt
+            ? [
+                { label: '终止日期', value: contract.terminatedAt },
+                { label: '终止原因', value: contract.terminationReason ?? '-' }
+              ]
+            : []),
           { label: '负责人', value: contract.owner },
           { label: '备注', value: contract.note }
         ]}
@@ -104,7 +113,7 @@ export function ContractProfileSection({
   );
 }
 
-export function ContractReceiptSummary({ contract }: { contract: CustomerContractRecord }) {
+export function ContractReceiptSummary({ contract }: { contract: CustomerContractReceiptView }) {
   const unreceivedAmount = getContractUnreceivedAmount(contract);
 
   return (
@@ -148,7 +157,7 @@ export function ContractReceiptTable({ records }: { records: CustomerContractRec
   );
 }
 
-export function ContractReceiptPanel({ contract }: { contract: CustomerContractRecord }) {
+export function ContractReceiptPanel({ contract }: { contract: CustomerContractReceiptView }) {
   return (
     <>
       <ContractReceiptSummary contract={contract} />
@@ -163,8 +172,8 @@ export function ContractFileSection({
   onPreview
 }: {
   contract: CustomerContractRecord;
-  onDownload: ContractFileAction;
-  onPreview: ContractFileAction;
+  onDownload?: ContractFileAction;
+  onPreview?: ContractFileAction;
 }) {
   return (
     <CustomerDetailSection icon={<FileProtectOutlined />} title="已签合同文件">
@@ -330,7 +339,7 @@ export function ContractFileUploadSection({
   onSelect
 }: {
   files: ContractDraftFile[];
-  onPreview: ContractDraftFileAction;
+  onPreview?: ContractDraftFileAction;
   onRemove: ContractDraftFileAction;
   onSelect: (file: UploadFile) => void;
 }) {

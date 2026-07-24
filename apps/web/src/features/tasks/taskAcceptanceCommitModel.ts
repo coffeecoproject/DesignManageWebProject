@@ -60,9 +60,7 @@ export function applyTaskAcceptanceCommit(
   }
 
   return {
-    customerTaskBillingFacts: !currentState.customerTaskBillingFacts.some((fact) => fact.id === billingFact.id)
-      ? [billingFact, ...currentState.customerTaskBillingFacts]
-      : currentState.customerTaskBillingFacts,
+    customerTaskBillingFacts: upsertById(currentState.customerTaskBillingFacts, billingFact),
     partTimeLaborAcceptanceRows: input.laborAcceptance
       ? upsertById(currentState.partTimeLaborAcceptanceRows, input.laborAcceptance)
       : currentState.partTimeLaborAcceptanceRows,
@@ -86,6 +84,7 @@ export function applyTaskAcceptanceReversal(
     {
       ...task,
       acceptedAt: undefined,
+      customerAcceptance: undefined,
       files: task.files.map((file) =>
         file.stage === '验收归档' ? { ...file, status: '已作废', updatedAt: input.occurredAt } : file
       ),
