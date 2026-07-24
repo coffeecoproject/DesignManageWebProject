@@ -95,8 +95,18 @@ function createSocialRecord(overrides: Partial<SocialInsuranceEmployeeRecord> = 
     department: '财务部',
     employeeName: '测试员工',
     employeeNo: 'EMP-001',
-    handlingStatus: '已确认',
+    handlingStatus: '待缴费',
     id: 'social-record-001',
+    originalPeriod: '2026-06',
+    handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保',
+    items: [],
+    estimatedEmployerAmount: 2214,
+    estimatedEmployeeAmount: 861,
+    assessedEmployerAmount: 2214,
+    assessedEmployeeAmount: 861,
+    assessmentFileIds: ['assessment-file-001'],
+    paymentFileIds: [],
     operationRecords: [],
     period: '2026-06',
     personalAmount: 861,
@@ -957,7 +967,7 @@ const tests: UnitTest[] = [
           createSocialRecord({
             companyAmount: 3240,
             employeeNo: 'EMP-002',
-            handlingStatus: '待确认',
+            handlingStatus: '待核定',
             id: 'pending-social',
             personalAmount: 1260
           }),
@@ -965,7 +975,7 @@ const tests: UnitTest[] = [
             category: '公积金',
             companyAmount: 820,
             employeeNo: 'EMP-003',
-            handlingStatus: '延期补缴',
+            handlingStatus: '欠缴待补',
             id: 'deferred-housing',
             personalAmount: 820
           })
@@ -987,7 +997,7 @@ const tests: UnitTest[] = [
       const sourceMatter = createTaxMatter({ payableAmount: 999, sourceItems: [] });
       const appliedMatter = applySocialInsuranceSummaryToTaxMatter(sourceMatter, [
         createSocialRecord(),
-        createSocialRecord({ employeeNo: 'EMP-002', handlingStatus: '待确认', id: 'pending-social' })
+        createSocialRecord({ employeeNo: 'EMP-002', handlingStatus: '待核定', id: 'pending-social' })
       ]);
       const readyMatter = applySocialInsuranceSummaryToTaxMatter(
         createTaxMatter({ payableAmount: 888, processStatus: '数据待确认' }),

@@ -36,6 +36,7 @@ export type FinanceSourceType =
   | '外协结算'
   | '报销单'
   | '税费事项'
+  | '社保公积金缴费'
   | '员工代收流水'
   | '现金暂收流水'
   | '流水冲正'
@@ -56,6 +57,11 @@ export type FinanceTaxPaymentAllocation = {
   amount: number;
   subjectCode: string;
   taxType: '增值税' | '城市维护建设税' | '教育费附加' | '地方教育附加' | '其他税费';
+};
+export type FinanceAccountingAllocation = {
+  amount: number;
+  label: string;
+  subjectCode: string;
 };
 export type FinancePaymentMethod = '对公账户收款' | '对公账户付款' | '员工代收' | '现金暂收';
 export type FinanceCategoryStatus = '启用' | '停用';
@@ -139,6 +145,7 @@ export type FinanceTransactionRecord = {
   sourceNo: string;
   sourceTitle: string;
   taxPaymentAllocations?: FinanceTaxPaymentAllocation[];
+  accountingAllocations?: FinanceAccountingAllocation[];
   relatedReceivableNo?: string;
   voucherStatus: FinanceVoucherStatus;
   reconciliationStatus: FinanceReconciliationStatus;
@@ -359,6 +366,42 @@ export const financeSecondaryCategorySeeds: FinanceSecondaryCategoryConfig[] = [
     voucherRequirement: '工资表、付款回单'
   },
   {
+    code: 'FC2-EXP-SOCIAL-INSURANCE',
+    counterpartyScope: '内部',
+    defaultSourceType: '社保公积金缴费',
+    direction: '支出',
+    id: 'finance-secondary-social-insurance-payment',
+    includeInReport: false,
+    name: '社保缴费',
+    note: '冲减已计提的社保单位负担及个人代扣负债。',
+    defaultAccountingSubjectCode: '2211.03',
+    paymentMethods: ['对公账户付款'],
+    primaryId: 'finance-primary-people-expense',
+    reportAggregation: '人员支出',
+    sortOrder: 45,
+    status: '启用',
+    updatedAt: financeCategoryConfigToday,
+    voucherRequirement: '官方缴费回单或银行回单'
+  },
+  {
+    code: 'FC2-EXP-HOUSING-FUND',
+    counterpartyScope: '内部',
+    defaultSourceType: '社保公积金缴费',
+    direction: '支出',
+    id: 'finance-secondary-housing-fund-payment',
+    includeInReport: false,
+    name: '公积金缴费',
+    note: '冲减已计提的公积金单位负担及个人代扣负债。',
+    defaultAccountingSubjectCode: '2211.04',
+    paymentMethods: ['对公账户付款'],
+    primaryId: 'finance-primary-people-expense',
+    reportAggregation: '人员支出',
+    sortOrder: 46,
+    status: '启用',
+    updatedAt: financeCategoryConfigToday,
+    voucherRequirement: '官方缴费回单或银行回单'
+  },
+  {
     code: 'FC2-EXP-OUTSOURCE',
     counterpartyScope: '合作人员',
     defaultSourceType: '外协结算',
@@ -562,6 +605,14 @@ export const financeCategoryAccountingSubjectMappings: Record<string, FinanceAcc
     cashCredit: '1002',
     cashDebit: '2221.99'
   },
+  社保缴费: {
+    cashCredit: '1002',
+    cashDebit: '2211.03'
+  },
+  公积金缴费: {
+    cashCredit: '1002',
+    cashDebit: '2211.04'
+  },
   外协付款: {
     accrualExpense: '5401',
     accrualPayable: '2202',
@@ -683,7 +734,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '奈雪华南区域',
+    counterparty: '湖北星际装饰有限公司',
     counterpartyType: '客户',
     amount: 68000,
     currency: 'CNY',
@@ -744,7 +795,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '支出',
     category: '工资发放',
-    counterparty: '示例全职 B',
+    counterparty: '陈浩',
     counterpartyType: '员工',
     amount: 11059.83,
     currency: 'CNY',
@@ -752,7 +803,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...icbcPaymentPublicAccountRef,
     sourceType: '薪酬发放',
     sourceNo: 'PAY-202605-20250018',
-    sourceTitle: '示例全职 B 2026-05 工资发放',
+    sourceTitle: '陈浩 2026-05 工资发放',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -764,7 +815,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-019',
-        name: '示例全职B_2026-05工资付款回单.pdf',
+        name: '陈浩_2026-05工资付款回单.pdf',
         status: '已上传',
         type: '付款回单',
         updatedAt: '2026-06-15'
@@ -796,7 +847,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '支出',
     category: '外协付款',
-    counterparty: '示例兼职 B',
+    counterparty: '林悦',
     counterpartyId: '20260006',
     counterpartyType: '外协',
     amount: 2720,
@@ -833,7 +884,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '星河餐饮集团',
+    counterparty: '湖南新岚餐饮管理有限公司',
     counterpartyType: '客户',
     amount: 9800,
     currency: 'CNY',
@@ -884,7 +935,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '美刻咖啡',
+    counterparty: '湖北星际装饰有限公司',
     counterpartyType: '客户',
     amount: 3000,
     currency: 'CNY',
@@ -892,7 +943,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-012',
-    sourceTitle: '美刻咖啡门店设计阶段款',
+    sourceTitle: '湖北星际装饰有限公司门店设计阶段款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -904,7 +955,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-008',
-        name: '美刻咖啡_首笔回款银行回单.pdf',
+        name: '湖北星际装饰有限公司_首笔回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-18'
@@ -936,7 +987,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '美刻咖啡',
+    counterparty: '湖北星际装饰有限公司',
     counterpartyType: '客户',
     amount: 2000,
     currency: 'CNY',
@@ -944,7 +995,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-012',
-    sourceTitle: '美刻咖啡门店设计阶段款',
+    sourceTitle: '湖北星际装饰有限公司门店设计阶段款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -956,7 +1007,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-009',
-        name: '美刻咖啡_第二笔回款银行回单.pdf',
+        name: '湖北星际装饰有限公司_第二笔回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-19'
@@ -988,7 +1039,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '合众餐饮集团',
+    counterparty: '湖南新岚餐饮管理有限公司',
     counterpartyType: '客户',
     amount: 11800,
     currency: 'CNY',
@@ -1040,7 +1091,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '湖畔烘焙',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     amount: 3000,
     currency: 'CNY',
@@ -1048,7 +1099,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-018',
-    sourceTitle: '湖畔烘焙门店设计结算款',
+    sourceTitle: '武汉城设商业运营有限公司门店设计结算款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -1060,7 +1111,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-011',
-        name: '湖畔烘焙_首笔回款银行回单.pdf',
+        name: '武汉城设商业运营有限公司_首笔回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-22'
@@ -1092,7 +1143,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '湖畔烘焙',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     amount: 2000,
     currency: 'CNY',
@@ -1100,7 +1151,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-018',
-    sourceTitle: '湖畔烘焙门店设计结算款',
+    sourceTitle: '武汉城设商业运营有限公司门店设计结算款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -1112,7 +1163,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-012',
-        name: '湖畔烘焙_第二笔回款银行回单.pdf',
+        name: '武汉城设商业运营有限公司_第二笔回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-23'
@@ -1144,7 +1195,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '湖畔烘焙',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     amount: 8000,
     currency: 'CNY',
@@ -1152,7 +1203,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-018',
-    sourceTitle: '湖畔烘焙门店设计结算款',
+    sourceTitle: '武汉城设商业运营有限公司门店设计结算款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -1164,7 +1215,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-013',
-        name: '湖畔烘焙_尾款回款银行回单.pdf',
+        name: '武汉城设商业运营有限公司_尾款回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-24'
@@ -1196,7 +1247,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '麦田轻食',
+    counterparty: '湖南新岚餐饮管理有限公司',
     counterpartyType: '客户',
     amount: 5600,
     currency: 'CNY',
@@ -1204,7 +1255,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-019',
-    sourceTitle: '麦田轻食门店设计尾款',
+    sourceTitle: '湖南新岚餐饮管理有限公司门店设计尾款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -1217,7 +1268,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-014',
-        name: '麦田轻食_尾款银行回单.pdf',
+        name: '湖南新岚餐饮管理有限公司_尾款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-25'
@@ -1249,7 +1300,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-06',
     direction: '收入',
     category: '客户回款',
-    counterparty: '青禾咖啡',
+    counterparty: '长沙旧巷商业管理有限公司',
     counterpartyType: '客户',
     amount: 24000,
     currency: 'CNY',
@@ -1257,7 +1308,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-020',
-    sourceTitle: '青禾咖啡门店设计尾款',
+    sourceTitle: '长沙旧巷商业管理有限公司门店设计尾款',
     voucherStatus: '已上传',
     reconciliationStatus: '已对账',
     status: '已入账',
@@ -1270,7 +1321,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-019',
-        name: '青禾咖啡_尾款银行回单.pdf',
+        name: '长沙旧巷商业管理有限公司_尾款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-06-20'
@@ -1493,7 +1544,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-05',
     direction: '收入',
     category: '客户回款',
-    counterparty: '示例客户 A',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     amount: 12000,
     currency: 'CNY',
@@ -1501,7 +1552,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-005',
-    sourceTitle: '示例客户 A 项目阶段款',
+    sourceTitle: '武汉城设商业运营有限公司 项目阶段款',
     voucherStatus: '已上传',
     reconciliationStatus: '未对账',
     status: '已入账',
@@ -1513,7 +1564,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-015',
-        name: '示例客户A_阶段款银行回单.pdf',
+        name: '武汉城设商业运营有限公司_阶段款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-05-20'
@@ -1545,7 +1596,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-04',
     direction: '收入',
     category: '客户回款',
-    counterparty: '春序茶饮',
+    counterparty: '长沙旧巷商业管理有限公司',
     counterpartyType: '客户',
     amount: 32000,
     currency: 'CNY',
@@ -1553,7 +1604,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     ...cmbPublicAccountRef,
     sourceType: '合同应收',
     sourceNo: 'CON-2026-004',
-    sourceTitle: '春序茶饮空间设计服务',
+    sourceTitle: '长沙旧巷商业管理有限公司空间设计服务',
     voucherStatus: '已上传',
     reconciliationStatus: '已对账',
     status: '已入账',
@@ -1566,7 +1617,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-016',
-        name: '春序茶饮_回款银行回单.pdf',
+        name: '长沙旧巷商业管理有限公司_回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-04-18'
@@ -1710,7 +1761,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     accountingPeriod: '2026-03',
     direction: '收入',
     category: '客户回款',
-    counterparty: '前期未开票客户',
+    counterparty: '长沙旧巷商业管理有限公司',
     counterpartyType: '客户',
     amount: 1000,
     currency: 'CNY',
@@ -1739,7 +1790,7 @@ export const financeTransactionRecords: FinanceTransactionRecord[] = ([
     files: [
       {
         id: 'fin-file-018',
-        name: '前期未开票客户_回款银行回单.pdf',
+        name: '长沙旧巷商业管理有限公司_回款银行回单.pdf',
         status: '已上传',
         type: '银行回单',
         updatedAt: '2026-03-28'

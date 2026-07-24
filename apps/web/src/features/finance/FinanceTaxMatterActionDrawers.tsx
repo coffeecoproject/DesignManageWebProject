@@ -1,6 +1,5 @@
 import {
   AuditOutlined,
-  CalendarOutlined,
   FileProtectOutlined,
   FileSearchOutlined,
   WalletOutlined
@@ -14,27 +13,14 @@ import { DrawerShell } from '../../components/DrawerShell';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { FinanceVoucherUploadPanel, type FinanceVoucherUploadFile } from './FinanceVoucherUploadPanel';
 import type { FinanceTaxDeclarationVerificationStatus, FinanceTaxMatterRecord } from './financeTaxFilingData';
+import { buildTaxMatterReceiptFile } from './financeTaxMatterHandlingModel';
 import {
-  buildTaxMatterNo,
-  buildTaxMatterReceiptFile,
-  buildTaxMatterRecord,
-  defaultTaxMatterFormValue,
-  getTaxMatterFormError,
-  getTaxMatterFormValue,
-  getTaxMatterProcessStatusLabel,
-  isSocialInsuranceTaxMatterType,
-  taxMatterOfficialHandlingEntries,
-  type TaxMatterFormValue
-} from './financeTaxMatterHandlingModel';
-import {
-  getMissingTaxMatterReceiptTypes,
   getTaxMatterCurrentVersionOffsetAmount,
   getTaxMatterCurrentVersionPaidAmount,
   getTaxMatterCurrentVersionRefundedAmount,
   getTaxMatterDeclarationResultValidationError,
   getTaxMatterOutstandingAmount,
   getTaxMatterRefundOutstandingAmount,
-  getTaxMatterRequiredReceiptTypes,
   getTaxMatterSettlementDirection,
   getVatDeclarationVersionSettlement,
   type TaxMatterDeclarationEvidenceInput,
@@ -45,124 +31,12 @@ import {
   type TaxMatterRefundResultInput,
   type TaxMatterReceiptFileType
 } from './financeTaxMatterModel';
-import { taxMatterProcessStatusTone } from './financeTaxFilingData';
 import { financeToday, formatMoney } from './financeUtils';
 
 type CommonDrawerProps = {
   onClose: () => void;
   record?: FinanceTaxMatterRecord;
 };
-
-export function TaxMatterReceiptDrawer({
-  allRecords,
-  onClose,
-  onSave,
-  record
-}: CommonDrawerProps & {
-  allRecords: FinanceTaxMatterRecord[];
-  onSave: (record: FinanceTaxMatterRecord) => void;
-}) {
-  const [formValue, setFormValue] = useState<TaxMatterFormValue>(defaultTaxMatterFormValue);
-  const [formFiles, setFormFiles] = useState<FinanceTaxMatterRecord['files']>([]);
-
-  useEffect(() => {
-    setFormValue(getTaxMatterFormValue(record));
-    setFormFiles(record?.files ?? []);
-  }, [record]);
-
-  if (!record) return null;
-
-  const matterNo = record.matterNo ?? buildTaxMatterNo(formValue, allRecords, record.id);
-  const officialEntry = taxMatterOfficialHandlingEntries[formValue.matterType];
-  const isSocialInsuranceMatter = isSocialInsuranceTaxMatterType(formValue.matterType);
-  const moduleScope = isSocialInsuranceMatter ? 'social' : 'tax';
-  const requiredReceiptTypes = getTaxMatterRequiredReceiptTypes(formValue);
-  const missingReceiptTypes = getMissingTaxMatterReceiptTypes(formFiles, requiredReceiptTypes);
-  const processStatus = missingReceiptTypes.length === 0 ? '已完成' : '申报材料待核对';
-  const formError = missingReceiptTypes.length > 0
-    ? `请上传${missingReceiptTypes.join('、')}`
-    : getTaxMatterFormError(formValue);
-
-  function handleReceiptFileSelect(receiptType: TaxMatterReceiptFileType, file: FinanceVoucherUploadFile) {
-    setFormFiles((currentFiles) => [
-      buildTaxMatterReceiptFile(file, receiptType),
-      ...currentFiles.filter((currentFile) => currentFile.type !== receiptType)
-    ]);
-  }
-
-  return (
-    <DrawerShell
-      bodyTestId="finance-tax-process-drawer"
-      cancelAction={{ label: '取消', onClick: onClose }}
-      className="finance-tax-drawer"
-      contentLayout="detail"
-      open
-      primaryAction={{
-        disabled: Boolean(formError),
-        label: isSocialInsuranceMatter ? '保存凭证' : '保存申报材料',
-        testId: 'finance-tax-process-save',
-        onClick: () => !formError && onSave(buildTaxMatterRecord(formValue, allRecords, record, formFiles))
-      }}
-      title={
-        <DetailDrawerTitle
-          status={getTaxMatterProcessStatusLabel(processStatus, moduleScope)}
-          statusTone={taxMatterProcessStatusTone[processStatus]}
-          subtitle={matterNo}
-          title={isSocialInsuranceMatter ? '上传凭证' : '维护申报材料'}
-        />
-      }
-      width={820}
-      onClose={onClose}
-    >
-      <DetailSection icon={<FileSearchOutlined />} title={isSocialInsuranceMatter ? '缴费信息' : '办理信息'}>
-        <div className="drawer-form-grid">
-          <ReadOnlyField label={isSocialInsuranceMatter ? '缴费编号' : '事项编号'} testId="finance-tax-process-no" value={matterNo} />
-          <ReadOnlyField label="所属期间" value={formValue.period} />
-          <ReadOnlyField label="办理平台" value={officialEntry.platform} />
-        </div>
-      </DetailSection>
-      <DetailSection icon={<CalendarOutlined />} title={isSocialInsuranceMatter ? '缴费日期' : '办理日期'}>
-        <DrawerFormGrid>
-          {!isSocialInsuranceMatter ? (
-            <DrawerFormField label="实际申报日期" required>
-              <DatePicker
-                inputReadOnly
-                style={{ width: '100%' }}
-                value={formValue.declarationDate ? dayjs(formValue.declarationDate) : undefined}
-                onChange={(value) => setFormValue((current) => ({ ...current, declarationDate: value?.format('YYYY-MM-DD') ?? '' }))}
-              />
-            </DrawerFormField>
-          ) : null}
-          {formValue.payableAmount > 0 ? (
-            <DrawerFormField label={isSocialInsuranceMatter ? '实际缴费日期' : '实际缴款日期'} required>
-              <DatePicker
-                inputReadOnly
-                style={{ width: '100%' }}
-                value={formValue.paymentDate ? dayjs(formValue.paymentDate) : undefined}
-                onChange={(value) => setFormValue((current) => ({ ...current, paymentDate: value?.format('YYYY-MM-DD') ?? '' }))}
-              />
-            </DrawerFormField>
-          ) : null}
-        </DrawerFormGrid>
-      </DetailSection>
-      <DetailSection icon={<FileProtectOutlined />} title={isSocialInsuranceMatter ? '凭证文件' : '回执文件'}>
-        <div className="detail-tab-stack">
-          {requiredReceiptTypes.map((receiptType) => (
-            <FinanceVoucherUploadPanel
-              key={receiptType}
-              description=""
-              emptyText={`暂无${receiptType}`}
-              files={formFiles.filter((file) => file.type === receiptType)}
-              title={receiptType}
-              onRemove={(file) => setFormFiles((files) => files.filter((item) => item.id !== file.id))}
-              onSelect={(file) => handleReceiptFileSelect(receiptType, file)}
-            />
-          ))}
-        </div>
-      </DetailSection>
-    </DrawerShell>
-  );
-}
 
 export function TaxDeclarationResultDrawer({ onClose, onSave, record }: CommonDrawerProps & {
   onSave: (record: FinanceTaxMatterRecord, input: TaxMatterDeclarationResultInput) => void;

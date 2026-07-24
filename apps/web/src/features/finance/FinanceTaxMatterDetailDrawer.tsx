@@ -5,8 +5,6 @@ import {
   ExportOutlined,
   FileProtectOutlined,
   FileSearchOutlined,
-  ProfileOutlined,
-  UploadOutlined,
   WalletOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
@@ -17,11 +15,9 @@ import { DetailTabs } from '../../components/DetailTabs';
 import { DetailDrawerShell } from '../../components/DrawerShell';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
-import type { TagChipTone } from '../../components/TagChip';
 import { CompactCell } from '../../components/TableCell';
 import { CorporateIncomeTaxSourceTable } from './CorporateIncomeTaxSourceTable';
 import { PayrollIitEmployeeDetailPanel } from './PayrollIitEmployeeDetailPanel';
-import { SocialInsuranceContributionDetailPanel } from './SocialInsuranceContributionDetailPanel';
 import { StampDutySourceDetailTable } from './StampDutySourceDetailTable';
 import { VatUnbilledIncomeDetailTable } from './VatUnbilledIncomeDetailTable';
 import type { AccountingVoucherRecord } from './financeAccountingVoucherModel';
@@ -29,14 +25,11 @@ import type {
   FinanceDeclarationPreparationRecord,
   FinanceDeclarationUnbilledIncomeCandidate
 } from './financeDeclarationPreparationData';
-import type { SocialInsuranceEmployeeRecord, SocialInsuranceHandlingStatus } from './financeSocialInsuranceData';
 import type { FinanceStampDutySourceRecord } from './financeStampDutyModel';
 import {
-  getTaxMatterFileStatus,
   taxMatterDeclarationStatusTone,
   taxMatterProcessStatusTone,
   taxMatterSourceStatusTone,
-  taxMatterTypeTone,
   type FinanceTaxMatterDeclarationHistoryRecord,
   type FinanceTaxMatterRecord,
   type FinanceTaxMatterSourceItem
@@ -44,24 +37,13 @@ import {
 import {
   getTaxMatterProcessStatusLabel,
   taxMatterOfficialHandlingEntries,
-  type TaxMatterEditorMode,
-  type TaxMatterModuleScope
+  type TaxMatterEditorMode
 } from './financeTaxMatterHandlingModel';
 import {
   getTaxMatterEvidenceStatus,
-  getTaxMatterSettlementDirection,
-  type SocialInsuranceTaxMatterSummary
+  getTaxMatterSettlementDirection
 } from './financeTaxMatterModel';
 import { formatMoney } from './financeUtils';
-
-type TaxMatterFileStatus = '未开始' | '待上传' | '待补充' | '已归档';
-
-const taxMatterFileStatusTone = {
-  未开始: 'gray',
-  待上传: 'amber',
-  待补充: 'amber',
-  已归档: 'green'
-} as const satisfies Record<TaxMatterFileStatus, TagChipTone>;
 
 const taxMatterSourceColumns: TableColumnsType<FinanceTaxMatterSourceItem> = [
   {
@@ -141,25 +123,16 @@ export type FinanceTaxMatterDetailDrawerProps = {
   canRecordRefundResult: boolean;
   canSubmitRefundApplication: boolean;
   canMaintainDeclarationEvidence: boolean;
-  canUploadSocialReceipt: boolean;
   declarationDetailPreparation?: FinanceDeclarationPreparationRecord;
   declarationPreparation?: FinanceDeclarationPreparationRecord;
-  isSocialInsuranceEmployeeLocked: (record: SocialInsuranceEmployeeRecord) => boolean;
-  moduleScope: TaxMatterModuleScope;
   record?: FinanceTaxMatterRecord;
-  socialInsuranceEmployeeRows: SocialInsuranceEmployeeRecord[];
-  socialInsuranceSummary?: SocialInsuranceTaxMatterSummary;
   taxFilingVouchers: AccountingVoucherRecord[];
   vatUnbilledIncomeRows: FinanceDeclarationUnbilledIncomeCandidate[];
   onClose: () => void;
-  onDownloadFile: (file: RelatedFileRecord) => void;
+  onDownloadFile?: (file: RelatedFileRecord) => void;
   onOpenAction: (mode: TaxMatterEditorMode) => void;
   onOpenOfficialPlatform: () => void;
-  onPreviewFile: (file: RelatedFileRecord) => void;
-  onSocialInsuranceStatusChange: (
-    employeeRecord: SocialInsuranceEmployeeRecord,
-    handlingStatus: SocialInsuranceHandlingStatus
-  ) => void;
+  onPreviewFile?: (file: RelatedFileRecord) => void;
   onStampDutySourceClick: (record: FinanceStampDutySourceRecord) => void;
 };
 
@@ -172,26 +145,18 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
     canRecordRefundResult,
     canSubmitRefundApplication,
     canMaintainDeclarationEvidence,
-    canUploadSocialReceipt,
     declarationDetailPreparation,
     declarationPreparation,
-    isSocialInsuranceEmployeeLocked,
-    moduleScope,
     onClose,
     onDownloadFile,
     onOpenAction,
     onOpenOfficialPlatform,
     onPreviewFile,
-    onSocialInsuranceStatusChange,
     onStampDutySourceClick,
     record,
-    socialInsuranceEmployeeRows,
-    socialInsuranceSummary,
     taxFilingVouchers,
     vatUnbilledIncomeRows
   } = props;
-  const isSocialInsuranceModule = moduleScope === 'social';
-
   return (
     <DetailDrawerShell
       bodyTestId="finance-tax-detail-drawer"
@@ -205,8 +170,6 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
         canRecordRefundResult,
         canSubmitRefundApplication,
         canMaintainDeclarationEvidence,
-        canUploadSocialReceipt,
-        isSocialInsuranceModule,
         onOpenAction,
         record
       })}
@@ -220,7 +183,7 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
         : undefined}
       title={record ? (
         <DetailDrawerTitle
-          status={getTaxMatterProcessStatusLabel(record.processStatus, moduleScope)}
+          status={getTaxMatterProcessStatusLabel(record.processStatus)}
           statusTone={taxMatterProcessStatusTone[record.processStatus]}
           subtitle={`${record.matterNo} / ${record.period}`}
           title={record.title}
@@ -233,22 +196,16 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
         <>
           <DetailSummaryCards
             columns={4}
-            items={getSummaryItems(record, moduleScope)}
+            items={getSummaryItems(record)}
           />
           <DetailTabs
             items={getDetailTabs({
               declarationDetailPreparation,
               declarationPreparation,
-              isSocialInsuranceEmployeeLocked,
-              isSocialInsuranceModule,
-              moduleScope,
               onDownloadFile,
               onPreviewFile,
-              onSocialInsuranceStatusChange,
               onStampDutySourceClick,
               record,
-              socialInsuranceEmployeeRows,
-              socialInsuranceSummary,
               taxFilingVouchers,
               vatUnbilledIncomeRows
             })}
@@ -261,8 +218,8 @@ export function FinanceTaxMatterDetailDrawer(props: FinanceTaxMatterDetailDrawer
   );
 }
 
-function renderProcessStatus(record: FinanceTaxMatterRecord, moduleScope: TaxMatterModuleScope) {
-  return <StatusTag tone={taxMatterProcessStatusTone[record.processStatus]} value={getTaxMatterProcessStatusLabel(record.processStatus, moduleScope)} />;
+function renderProcessStatus(record: FinanceTaxMatterRecord) {
+  return <StatusTag tone={taxMatterProcessStatusTone[record.processStatus]} value={getTaxMatterProcessStatusLabel(record.processStatus)} />;
 }
 
 function getPreparedSettlement(record: FinanceTaxMatterRecord) {
@@ -273,22 +230,21 @@ function getPreparedSettlement(record: FinanceTaxMatterRecord) {
   return { amount, direction };
 }
 
-function getSummaryItems(record: FinanceTaxMatterRecord, moduleScope: TaxMatterModuleScope) {
-  const social = moduleScope === 'social';
+function getSummaryItems(record: FinanceTaxMatterRecord) {
   const preparedSettlement = getPreparedSettlement(record);
   return [
     {
-      icon: social ? <ProfileOutlined /> : <FileProtectOutlined />,
-      key: social ? 'matterType' : 'processStatus',
-      label: social ? '缴费类别' : '处理进度',
-      value: social ? record.matterType : renderProcessStatus(record, moduleScope)
+      icon: <FileProtectOutlined />,
+      key: 'processStatus',
+      label: '处理进度',
+      value: renderProcessStatus(record)
     },
-    { icon: <CalendarOutlined />, key: 'period', label: social ? '所属期间' : '所属税期', value: record.period },
+    { icon: <CalendarOutlined />, key: 'period', label: '所属税期', value: record.period },
     {
       icon: <AuditOutlined />,
       key: 'settlement',
-      label: social ? '处理进度' : '补退结果',
-      value: social ? renderProcessStatus(record, moduleScope) : getTaxMatterSettlementDirection(record)
+      label: '补退结果',
+      value: getTaxMatterSettlementDirection(record)
     },
     {
       icon: <WalletOutlined />,
@@ -310,8 +266,6 @@ function getPrimaryAction({
   canRecordRefundResult,
   canSubmitRefundApplication,
   canMaintainDeclarationEvidence,
-  canUploadSocialReceipt,
-  isSocialInsuranceModule,
   onOpenAction,
   record
 }: Pick<FinanceTaxMatterDetailDrawerProps,
@@ -321,11 +275,9 @@ function getPrimaryAction({
   | 'canRecordRefundResult'
   | 'canSubmitRefundApplication'
   | 'canMaintainDeclarationEvidence'
-  | 'canUploadSocialReceipt'
   | 'record'
   | 'onOpenAction'
-> & { isSocialInsuranceModule: boolean }) {
-  if (canUploadSocialReceipt) return { icon: <UploadOutlined />, label: '上传凭证', testId: 'finance-tax-receipt-button', onClick: () => onOpenAction('social-receipt') };
+>) {
   if (canRecordDeclarationResult) return { icon: <FileProtectOutlined />, label: '登记申报结果', testId: 'finance-tax-declaration-result-button', onClick: () => onOpenAction('declaration-result') };
   if (canRecordPaymentResult) return { icon: <WalletOutlined />, label: '登记缴款', testId: 'finance-tax-payment-result-button', onClick: () => onOpenAction('payment-result') };
   if (canSubmitRefundApplication) return { icon: <FileProtectOutlined />, label: '处理多缴税款', testId: 'finance-tax-refund-application-button', onClick: () => onOpenAction('refund-application') };
@@ -333,7 +285,7 @@ function getPrimaryAction({
     ? { icon: <WalletOutlined />, label: '登记抵缴结果', testId: 'finance-tax-offset-result-button', onClick: () => onOpenAction('offset-result') }
     : { icon: <WalletOutlined />, label: '登记退税到账', testId: 'finance-tax-refund-result-button', onClick: () => onOpenAction('refund-result') };
   if (canMaintainDeclarationEvidence) return { icon: <FileProtectOutlined />, label: '维护申报材料', testId: 'finance-tax-declaration-evidence-button', onClick: () => onOpenAction('declaration-evidence') };
-  if (!isSocialInsuranceModule && canAdjustDeclaration && record) {
+  if (canAdjustDeclaration && record) {
     return { icon: <FileProtectOutlined />, label: '调整申报', testId: 'finance-tax-revision-button', onClick: () => onOpenAction('revision') };
   }
   return undefined;
@@ -342,62 +294,34 @@ function getPrimaryAction({
 function getDetailTabs({
   declarationDetailPreparation,
   declarationPreparation,
-  isSocialInsuranceEmployeeLocked,
-  isSocialInsuranceModule,
-  moduleScope,
   onDownloadFile,
   onPreviewFile,
-  onSocialInsuranceStatusChange,
   onStampDutySourceClick,
   record,
-  socialInsuranceEmployeeRows,
-  socialInsuranceSummary,
   taxFilingVouchers,
   vatUnbilledIncomeRows
 }: Pick<FinanceTaxMatterDetailDrawerProps,
   | 'declarationDetailPreparation'
   | 'declarationPreparation'
-  | 'isSocialInsuranceEmployeeLocked'
-  | 'moduleScope'
   | 'onDownloadFile'
   | 'onPreviewFile'
-  | 'onSocialInsuranceStatusChange'
   | 'onStampDutySourceClick'
-  | 'socialInsuranceEmployeeRows'
-  | 'socialInsuranceSummary'
   | 'taxFilingVouchers'
   | 'vatUnbilledIncomeRows'
-> & { isSocialInsuranceModule: boolean; record: FinanceTaxMatterRecord }) {
+> & { record: FinanceTaxMatterRecord }) {
   return [
     {
       children: (
         <TaxMatterOverviewPanel
           declarationPreparation={declarationPreparation}
-          moduleScope={moduleScope}
           record={record}
           taxFilingVouchers={taxFilingVouchers}
         />
       ),
       key: 'basic',
-      label: isSocialInsuranceModule ? '缴费信息' : '申报结果'
+      label: '申报结果'
     },
-    ...(isSocialInsuranceModule ? [{
-      children: (
-        <DetailSection icon={<FileSearchOutlined />} title="缴费明细">
-          <SocialInsuranceContributionDetailPanel
-            isRecordLocked={isSocialInsuranceEmployeeLocked}
-            payableAmount={record.payableAmount}
-            readOnly={record.processStatus === '已完成'}
-            records={socialInsuranceEmployeeRows}
-            summary={socialInsuranceSummary}
-            onStatusChange={onSocialInsuranceStatusChange}
-          />
-        </DetailSection>
-      ),
-      key: 'confirmation',
-      label: '缴费明细'
-    }] : []),
-    ...(!isSocialInsuranceModule && declarationDetailPreparation ? [{
+    ...(declarationDetailPreparation ? [{
       children: (
         <TaxDeclarationDetailPanel
           preparation={declarationDetailPreparation}
@@ -410,12 +334,12 @@ function getDetailTabs({
     }] : []),
     {
       children: (
-        <DetailSection icon={<FileProtectOutlined />} title={isSocialInsuranceModule ? '缴费凭证' : '申报材料'}>
+        <DetailSection icon={<FileProtectOutlined />} title="申报材料">
           <RelatedFileTable records={record.files} onDownload={onDownloadFile} onPreview={onPreviewFile} />
         </DetailSection>
       ),
       key: 'files',
-      label: isSocialInsuranceModule ? '缴费凭证' : '申报材料'
+      label: '申报材料'
     },
     {
       children: <OperationRecordSection icon={<CheckCircleOutlined />} records={record.operationRecords} title="操作记录" />,
@@ -427,45 +351,30 @@ function getDetailTabs({
 
 function TaxMatterOverviewPanel({
   declarationPreparation,
-  moduleScope,
   record,
   taxFilingVouchers
 }: {
   declarationPreparation?: FinanceDeclarationPreparationRecord;
-  moduleScope: TaxMatterModuleScope;
   record: FinanceTaxMatterRecord;
   taxFilingVouchers: AccountingVoucherRecord[];
 }) {
-  const social = moduleScope === 'social';
   const officialEntry = taxMatterOfficialHandlingEntries[record.matterType];
   const currentFilingVoucher = taxFilingVouchers.find((candidate) => (
     candidate.taxFilingContext?.declarationVersion === record.declarationVersion
   ));
   return (
     <div className="detail-tab-stack">
-      <DetailSection icon={<AuditOutlined />} title={social ? '缴费信息' : '申报结果'}>
-        <DetailInfoGrid columns={3} items={social ? [
-          { label: '缴费编号', value: record.matterNo },
-          { label: '缴费类型', value: <StatusTag toneMap={taxMatterTypeTone} value={record.matterType} /> },
-          { label: '处理进度', value: renderProcessStatus(record, moduleScope) },
-          { label: '办理平台', value: officialEntry.platform },
-          { label: '凭证状态', value: <StatusTag toneMap={taxMatterFileStatusTone} value={getTaxMatterFileStatus(record)} /> },
-          { label: '所属期间', value: record.period },
-          { label: '涉及对象', value: record.participantSummary },
-          { label: '办理截止日', value: record.declarationDueDate },
-          { label: '缴纳截止日', value: record.paymentDueDate }
-        ] : getTaxMatterInfoItems(record, officialEntry.platform, currentFilingVoucher)} />
+      <DetailSection icon={<AuditOutlined />} title="申报结果">
+        <DetailInfoGrid columns={3} items={getTaxMatterInfoItems(record, officialEntry.platform, currentFilingVoucher)} />
       </DetailSection>
-      {!social ? (
-        <DetailSection icon={<FileSearchOutlined />} title={declarationPreparation ? '申报数据' : '来源资料'}>
-          {declarationPreparation ? (
-            <DetailInfoGrid columns={3} items={getDeclarationPreparationResultItems(declarationPreparation)} />
-          ) : (
-            <CompactDetailTable<FinanceTaxMatterSourceItem> columns={taxMatterSourceColumns} dataSource={record.sourceItems} rowKey="id" scrollX={420} />
-          )}
-        </DetailSection>
-      ) : null}
-      {!social && record.declarationHistory.length > 0 ? (
+      <DetailSection icon={<FileSearchOutlined />} title={declarationPreparation ? '申报数据' : '来源资料'}>
+        {declarationPreparation ? (
+          <DetailInfoGrid columns={3} items={getDeclarationPreparationResultItems(declarationPreparation)} />
+        ) : (
+          <CompactDetailTable<FinanceTaxMatterSourceItem> columns={taxMatterSourceColumns} dataSource={record.sourceItems} rowKey="id" scrollX={420} />
+        )}
+      </DetailSection>
+      {record.declarationHistory.length > 0 ? (
         <DetailSection icon={<AuditOutlined />} title="历史申报">
           <CompactDetailTable<FinanceTaxMatterDeclarationHistoryRecord>
             columns={getDeclarationHistoryColumns(taxFilingVouchers)}

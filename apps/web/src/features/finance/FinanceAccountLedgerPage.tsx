@@ -6,7 +6,7 @@ import {
   ProfileOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Select, message } from 'antd';
+import { Select } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
@@ -237,8 +237,8 @@ function AccountLedgerDrawer({
 }: {
   row?: AccountLedgerRow;
   onClose: () => void;
-  onDownloadFile: (fileName: string) => void;
-  onPreviewFile: (fileName: string) => void;
+  onDownloadFile?: (fileName: string) => void;
+  onPreviewFile?: (fileName: string) => void;
 }) {
   const movementColumns = useMemo(() => createMovementColumns(), []);
 
@@ -361,8 +361,8 @@ function AccountLedgerDrawer({
                 <DetailSection icon={<FileProtectOutlined />} title="近期凭证">
                   <RelatedFileTable
                     records={row.movementRows.flatMap((record) => record.files).slice(0, 8)}
-                    onDownload={(file) => onDownloadFile(file.name)}
-                    onPreview={(file) => onPreviewFile(file.name)}
+                    onDownload={onDownloadFile ? (file) => onDownloadFile(file.name) : undefined}
+                    onPreview={onPreviewFile ? (file) => onPreviewFile(file.name) : undefined}
                   />
                 </DetailSection>
               </>
@@ -379,7 +379,6 @@ function AccountLedgerDrawer({
 export function FinanceAccountLedgerPage() {
   const { financeRows } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
-  const [messageApi, contextHolder] = message.useMessage();
   const [filters, setFilters] = useState<AccountLedgerFilters>(defaultFilters);
   const [activeAccountId, setActiveAccountId] = useState<string>();
 
@@ -452,7 +451,6 @@ export function FinanceAccountLedgerPage() {
   return (
     <ManagementPageScaffold
       layout="table-workbench"
-      feedback={contextHolder}
       metrics={
         <MetricGrid columns={4}>
           <MetricCard icon={<BankOutlined />} label="启用账户" value={`${enabledRows.length} 个`} />
@@ -506,12 +504,6 @@ export function FinanceAccountLedgerPage() {
       <AccountLedgerDrawer
         row={activeRow}
         onClose={() => setActiveAccountId(undefined)}
-        onDownloadFile={(fileName) => {
-          void messageApi.success(`${fileName} 下载请求已记录`);
-        }}
-        onPreviewFile={(fileName) => {
-          void messageApi.info(`${fileName} 预览仍为前端原型，未接入真实文件服务`);
-        }}
       />
     </ManagementPageScaffold>
   );

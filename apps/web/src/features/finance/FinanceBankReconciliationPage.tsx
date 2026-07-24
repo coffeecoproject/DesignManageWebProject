@@ -23,7 +23,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import type { OperationRecord } from '../../components/OperationRecordTable';
-import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
+import { RelatedFileTable } from '../../components/RelatedFileTable';
 import { CellText, CompactCell, type CellTextTone } from '../../components/TableCell';
 import {
   getDefaultPublicAccountRef,
@@ -32,6 +32,7 @@ import {
   usePublicAccountConfigState
 } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from './FinanceManagementState';
+import { type BankImportBatch, useFinanceBankStatementState } from './FinanceBankStatementState';
 import { FinanceTransactionAdjustmentDrawer } from './FinanceTransactionAdjustmentDrawer';
 import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import { getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
@@ -71,19 +72,6 @@ import {
 } from './financeUtils';
 
 type BankDisplayStatus = '待处理' | '待确认' | '金额不一致' | '已对账' | '跳过';
-
-type BankImportBatch = Pick<BankStatementRecord, 'importedAccountName' | 'publicAccountId' | 'publicAccountSnapshot'> & {
-  batchNo: string;
-  duplicateRows: number;
-  amountMismatchRows: number;
-  fileName: string;
-  id: string;
-  importedAt: string;
-  matchedRows: number;
-  statementRange: string;
-  status: '已导入' | '导入预览';
-  totalRows: number;
-};
 
 type MatchAction = {
   actionLabel: string;
@@ -188,7 +176,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     balance: 191593.12,
     bankSerialNo: '待补导入',
     batchNo: '系统待补导入',
-    counterparty: '美刻咖啡',
+    counterparty: '湖北星际装饰有限公司',
     direction: '入账',
     id: 'bank-statement-008',
     importedAt: '2026-06-19 10:20',
@@ -197,7 +185,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     matchStatus: '系统未匹配',
     matchScore: 55,
     statementDate: '2026-06-18',
-    summary: '美刻咖啡门店设计阶段款'
+    summary: '湖北星际装饰有限公司门店设计阶段款'
   },
   {
     importedAccountName: seedBankPublicAccountName,
@@ -206,7 +194,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     balance: 188000,
     bankSerialNo: 'CMB202606030001',
     batchNo: 'BANK-IMP-202606-01',
-    counterparty: '奈雪华南区域',
+    counterparty: '湖北星际装饰有限公司',
     direction: '入账',
     id: 'bank-statement-001',
     importedAt: '2026-06-04 09:20',
@@ -224,7 +212,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     balance: 176000,
     bankSerialNo: 'CMB202605210001',
     batchNo: 'BANK-IMP-202605-01',
-    counterparty: '示例客户 A',
+    counterparty: '武汉城设商业运营有限公司',
     direction: '入账',
     id: 'bank-statement-006',
     importedAt: '2026-06-24 10:40',
@@ -233,7 +221,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     matchStatus: '待确认',
     matchScore: 92,
     statementDate: '2026-05-21',
-    summary: '示例客户 A 项目阶段款 CON-2026-005'
+    summary: '武汉城设商业运营有限公司 项目阶段款 CON-2026-005'
   },
   {
     importedAccountName: seedSecondaryPaymentPublicAccountName,
@@ -260,7 +248,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     balance: 183993.12,
     bankSerialNo: 'CMB202606140001',
     batchNo: 'BANK-IMP-202606-02',
-    counterparty: '星河餐饮集团',
+    counterparty: '湖南新岚餐饮管理有限公司',
     direction: '入账',
     id: 'bank-statement-004',
     importedAt: '2026-06-14 16:40',
@@ -269,7 +257,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     matchStatus: '暂不可对账',
     matchScore: 86,
     statementDate: '2026-06-14',
-    summary: '星河餐饮集团门店设计首款'
+    summary: '湖南新岚餐饮管理有限公司门店设计首款'
   },
   {
     importedAccountName: seedBankPublicAccountName,
@@ -278,7 +266,7 @@ const bankStatementSeeds: BankStatementRecord[] = [
     balance: 180993.12,
     bankSerialNo: 'CMB202606120002',
     batchNo: 'BANK-IMP-202606-02',
-    counterparty: '示例兼职 B',
+    counterparty: '林悦',
     direction: '出账',
     id: 'bank-statement-005',
     importedAt: '2026-06-14 16:40',
@@ -344,7 +332,7 @@ const importPreviewSeedRows: BankStatementRecord[] = [
     balance: 183993.12,
     bankSerialNo: 'CMB202606140001',
     batchNo: '导入预览',
-    counterparty: '星河餐饮集团',
+    counterparty: '湖南新岚餐饮管理有限公司',
     direction: '入账',
     id: 'bank-preview-001',
     importedAt: financeToday,
@@ -353,7 +341,7 @@ const importPreviewSeedRows: BankStatementRecord[] = [
     matchStatus: '银行未匹配',
     matchScore: 42,
     statementDate: '2026-06-14',
-    summary: '星河餐饮集团门店设计首款'
+    summary: '湖南新岚餐饮管理有限公司门店设计首款'
   },
   {
     importedAccountName: seedBankPublicAccountName,
@@ -362,7 +350,7 @@ const importPreviewSeedRows: BankStatementRecord[] = [
     balance: 180993.12,
     bankSerialNo: 'CMB202606120002',
     batchNo: '导入预览',
-    counterparty: '示例兼职 B',
+    counterparty: '林悦',
     direction: '出账',
     id: 'bank-preview-002',
     importedAt: financeToday,
@@ -380,7 +368,7 @@ const importPreviewSeedRows: BankStatementRecord[] = [
     balance: 188593.12,
     bankSerialNo: 'CMB202606150001',
     batchNo: '导入预览',
-    counterparty: '麦田轻食',
+    counterparty: '湖南新岚餐饮管理有限公司',
     direction: '入账',
     id: 'bank-preview-003',
     importedAt: financeToday,
@@ -389,7 +377,7 @@ const importPreviewSeedRows: BankStatementRecord[] = [
     matchStatus: '银行未匹配',
     matchScore: 40,
     statementDate: '2026-06-15',
-    summary: '麦田轻食项目补充回款'
+    summary: '湖南新岚餐饮管理有限公司项目补充回款'
   }
 ];
 
@@ -742,8 +730,14 @@ export function FinanceBankReconciliationPage() {
   const { addFinanceTransaction, confirmBankReconciliation, financeRows, getAccountingPeriodGuard } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, contextHolder] = message.useMessage();
-  const [bankStatements, setBankStatements] = useState<BankStatementRecord[]>(bankStatementSeeds);
-  const [importBatches, setImportBatches] = useState<BankImportBatch[]>(importBatchSeeds);
+  const {
+    bankStatements: storedBankStatements,
+    importBatches: storedImportBatches,
+    setBankStatements,
+    setImportBatches
+  } = useFinanceBankStatementState();
+  const bankStatements = storedBankStatements ?? bankStatementSeeds;
+  const importBatches = storedImportBatches ?? importBatchSeeds;
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
   const [selectedImportFileName, setSelectedImportFileName] = useState<string>();
@@ -950,7 +944,7 @@ export function FinanceBankReconciliationPage() {
       importedAt: importTime
     }));
 
-    setBankStatements((current) => [...nextRows, ...current]);
+    setBankStatements((current) => [...nextRows, ...(current ?? bankStatementSeeds)]);
     setImportBatches((current) => [
       {
         importedAccountName: selectedImportPublicAccountName,
@@ -967,7 +961,7 @@ export function FinanceBankReconciliationPage() {
         status: '已导入',
         totalRows: importPreviewRows.length
       },
-      ...current
+      ...(current ?? importBatchSeeds)
     ]);
     setSelectedImportFileName(undefined);
     setImportDrawerOpen(false);
@@ -1002,7 +996,7 @@ export function FinanceBankReconciliationPage() {
     }
 
     setBankStatements((current) =>
-      current.map((record) =>
+      (current ?? bankStatementSeeds).map((record) =>
         record.id === activeRecord.id
           ? {
               ...record,
@@ -1075,7 +1069,7 @@ export function FinanceBankReconciliationPage() {
     }
 
     setBankStatements((current) =>
-      current.map((record) =>
+      (current ?? bankStatementSeeds).map((record) =>
         record.id === quickActionRecord.id
           ? {
               ...record,
@@ -1104,14 +1098,6 @@ export function FinanceBankReconciliationPage() {
 
     closeQuickAction();
     setImportDrawerOpen(true);
-  }
-
-  function handlePreviewFile(file: RelatedFileRecord) {
-    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
-  }
-
-  function handleDownloadFile(file: RelatedFileRecord) {
-    void messageApi.success(`${file.name} 下载请求已记录`);
   }
 
   const importPreviewColumns: TableColumnsType<BankStatementRecord> = [
@@ -1406,7 +1392,7 @@ export function FinanceBankReconciliationPage() {
                       />
                     </DetailSection>
                     <DetailSection icon={<FileProtectOutlined />} title="系统凭证">
-                      <RelatedFileTable records={activeSystemRecord.files} onDownload={handleDownloadFile} onPreview={handlePreviewFile} />
+                      <RelatedFileTable records={activeSystemRecord.files} />
                     </DetailSection>
                     <OperationRecordSection icon={<AuditOutlined />} records={activeOperationRecords} title="操作记录" />
                   </>
@@ -1689,7 +1675,7 @@ export function FinanceBankReconciliationPage() {
           }
 
           setBankStatements((current) =>
-            current.map((bankRecord) =>
+            (current ?? bankStatementSeeds).map((bankRecord) =>
               bankRecord.id === adjustmentRecordId
                 ? {
                     ...bankRecord,

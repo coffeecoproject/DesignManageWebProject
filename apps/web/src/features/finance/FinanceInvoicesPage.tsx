@@ -2,7 +2,8 @@ import { CloudUploadOutlined, FileSearchOutlined, FileTextOutlined, LinkOutlined
 import type { TableColumnsType } from 'antd';
 import { Alert, Select, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { DateScopeFilter, getDateScopeRange, type DateScopeFilterValue } from '../../components/DateFilterFields';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { ImportDrawerShell } from '../../components/DrawerShell';
@@ -97,6 +98,9 @@ function buildImportPeriodOptions(invoices: FinanceInvoiceRecord[]) {
 }
 
 export function FinanceInvoicesPage() {
+  const [searchParams] = useSearchParams();
+  const invoiceNo = searchParams.get('invoiceNo');
+  const handledInvoiceNoRef = useRef<string>();
   const [messageApi, contextHolder] = message.useMessage();
   const {
     getAccountingPeriodGuard,
@@ -119,6 +123,20 @@ export function FinanceInvoicesPage() {
     () => invoiceRows.find((invoice) => invoice.id === activeInvoiceId),
     [activeInvoiceId, invoiceRows]
   );
+
+  useEffect(() => {
+    if (!invoiceNo || handledInvoiceNoRef.current === invoiceNo) {
+      return;
+    }
+
+    const targetInvoice = invoiceRows.find((invoice) => invoice.invoiceNo === invoiceNo);
+    if (!targetInvoice) {
+      return;
+    }
+
+    handledInvoiceNoRef.current = invoiceNo;
+    setActiveInvoiceId(targetInvoice.id);
+  }, [invoiceNo, invoiceRows]);
   const dateRange = useMemo(
     () => getDateScopeRange(filters.occurredTime, defaultMonth),
     [filters.occurredTime]

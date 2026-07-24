@@ -1,6 +1,11 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { TagChipTone } from '../../components/TagChip';
+import {
+  blockMasterDataMutation,
+  validateDefaultMasterDataStatusChange,
+  type MasterDataMutationResult
+} from './masterDataLifecycleModel';
 
 export type PublicAccountStatus = '启用' | '停用';
 export type PublicAccountUsage = '收款' | '付款' | '银行对账';
@@ -50,8 +55,12 @@ export type PublicAccountFormValue = Pick<
 type PublicAccountConfigStateValue = {
   createPublicAccount: (nextValue: PublicAccountFormValue) => PublicAccountRecord;
   publicAccounts: PublicAccountRecord[];
-  updatePublicAccount: (id: string, nextValue: PublicAccountFormValue) => void;
-  updatePublicAccountStatus: (id: string, status: PublicAccountStatus) => void;
+  updatePublicAccount: (
+    id: string,
+    nextValue: PublicAccountFormValue,
+    activeReferenceCount?: number
+  ) => MasterDataMutationResult;
+  updatePublicAccountStatus: (id: string, status: PublicAccountStatus, activeReferenceCount?: number) => MasterDataMutationResult;
 };
 
 export const publicAccountConfigToday = '2026-06-17';
@@ -70,7 +79,7 @@ export const publicAccountUsageTone: Record<PublicAccountUsage, TagChipTone> = {
 
 export const publicAccountSeeds: PublicAccountRecord[] = [
   {
-    accountHolder: '示例企业管理有限公司',
+    accountHolder: '武汉启程空间设计有限公司',
     accountTailNumber: '0821',
     bankName: '招商银行',
     defaultFor: ['收款', '付款', '银行对账'],
@@ -93,7 +102,7 @@ export const publicAccountSeeds: PublicAccountRecord[] = [
     usage: ['收款', '付款', '银行对账']
   },
   {
-    accountHolder: '示例企业管理有限公司',
+    accountHolder: '武汉启程空间设计有限公司',
     accountTailNumber: '3912',
     bankName: '工商银行',
     defaultFor: [],
@@ -116,7 +125,7 @@ export const publicAccountSeeds: PublicAccountRecord[] = [
     usage: ['付款', '银行对账']
   },
   {
-    accountHolder: '示例企业管理有限公司',
+    accountHolder: '武汉启程空间设计有限公司',
     accountTailNumber: '7766',
     bankName: '建设银行',
     defaultFor: [],
@@ -160,7 +169,9 @@ function normalizeTailNumber(value: string) {
 
 function normalizePublicAccountValue(nextValue: PublicAccountFormValue): PublicAccountFormValue {
   const usage = [...new Set(nextValue.usage)];
-  const defaultFor = [...new Set(nextValue.defaultFor)].filter((item) => usage.includes(item));
+  const defaultFor = nextValue.status === '启用'
+    ? [...new Set(nextValue.defaultFor)].filter((item) => usage.includes(item))
+    : [];
 
   return {
     ...nextValue,
@@ -173,6 +184,23 @@ function normalizePublicAccountValue(nextValue: PublicAccountFormValue): PublicA
     openingBalanceDate: nextValue.openingBalanceDate.trim(),
     usage
   };
+}
+
+export function reconcilePublicAccountDefaults(
+  rows: PublicAccountRecord[],
+  targetId: string,
+  nextDefaultFor: PublicAccountUsage[]
+) {
+  const transferredUsages = new Set(nextDefaultFor);
+
+  return rows.map((row) =>
+    row.id === targetId
+      ? row
+      : {
+          ...row,
+          defaultFor: row.defaultFor.filter((usage) => !transferredUsages.has(usage))
+        }
+  );
 }
 
 const PublicAccountConfigContext = createContext<PublicAccountConfigStateValue | undefined>(undefined);
@@ -257,16 +285,31 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
           updatedAt: publicAccountConfigToday
         };
 
-        setPublicAccounts((currentRows) => [...currentRows, nextRecord]);
+        setPublicAccounts((currentRows) => [
+          ...reconcilePublicAccountDefaults(currentRows, nextRecord.id, nextRecord.defaultFor),
+          nextRecord
+        ]);
 
         return nextRecord;
       },
       publicAccounts,
-      updatePublicAccount(id, nextValue) {
+      updatePublicAccount(id, nextValue, activeReferenceCount = 0) {
         const normalizedValue = normalizePublicAccountValue(nextValue);
+        const target = publicAccounts.find((row) => row.id === id);
+        const validation = validateDefaultMasterDataStatusChange(
+          normalizedValue.status,
+          Boolean(target?.defaultFor.length),
+          '请先将默认用途转移到其他启用账户'
+        );
+        if (!validation.success) {
+          return validation;
+        }
+        if (normalizedValue.status === '停用' && activeReferenceCount > 0) {
+          return blockMasterDataMutation(`仍有 ${activeReferenceCount} 条待处理流水使用该账户`);
+        }
 
         setPublicAccounts((currentRows) =>
-          currentRows.map((row) =>
+          reconcilePublicAccountDefaults(currentRows, id, normalizedValue.defaultFor).map((row) =>
             row.id === id
               ? {
                   ...row,
@@ -280,8 +323,22 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
               : row
           )
         );
+        return validation;
       },
-      updatePublicAccountStatus(id, status) {
+      updatePublicAccountStatus(id, status, activeReferenceCount = 0) {
+        const target = publicAccounts.find((row) => row.id === id);
+        const validation = validateDefaultMasterDataStatusChange(
+          status,
+          Boolean(target?.defaultFor.length),
+          '请先将默认用途转移到其他启用账户'
+        );
+        if (!validation.success) {
+          return validation;
+        }
+        if (status === '停用' && activeReferenceCount > 0) {
+          return blockMasterDataMutation(`仍有 ${activeReferenceCount} 条待处理流水使用该账户`);
+        }
+
         setPublicAccounts((currentRows) =>
           currentRows.map((row) =>
             row.id === id
@@ -297,6 +354,7 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
               : row
           )
         );
+        return validation;
       }
     }),
     [publicAccounts]

@@ -2,9 +2,15 @@ import {
   getDefaultPublicAccount,
   getDefaultPublicAccountRef,
   publicAccountSeeds,
+  reconcilePublicAccountDefaults,
   resolveActivePublicAccountRef,
   type PublicAccountRecord
 } from './PublicAccountConfigState';
+import {
+  validateDefaultMasterDataStatusChange,
+  validatePrimaryCategoryStatusChange,
+  validateTaskConfigStatusChange
+} from './masterDataLifecycleModel';
 
 type UnitTest = {
   name: string;
@@ -71,6 +77,55 @@ const tests: UnitTest[] = [
         resolveActivePublicAccountRef(rows, publicAccountSeeds[1].id, '付款')?.publicAccountId,
         publicAccountSeeds[1].id,
         'enabled account with requested usage should resolve'
+      );
+    }
+  },
+  {
+    name: 'blocks disabling task types that still have in-flight tasks',
+    run: () => {
+      assertEqual(validateTaskConfigStatusChange('停用', 2).success, false, 'in-flight task type should be protected');
+      assertEqual(validateTaskConfigStatusChange('停用', 0).success, true, 'unused task type should be stoppable');
+    }
+  },
+  {
+    name: 'blocks disabling default calendars and accounts',
+    run: () => {
+      assertEqual(
+        validateDefaultMasterDataStatusChange('停用', true, 'blocked').success,
+        false,
+        'default master data should be protected'
+      );
+      assertEqual(
+        validateDefaultMasterDataStatusChange('停用', false, 'blocked').success,
+        true,
+        'non-default master data should be stoppable'
+      );
+    }
+  },
+  {
+    name: 'blocks disabling primary categories with enabled children',
+    run: () => {
+      assertEqual(validatePrimaryCategoryStatusChange('停用', 1).success, false, 'enabled children should block parent stop');
+      assertEqual(validatePrimaryCategoryStatusChange('停用', 0).success, true, 'empty parent should be stoppable');
+    }
+  },
+  {
+    name: 'keeps one default account for each usage after reassignment',
+    run: () => {
+      const reassigned = reconcilePublicAccountDefaults(
+        publicAccountSeeds,
+        publicAccountSeeds[1].id,
+        ['付款']
+      );
+      assertEqual(
+        reassigned[0].defaultFor.includes('付款'),
+        false,
+        'old account should release transferred payment default'
+      );
+      assertEqual(
+        reassigned[0].defaultFor.includes('收款'),
+        true,
+        'unrelated collection default should remain'
       );
     }
   }

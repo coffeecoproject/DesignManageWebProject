@@ -30,6 +30,7 @@ import { OperationRecordSection } from '../../components/OperationRecordSection'
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
+import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationState';
 import {
   accountingStatementTargetTone,
   accountingSubjectSeedRows,
@@ -48,13 +49,8 @@ import {
   applyLedgerOpeningBalanceImportPreview,
   defaultLedgerInitializationFilters,
   ledgerInitializationControlContext,
-  ledgerInitializationDraftOperationRecords,
   ledgerInitializationDraftProfile,
-  ledgerInitializationOperationRecords,
-  ledgerInitializationProfile,
-  ledgerOpeningBalanceImportBatch,
   ledgerOpeningBalanceDraftImportBatch,
-  ledgerOpeningBalanceRows,
   ledgerOpeningBalanceEntrySourceLabels,
   matchesLedgerInitializationFilters,
   type LedgerInitializationControlledAction,
@@ -72,7 +68,6 @@ import {
   type LedgerInitializationWorkspaceMode,
   type LedgerOpeningBalanceEntrySource,
   type LedgerOpeningBalanceEntryStatus,
-  type LedgerOpeningBalanceImportBatch,
   type LedgerOpeningBalanceImportImpact,
   type LedgerOpeningBalanceImportPreviewRow,
   type LedgerOpeningBalanceImportStatus,
@@ -1125,6 +1120,24 @@ function LedgerInitializationControlledActionDrawer({
 export function FinanceLedgerInitializationPage() {
   const { message } = AntApp.useApp();
   const { addLedgerOpeningAdjustmentVoucher, getAccountingPeriodGuard, ledgerOpeningAdjustmentRows } = useFinanceManagement();
+  const {
+    draftImportBatch,
+    draftOpeningRows,
+    draftOperationRecords,
+    draftProfile,
+    enabledImportBatch,
+    enabledOpeningRows,
+    enabledOperationRecords,
+    enabledProfile,
+    setDraftImportBatch,
+    setDraftOpeningRows,
+    setDraftOperationRecords,
+    setDraftProfile,
+    setEnabledImportBatch,
+    setEnabledOpeningRows,
+    setEnabledOperationRecords,
+    setEnabledProfile
+  } = useFinanceLedgerInitialization();
   const [workspaceMode, setWorkspaceMode] = useState<LedgerInitializationWorkspaceMode>('初始化草稿');
   const [activeView, setActiveView] = useState<LedgerInitializationStepKey>('basic');
   const [openingBalanceView, setOpeningBalanceView] = useState<OpeningBalanceViewKey>('ledger');
@@ -1132,12 +1145,6 @@ export function FinanceLedgerInitializationPage() {
   const [activeOpeningMutationId, setActiveOpeningMutationId] = useState<string>();
   const [activeProcessAction, setActiveProcessAction] = useState<LedgerInitializationProcessActionKey>();
   const [activeControlledActionKey, setActiveControlledActionKey] = useState<LedgerInitializationControlledActionKey>();
-  const [draftProfile, setDraftProfile] = useState<LedgerInitializationProfile>(ledgerInitializationDraftProfile);
-  const [draftOpeningRows, setDraftOpeningRows] = useState<LedgerOpeningBalanceRow[]>(ledgerOpeningBalanceRows);
-  const [draftImportBatch, setDraftImportBatch] = useState<LedgerOpeningBalanceImportBatch | undefined>(ledgerOpeningBalanceDraftImportBatch);
-  const [draftOperationRecords, setDraftOperationRecords] = useState<LedgerInitializationOperationRecord[]>(ledgerInitializationDraftOperationRecords);
-  const [enabledOperationRecords, setEnabledOperationRecords] =
-    useState<LedgerInitializationOperationRecord[]>(ledgerInitializationOperationRecords);
   const [basicSettingsForm, setBasicSettingsForm] = useState<LedgerInitializationBasicSettingsForm>(() =>
     createBasicSettingsForm(ledgerInitializationDraftProfile)
   );
@@ -1148,9 +1155,9 @@ export function FinanceLedgerInitializationPage() {
   );
   const [importFileName, setImportFileName] = useState(ledgerOpeningBalanceDraftImportBatch.fileName);
 
-  const activeProfile = workspaceMode === '初始化草稿' ? draftProfile : ledgerInitializationProfile;
-  const activeOpeningRows = workspaceMode === '初始化草稿' ? draftOpeningRows : ledgerOpeningBalanceRows;
-  const activeImportBatch = workspaceMode === '初始化草稿' ? draftImportBatch : ledgerOpeningBalanceImportBatch;
+  const activeProfile = workspaceMode === '初始化草稿' ? draftProfile : enabledProfile ?? draftProfile;
+  const activeOpeningRows = workspaceMode === '初始化草稿' ? draftOpeningRows : enabledOpeningRows;
+  const activeImportBatch = workspaceMode === '初始化草稿' ? draftImportBatch : enabledImportBatch;
   const sourceOperationRecords = workspaceMode === '初始化草稿' ? draftOperationRecords : enabledOperationRecords;
   const activeEffectivePeriodGuard = getAccountingPeriodGuard(activeProfile.effectivePeriod, '处理账套初始化');
   const activeEffectivePeriodLocked = !activeEffectivePeriodGuard.allowed;
@@ -1576,19 +1583,25 @@ export function FinanceLedgerInitializationPage() {
 
     const enabledAt = formatOperationTime();
 
-    setDraftProfile((currentProfile) => ({
-      ...currentProfile,
+    const nextProfile: LedgerInitializationProfile = {
+      ...draftProfile,
       enabledAt,
       enabledBy: '李明',
       status: '已启用'
-    }));
-    appendDraftOperationRecord(
-      createDraftOperationRecord({
-        action: '启用账套',
-        note: '账套启用后，基础设置和期初余额进入只读锁定状态。',
-        result: '已启用'
-      })
-    );
+    };
+    const operationRecord = createDraftOperationRecord({
+      action: '启用账套',
+      note: '账套启用后，基础设置和期初余额进入只读锁定状态。',
+      result: '已启用'
+    });
+
+    setDraftProfile(nextProfile);
+    setEnabledProfile(nextProfile);
+    setEnabledOpeningRows(draftOpeningRows.map((row) => ({ ...row })));
+    setEnabledImportBatch(draftImportBatch ? { ...draftImportBatch } : undefined);
+    setDraftOperationRecords((currentRecords) => [...currentRecords, operationRecord]);
+    setEnabledOperationRecords((currentRecords) => [...currentRecords.filter((record) => record.result !== '已启用'), operationRecord]);
+    setWorkspaceMode('已启用账套');
     setActiveView('enable');
     setActiveProcessAction(undefined);
     message.success('账套已启用');
@@ -1608,19 +1621,23 @@ export function FinanceLedgerInitializationPage() {
       return;
     }
 
-    setDraftProfile((currentProfile) => ({
-      ...currentProfile,
+    const nextProfile: LedgerInitializationProfile = {
+      ...activeProfile,
       enabledAt: '',
       enabledBy: '',
       status: '试算平衡'
-    }));
-    appendDraftOperationRecord(
-      createDraftOperationRecord({
-        action: '撤回启用',
-        note: `撤回原因：${withdrawForm.reason.trim()}；影响范围：${withdrawForm.impact.trim()}。账套回到试算平衡状态。`,
-        result: '试算平衡'
-      })
-    );
+    };
+    const operationRecord = createDraftOperationRecord({
+      action: '撤回启用',
+      note: `撤回原因：${withdrawForm.reason.trim()}；影响范围：${withdrawForm.impact.trim()}。账套回到试算平衡状态。`,
+      result: '试算平衡'
+    });
+
+    setDraftProfile(nextProfile);
+    setEnabledProfile(undefined);
+    setDraftOperationRecords((currentRecords) => [...currentRecords, operationRecord]);
+    setEnabledOperationRecords((currentRecords) => [...currentRecords, operationRecord]);
+    setWorkspaceMode('初始化草稿');
     setActiveControlledActionKey(undefined);
     setWithdrawForm(createDefaultWithdrawForm());
     setActiveView('enable');

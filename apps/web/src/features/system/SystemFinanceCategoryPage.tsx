@@ -858,13 +858,21 @@ export function SystemFinanceCategoryPage() {
 
   function togglePrimaryStatus(record: FinancePrimaryCategoryConfig) {
     const nextStatus: FinanceCategoryStatus = record.status === '启用' ? '停用' : '启用';
-    updatePrimaryCategoryStatus(record.id, nextStatus);
+    const result = updatePrimaryCategoryStatus(record.id, nextStatus);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     void messageApi.success(`${record.name}已${nextStatus}`);
   }
 
   function toggleSecondaryStatus(record: FinanceSecondaryCategoryConfig) {
     const nextStatus: FinanceCategoryStatus = record.status === '启用' ? '停用' : '启用';
-    updateSecondaryCategoryStatus(record.id, nextStatus);
+    const result = updateSecondaryCategoryStatus(record.id, nextStatus);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     void messageApi.success(`${record.name}已${nextStatus}`);
   }
 

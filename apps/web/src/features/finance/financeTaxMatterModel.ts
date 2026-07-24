@@ -1128,12 +1128,12 @@ export function buildSocialInsuranceTaxMatterSummary(
   period: string
 ): SocialInsuranceTaxMatterSummary {
   const periodRecords = records.filter((record) => record.category === category && record.period === period);
-  const confirmedRecords = periodRecords.filter((record) => record.handlingStatus === '已确认');
-  const pendingCount = periodRecords.filter((record) => record.handlingStatus === '待确认').length;
-  const exceptionCount = periodRecords.filter((record) => record.handlingStatus === '延期补缴' || record.handlingStatus === '本月不缴').length;
+  const confirmedRecords = periodRecords.filter((record) => record.handlingStatus === '待缴费' || record.handlingStatus === '已缴费');
+  const pendingCount = periodRecords.filter((record) => !['待缴费', '已缴费', '无需缴纳'].includes(record.handlingStatus)).length;
+  const exceptionCount = periodRecords.filter((record) => record.handlingStatus === '核定有差异' || record.handlingStatus === '欠缴待补').length;
   const readyForHandling = periodRecords.length > 0 && pendingCount === 0 && confirmedRecords.length > 0;
-  const companyAmount = roundMoney(confirmedRecords.reduce((total, record) => total + record.companyAmount, 0));
-  const personalAmount = roundMoney(confirmedRecords.reduce((total, record) => total + record.personalAmount, 0));
+  const companyAmount = roundMoney(confirmedRecords.reduce((total, record) => total + (record.assessedEmployerAmount ?? record.companyAmount), 0));
+  const personalAmount = roundMoney(confirmedRecords.reduce((total, record) => total + (record.assessedEmployeeAmount ?? record.personalAmount), 0));
   const totalAmount = roundMoney(companyAmount + personalAmount);
   const sourceStatus: FinanceTaxMatterDataStatus =
     readyForHandling

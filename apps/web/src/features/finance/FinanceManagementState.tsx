@@ -3,6 +3,7 @@ import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { useTaskManagementState } from '../tasks/TaskManagementState';
+import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationState';
 import {
   applyAccountingPeriodCloseLock,
   assignTaxFilingAdjustmentAccountingPeriod,
@@ -67,10 +68,13 @@ import {
 import { buildOriginalInvoiceRedSummary, isFinanceInvoiceAllocationEffective } from './financeInvoiceModel';
 import {
   financeReceivablePayableRecords,
+  getReceivablePayableConfirmedAmount,
   type FinanceReceivablePayableRecord
 } from './financeReceivablesPayablesData';
 import {
   deriveFinanceReceivablePayableSettlementRows,
+  getFinanceReceivablePayableLinkedTransactionRows,
+  getFinanceReceivablePayableSettlementSignedAmount,
   hasFinanceReceivablePayableActiveSettlement,
   hasFinanceReceivablePayableBookedVoucher,
   getFinanceReceivablePayableSettlementTargets
@@ -104,6 +108,7 @@ import {
   getCustomerTaskSettlementMergeIssues,
   mergeCustomerTaskReceivablePayableRecords,
   reconcileCustomerTaskReversals,
+  reconcileZeroNetCustomerTaskAcceptanceCorrections,
   type CustomerTaskSettlementMergeIssue
 } from './financeCustomerTaskSettlementModel';
 import { mergeSalaryReceivablePayableRecords } from './financeSalarySettlementModel';
@@ -159,7 +164,7 @@ type FinanceManagementStateValue = {
     reason?: string,
     closeCheckSnapshot?: AccountingPeriodCloseCheckSnapshotItem[],
     closeSummarySnapshot?: AccountingPeriodCloseSummarySnapshot
-  ) => void;
+  ) => boolean;
   commitTaxMatterPayment: (
     recordId: string,
     nextRecord: FinanceTaxMatterRecord,
@@ -278,7 +283,14 @@ function createSeedAccountingVoucherLifecycleRows() {
 const seedAccountingVoucherLifecycleRows = createSeedAccountingVoucherLifecycleRows();
 const seedAccountingPeriodLocks: AccountingPeriodLockRecord[] = [];
 
+function getPreviousAccountingPeriod(accountingPeriod: string) {
+  const [year, month] = accountingPeriod.split('-').map(Number);
+  const previousMonth = new Date(year, month - 2, 1);
+  return `${previousMonth.getFullYear()}-${String(previousMonth.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export function FinanceManagementProvider({ children }: { children: ReactNode }) {
+  const { enabledProfile } = useFinanceLedgerInitialization();
   const { brandRows, customerRows, storeRows } = useCustomerManagementState();
   const {
     isSalaryAdjustmentPeriodOpen,
@@ -337,7 +349,32 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           && isFinanceInvoiceAllocationEffective(allocation)
         )
         && !hasFinanceReceivablePayableActiveSettlement(
-          financeRows.filter((transaction) => record.linkedTransactionNos.includes(transaction.transactionNo))
+          getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
+        ),
+      facts: customerTaskBillingFacts,
+      records: receivablePayableRows
+    }),
+    [
+      accountingPeriodLocks,
+      accountingVoucherLifecycleRows,
+      customerTaskBillingFacts,
+      financeRows,
+      invoiceBusinessAllocationRows,
+      receivablePayableRows
+    ]
+  );
+  const customerTaskZeroNetReconciliation = useMemo(
+    () => reconcileZeroNetCustomerTaskAcceptanceCorrections({
+      canDirectCorrect: (record) =>
+        guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '更正甲方验收').allowed
+        && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+        && !invoiceBusinessAllocationRows.some((allocation) =>
+          allocation.targetType === '应收应付'
+          && allocation.targetId === record.id
+          && isFinanceInvoiceAllocationEffective(allocation)
+        )
+        && !hasFinanceReceivablePayableActiveSettlement(
+          getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
         ),
       facts: customerTaskBillingFacts,
       records: receivablePayableRows
@@ -352,20 +389,90 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     ]
   );
   const customerTaskSettlementIssues = useMemo(
-    () => [
-      ...getCustomerTaskSettlementMergeIssues({
+    () => {
+      const resolvedIssueIds = new Set(
+        accountingVoucherLaterPeriodAdjustmentRows
+          .filter((record) => record.candidateStatus === '已记账' && record.correctionContext)
+          .filter((adjustment) => {
+            const sourceRecord = receivablePayableRows.find(
+              (record) => record.id === adjustment.correctionContext?.recordId
+            );
+            if (!sourceRecord) {
+              return false;
+            }
+
+            const correctionAlreadyApplied = sourceRecord.taskSettlementCorrections?.some(
+              (correction) => correction.issueId === adjustment.correctionContext?.issueId
+            ) ?? false;
+            const correctedAmount = Number((
+              getReceivablePayableConfirmedAmount(sourceRecord)
+              + (correctionAlreadyApplied ? 0 : adjustment.signedAmount)
+            ).toFixed(2));
+            const linkedTransactions = getFinanceReceivablePayableLinkedTransactionRows(sourceRecord, financeRows);
+            const hasPendingTransaction = linkedTransactions.some((record) => record.status === '待复核');
+            const postedAmount = linkedTransactions
+              .filter((record) => record.status === '已入账')
+              .reduce(
+                (total, transaction) => total + getFinanceReceivablePayableSettlementSignedAmount(
+                  sourceRecord,
+                  transaction,
+                  financeRows
+                ),
+                0
+              );
+            const allocatedInvoiceAmount = invoiceBusinessAllocationRows
+              .filter((allocation) => (
+                allocation.targetType === '应收应付'
+                && allocation.targetId === sourceRecord.id
+                && isFinanceInvoiceAllocationEffective(allocation)
+              ))
+              .reduce((total, allocation) => total + allocation.taxIncludedAmount, 0);
+
+            return (
+              correctedAmount >= -0.01
+              && !hasPendingTransaction
+              && postedAmount <= correctedAmount + 0.01
+              && allocatedInvoiceAmount <= correctedAmount + 0.01
+            );
+          })
+          .map((record) => record.correctionContext?.issueId)
+          .filter((issueId): issueId is string => Boolean(issueId))
+      );
+      const issues = [
+        ...getCustomerTaskSettlementMergeIssues({
         batches: customerTaskSettlementBatches,
         brands: brandRows,
+        canDirectCorrect: (record) =>
+          guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '更正甲方验收').allowed
+          && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+          && !invoiceBusinessAllocationRows.some((allocation) =>
+            allocation.targetType === '应收应付'
+            && allocation.targetId === record.id
+            && isFinanceInvoiceAllocationEffective(allocation)
+          )
+          && !hasFinanceReceivablePayableActiveSettlement(
+            getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
+          ),
         customers: customerRows,
         records: receivablePayableRows
       }),
-      ...customerTaskReversalReconciliation.issues
-    ],
+        ...customerTaskZeroNetReconciliation.issues,
+        ...customerTaskReversalReconciliation.issues
+      ];
+
+      return issues.filter((issue) => !resolvedIssueIds.has(issue.issueId));
+    },
     [
       brandRows,
+      accountingVoucherLaterPeriodAdjustmentRows,
+      accountingPeriodLocks,
+      accountingVoucherLifecycleRows,
       customerRows,
       customerTaskReversalReconciliation.issues,
       customerTaskSettlementBatches,
+      customerTaskZeroNetReconciliation.issues,
+      financeRows,
+      invoiceBusinessAllocationRows,
       receivablePayableRows
     ]
   );
@@ -374,10 +481,37 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       const mergedRows = mergeCustomerTaskReceivablePayableRecords({
         batches: customerTaskSettlementBatches,
         brands: brandRows,
+        canDirectCorrect: (record) =>
+          guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '更正甲方验收').allowed
+          && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+          && !invoiceBusinessAllocationRows.some((allocation) =>
+            allocation.targetType === '应收应付'
+            && allocation.targetId === record.id
+            && isFinanceInvoiceAllocationEffective(allocation)
+          )
+          && !hasFinanceReceivablePayableActiveSettlement(
+            getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
+          ),
         customers: customerRows,
         records: currentRows,
         stores: storeRows
       });
+
+      const zeroNetReconciledRows = reconcileZeroNetCustomerTaskAcceptanceCorrections({
+        canDirectCorrect: (record) =>
+          guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '更正甲方验收').allowed
+          && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+          && !invoiceBusinessAllocationRows.some((allocation) =>
+            allocation.targetType === '应收应付'
+            && allocation.targetId === record.id
+            && isFinanceInvoiceAllocationEffective(allocation)
+          )
+          && !hasFinanceReceivablePayableActiveSettlement(
+            getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
+          ),
+        facts: customerTaskBillingFacts,
+        records: mergedRows
+      }).records;
 
       return reconcileCustomerTaskReversals({
         canDirectCorrect: (record) =>
@@ -389,10 +523,10 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
             && isFinanceInvoiceAllocationEffective(allocation)
           )
           && !hasFinanceReceivablePayableActiveSettlement(
-            financeRows.filter((transaction) => record.linkedTransactionNos.includes(transaction.transactionNo))
+            getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
           ),
         facts: customerTaskBillingFacts,
-        records: mergedRows
+        records: zeroNetReconciledRows
       }).records;
     });
   }, [
@@ -410,11 +544,23 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     setReceivablePayableRows((currentRows) =>
       mergePartTimeLaborReceivablePayableRecords({
         batches: partTimeLaborSettlementBatches,
+        canDirectCorrect: (record) =>
+          guardAccountingPeriodOpen(accountingPeriodLocks, record.accountingPeriod, '撤销兼职任务验收').allowed
+          && !hasFinanceReceivablePayableBookedVoucher(record, accountingVoucherLifecycleRows)
+          && !hasFinanceReceivablePayableActiveSettlement(
+            getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
+          ),
         people: peopleRows,
         records: currentRows
       })
     );
-  }, [partTimeLaborSettlementBatches, peopleRows]);
+  }, [
+    accountingPeriodLocks,
+    accountingVoucherLifecycleRows,
+    financeRows,
+    partTimeLaborSettlementBatches,
+    peopleRows
+  ]);
   useEffect(() => {
     setReceivablePayableRows((currentRows) =>
       mergeSalaryReceivablePayableRecords({
@@ -566,8 +712,11 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       addAccountingVoucherLaterPeriodAdjustment(record) {
         const input: AccountingVoucherLaterPeriodAdjustmentInput = {
           accountingPeriod: record.accountingPeriod,
+          adjustmentMode: record.adjustmentMode,
           adjustedAt: record.adjustedAt,
-          reason: record.reason
+          correctionContext: record.correctionContext,
+          reason: record.reason,
+          signedAmount: record.signedAmount
         };
 
         if (!canSubmitLaterPeriodAccountingVoucherAdjustment(
@@ -590,7 +739,8 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
               currentRecord.adjustmentNo === record.adjustmentNo ||
               (
                 currentRecord.originalVoucherId === record.originalVoucherId &&
-                currentRecord.accountingPeriod === record.accountingPeriod
+                currentRecord.accountingPeriod === record.accountingPeriod &&
+                currentRecord.correctionContext?.issueId === record.correctionContext?.issueId
               )
           );
 
@@ -618,7 +768,12 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           return true;
         }
 
-        setFinanceRows((current) => [record, ...current]);
+        setFinanceRows((current) => current.some(
+          (candidate) => candidate.id === record.id || candidate.transactionNo === record.transactionNo
+        )
+          ? current
+          : [record, ...current]
+        );
         return true;
       },
       registerReceivablePayableSettlement(recordId, transaction) {
@@ -851,7 +1006,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           reversal = buildFinanceExpenseApprovalReversal({
             actor: currentFinanceActor,
             hasActiveSettlement: (record) => hasFinanceReceivablePayableActiveSettlement(
-              financeRows.filter((financeRecord) => record.linkedTransactionNos.includes(financeRecord.transactionNo))
+              getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
             ),
             isAccountingPeriodOpen: (accountingPeriod) => guardAccountingPeriodOpen(
               accountingPeriodLocks,
@@ -894,7 +1049,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
             actor: currentFinanceActor,
             file,
             hasActiveSettlement: (record) => hasFinanceReceivablePayableActiveSettlement(
-              financeRows.filter((financeRecord) => record.linkedTransactionNos.includes(financeRecord.transactionNo))
+              getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
             ),
             isAccountingPeriodOpen: (accountingPeriod) => guardAccountingPeriodOpen(
               accountingPeriodLocks,
@@ -957,6 +1112,31 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         return true;
       },
       closeAccountingPeriod(accountingPeriod, reason = '期间结账', closeCheckSnapshot, closeSummarySnapshot) {
+        const enabledPeriod = enabledProfile?.effectivePeriod;
+        const previousPeriod = getPreviousAccountingPeriod(accountingPeriod);
+        const previousPeriodClosed = accountingPeriodLocks.some(
+          (record) => record.accountingPeriod === previousPeriod && record.status === '已结账'
+        );
+        const alreadyClosed = accountingPeriodLocks.some(
+          (record) => record.accountingPeriod === accountingPeriod && record.status === '已结账'
+        );
+        const checksPassed = Boolean(
+          closeCheckSnapshot?.length && closeCheckSnapshot.every((item) => item.status === '通过')
+        );
+        const summaryPassed = Boolean(
+          closeSummarySnapshot &&
+          closeSummarySnapshot.blockedCheckCount === 0 &&
+          closeSummarySnapshot.trialBalanceStatus === '平衡' &&
+          closeSummarySnapshot.trialBalanceDifference === 0
+        );
+        const continuityPassed = Boolean(
+          enabledPeriod && (accountingPeriod === enabledPeriod || previousPeriodClosed)
+        );
+
+        if (!reason.trim() || alreadyClosed || !checksPassed || !summaryPassed || !continuityPassed) {
+          return false;
+        }
+
         setAccountingPeriodLocks((currentRows) => {
           const nextRecord: AccountingPeriodLockRecord = {
             accountingPeriod,
@@ -970,6 +1150,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
 
           return applyAccountingPeriodCloseLock(currentRows, nextRecord);
         });
+        return true;
       },
       reopenAccountingPeriod(accountingPeriod, reason) {
         const currentLock = accountingPeriodLocks.find(
@@ -1579,6 +1760,10 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         }
 
         if (record.sourceType === '后续调整') {
+          const adjustmentRecord = accountingVoucherLaterPeriodAdjustmentRows.find(
+            (currentRecord) => currentRecord.adjustmentNo === record.sourceNo
+          );
+
           setAccountingVoucherLaterPeriodAdjustmentRows((currentRows) =>
             currentRows.map((currentRecord) =>
               currentRecord.adjustmentNo === record.sourceNo
@@ -1589,6 +1774,45 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
                 : currentRecord
             )
           );
+
+          if (adjustmentRecord?.correctionContext && adjustmentRecord.adjustmentMode === '差额调整') {
+            setReceivablePayableRows((currentRows) => currentRows.map((currentRecord) => {
+              if (currentRecord.id !== adjustmentRecord.correctionContext?.recordId) {
+                return currentRecord;
+              }
+
+              const existingCorrections = currentRecord.taskSettlementCorrections ?? [];
+              if (existingCorrections.some((correction) => correction.issueId === adjustmentRecord.correctionContext?.issueId)) {
+                return currentRecord;
+              }
+
+              return {
+                ...currentRecord,
+                operationRecords: [
+                  ...currentRecord.operationRecords,
+                  {
+                    action: '记账差额调整',
+                    actor: currentFinanceActor,
+                    id: `op-${currentRecord.id}-${adjustmentRecord.id}`,
+                    object: currentRecord.documentNo,
+                    summary: `${adjustmentRecord.adjustmentNo} 调整 ${adjustmentRecord.signedAmount.toFixed(2)} 元`,
+                    time: `${financeToday} 17:30`
+                  }
+                ],
+                taskSettlementCorrections: [
+                  ...existingCorrections,
+                  {
+                    accountingPeriod: adjustmentRecord.accountingPeriod,
+                    adjustmentNo: adjustmentRecord.adjustmentNo,
+                    bookedAt: `${financeToday} 17:30`,
+                    differenceAmount: adjustmentRecord.signedAmount,
+                    issueId: adjustmentRecord.correctionContext.issueId
+                  }
+                ],
+                updatedAt: `${financeToday} 17:30`
+              };
+            }));
+          }
         }
 
         if (record.sourceModule === '月末事项') {
@@ -1744,6 +1968,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       bankReconciliationRows,
       effectiveDeclarationPreparationRows,
       effectiveTaxMatterRows,
+      enabledProfile,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceImportBatches,

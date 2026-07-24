@@ -18,6 +18,10 @@ import { OperationRecordSection } from '../../components/OperationRecordSection'
 import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { TagChip } from '../../components/TagChip';
 import type { FinanceTransactionRecord } from './financeData';
+import {
+  getCustomerTaskSettlementCorrectionActions,
+  type CustomerTaskSettlementMergeIssue
+} from './financeCustomerTaskSettlementModel';
 import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
 import type { FinanceInvoiceBusinessAllocation, FinanceInvoiceRecord } from './financeInvoiceData';
 import type {
@@ -25,6 +29,7 @@ import type {
   FinanceReceivablePayableRecord
 } from './financeReceivablesPayablesData';
 import {
+  getReceivablePayableConfirmedAmount,
   getReceivablePayableOutstandingAmount,
   receivablePayableDirectionTone,
   receivablePayableReviewProgressTone,
@@ -59,7 +64,12 @@ type FinanceReceivablesPayablesDetailDrawerProps = {
   linkedTransactionRows: FinanceTransactionRecord[];
   invoiceAssociationLockedReason?: string;
   invoiceBusinessAllocationRows: FinanceInvoiceBusinessAllocation[];
+  recordHasBookedVoucher: boolean;
+  taskSettlementIssue?: CustomerTaskSettlementMergeIssue;
   onAssociateInvoice?: (record: FinanceReceivablePayableRecord) => void;
+  onOpenAccountingVoucher?: (record: FinanceReceivablePayableRecord, issue?: CustomerTaskSettlementMergeIssue) => void;
+  onOpenInvoiceCorrection?: (invoice: FinanceInvoiceRecord) => void;
+  onOpenLinkedTransaction?: (record: FinanceTransactionRecord) => void;
   onClose: () => void;
   onDownloadFile: (file: RelatedFileRecord) => void;
   onEdit: (record: FinanceReceivablePayableRecord) => void;
@@ -112,7 +122,12 @@ export function FinanceReceivablesPayablesDetailDrawer({
   linkedTransactionRows,
   invoiceAssociationLockedReason,
   invoiceBusinessAllocationRows,
+  recordHasBookedVoucher,
+  taskSettlementIssue,
   onAssociateInvoice,
+  onOpenAccountingVoucher,
+  onOpenInvoiceCorrection,
+  onOpenLinkedTransaction,
   onClose,
   onDownloadFile,
   onEdit,
@@ -128,6 +143,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
   }
 
   const amountLabels = getFinanceReceivablePayableAmountLabels(record.direction);
+  const confirmedAmount = getReceivablePayableConfirmedAmount(record);
   const dueDate = getFinanceReceivablePayableDueDate(record);
   const reviewProgressStatus = getFinanceReceivablePayableReviewProgressStatus(record, linkedTransactionRows);
   const overdue = isFinanceReceivablePayableOverdue(record);
@@ -139,6 +155,16 @@ export function FinanceReceivablesPayablesDetailDrawer({
   const laborPayment = naturalPersonPayment?.incomeType === '劳务报酬' ? naturalPersonPayment : undefined;
   const salarySettlement = record.salarySettlement;
   const taskSettlement = record.taskSettlement;
+  const activeLinkedTransaction = linkedTransactionRows.find((row) => row.status !== '已作废');
+  const adjustedTaskSettlementAmount = taskSettlementIssue
+    ? Math.max(0, Number((confirmedAmount + taskSettlementIssue.differenceAmount).toFixed(2)))
+    : undefined;
+  const taskSettlementCorrectionActions = getCustomerTaskSettlementCorrectionActions({
+    hasBookedVoucher: recordHasBookedVoucher,
+    hasLinkedInvoice: linkedInvoiceRows.length > 0,
+    hasLinkedTransaction: Boolean(activeLinkedTransaction),
+    periodLocked: Boolean(recordLockedReason)
+  });
   const periodReadbackNotice = recordLockedReason
     ? getClosedAccountingPeriodReadbackNotice(record.accountingPeriod, '当前权责事项')
     : undefined;
@@ -199,27 +225,77 @@ export function FinanceReceivablesPayablesDetailDrawer({
         <div>
           <div>{row.taskName}</div>
           <div className="secondary-text">{row.taskCode} / {row.storeName}</div>
+          {row.customerAcceptanceRemark ? (
+            <div className="secondary-text">{row.customerAcceptanceRemark}</div>
+          ) : null}
+          {row.customerAcceptanceCorrectionReason ? (
+            <div className="secondary-text">更正：{row.customerAcceptanceCorrectionReason}</div>
+          ) : null}
         </div>
       )
     },
     {
-      title: '验收时间',
-      dataIndex: 'acceptedAt',
-      width: 150
+      title: '甲方验收',
+      dataIndex: 'customerAcceptedOn',
+      width: 150,
+      render: (_acceptedOn: string, row) => (
+        <div>
+          <div>{row.customerAcceptedOn}</div>
+          <div className="secondary-text">{row.customerAcceptanceRecordedBy}</div>
+        </div>
+      )
     },
     {
-      title: '验收人',
-      dataIndex: 'acceptedBy',
-      width: 100
+      title: '验收结果',
+      dataIndex: 'customerScore',
+      width: 125,
+      render: (_score: number, row) => (
+        <div>
+          <div>{row.customerScore} 分 / {row.timelinessResult}</div>
+          <div className="secondary-text">累计扣罚 {row.totalPenaltyPoints} 分</div>
+        </div>
+      )
+    },
+    {
+      title: '标准金额',
+      dataIndex: 'standardAmount',
+      align: 'right',
+      width: 120,
+      render: (amount: number) => formatMoney(amount)
+    },
+    {
+      title: '扣款',
+      dataIndex: 'deductionAmount',
+      align: 'right',
+      width: 110,
+      render: (_amount: number, row) => (
+        <div>
+          <div>{formatMoney(row.deductionAmount)}</div>
+          <div className="secondary-text">{Math.round(row.deductionRate * 100)}%</div>
+        </div>
+      )
+    },
+    {
+      title: '内部验收',
+      dataIndex: 'acceptedAt',
+      width: 150,
+      render: (_acceptedAt: string, row) => (
+        <div>
+          <div>{row.acceptedAt}</div>
+          <div className="secondary-text">{row.acceptedBy}</div>
+        </div>
+      )
     },
     {
       title: '价格版本',
       dataIndex: 'priceVersion',
-      width: 100,
-      render: (version: number) => `V${version}`
+      width: 112,
+      render: (_version: number, row) => (
+        <div>V{row.priceVersion}</div>
+      )
     },
     {
-      title: '结算金额',
+      title: '应收净额',
       dataIndex: 'amount',
       align: 'right',
       width: 120,
@@ -263,7 +339,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
             icon: <FileProtectOutlined />,
             key: 'amount',
             label: laborPayment ? '税前应付' : salarySettlement ? '员工实发应付' : amountLabels.amount,
-            value: formatMoney(record.amount)
+            value: formatMoney(confirmedAmount)
           },
           {
             icon: <WalletOutlined />,
@@ -284,8 +360,50 @@ export function FinanceReceivablesPayablesDetailDrawer({
         items={[
           {
             children: (
-              <DetailSection
-                extra={
+              <>
+                {taskSettlementIssue ? (
+                  <DetailSection icon={<LinkOutlined />} title="来源更正">
+                    <Alert
+                      data-testid="finance-rp-task-settlement-correction-alert"
+                      description={taskSettlementIssue.message}
+                      message={taskSettlementIssue.kind}
+                      showIcon
+                      type="warning"
+                    />
+                    <DetailInfoGrid
+                      columns={3}
+                      items={[
+                        { label: '原确认金额', value: formatMoney(confirmedAmount) },
+                        { label: '更正差额', value: formatMoney(taskSettlementIssue.differenceAmount) },
+                        { label: '更正后金额', value: formatMoney(adjustedTaskSettlementAmount ?? confirmedAmount) }
+                      ]}
+                    />
+                    <div className="detail-section-action-row finance-rp-task-settlement-actions">
+                      {taskSettlementCorrectionActions.includes('调整发票关联') && onAssociateInvoice && !invoiceAssociationLockedReason ? (
+                        <Button icon={<LinkOutlined />} onClick={() => onAssociateInvoice(record)}>
+                          调整发票关联
+                        </Button>
+                      ) : null}
+                      {taskSettlementCorrectionActions.includes('处理发票更正') && linkedInvoiceRows[0] && onOpenInvoiceCorrection ? (
+                        <Button icon={<LinkOutlined />} onClick={() => onOpenInvoiceCorrection(linkedInvoiceRows[0])}>
+                          处理发票更正
+                        </Button>
+                      ) : null}
+                      {taskSettlementCorrectionActions.includes('查看关联流水') && activeLinkedTransaction && onOpenLinkedTransaction ? (
+                        <Button onClick={() => onOpenLinkedTransaction(activeLinkedTransaction)}>
+                          查看关联流水
+                        </Button>
+                      ) : null}
+                      {taskSettlementCorrectionActions.includes('处理会计凭证') && onOpenAccountingVoucher ? (
+                        <Button type="primary" onClick={() => onOpenAccountingVoucher(record, taskSettlementIssue)}>
+                          处理会计凭证
+                        </Button>
+                      ) : null}
+                    </div>
+                  </DetailSection>
+                ) : null}
+                <DetailSection
+                  extra={
                   recordEditable ? (
                     <Button size="small" onClick={() => onEdit(record)}>
                       调整事项
@@ -338,7 +456,7 @@ export function FinanceReceivablesPayablesDetailDrawer({
                     { label: '业务来源', value: getFinanceReceivablePayableSourceLabel(record.sourceType) },
                     { label: '来源单号', value: record.sourceNo },
                     { label: '来源名称', value: record.sourceTitle },
-                    { label: amountLabels.amount, value: formatMoney(record.amount) },
+                    { label: amountLabels.amount, value: formatMoney(confirmedAmount) },
                     ...(taskSettlement
                       ? [
                           { label: '品牌', value: taskSettlement.brandName },
@@ -386,10 +504,11 @@ export function FinanceReceivablesPayablesDetailDrawer({
                     dataSource={taskSettlement.lineItems}
                     emptyText="暂无来源任务"
                     rowKey="taskId"
-                    scrollX={720}
+                    scrollX={1120}
                   />
                 ) : null}
-              </DetailSection>
+                </DetailSection>
+              </>
             ),
             key: 'basic',
             label: '权责事项'

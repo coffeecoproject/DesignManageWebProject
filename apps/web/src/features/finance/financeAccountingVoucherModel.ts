@@ -354,8 +354,15 @@ export type AccountingVoucherReversalInput = {
 
 export type AccountingVoucherLaterPeriodAdjustmentInput = {
   accountingPeriod: string;
+  adjustmentMode?: '冲销原凭证' | '差额调整';
   adjustedAt: string;
+  correctionContext?: {
+    batchId: string;
+    issueId: string;
+    recordId: string;
+  };
   reason: string;
+  signedAmount?: number;
 };
 
 export type AccountingVoucherLaterPeriodAdjustmentRecord = {
@@ -364,13 +371,20 @@ export type AccountingVoucherLaterPeriodAdjustmentRecord = {
   adjustedBy: string;
   adjustmentNo: string;
   amount: number;
+  adjustmentMode: '冲销原凭证' | '差额调整';
   candidateStatus: '待记账' | '已记账';
   id: string;
   originalAccountingPeriod: string;
   originalVoucherId: string;
   originalVoucherNo: string;
+  correctionContext?: {
+    batchId: string;
+    issueId: string;
+    recordId: string;
+  };
   reason: string;
   snapshot: AccountingVoucherRecord;
+  signedAmount: number;
 };
 
 export type AccountingLedgerEntry = {
@@ -1293,6 +1307,21 @@ function createSalaryPayableLines(record: FinanceReceivablePayableRecord) {
     }
   ].filter((line) => line.amount > moneyTolerance);
 
+  const employerContributionLines = [
+    {
+      amount: settlement.employerSocialInsuranceAmount,
+      id: 'employer-social-insurance',
+      subjectCode: '2211.03',
+      summary: `${record.sourceTitle} 单位社保`
+    },
+    {
+      amount: settlement.employerHousingFundAmount,
+      id: 'employer-housing-fund',
+      subjectCode: '2211.04',
+      summary: `${record.sourceTitle} 单位公积金`
+    }
+  ].filter((line) => line.amount > moneyTolerance);
+
   return [
     createVoucherLine({
       amount: settlement.employeeGrossPayableAmount,
@@ -1302,7 +1331,23 @@ function createSalaryPayableLines(record: FinanceReceivablePayableRecord) {
       subjectCode: getPayableExpenseSubjectCode(record),
       summary: `${record.sourceTitle} 工资费用`
     }),
+    ...employerContributionLines.map((line) => createVoucherLine({
+      amount: line.amount,
+      auxiliary: record.counterparty,
+      id: `${record.id}-debit-${line.id}`,
+      side: '借方',
+      subjectCode: '5602.02',
+      summary: line.summary
+    })),
     ...creditLines.map((line) => createVoucherLine({
+      amount: line.amount,
+      auxiliary: record.counterparty,
+      id: `${record.id}-credit-${line.id}`,
+      side: '贷方',
+      subjectCode: line.subjectCode,
+      summary: line.summary
+    })),
+    ...employerContributionLines.map((line) => createVoucherLine({
       amount: line.amount,
       auxiliary: record.counterparty,
       id: `${record.id}-credit-${line.id}`,
@@ -1331,7 +1376,7 @@ export function buildAccountingVoucherFromReceivablePayable(
   const sourceSummaryPrefix = record.sourceType.endsWith('确认') ? record.sourceType : `${record.sourceType}确认`;
   const common = {
     accountingPeriod: record.accountingPeriod,
-    amount: record.salarySettlement?.employeeGrossPayableAmount ?? record.amount,
+    amount: record.salarySettlement?.totalEmploymentCostAmount ?? record.amount,
     businessType: '权责凭证' as const,
     counterparty: record.counterparty,
     id: `voucher-business-${record.id}`,
@@ -1495,8 +1540,18 @@ export function buildAccountingVoucherFromTransaction(
     );
   }
 
-  if (record.adjustmentContext?.mode === '冲正' && originTransaction?.sourceType === '税费事项') {
-    const reversedTaxLines = originTransaction.taxPaymentAllocations?.map((allocation, allocationIndex) => (
+  if (
+    record.adjustmentContext?.mode === '冲正'
+    && originTransaction
+    && (originTransaction.sourceType === '税费事项' || originTransaction.accountingAllocations?.length)
+  ) {
+    const reversedTaxLines = (
+      originTransaction.accountingAllocations?.map((allocation) => ({
+        ...allocation,
+        taxType: allocation.label
+      }))
+      ?? originTransaction.taxPaymentAllocations
+    )?.map((allocation, allocationIndex) => (
       createVoucherLine({
         amount: allocation.amount,
         auxiliary: allocation.taxType,
@@ -1538,7 +1593,13 @@ export function buildAccountingVoucherFromTransaction(
     );
   }
 
-  const taxSettlementLines = record.taxPaymentAllocations?.map((allocation, allocationIndex) => (
+  const taxSettlementLines = (
+    record.accountingAllocations?.map((allocation) => ({
+      ...allocation,
+      taxType: allocation.label
+    }))
+    ?? record.taxPaymentAllocations
+  )?.map((allocation, allocationIndex) => (
     createVoucherLine({
       amount: allocation.amount,
       auxiliary: allocation.taxType,
@@ -2170,6 +2231,34 @@ export function buildAccountingVoucherFromLaterPeriodAdjustment(
   const voucherNo = `VCH-${record.accountingPeriod.replace('-', '')}-L${String(index + 1).padStart(3, '0')}`;
   const voucherDate = record.adjustedAt.slice(0, 10);
 
+  const differenceMode = record.adjustmentMode === '差额调整';
+  const targetAmount = differenceMode ? Math.abs(record.signedAmount) : record.amount;
+  if (targetAmount <= 0 || record.snapshot.amount <= 0 || record.snapshot.lines.length === 0) {
+    return undefined;
+  }
+  const preserveOriginalSide = differenceMode && record.signedAmount > 0;
+  const sourceLines = differenceMode
+    ? record.snapshot.lines.flatMap((line, lineIndex, lines) => {
+        const sameSideLines = lines.filter((candidate) => candidate.side === line.side);
+        const sameSideIndex = sameSideLines.findIndex((candidate) => candidate.id === line.id);
+        const priorAmount = sameSideLines.slice(0, sameSideIndex).reduce(
+          (total, candidate) => total + roundMoney(candidate.amount * targetAmount / record.snapshot.amount),
+          0
+        );
+        const amount = sameSideIndex === sameSideLines.length - 1
+          ? roundMoney(targetAmount - priorAmount)
+          : roundMoney(line.amount * targetAmount / record.snapshot.amount);
+
+        return amount > 0
+          ? [{ line, lineIndex, amount }]
+          : [];
+      })
+    : record.snapshot.lines.map((line, lineIndex) => ({ amount: line.amount, line, lineIndex }));
+
+  if (targetAmount <= 0 || sourceLines.length === 0) {
+    return undefined;
+  }
+
   return finalizeAccountingVoucher({
     accountingPeriod: record.accountingPeriod,
     amount: record.amount,
@@ -2178,20 +2267,23 @@ export function buildAccountingVoucherFromLaterPeriodAdjustment(
     id: `voucher-later-adjustment-${record.id}`,
     invoiceRefs: record.snapshot.invoiceRefs.map((invoiceRef) => ({ ...invoiceRef })),
     kind: '转账凭证',
-    lines: record.snapshot.lines.map((line, lineIndex) =>
+    lines: sourceLines.map(({ amount, line, lineIndex }) =>
       createVoucherLine({
-        amount: line.amount,
+        amount,
         auxiliary: line.auxiliary,
         id: `${record.id}-adjustment-${lineIndex + 1}`,
-        side: getOppositeVoucherLineSide(line.side),
+        side: preserveOriginalSide ? line.side : getOppositeVoucherLineSide(line.side),
         subjectCode: line.subjectCode,
-        summary: `后续调整：${line.summary}`
+        summary: `${differenceMode ? '差额调整' : '后续调整'}：${line.summary}`
       })
     ),
     sourceModule: '会计凭证',
     sourceNo: record.adjustmentNo,
     sourceRefs: [
-      createSourceRef('会计凭证', record.originalVoucherId, record.originalVoucherNo, '调整依据')
+      createSourceRef('会计凭证', record.originalVoucherId, record.originalVoucherNo, '调整依据'),
+      ...(record.correctionContext
+        ? [createSourceRef('应收应付', record.correctionContext.recordId, record.correctionContext.issueId, '调整依据')]
+        : [])
     ],
     sourceTitle: `后续调整 ${record.snapshot.sourceTitle}`,
     sourceType: '后续调整',
@@ -2674,7 +2766,8 @@ export function canCreateLaterPeriodAccountingVoucherAdjustment(
   record: AccountingVoucherRecord,
   periodLocks: AccountingPeriodLockRecord[] = [],
   targetAccountingPeriod?: string,
-  existingRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = []
+  existingRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = [],
+  correctionIssueId?: string
 ) {
   const baseAllowed =
     record.status === '已记账' &&
@@ -2689,7 +2782,7 @@ export function canCreateLaterPeriodAccountingVoucherAdjustment(
     return true;
   }
 
-  if (getExistingLaterPeriodAccountingVoucherAdjustment(record, targetAccountingPeriod, existingRows)) {
+  if (getExistingLaterPeriodAccountingVoucherAdjustment(record, targetAccountingPeriod, existingRows, correctionIssueId)) {
     return false;
   }
 
@@ -2702,12 +2795,14 @@ export function canCreateLaterPeriodAccountingVoucherAdjustment(
 export function getExistingLaterPeriodAccountingVoucherAdjustment(
   record: AccountingVoucherRecord,
   targetAccountingPeriod: string,
-  existingRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = []
+  existingRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = [],
+  correctionIssueId?: string
 ) {
   return existingRows.find(
     (row) =>
       row.originalVoucherId === record.id &&
-      row.accountingPeriod === targetAccountingPeriod
+      row.accountingPeriod === targetAccountingPeriod &&
+      (!correctionIssueId || row.correctionContext?.issueId === correctionIssueId)
   );
 }
 
@@ -2715,12 +2810,19 @@ export function getAvailableLaterPeriodAdjustmentAccountingPeriod(
   record: AccountingVoucherRecord,
   periodLocks: AccountingPeriodLockRecord[] = [],
   existingRows: AccountingVoucherLaterPeriodAdjustmentRecord[] = [],
+  correctionIssueId?: string,
   maxLookaheadMonths = 12
 ) {
   let targetAccountingPeriod = getDefaultLaterPeriodAdjustmentAccountingPeriod(record);
 
   for (let index = 0; index < maxLookaheadMonths; index += 1) {
-    if (canCreateLaterPeriodAccountingVoucherAdjustment(record, periodLocks, targetAccountingPeriod, existingRows)) {
+    if (canCreateLaterPeriodAccountingVoucherAdjustment(
+      record,
+      periodLocks,
+      targetAccountingPeriod,
+      existingRows,
+      correctionIssueId
+    )) {
       return targetAccountingPeriod;
     }
 
@@ -2740,7 +2842,12 @@ export function validateLaterPeriodAccountingVoucherAdjustment(
   const reason = input.reason.trim();
   const adjustmentPeriodFromDate = input.adjustedAt.slice(0, 7);
   const existingAdjustment = input.accountingPeriod
-    ? getExistingLaterPeriodAccountingVoucherAdjustment(record, input.accountingPeriod, existingRows)
+    ? getExistingLaterPeriodAccountingVoucherAdjustment(
+        record,
+        input.accountingPeriod,
+        existingRows,
+        input.correctionContext?.issueId
+      )
     : undefined;
 
   if (record.status !== '已记账' || record.reversalOfVoucherId) {
@@ -2775,6 +2882,16 @@ export function validateLaterPeriodAccountingVoucherAdjustment(
     issues.push('调整原因必填');
   }
 
+  if (input.adjustmentMode === '差额调整') {
+    if (!input.correctionContext) {
+      issues.push('差额调整缺少来源更正事项');
+    }
+
+    if (!input.signedAmount || Math.abs(input.signedAmount) < 0.01) {
+      issues.push('差额调整金额不能为 0');
+    }
+  }
+
   return issues;
 }
 
@@ -2807,13 +2924,20 @@ export function createLaterPeriodAccountingVoucherAdjustmentRecord({
     adjustedAt,
     adjustedBy: actor,
     adjustmentNo: getNextAccountingVoucherAdjustmentNo(existingRows, input.accountingPeriod),
-    amount: originalRecord.amount,
+    amount: input.adjustmentMode === '差额调整'
+      ? Math.abs(input.signedAmount ?? 0)
+      : originalRecord.amount,
+    adjustmentMode: input.adjustmentMode ?? '冲销原凭证',
     candidateStatus: '待记账',
-    id: `later-adjustment-${originalRecord.id}-${input.accountingPeriod}`,
+    id: `later-adjustment-${originalRecord.id}-${input.accountingPeriod}-${input.correctionContext?.issueId ?? 'general'}`,
     originalAccountingPeriod: originalRecord.accountingPeriod,
     originalVoucherId: originalRecord.id,
     originalVoucherNo: originalRecord.voucherNo,
+    correctionContext: input.correctionContext ? { ...input.correctionContext } : undefined,
     reason: input.reason.trim(),
+    signedAmount: input.adjustmentMode === '差额调整'
+      ? Number((input.signedAmount ?? 0).toFixed(2))
+      : -originalRecord.amount,
     snapshot: cloneAccountingVoucherRecord(originalRecord)
   };
 }

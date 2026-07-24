@@ -118,7 +118,7 @@ export const financeMonthEndMatterRecords: FinanceMonthEndMatterRecord[] = [
     sourceFiles: [
       {
         id: 'month-end-file-revenue-001',
-        name: '光谷商业空间_方案确认单.pdf',
+        name: '武汉城设商业运营有限公司_方案确认单.pdf',
         status: '已归档',
         type: '验收确认单',
         updatedAt: '2026-06-12'
@@ -126,9 +126,9 @@ export const financeMonthEndMatterRecords: FinanceMonthEndMatterRecord[] = [
     ],
     sourceModule: '应收应付',
     sourceNo: 'AR-202606-003',
-    sourceTitle: '光谷商业空间方案阶段权责确认',
+    sourceTitle: '武汉城设商业运营有限公司方案阶段权责确认',
     status: '无需处理',
-    title: '光谷商业空间方案阶段收入确认',
+    title: '武汉城设商业运营有限公司方案阶段收入确认',
     type: '收入确认',
     voucherDate: '2026-06-30'
   }

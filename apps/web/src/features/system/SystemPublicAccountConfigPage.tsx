@@ -23,6 +23,7 @@ import { OperationRecordSection } from '../../components/OperationRecordSection'
 import { TagChipList } from '../../components/TagChip';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { formatMoney } from '../finance/financeUtils';
+import { useFinanceManagement } from '../finance/FinanceManagementState';
 import {
   formatPublicAccountTail,
   getDefaultPublicAccount,
@@ -388,6 +389,7 @@ function PublicAccountDrawer({
 }
 
 export function SystemPublicAccountConfigPage() {
+  const { financeRows } = useFinanceManagement();
   const [messageApi, contextHolder] = message.useMessage();
   const { createPublicAccount, publicAccounts, updatePublicAccount, updatePublicAccountStatus } = usePublicAccountConfigState();
   const [statusFilter, setStatusFilter] = useState<'全部' | PublicAccountStatus>('全部');
@@ -443,13 +445,33 @@ export function SystemPublicAccountConfigPage() {
   }
 
   function saveAccount(id: string, nextValue: PublicAccountFormValue) {
-    updatePublicAccount(id, nextValue);
+    const activeReferenceCount = financeRows.filter(
+      (transaction) =>
+        transaction.publicAccountId === id &&
+        transaction.status !== '已作废' &&
+        (transaction.status !== '已入账' || transaction.reconciliationStatus !== '已对账')
+    ).length;
+    const result = updatePublicAccount(id, nextValue, activeReferenceCount);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     publicAccountDrawer.openDetail(id);
   }
 
   function toggleAccountStatus(record: PublicAccountRecord) {
     const nextStatus: PublicAccountStatus = record.status === '启用' ? '停用' : '启用';
-    updatePublicAccountStatus(record.id, nextStatus);
+    const activeReferenceCount = financeRows.filter(
+      (transaction) =>
+        transaction.publicAccountId === record.id &&
+        transaction.status !== '已作废' &&
+        (transaction.status !== '已入账' || transaction.reconciliationStatus !== '已对账')
+    ).length;
+    const result = updatePublicAccountStatus(record.id, nextStatus, activeReferenceCount);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     void messageApi.success(`${record.displayName}已${nextStatus}`);
   }
 

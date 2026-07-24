@@ -2,6 +2,7 @@ import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import type { StatusTagTone } from '../../components/Detail';
 import type { SalarySettlementSnapshot } from '../salary/salaryDomain';
+import type { BrandAcceptanceTimelinessResult } from '../customers/brandAcceptancePolicyModel';
 import type { FinanceCategorySnapshot, FinanceReportAggregation, FinanceTransactionCategory } from './financeData';
 import { getFinanceCategorySnapshot } from './financeData';
 import { partTimeLaborPaymentSnapshot202606 } from './financeNaturalPersonPaymentSeeds';
@@ -34,13 +35,28 @@ export type FinanceCustomerTaskSettlementLine = {
   acceptedBy: string;
   amount: number;
   acceptanceEvidence: RelatedFileRecord[];
+  customerAcceptanceCorrectionReason?: string;
+  customerAcceptanceRemark: string;
+  customerAcceptedOn: string;
+  customerAcceptanceRecordedAt: string;
+  customerAcceptanceRecordedBy: string;
+  customerAcceptanceUpdatedAt: string;
+  customerAcceptanceUpdatedBy: string;
+  customerScore: number;
+  deductionRate: number;
+  deductionAmount: number;
   priceVersion: number;
   priceVersionId: string;
+  standardAmount: number;
+  qualityPenaltyPoints: number;
   storeId: string;
   storeName: string;
   taskCode: string;
   taskId: string;
   taskName: string;
+  timelinessPenaltyPoints: number;
+  timelinessResult: BrandAcceptanceTimelinessResult;
+  totalPenaltyPoints: number;
   unitPrice: number;
 };
 
@@ -54,9 +70,17 @@ export type FinanceCustomerTaskSettlementSnapshot = {
   customerId: string;
   customerName: string;
   lineItems: FinanceCustomerTaskSettlementLine[];
-  recordKind: '原始结算' | '后续调整';
+  recordKind: '原始结算';
   settlementMode: '按任务结算' | '按月汇总';
   settlementPeriod: string;
+};
+
+export type FinanceCustomerTaskSettlementCorrection = {
+  accountingPeriod: string;
+  adjustmentNo: string;
+  bookedAt: string;
+  differenceAmount: number;
+  issueId: string;
 };
 
 export type FinanceReceivablePayableRecord = {
@@ -66,6 +90,7 @@ export type FinanceReceivablePayableRecord = {
   categorySnapshot: FinanceCategorySnapshot;
   confirmDate: string;
   confirmationStatus: FinanceReceivablePayableConfirmationStatus;
+  contractId?: string;
   counterparty: string;
   counterpartyId?: string;
   counterpartyType: FinanceReceivablePayableCounterpartyType;
@@ -82,6 +107,7 @@ export type FinanceReceivablePayableRecord = {
   reportAggregation: FinanceReportAggregation;
   salarySettlement?: SalarySettlementSnapshot;
   taskSettlement?: FinanceCustomerTaskSettlementSnapshot;
+  taskSettlementCorrections?: FinanceCustomerTaskSettlementCorrection[];
   settledAmount: number;
   settlementStatus: FinanceReceivablePayableSettlementStatus;
   sourceNo: string;
@@ -136,7 +162,14 @@ export const financeReceivablePayableCounterpartyTypeOptions: FinanceReceivableP
 ];
 
 export function getReceivablePayableOutstandingAmount(record: FinanceReceivablePayableRecord) {
-  return Math.max(0, record.amount - record.settledAmount);
+  return Math.max(0, getReceivablePayableConfirmedAmount(record) - record.settledAmount);
+}
+
+export function getReceivablePayableConfirmedAmount(record: FinanceReceivablePayableRecord) {
+  return Number((record.amount + (record.taskSettlementCorrections ?? []).reduce(
+    (total, correction) => total + correction.differenceAmount,
+    0
+  )).toFixed(2));
 }
 
 type FinanceReceivablePayableRecordSeed = Omit<FinanceReceivablePayableRecord, 'categorySnapshot' | 'reportAggregation' | 'taxBasis'> & {
@@ -152,7 +185,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-01',
     confirmationStatus: '已确认',
-    counterparty: '奈雪华南区域',
+    counterparty: '湖北星际装饰有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-001',
@@ -201,7 +234,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-08',
     confirmationStatus: '已确认',
-    counterparty: '星河餐饮集团',
+    counterparty: '湖南新岚餐饮管理有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-002',
@@ -209,7 +242,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-002',
-        name: '星河餐饮集团_阶段确认单.pdf',
+        name: '湖南新岚餐饮管理有限公司_阶段确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-06-08'
@@ -240,7 +273,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 9800,
     settlementStatus: '部分结清',
     sourceNo: 'CON-2026-009',
-    sourceTitle: '星河餐饮集团空间设计项目',
+    sourceTitle: '湖南新岚餐饮管理有限公司空间设计项目',
     sourceType: '合同应收',
     updatedAt: '2026-06-15 09:20'
   },
@@ -250,7 +283,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-12',
     confirmationStatus: '已确认',
-    counterparty: '光谷商业空间',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-003',
@@ -258,7 +291,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-003',
-        name: '光谷商业空间_方案确认单.pdf',
+        name: '武汉城设商业运营有限公司_方案确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-06-12'
@@ -281,7 +314,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'PRJ-202606-003',
-    sourceTitle: '光谷商业空间方案阶段',
+    sourceTitle: '武汉城设商业运营有限公司方案阶段',
     sourceType: '合同应收',
     updatedAt: '2026-06-12 16:20'
   },
@@ -291,7 +324,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '外协付款',
     confirmDate: '2026-06-11',
     confirmationStatus: '已确认',
-    counterparty: '示例兼职 B',
+    counterparty: '林悦',
     counterpartyId: '20260006',
     counterpartyType: '外协',
     direction: '应付',
@@ -300,7 +333,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-006',
-        name: '示例兼职B_外协结算单.pdf',
+        name: '林悦_外协结算单.pdf',
         status: '已上传',
         type: '结算单',
         updatedAt: '2026-06-11'
@@ -324,7 +357,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'OUT-202606-0008',
-    sourceTitle: '示例兼职 B 外协结算',
+    sourceTitle: '林悦 外协结算',
     sourceType: '外协结算',
     updatedAt: '2026-06-11 14:40'
   },
@@ -334,7 +367,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-18',
     confirmationStatus: '已确认',
-    counterparty: '青禾咖啡',
+    counterparty: '长沙旧巷商业管理有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-004',
@@ -342,7 +375,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-008',
-        name: '青禾咖啡_设计尾款确认单.pdf',
+        name: '长沙旧巷商业管理有限公司_设计尾款确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-06-18'
@@ -373,7 +406,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 24000,
     settlementStatus: '已结清',
     sourceNo: 'CON-2026-020',
-    sourceTitle: '青禾咖啡门店设计尾款',
+    sourceTitle: '长沙旧巷商业管理有限公司门店设计尾款',
     sourceType: '合同应收',
     updatedAt: '2026-06-21 09:30'
   },
@@ -612,7 +645,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-18',
     confirmationStatus: '已确认',
-    counterparty: '美刻咖啡',
+    counterparty: '湖北星际装饰有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-005',
@@ -620,7 +653,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-013',
-        name: '美刻咖啡_设计阶段确认单.pdf',
+        name: '湖北星际装饰有限公司_设计阶段确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-06-18'
@@ -643,7 +676,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-012',
-    sourceTitle: '美刻咖啡门店设计阶段款',
+    sourceTitle: '湖北星际装饰有限公司门店设计阶段款',
     sourceType: '合同应收',
     updatedAt: '2026-06-18 15:10'
   },
@@ -653,7 +686,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-21',
     confirmationStatus: '已确认',
-    counterparty: '合众餐饮集团',
+    counterparty: '湖南新岚餐饮管理有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-006',
@@ -694,7 +727,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-20',
     confirmationStatus: '已确认',
-    counterparty: '光谷商业空间',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-007',
@@ -702,7 +735,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-015',
-        name: '光谷商业空间_深化服务确认单.pdf',
+        name: '武汉城设商业运营有限公司_深化服务确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-06-20'
@@ -725,7 +758,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'PRJ-202606-007',
-    sourceTitle: '光谷商业空间深化服务阶段',
+    sourceTitle: '武汉城设商业运营有限公司深化服务阶段',
     sourceType: '合同应收',
     updatedAt: '2026-06-20 14:15'
   },
@@ -735,7 +768,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-06-16',
     confirmationStatus: '已确认',
-    counterparty: '旧票红冲调整',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202606-008',
@@ -743,7 +776,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-018',
-        name: '旧票红冲调整_服务确认单.pdf',
+        name: '武汉城设商业运营有限公司_服务确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-06-16'
@@ -766,7 +799,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-018',
-    sourceTitle: '旧票红冲调整服务确认',
+    sourceTitle: '武汉城设商业运营有限公司服务确认',
     sourceType: '合同应收',
     updatedAt: '2026-06-16 09:20'
   },
@@ -776,7 +809,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-05-20',
     confirmationStatus: '已确认',
-    counterparty: '示例客户 A',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202605-001',
@@ -784,7 +817,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-016',
-        name: '示例客户A_项目阶段确认单.pdf',
+        name: '武汉城设商业运营有限公司_项目阶段确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-05-20'
@@ -807,7 +840,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-005',
-    sourceTitle: '示例客户 A 项目阶段款',
+    sourceTitle: '武汉城设商业运营有限公司 项目阶段款',
     sourceType: '合同应收',
     updatedAt: '2026-05-20 16:10'
   },
@@ -817,7 +850,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-03-28',
     confirmationStatus: '已确认',
-    counterparty: '前期未开票客户',
+    counterparty: '长沙旧巷商业管理有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202603-001',
@@ -858,7 +891,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     category: '客户回款',
     confirmDate: '2026-04-18',
     confirmationStatus: '已确认',
-    counterparty: '春序茶饮',
+    counterparty: '长沙旧巷商业管理有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-202604-001',
@@ -866,7 +899,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     files: [
       {
         id: 'rp-file-017',
-        name: '春序茶饮_空间设计服务确认单.pdf',
+        name: '长沙旧巷商业管理有限公司_空间设计服务确认单.pdf',
         status: '已上传',
         type: '确认单',
         updatedAt: '2026-04-18'
@@ -889,7 +922,7 @@ export const financeReceivablePayableRecords: FinanceReceivablePayableRecord[] =
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'CON-2026-004',
-    sourceTitle: '春序茶饮空间设计服务',
+    sourceTitle: '长沙旧巷商业管理有限公司空间设计服务',
     sourceType: '合同应收',
     updatedAt: '2026-04-18 17:10'
   },

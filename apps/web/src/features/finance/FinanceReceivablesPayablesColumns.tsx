@@ -5,6 +5,7 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import type { FinanceTransactionRecord } from './financeData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import {
+  getReceivablePayableConfirmedAmount,
   getReceivablePayableOutstandingAmount,
   receivablePayableDirectionTone,
   receivablePayableReviewProgressTone,
@@ -110,7 +111,9 @@ export function buildFinanceReceivablePayableColumns(
     },
     {
       dataIndex: 'amount',
-      render: (amount: number) => <CellText>{formatMoney(amount)}</CellText>,
+      render: (_amount: number, record) => (
+        <CellText>{formatMoney(getReceivablePayableConfirmedAmount(record))}</CellText>
+      ),
       title: financeReceivablePayableLedgerAmountLabels.amount,
       width: 128
     },
@@ -155,9 +158,7 @@ export const financeReceivablePayableLinkedTransactionColumns: TableColumnsType<
   },
   {
     dataIndex: 'amount',
-    render: (_amount: number, record) => (
-      <CellText tone={getAmountTone(record)}>{formatMoney(record.amount)}</CellText>
-    ),
+    render: (amount: number, record) => <CellText tone={getAmountTone(record)}>{formatMoney(amount)}</CellText>,
     title: '流水金额',
     width: 132
   },

@@ -44,7 +44,7 @@ function createReceivablePayableRecord(overrides: Partial<FinanceReceivablePayab
     categorySnapshot,
     confirmDate: '2026-06-20',
     confirmationStatus: '已确认',
-    counterparty: '光谷商业空间',
+    counterparty: '武汉城设商业运营有限公司',
     counterpartyType: '客户',
     direction: '应收',
     documentNo: 'AR-TEST-001',
@@ -59,7 +59,7 @@ function createReceivablePayableRecord(overrides: Partial<FinanceReceivablePayab
     settledAmount: 0,
     settlementStatus: '未结清',
     sourceNo: 'CON-TEST-001',
-    sourceTitle: '光谷商业空间方案阶段',
+    sourceTitle: '武汉城设商业运营有限公司方案阶段',
     sourceType: '任务结算',
     taxBasis: {
       basisSource: '来源单据',
@@ -77,7 +77,7 @@ function createReceivablePayableRecord(overrides: Partial<FinanceReceivablePayab
 function createInvoiceRecord(overrides: Partial<FinanceInvoiceRecord> = {}): FinanceInvoiceRecord {
   return {
     accountingPeriod: '2026-07',
-    counterparty: '光谷商业空间',
+    counterparty: '武汉城设商业运营有限公司',
     declarationPeriod: '2026-Q3',
     declarationTreatment: '本期申报',
     direction: '销项',
@@ -117,8 +117,8 @@ const tests: UnitTest[] = [
   {
     name: 'labels name-only invoice candidates as name matches',
     run: () => {
-      const invoice = createInvoiceRecord({ counterparty: '光谷商业空间', id: 'invoice-name-match-001' });
-      const record = createReceivablePayableRecord({ counterparty: '光谷商业空间', id: 'rp-name-match-001' });
+      const invoice = createInvoiceRecord({ counterparty: '武汉城设商业运营有限公司', id: 'invoice-name-match-001' });
+      const record = createReceivablePayableRecord({ counterparty: '武汉城设商业运营有限公司', id: 'rp-name-match-001' });
       const candidates = buildInvoiceBusinessAssociationCandidates(invoice, [invoice], [], [record]);
 
       assertEqual(candidates.length, 1, 'matching counterparty should produce one candidate');

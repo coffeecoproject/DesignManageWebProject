@@ -8,7 +8,8 @@ import {
   WarningOutlined
 } from '@ant-design/icons';
 import { Alert, Button, Empty, Space, message } from 'antd';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { MetricCard } from '../../components/MetricCard';
@@ -59,6 +60,9 @@ function getNextActiveRecordId(queueRows: FinanceTransactionRecord[], currentRec
 }
 
 export function FinanceReviewPage() {
+  const [searchParams] = useSearchParams();
+  const transactionNo = searchParams.get('transactionNo');
+  const handledTransactionNoRef = useRef<string>();
   const [messageApi, contextHolder] = message.useMessage();
   const {
     addTransactionVoucherFile,
@@ -83,6 +87,20 @@ export function FinanceReviewPage() {
   const activePeriodReadbackNotice = activeRecord && activePeriodLocked
     ? getClosedAccountingPeriodReadbackNotice(activeRecord.accountingPeriod, '当前流水复核事项')
     : undefined;
+
+  useEffect(() => {
+    if (!transactionNo || handledTransactionNoRef.current === transactionNo) {
+      return;
+    }
+
+    const targetRecord = queueRows.find((record) => record.transactionNo === transactionNo);
+    if (!targetRecord) {
+      return;
+    }
+
+    handledTransactionNoRef.current = transactionNo;
+    setActiveRecordId(targetRecord.id);
+  }, [queueRows, transactionNo]);
 
   function buildVoucherFile(file: FinanceVoucherUploadFile, record: FinanceTransactionRecord): RelatedFileRecord | undefined {
     const maxFileSize = 10 * 1024 * 1024;
@@ -130,14 +148,6 @@ export function FinanceReviewPage() {
     }
 
     void messageApi.success('凭证已补充');
-  }
-
-  function handlePreviewFile(file: RelatedFileRecord) {
-    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
-  }
-
-  function handleDownloadFile(file: RelatedFileRecord) {
-    void messageApi.success(`${file.name} 下载请求已记录`);
   }
 
   function handleReview(record: FinanceTransactionRecord) {
@@ -337,8 +347,6 @@ export function FinanceReviewPage() {
                     disabled={activePeriodLocked}
                     files={activeRecord.files}
                     title={activeDirectionLabels?.uploadVoucher}
-                    onDownload={handleDownloadFile}
-                    onPreview={handlePreviewFile}
                     onRemove={(file) => {
                       const periodGuard = getAccountingPeriodGuard(activeRecord.accountingPeriod, '移除流水凭证');
 

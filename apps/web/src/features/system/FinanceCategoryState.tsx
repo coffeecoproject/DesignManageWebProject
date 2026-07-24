@@ -12,6 +12,11 @@ import {
   type FinanceSourceType,
   type FinanceTransactionDirection
 } from '../finance/financeData';
+import {
+  allowMasterDataMutation,
+  validatePrimaryCategoryStatusChange,
+  type MasterDataMutationResult
+} from './masterDataLifecycleModel';
 
 export type FinancePrimaryCategoryFormValue = Pick<
   FinancePrimaryCategoryConfig,
@@ -37,9 +42,9 @@ type FinanceCategoryStateValue = {
   financePrimaryCategories: FinancePrimaryCategoryConfig[];
   financeSecondaryCategories: FinanceSecondaryCategoryConfig[];
   updatePrimaryCategory: (id: string, nextValue: FinancePrimaryCategoryFormValue) => void;
-  updatePrimaryCategoryStatus: (id: string, status: FinanceCategoryStatus) => void;
+  updatePrimaryCategoryStatus: (id: string, status: FinanceCategoryStatus) => MasterDataMutationResult;
   updateSecondaryCategory: (id: string, nextValue: FinanceSecondaryCategoryFormValue) => void;
-  updateSecondaryCategoryStatus: (id: string, status: FinanceCategoryStatus) => void;
+  updateSecondaryCategoryStatus: (id: string, status: FinanceCategoryStatus) => MasterDataMutationResult;
 };
 
 export const financeReportAggregationOptions: FinanceReportAggregation[] = [
@@ -57,6 +62,7 @@ export const financeSourceTypeOptions: FinanceSourceType[] = [
   '外协结算',
   '报销单',
   '税费事项',
+  '社保公积金缴费',
   '员工代收流水',
   '现金暂收流水',
   '流水冲正',
@@ -168,6 +174,14 @@ export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
         );
       },
       updatePrimaryCategoryStatus(id, status) {
+        const enabledChildCount = financeSecondaryCategories.filter(
+          (row) => row.primaryId === id && row.status === '启用'
+        ).length;
+        const validation = validatePrimaryCategoryStatusChange(status, enabledChildCount);
+        if (!validation.success) {
+          return validation;
+        }
+
         setFinancePrimaryCategories((currentRows) =>
           currentRows.map((row) =>
             row.id === id
@@ -179,6 +193,7 @@ export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
               : row
           )
         );
+        return validation;
       },
       updateSecondaryCategory(id, nextValue) {
         setFinanceSecondaryCategories((currentRows) =>
@@ -209,6 +224,7 @@ export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
               : row
           )
         );
+        return allowMasterDataMutation();
       }
     }),
     [financePrimaryCategories, financeSecondaryCategories]

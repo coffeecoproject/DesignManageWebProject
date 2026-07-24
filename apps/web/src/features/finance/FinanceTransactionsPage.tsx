@@ -9,7 +9,8 @@ import {
 } from '@ant-design/icons';
 import { Alert, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   DateScopeFilter,
   getDateScopeMonthRange,
@@ -186,6 +187,9 @@ function matchesFilters(
 }
 
 export function FinanceTransactionsPage() {
+  const [searchParams] = useSearchParams();
+  const deepLinkQuery = searchParams.toString();
+  const handledDeepLinkRef = useRef('');
   const [messageApi, contextHolder] = message.useMessage();
   const {
     addFinanceTransaction,
@@ -197,6 +201,25 @@ export function FinanceTransactionsPage() {
   const [filters, setFilters] = useState<FinanceTransactionFilters>(defaultFilters);
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [adjustmentDrawerOpen, setAdjustmentDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!deepLinkQuery || handledDeepLinkRef.current === deepLinkQuery) {
+      return;
+    }
+
+    const transactionNo = new URLSearchParams(deepLinkQuery).get('transactionNo')?.trim();
+    const target = transactionNo
+      ? records.find((record) => record.transactionNo === transactionNo)
+      : undefined;
+
+    if (!target) {
+      return;
+    }
+
+    handledDeepLinkRef.current = deepLinkQuery;
+    setActiveTab(target.direction === '支出' ? '支出' : '收入');
+    setActiveRecordId(target.id);
+  }, [deepLinkQuery, records]);
   const occurredDateRange = useMemo(
     () => getDateScopeRange(filters.occurredTime, financeTransactionDefaultMonth),
     [filters.occurredTime]
@@ -548,12 +571,6 @@ export function FinanceTransactionsPage() {
                       <DetailSection icon={<FileProtectOutlined />} title={getFinanceDirectionLabels(activeRecord.direction, activeRecord.paymentMethod).voucherSection}>
                         <RelatedFileTable
                           records={activeRecord.files}
-                          onPreview={(file) => {
-                            void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
-                          }}
-                          onDownload={(file) => {
-                            void messageApi.success(`${file.name} 下载请求已记录`);
-                          }}
                         />
                       </DetailSection>
                     </div>

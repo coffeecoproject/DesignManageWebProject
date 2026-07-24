@@ -26,6 +26,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
+import { useFinanceSocialInsuranceState } from './FinanceSocialInsuranceState';
 import { accountingSubjectProfile } from './financeAccountingSubjectData';
 import {
   applyAccountingVoucherLifecycle,
@@ -799,6 +800,7 @@ function PeriodCloseReopenDrawer({
 }
 
 export function FinancePeriodClosePage() {
+  const { socialInsuranceRecords } = useFinanceSocialInsuranceState();
   const {
     addAccountingVoucherLaterPeriodAdjustment,
     accountingPeriodLocks,
@@ -876,6 +878,7 @@ export function FinancePeriodClosePage() {
         ledgerEntries,
         monthEndMatterRows,
         periodLocks: accountingPeriodLocks,
+        socialInsuranceRows: socialInsuranceRecords,
         taxMatterRows,
         voucherRows
       }),
@@ -886,6 +889,7 @@ export function FinancePeriodClosePage() {
       filters,
       ledgerEntries,
       monthEndMatterRows,
+      socialInsuranceRecords,
       taxMatterRows,
       voucherRows
     ]
@@ -1000,12 +1004,16 @@ export function FinancePeriodClosePage() {
       return;
     }
 
-    closeAccountingPeriod(
+    const closed = closeAccountingPeriod(
       confirmRecord.accountingPeriod,
       closeReason.trim(),
       confirmRecord.checkItems,
       createFinancePeriodCloseSummarySnapshot(confirmRecord)
     );
+    if (!closed) {
+      void messageApi.warning('结账条件已变化，请重新执行结账检查');
+      return;
+    }
     setActivePeriod(confirmRecord.accountingPeriod);
     setConfirmPeriod(undefined);
   }

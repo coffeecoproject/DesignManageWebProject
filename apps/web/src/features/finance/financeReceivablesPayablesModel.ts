@@ -1,5 +1,6 @@
 import {
   financeReceivablePayableSettlementStatusOptions,
+  getReceivablePayableConfirmedAmount,
   getReceivablePayableOutstandingAmount,
   type FinanceReceivablePayableCounterpartyType,
   type FinanceReceivablePayableDirection,
@@ -256,7 +257,7 @@ export function buildFinanceReceivablePayableAccrualReadiness(
     hasBlankAccrualSourceValue(record.counterparty) ||
     hasBlankAccrualSourceValue(record.accountingPeriod) ||
     hasBlankAccrualSourceValue(record.confirmDate) ||
-    record.amount <= 0
+    getReceivablePayableConfirmedAmount(record) <= 0
   ) {
     issues.push('source_document_incomplete');
   }
@@ -492,11 +493,13 @@ export function matchesFinanceReceivablePayableFilters(
 }
 
 export function getFinanceReceivablePayableSettlementProgress(record: FinanceReceivablePayableRecord) {
-  if (record.amount <= 0) {
+  const confirmedAmount = getReceivablePayableConfirmedAmount(record);
+
+  if (confirmedAmount <= 0) {
     return '0%';
   }
 
-  const percent = Math.min(100, Math.round((record.settledAmount / record.amount) * 100));
+  const percent = Math.min(100, Math.round((record.settledAmount / confirmedAmount) * 100));
   return `${percent}%`;
 }
 
@@ -580,7 +583,24 @@ export function isFinanceReceivablePayableOverdue(
 }
 
 export function hasFinanceReceivablePayableActiveSettlement(linkedTransactionRows: FinanceTransactionRecord[]) {
-  return linkedTransactionRows.some(isFinanceReceivablePayableActiveSettlementTransaction);
+  if (linkedTransactionRows.some(isFinanceReceivablePayablePendingSettlementTransaction)) {
+    return true;
+  }
+
+  const postedReversalOriginNos = new Set(
+    linkedTransactionRows
+      .filter(isFinanceReceivablePayablePostedSettlementTransaction)
+      .filter((record) => record.adjustmentContext?.mode === '冲正')
+      .map((record) => record.adjustmentContext?.originTransactionNo)
+      .filter((transactionNo): transactionNo is string => Boolean(transactionNo))
+  );
+
+  return linkedTransactionRows
+    .filter(isFinanceReceivablePayablePostedSettlementTransaction)
+    .some((record) => (
+      record.adjustmentContext?.mode !== '冲正'
+      && !postedReversalOriginNos.has(record.transactionNo)
+    ));
 }
 
 export function hasFinanceReceivablePayableBookedVoucher(
@@ -590,7 +610,7 @@ export function hasFinanceReceivablePayableBookedVoucher(
   return lifecycleRows.some(
     (lifecycle) =>
       lifecycle.voucherId === `voucher-business-${record.id}`
-      && (lifecycle.status === '已记账' || lifecycle.status === '已冲销')
+      && lifecycle.status === '已记账'
   );
 }
 
@@ -640,7 +660,7 @@ export function buildFinanceReceivablePayableMetrics(
     (total, record) => total + getReceivablePayableOutstandingAmount(record),
     0
   );
-  const confirmedAmount = confirmedRows.reduce((total, record) => total + record.amount, 0);
+  const confirmedAmount = confirmedRows.reduce((total, record) => total + getReceivablePayableConfirmedAmount(record), 0);
   const overdueRows = confirmedRows.filter((record) => isFinanceReceivablePayableOverdue(record));
 
   return {
@@ -900,7 +920,9 @@ function getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(
   record: FinanceReceivablePayableRecord,
   settledAmount: number
 ): FinanceReceivablePayableSettlementStatus {
-  if (settledAmount >= record.amount && record.amount > 0) {
+  const confirmedAmount = getReceivablePayableConfirmedAmount(record);
+
+  if (settledAmount >= confirmedAmount && confirmedAmount > 0) {
     return '已结清';
   }
 
@@ -911,7 +933,7 @@ function getFinanceReceivablePayableSettlementStatusAfterPostedSettlement(
   return '未结清';
 }
 
-function getFinanceReceivablePayableSettlementSignedAmount(
+export function getFinanceReceivablePayableSettlementSignedAmount(
   record: FinanceReceivablePayableRecord,
   transaction: FinanceTransactionRecord,
   financeRows: FinanceTransactionRecord[] = []
@@ -942,8 +964,9 @@ export function getFinanceReceivablePayableSettlementSnapshot(
   financeRows: FinanceTransactionRecord[] = []
 ): FinanceReceivablePayableSettlementSnapshot {
   const linkedTransactionRows = getFinanceReceivablePayableLinkedTransactionRows(record, financeRows);
+  const confirmedAmount = getReceivablePayableConfirmedAmount(record);
   const settledAmount = Math.min(
-    record.amount,
+    confirmedAmount,
     Math.max(
       0,
       linkedTransactionRows

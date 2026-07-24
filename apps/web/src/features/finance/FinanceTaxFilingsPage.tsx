@@ -8,42 +8,27 @@ import type { TableColumnsType } from 'antd';
 import { Select, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { StatusTag } from '../../components/Detail';
-import {
-  DateScopeFilter,
-  getDateScopeMonthRange,
-  getDateScopeRange,
-  type DateRangeFilterValue,
-  type DateScopeFilterValue
-} from '../../components/DateFilterFields';
 import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { ManagementTable } from '../../components/ManagementTable';
 import { ManagementTableTabs } from '../../components/ManagementTableTabs';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
-import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { CompactCell } from '../../components/TableCell';
 import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import { getDefaultPublicAccountRef, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
-import { isSalaryMonthlyPaid } from '../salary/salaryDomain';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { useFinanceManagement } from './FinanceManagementState';
-import { useFinanceSocialInsuranceState } from './FinanceSocialInsuranceState';
 import { buildCorporateIncomeTaxAccountingSources } from './financeCorporateIncomeTaxModel';
 import { buildCapitalBookStampDutySourcesFromLedger } from './financeStampDutyLedgerBridge';
-import {
-  type SocialInsuranceEmployeeRecord,
-  type SocialInsuranceHandlingStatus
-} from './financeSocialInsuranceData';
 import { StampDutySourceDetailDrawer } from './StampDutySourceDetailDrawer';
 import type { FinanceStampDutySourceRecord } from './financeStampDutyModel';
 import {
   TaxDeclarationEvidenceDrawer,
   TaxDeclarationResultDrawer,
   TaxDeclarationRevisionDrawer,
-  TaxMatterReceiptDrawer,
   TaxOffsetResultDrawer,
   TaxPaymentResultDrawer,
   TaxRefundApplicationDrawer,
@@ -53,8 +38,7 @@ import { FinanceTaxMatterDetailDrawer } from './FinanceTaxMatterDetailDrawer';
 import {
   getTaxMatterProcessStatusLabel,
   taxMatterOfficialHandlingEntries,
-  type TaxMatterEditorMode,
-  type TaxMatterModuleScope
+  type TaxMatterEditorMode
 } from './financeTaxMatterHandlingModel';
 import {
   taxMatterProcessStatusTone,
@@ -68,13 +52,10 @@ import {
 } from './financeDeclarationPreparationData';
 import {
   applyDeclarationPreparationsToTaxMatters,
-  applyTaxMatterSourceSummaries,
   attachTaxMatterPaymentTransaction,
   attachTaxMatterRefundTransaction,
-  buildSocialInsuranceTaxMatterSummary,
   buildTaxMatterPaymentTransaction,
   buildTaxMatterRefundTransaction,
-  getSocialInsuranceCategoryByTaxMatterType,
   findDeclarationPreparationForTaxMatter,
   getTaxMatterDeclarationPreparationSnapshot,
   getTaxMatterDeclarationResultValidationError,
@@ -92,7 +73,6 @@ import {
   recordTaxMatterRefundResult,
   startTaxMatterDeclarationRevision,
   supplementTaxMatterDeclarationEvidence,
-  type SocialInsuranceTaxMatterSummary,
   type TaxMatterDeclarationEvidenceInput,
   type TaxMatterDeclarationResultInput,
   type TaxMatterOffsetResultInput,
@@ -102,7 +82,6 @@ import {
 } from './financeTaxMatterModel';
 import {
   financeToday,
-  getAccountingPeriodFromBusinessPeriod,
   formatMoney
 } from './financeUtils';
 
@@ -112,13 +91,11 @@ type TaxMatterEditorState = {
   mode: TaxMatterEditorMode;
   recordId: string;
 } | undefined;
-type TaxMatterPageId = 'tax-handling' | 'salary-social-insurance';
 
 type FinanceTaxMatterFilters = {
   keyword: string;
   matterType: FilterOptionValue | FinanceTaxMatterType;
   period: FilterOptionValue | string;
-  periodScope: DateScopeFilterValue;
 };
 
 const currentPeriod = financeToday.slice(0, 7);
@@ -127,28 +104,10 @@ const currentQuarter = getQuarterPeriod(financeToday);
 const defaultFilters: FinanceTaxMatterFilters = {
   keyword: '',
   matterType: '全部',
-  period: '全部',
-  periodScope: { mode: 'all' }
+  period: '全部'
 };
 
-const taxMatterTypeScopeMap: Record<TaxMatterModuleScope, FinanceTaxMatterType[]> = {
-  tax: ['个人所得税', '增值税及附加', '企业所得税', '印花税', '其他税费'],
-  social: ['社保缴纳', '公积金缴纳']
-};
-
-const taxMatterPageConfig: Record<TaxMatterModuleScope, {
-  countUnit: string;
-  pageId: TaxMatterPageId;
-}> = {
-  tax: {
-    countUnit: '条税务办理事项',
-    pageId: 'tax-handling'
-  },
-  social: {
-    countUnit: '条社保公积金事项',
-    pageId: 'salary-social-insurance'
-  }
-};
+const allowedTaxMatterTypes = new Set<FinanceTaxMatterType>(['个人所得税', '增值税及附加', '企业所得税', '印花税', '其他税费']);
 
 function getQuarterPeriod(dateText: string) {
   const [year, monthText] = dateText.split('-');
@@ -166,69 +125,19 @@ function getSourceSearchText(record: FinanceTaxMatterRecord) {
   return record.sourceItems.map((item) => `${item.name} ${item.sourceModule} ${item.status}`).join(' ');
 }
 
-function renderTaxMatterProcessStatus(status: FinanceTaxMatterProcessStatus, moduleScope: TaxMatterModuleScope) {
+function renderTaxMatterProcessStatus(status: FinanceTaxMatterProcessStatus) {
   return (
     <StatusTag
       tone={taxMatterProcessStatusTone[status]}
-      value={getTaxMatterProcessStatusLabel(status, moduleScope)}
+      value={getTaxMatterProcessStatusLabel(status)}
     />
   );
 }
 
-function getQuarterRange(period: string): DateRangeFilterValue | undefined {
-  const match = /^(\d{4})-Q([1-4])$/.exec(period);
-
-  if (!match) {
-    return undefined;
-  }
-
-  const [, year, quarterText] = match;
-  const quarter = Number(quarterText);
-  const startMonth = String((quarter - 1) * 3 + 1).padStart(2, '0');
-  const endMonth = String(quarter * 3).padStart(2, '0');
-
-  return {
-    endDate: getDateScopeMonthRange(`${year}-${endMonth}`).endDate,
-    startDate: `${year}-${startMonth}-01`
-  };
-}
-
-function getTaxMatterPeriodRange(period: string): DateRangeFilterValue | undefined {
-  if (/^\d{4}-\d{2}$/.test(period)) {
-    return getDateScopeMonthRange(period);
-  }
-
-  return getQuarterRange(period);
-}
-
-function isDateRangeOverlapping(left: DateRangeFilterValue, right: DateRangeFilterValue) {
-  return left.startDate <= right.endDate && right.startDate <= left.endDate;
-}
-
-function isTaxMatterInPeriodScope(
-  record: FinanceTaxMatterRecord,
-  periodScope: DateScopeFilterValue,
-  defaultMonth: string
-) {
-  const filterRange = getDateScopeRange(periodScope, defaultMonth);
-
-  if (!filterRange) {
-    return true;
-  }
-
-  const recordRange = getTaxMatterPeriodRange(record.period);
-
-  return recordRange ? isDateRangeOverlapping(recordRange, filterRange) : false;
-}
-
-function matchesFilters(record: FinanceTaxMatterRecord, filters: FinanceTaxMatterFilters, moduleScope: TaxMatterModuleScope) {
+function matchesFilters(record: FinanceTaxMatterRecord, filters: FinanceTaxMatterFilters) {
   const keyword = filters.keyword.trim().toLowerCase();
 
-  if (moduleScope === 'social' && !isTaxMatterInPeriodScope(record, filters.periodScope, currentPeriod)) {
-    return false;
-  }
-
-  if (moduleScope !== 'social' && filters.period !== '全部' && record.period !== filters.period) {
+  if (filters.period !== '全部' && record.period !== filters.period) {
     return false;
   }
 
@@ -258,43 +167,7 @@ function matchesScope(record: FinanceTaxMatterRecord, scope: TaxMatterScope) {
   return true;
 }
 
-const socialInsuranceProcessStatusOrder: Record<FinanceTaxMatterProcessStatus, number> = {
-  数据待确认: 0,
-  待申报: 1,
-  待缴款: 1,
-  部分缴纳: 2,
-  待退抵处理: 1,
-  退抵处理中: 2,
-  部分退抵: 2,
-  申报材料待核对: 2,
-  已完成: 3
-};
-
-function compareSocialInsuranceTaxMatterRows(left: FinanceTaxMatterRecord, right: FinanceTaxMatterRecord) {
-  const statusDiff = socialInsuranceProcessStatusOrder[left.processStatus] - socialInsuranceProcessStatusOrder[right.processStatus];
-
-  if (statusDiff !== 0) {
-    return statusDiff;
-  }
-
-  const periodDiff = right.period.localeCompare(left.period);
-
-  if (periodDiff !== 0) {
-    return periodDiff;
-  }
-
-  return right.updatedAt.localeCompare(left.updatedAt);
-}
-
 export function FinanceTaxFilingsPage() {
-  return <FinanceTaxMatterHandlingPage moduleScope="tax" />;
-}
-
-export function FinanceSocialInsurancePage() {
-  return <FinanceTaxMatterHandlingPage moduleScope="social" />;
-}
-
-function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterModuleScope }) {
   const {
     accountingPeriodLocks,
     accountingVoucherRows,
@@ -315,8 +188,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   } = useFinanceManagement();
   const { contractRows, customerRows } = useCustomerManagementState();
   const { peopleRows } = usePeopleOrganizationState();
-  const { socialInsuranceRecords, updateSocialInsuranceRecordStatus } = useFinanceSocialInsuranceState();
-  const { salaryMonthlyWorkflows, salaryPaymentRecords } = useSalaryManagementState();
+  const { salaryPaymentRecords } = useSalaryManagementState();
   const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, contextHolder] = message.useMessage();
@@ -325,9 +197,6 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const [editorState, setEditorState] = useState<TaxMatterEditorState>();
   const [filters, setFilters] = useState<FinanceTaxMatterFilters>(defaultFilters);
   const [activeStampDutySource, setActiveStampDutySource] = useState<FinanceStampDutySourceRecord>();
-  const pageConfig = taxMatterPageConfig[moduleScope];
-  const isSocialInsuranceModule = moduleScope === 'social';
-  const allowedMatterTypes = useMemo(() => new Set(taxMatterTypeScopeMap[moduleScope]), [moduleScope]);
   const corporateIncomeTaxAccountingSources = useMemo(
     () => buildCorporateIncomeTaxAccountingSources(
       declarationPreparationRows,
@@ -364,17 +233,17 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const allDisplayTaxMatterRows = useMemo(
     () =>
       applyDeclarationPreparationsToTaxMatters(
-        applyTaxMatterSourceSummaries(taxMatterRows, socialInsuranceRecords),
+        taxMatterRows,
         displayDeclarationPreparationRows
       ),
-    [displayDeclarationPreparationRows, socialInsuranceRecords, taxMatterRows]
+    [displayDeclarationPreparationRows, taxMatterRows]
   );
   const displayTaxMatterRows = useMemo(
     () => allDisplayTaxMatterRows.filter((record) =>
-      allowedMatterTypes.has(record.matterType)
-      && (isSocialInsuranceModule || record.dataStatus === '已确认' || record.processStatus === '已完成')
+      allowedTaxMatterTypes.has(record.matterType)
+      && (record.dataStatus === '已确认' || record.processStatus === '已完成')
     ),
-    [allDisplayTaxMatterRows, allowedMatterTypes, isSocialInsuranceModule]
+    [allDisplayTaxMatterRows]
   );
   const defaultPaymentAccountRef = useMemo(
     () => getDefaultPublicAccountRef(publicAccounts, '付款'),
@@ -386,18 +255,12 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   );
 
   const filteredRecords = useMemo(
-    () => displayTaxMatterRows.filter((record) => matchesFilters(record, filters, moduleScope)),
-    [displayTaxMatterRows, filters, moduleScope]
+    () => displayTaxMatterRows.filter((record) => matchesFilters(record, filters)),
+    [displayTaxMatterRows, filters]
   );
   const visibleRecords = useMemo(
-    () => {
-      if (isSocialInsuranceModule) {
-        return [...filteredRecords].sort(compareSocialInsuranceTaxMatterRows);
-      }
-
-      return filteredRecords.filter((record) => matchesScope(record, activeScope));
-    },
-    [activeScope, filteredRecords, isSocialInsuranceModule]
+    () => filteredRecords.filter((record) => matchesScope(record, activeScope)),
+    [activeScope, filteredRecords]
   );
   const activeRecord = useMemo(
     () => displayTaxMatterRows.find((record) => record.id === activeRecordId),
@@ -424,8 +287,6 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     ? displayTaxMatterRows.find((record) => record.id === activeEditorRecord.offsetTargetMatterId)
     : undefined;
 
-  const activeSocialInsuranceSummary = activeRecord ? getTaxMatterSocialSummary(activeRecord) : undefined;
-  const activeSocialInsuranceEmployeeRows = activeRecord ? getTaxMatterSocialEmployeeRows(activeRecord) : [];
   const activeOfficialEntry = activeRecord ? taxMatterOfficialHandlingEntries[activeRecord.matterType] : undefined;
   const activeDeclarationPreparation = activeRecord
     ? findDeclarationPreparationForTaxMatter(activeRecord, displayDeclarationPreparationRows)
@@ -479,42 +340,30 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     Boolean(activeRecord && activeOfficialEntry) &&
     activeRecord?.processStatus !== '数据待确认';
   const canRecordDeclarationResult = Boolean(activeRecord)
-    && !isSocialInsuranceModule
     && activeRecord?.processStatus === '待申报';
   const canMaintainDeclarationEvidence = Boolean(
     activeRecord
-    && !isSocialInsuranceModule
     && ['申报成功', '零申报'].includes(activeRecord.declarationStatus)
     && getTaxMatterEvidenceStatus(activeRecord) !== '已齐全'
   );
   const canRecordPaymentResult = Boolean(activeRecord)
-    && !isSocialInsuranceModule
     && (activeRecord?.processStatus === '待缴款' || activeRecord?.processStatus === '部分缴纳');
   const canSubmitRefundApplication = Boolean(activeRecord)
-    && !isSocialInsuranceModule
     && activeRecord?.processStatus === '待退抵处理';
   const canRecordRefundResult = Boolean(activeRecord)
-    && !isSocialInsuranceModule
     && (activeRecord?.processStatus === '退抵处理中' || activeRecord?.processStatus === '部分退抵');
   const canAdjustDeclaration = Boolean(
     activeRecord
-    && !isSocialInsuranceModule
     && !getTaxMatterDeclarationRevisionValidationError(activeRecord, '更正', displayTaxMatterRows)
   );
   const canVoidDeclaration = Boolean(
     activeRecord
-    && !isSocialInsuranceModule
     && !getTaxMatterDeclarationRevisionValidationError(activeRecord, '作废', displayTaxMatterRows, accountingVoucherRows)
   );
-  const canUploadSocialReceipt = Boolean(activeRecord)
-    && isSocialInsuranceModule
-    && activeRecord?.processStatus !== '数据待确认'
-    && activeRecord?.processStatus !== '已完成';
   const periodOptions: Array<FilterOptionValue | string> = ['全部', ...uniqueOptions(displayTaxMatterRows, (record) => record.period)];
   const matterTypeOptions: Array<FilterOptionValue | FinanceTaxMatterType> = ['全部', ...uniqueOptions(displayTaxMatterRows, (record) => record.matterType)];
   const currentRows = displayTaxMatterRows.filter((record) => record.period === currentPeriod || record.period === currentQuarter);
   const pendingRows = displayTaxMatterRows.filter((record) => record.processStatus !== '已完成');
-  const pendingConfirmRows = displayTaxMatterRows.filter((record) => record.processStatus === '数据待确认');
   const pendingDeclarationRows = displayTaxMatterRows.filter((record) => record.processStatus === '待申报');
   const pendingPaymentRows = displayTaxMatterRows.filter((record) =>
     record.processStatus === '待缴款'
@@ -524,70 +373,13 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     || record.processStatus === '部分退抵'
   );
   const pendingReceiptRows = displayTaxMatterRows.filter((record) =>
-    isSocialInsuranceModule
-      ? record.processStatus === '申报材料待核对'
-      : ['申报成功', '零申报'].includes(record.declarationStatus)
-        && getTaxMatterEvidenceStatus(record) !== '已齐全'
+    ['申报成功', '零申报'].includes(record.declarationStatus)
+      && getTaxMatterEvidenceStatus(record) !== '已齐全'
   );
   const completedRows = displayTaxMatterRows.filter((record) => record.processStatus === '已完成');
 
-  function getTaxMatterSocialSummary(record: FinanceTaxMatterRecord): SocialInsuranceTaxMatterSummary | undefined {
-    const category = getSocialInsuranceCategoryByTaxMatterType(record.matterType);
-
-    return category ? buildSocialInsuranceTaxMatterSummary(socialInsuranceRecords, category, record.period) : undefined;
-  }
-
-  function getTaxMatterSocialEmployeeRows(record: FinanceTaxMatterRecord): SocialInsuranceEmployeeRecord[] {
-    const category = getSocialInsuranceCategoryByTaxMatterType(record.matterType);
-
-    return category
-      ? socialInsuranceRecords.filter((employeeRecord) => employeeRecord.category === category && employeeRecord.period === record.period)
-      : [];
-  }
-
   function closeEditor() {
     setEditorState(undefined);
-  }
-
-  function saveSocialTaxMatter(record: FinanceTaxMatterRecord) {
-    const paymentTransaction = buildTaxMatterPaymentTransaction({
-      financePrimaryCategories,
-      financeRows,
-      financeSecondaryCategories,
-      publicAccountRef: defaultPaymentAccountRef,
-      record,
-    });
-    const nextRecord = attachTaxMatterPaymentTransaction(record, paymentTransaction);
-
-    if (paymentTransaction) {
-      const periodGuard = getAccountingPeriodGuard(paymentTransaction.accountingPeriod, '生成税费缴款流水');
-
-      if (!periodGuard.allowed) {
-        void messageApi.warning(periodGuard.reason);
-        return;
-      }
-
-      if (!commitTaxMatterPayment(nextRecord.id, nextRecord, paymentTransaction)) {
-        void messageApi.warning('缴款事项或流水状态已变化，请刷新后重试');
-        return;
-      }
-    } else if (!updateTaxMatterRecord(nextRecord.id, () => nextRecord)) {
-      void messageApi.warning('当前事项不可保存');
-      return;
-    }
-
-    setActiveRecordId(nextRecord.id);
-    setActiveScope(nextRecord.processStatus === '已完成' ? 'completed' : 'pending');
-    setEditorState(undefined);
-    void messageApi.success(
-      paymentTransaction
-        ? isSocialInsuranceModule
-          ? '已保存凭证，并生成待复核缴款流水'
-          : '已保存回执，并生成待复核缴款流水'
-        : isSocialInsuranceModule
-          ? '已保存凭证'
-          : '已保存回执'
-    );
   }
 
   function saveDeclarationResult(
@@ -806,14 +598,6 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     );
   }
 
-  function handlePreviewFile(file: RelatedFileRecord) {
-    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
-  }
-
-  function handleDownloadFile(file: RelatedFileRecord) {
-    void messageApi.success(`${file.name} 下载请求已记录`);
-  }
-
   function openOfficialHandling(record: FinanceTaxMatterRecord) {
     const officialEntry = taxMatterOfficialHandlingEntries[record.matterType];
 
@@ -843,81 +627,12 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     void messageApi.success('已打开办理平台');
   }
 
-  function isSocialInsuranceEmployeeLocked(employeeRecord: SocialInsuranceEmployeeRecord) {
-    return isSalaryMonthlyPaid(salaryMonthlyWorkflows, employeeRecord.employeeNo, employeeRecord.period);
-  }
-
-  function getSocialInsuranceHandlingSummary(employeeRecord: SocialInsuranceEmployeeRecord, handlingStatus: SocialInsuranceHandlingStatus) {
-    if (handlingStatus === '已确认') {
-      return `${employeeRecord.employeeName} ${employeeRecord.category} 已确认`;
-    }
-
-    if (handlingStatus === '延期补缴') {
-      return `${employeeRecord.employeeName} ${employeeRecord.category} 标记延期补缴`;
-    }
-
-    if (handlingStatus === '本月不缴') {
-      return `${employeeRecord.employeeName} ${employeeRecord.category} 标记本月不缴`;
-    }
-
-    return `${employeeRecord.employeeName} ${employeeRecord.category} 退回明细确认`;
-  }
-
-  function updateSocialInsuranceEmployeeHandling(
-    record: FinanceTaxMatterRecord,
-    employeeRecord: SocialInsuranceEmployeeRecord,
-    handlingStatus: SocialInsuranceHandlingStatus
-  ) {
-    const periodGuard = getAccountingPeriodGuard(getAccountingPeriodFromBusinessPeriod(record.period), '调整缴费明细');
-
-    if (!periodGuard.allowed) {
-      void messageApi.warning(periodGuard.reason);
-      return;
-    }
-
-    if (isSocialInsuranceEmployeeLocked(employeeRecord)) {
-      void messageApi.warning('工资已发放，当前缴费明细已锁定');
-      return;
-    }
-
-    if (!updateTaxMatterRecord(record.id, (currentRecord) => ({
-      ...currentRecord,
-      dataStatus: '待复核',
-      paidAmount: handlingStatus === '待确认' ? 0 : currentRecord.paidAmount,
-      paymentStatus: handlingStatus === '待确认' ? '未开始' : currentRecord.paymentStatus,
-      processStatus: handlingStatus === '待确认' ? '数据待确认' : currentRecord.processStatus,
-      updatedAt: financeToday,
-      operationRecords: [
-        {
-          action: handlingStatus === '待确认' ? '退回明细' : '更新缴费明细',
-          actor: '李明',
-          id: `tax-op-return-${employeeRecord.id}-${Date.now()}`,
-          object: currentRecord.matterNo,
-          summary: getSocialInsuranceHandlingSummary(employeeRecord, handlingStatus),
-          time: `${financeToday} 14:40`
-        },
-        ...currentRecord.operationRecords
-      ]
-    }))) {
-      void messageApi.warning('当前缴费明细不可调整');
-      return;
-    }
-
-    if (!updateSocialInsuranceRecordStatus(employeeRecord.id, handlingStatus)) {
-      void messageApi.warning('当前缴费明细不可调整');
-      return;
-    }
-
-    setActiveScope('pending');
-    void messageApi.success(handlingStatus === '待确认' ? '已退回缴费明细' : '已更新缴费明细');
-  }
-
   const columns: TableColumnsType<FinanceTaxMatterRecord> = [
     {
       dataIndex: 'title',
       fixed: 'left',
       render: (_title: string, record) => <CompactCell primary={record.title} secondary={record.matterType} />,
-      title: isSocialInsuranceModule ? '缴费事项' : '事项',
+      title: '事项',
       width: 188
     },
     {
@@ -955,7 +670,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
     },
     {
       dataIndex: 'processStatus',
-      render: (status: FinanceTaxMatterProcessStatus) => renderTaxMatterProcessStatus(status, moduleScope),
+      render: (status: FinanceTaxMatterProcessStatus) => renderTaxMatterProcessStatus(status),
       title: '处理进度',
       width: 112
     },
@@ -977,7 +692,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
   const renderTaxMatterTable = () => (
     <ManagementTable<FinanceTaxMatterRecord>
       columns={columns}
-      count={{ value: visibleRecords.length, unit: pageConfig.countUnit }}
+      count={{ value: visibleRecords.length, unit: '条税务办理事项' }}
       dataSource={visibleRecords}
       rowKey="id"
       rowTestIdPrefix="finance-tax-table-row"
@@ -992,28 +707,15 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       filters={
         <FilterPanel>
           <FilterBar>
-            {isSocialInsuranceModule ? (
-              <DateScopeFilter
-                defaultMonth={currentPeriod}
-                defaultRange={getDateScopeMonthRange(currentPeriod)}
-                label="缴费期间"
-                monthLabel="缴费月份"
-                rangeLabel="缴费时间段"
-                testIdPrefix="finance-social-insurance-period"
-                value={filters.periodScope}
-                onChange={(periodScope) => setFilters((current) => ({ ...current, periodScope }))}
+            <FilterField label="所属期间">
+              <Select
+                data-testid="finance-tax-period-filter"
+                options={periodOptions.map((period) => ({ label: period, value: period }))}
+                value={filters.period}
+                onChange={(period) => setFilters((current) => ({ ...current, period }))}
               />
-            ) : (
-              <FilterField label="所属期间">
-                <Select
-                  data-testid="finance-tax-period-filter"
-                  options={periodOptions.map((period) => ({ label: period, value: period }))}
-                  value={filters.period}
-                  onChange={(period) => setFilters((current) => ({ ...current, period }))}
-                />
-              </FilterField>
-            )}
-            <FilterField label={isSocialInsuranceModule ? '缴费类型' : '事项类型'} controlWidth="wide-select">
+            </FilterField>
+            <FilterField label="事项类型" controlWidth="wide-select">
               <Select
                 data-testid="finance-tax-type-filter"
                 options={matterTypeOptions.map((matterType) => ({ label: matterType, value: matterType }))}
@@ -1023,7 +725,7 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
             </FilterField>
             <KeywordFilter
               data-testid="finance-tax-keyword-input"
-              placeholder={isSocialInsuranceModule ? '缴费事项 / 编号 / 来源' : '事项 / 编号 / 来源'}
+              placeholder="事项 / 编号 / 来源"
               value={filters.keyword}
               width="wide"
               onChange={(keyword) => setFilters((current) => ({ ...current, keyword }))}
@@ -1033,45 +735,39 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
       }
       metrics={
         <MetricGrid columns={4}>
-          <MetricCard icon={<CalendarOutlined />} label={isSocialInsuranceModule ? '当前缴费' : '当前事项'} value={`${currentRows.length} 条`} />
+          <MetricCard icon={<CalendarOutlined />} label="当前事项" value={`${currentRows.length} 条`} />
           <MetricCard
             icon={<AuditOutlined />}
-            label={isSocialInsuranceModule ? '明细待确认' : '材料待核对'}
-            value={`${isSocialInsuranceModule ? pendingConfirmRows.length : pendingReceiptRows.length} 条`}
+            label="材料待核对"
+            value={`${pendingReceiptRows.length} 条`}
           />
           <MetricCard
             icon={<FileProtectOutlined />}
-            label={isSocialInsuranceModule ? '可缴费' : '待申报'}
+            label="待申报"
             value={`${pendingDeclarationRows.length} 条`}
           />
           <MetricCard
             icon={<WalletOutlined />}
-            label={isSocialInsuranceModule ? '待上传凭证' : '待资金处理'}
-            value={`${isSocialInsuranceModule ? pendingReceiptRows.length : pendingPaymentRows.length} 条`}
+            label="待资金处理"
+            value={`${pendingPaymentRows.length} 条`}
           />
         </MetricGrid>
       }
-      pageId={pageConfig.pageId}
+      pageId="tax-handling"
     >
       {contextHolder}
-      {isSocialInsuranceModule ? (
-        renderTaxMatterTable()
-      ) : (
-        <>
-          <ManagementTableTabs
-            activeKey={activeScope}
-            items={[
-              { key: 'pending', label: `待处理 ${pendingRows.length}` },
-              { key: 'completed', label: `已完成 ${completedRows.length}` },
-              { key: 'all', label: `全部事项 ${filteredRecords.length}` }
-            ]}
-            tabTestIdPrefix="finance-tax-page-tab"
-            testId="finance-tax-page-tabs"
-            onChange={(key) => setActiveScope(key as TaxMatterScope)}
-          />
-          {renderTaxMatterTable()}
-        </>
-      )}
+      <ManagementTableTabs
+        activeKey={activeScope}
+        items={[
+          { key: 'pending', label: `待处理 ${pendingRows.length}` },
+          { key: 'completed', label: `已完成 ${completedRows.length}` },
+          { key: 'all', label: `全部事项 ${filteredRecords.length}` }
+        ]}
+        tabTestIdPrefix="finance-tax-page-tab"
+        testId="finance-tax-page-tabs"
+        onChange={(key) => setActiveScope(key as TaxMatterScope)}
+      />
+      {renderTaxMatterTable()}
 
       <FinanceTaxMatterDetailDrawer
         canAdjustDeclaration={canAdjustDeclaration}
@@ -1081,26 +777,16 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         canRecordRefundResult={canRecordRefundResult}
         canSubmitRefundApplication={canSubmitRefundApplication}
         canMaintainDeclarationEvidence={canMaintainDeclarationEvidence}
-        canUploadSocialReceipt={canUploadSocialReceipt}
         declarationDetailPreparation={activeDeclarationDetailPreparation}
         declarationPreparation={activeDeclarationPreparation}
-        isSocialInsuranceEmployeeLocked={isSocialInsuranceEmployeeLocked}
-        moduleScope={moduleScope}
         record={activeRecord}
-        socialInsuranceEmployeeRows={activeSocialInsuranceEmployeeRows}
-        socialInsuranceSummary={activeSocialInsuranceSummary}
         taxFilingVouchers={accountingVoucherRows.filter((voucher) => (
           voucher.sourceNo === activeRecord?.matterNo && Boolean(voucher.taxFilingContext)
         ))}
         vatUnbilledIncomeRows={activeVatUnbilledIncomeRows}
         onClose={() => setActiveRecordId(undefined)}
-        onDownloadFile={handleDownloadFile}
         onOpenAction={(mode) => activeRecord && setEditorState({ mode, recordId: activeRecord.id })}
         onOpenOfficialPlatform={() => activeRecord && openOfficialHandling(activeRecord)}
-        onPreviewFile={handlePreviewFile}
-        onSocialInsuranceStatusChange={(employeeRecord, handlingStatus) =>
-          activeRecord && updateSocialInsuranceEmployeeHandling(activeRecord, employeeRecord, handlingStatus)
-        }
         onStampDutySourceClick={setActiveStampDutySource}
       />
 
@@ -1108,17 +794,9 @@ function FinanceTaxMatterHandlingPage({ moduleScope }: { moduleScope: TaxMatterM
         editable={false}
         record={activeStampDutySource}
         onClose={() => setActiveStampDutySource(undefined)}
-        onDownloadFile={(fileName) => void messageApi.info(`已下载 ${fileName}`)}
-        onPreviewFile={(fileName) => void messageApi.info(`正在预览 ${fileName}`)}
         onSave={() => undefined}
       />
 
-      <TaxMatterReceiptDrawer
-        allRecords={displayTaxMatterRows}
-        record={editorState?.mode === 'social-receipt' ? activeEditorRecord : undefined}
-        onClose={closeEditor}
-        onSave={saveSocialTaxMatter}
-      />
       <TaxDeclarationResultDrawer
         record={editorState?.mode === 'declaration-result' ? activeEditorRecord : undefined}
         onClose={closeEditor}

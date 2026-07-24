@@ -21,6 +21,8 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
+import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationState';
+import { buildLedgerInitializationOpeningBalancesForGeneralLedger } from './financeLedgerInitializationModel';
 import {
   accountingStatementTargetTone,
   accountingSubjectProfile,
@@ -243,6 +245,7 @@ function GeneralLedgerDetailDrawer({
 }
 
 export function FinanceGeneralLedgerPage() {
+  const { enabledOpeningRows, enabledProfile } = useFinanceLedgerInitialization();
   const {
     accountingPeriodLocks,
     accountingVoucherLaterPeriodAdjustmentRows,
@@ -295,9 +298,16 @@ export function FinanceGeneralLedgerPage() {
     ]
   );
   const ledgerEntries = useMemo(() => buildAccountingLedgerEntries(voucherRows), [voucherRows]);
+  const openingBalances = useMemo(
+    () =>
+      enabledProfile
+        ? buildLedgerInitializationOpeningBalancesForGeneralLedger(enabledOpeningRows, enabledProfile)
+        : [],
+    [enabledOpeningRows, enabledProfile]
+  );
   const ledgerResponse = useMemo(
-    () => buildGeneralLedgerResponse({ entries: ledgerEntries, filters, periodLocks: accountingPeriodLocks }),
-    [accountingPeriodLocks, filters, ledgerEntries]
+    () => buildGeneralLedgerResponse({ entries: ledgerEntries, filters, openingBalances, periodLocks: accountingPeriodLocks }),
+    [accountingPeriodLocks, filters, ledgerEntries, openingBalances]
   );
   const { metrics, periodSummary, rows } = ledgerResponse;
   const readbackNotice = getGeneralLedgerReadbackNotice(periodSummary);

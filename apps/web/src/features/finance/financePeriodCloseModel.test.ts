@@ -14,6 +14,7 @@ import {
 } from './financeAccountingVoucherModel';
 import type { FinanceTransactionRecord } from './financeData';
 import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
+import { socialInsuranceEmployeeRecords, type SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
 import {
   buildFinancePeriodCloseMetrics,
   buildFinancePeriodCloseReadModel,
@@ -146,12 +147,14 @@ function createLaterPeriodAdjustment(
     adjustedBy: '李明',
     adjustmentNo: 'ADJ-202607-001',
     amount: snapshot.amount,
+    adjustmentMode: '冲销原凭证',
     candidateStatus: '待记账',
     id: 'later-period-adjustment-test',
     originalAccountingPeriod: '2026-06',
     originalVoucherId: snapshot.id,
     originalVoucherNo: snapshot.voucherNo,
     reason: '历史期间确认口径调整',
+    signedAmount: -snapshot.amount,
     snapshot,
     ...overrides
   };
@@ -164,6 +167,7 @@ function buildRows({
   laterPeriodAdjustmentRows = [],
   ledgerEntries = [],
   periodLocks = [],
+  socialInsuranceRows = [],
   taxMatterRows = [],
   voucherRows = []
 }: {
@@ -173,6 +177,7 @@ function buildRows({
   laterPeriodAdjustmentRows?: AccountingVoucherLaterPeriodAdjustmentRecord[];
   ledgerEntries?: AccountingLedgerEntry[];
   periodLocks?: AccountingPeriodLockRecord[];
+  socialInsuranceRows?: SocialInsuranceEmployeeRecord[];
   taxMatterRows?: FinanceTaxMatterRecord[];
   voucherRows?: AccountingVoucherRecord[];
 }) {
@@ -183,6 +188,7 @@ function buildRows({
     laterPeriodAdjustmentRows,
     ledgerEntries,
     periodLocks,
+    socialInsuranceRows,
     taxMatterRows,
     voucherRows
   });
@@ -201,6 +207,44 @@ const balancedLedgerEntries: AccountingLedgerEntry[] = [
 ];
 
 const tests: UnitTest[] = [
+  {
+    name: 'blocks close from the social-insurance domain record instead of legacy tax matters',
+    run: () => {
+      const rows = buildRows({
+        financeRows: [createFinanceTransaction({})],
+        ledgerEntries: balancedLedgerEntries,
+        socialInsuranceRows: [{ ...socialInsuranceEmployeeRecords[0], handlingStatus: '待缴费', period: '2026-06' }],
+        taxMatterRows: [createTaxMatter({})],
+        voucherRows: [createVoucher('已记账', { id: 'voucher-booked' })]
+      });
+      const period = rows.find((record) => record.accountingPeriod === '2026-06');
+
+      assertEqual(period?.socialInsurancePendingCount, 1, 'unfinished social-insurance record should block period close');
+      assertEqual(
+        period?.checkItems.find((item) => item.code === 'social_insurance_housing_fund')?.status,
+        '需处理',
+        'period close should consume the social-insurance domain status'
+      );
+    }
+  },
+  {
+    name: 'accepts paid and officially exempt social-insurance records for close',
+    run: () => {
+      const source = socialInsuranceEmployeeRecords[0];
+      const rows = buildRows({
+        financeRows: [createFinanceTransaction({})],
+        ledgerEntries: balancedLedgerEntries,
+        socialInsuranceRows: [
+          { ...source, id: 'social-paid', handlingStatus: '已缴费', period: '2026-06' },
+          { ...source, id: 'housing-exempt', category: '公积金', handlingStatus: '无需缴纳', period: '2026-06' }
+        ],
+        voucherRows: [createVoucher('已记账', { id: 'voucher-booked' })]
+      });
+      const period = rows.find((record) => record.accountingPeriod === '2026-06');
+
+      assertEqual(period?.socialInsurancePendingCount, 0, 'completed social-insurance outcomes should not block close');
+    }
+  },
   {
     name: 'marks a balanced booked period as closeable',
     run: () => {
@@ -1053,27 +1097,17 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'keeps social-insurance matters as a close check without duplicating external tax handling',
+    name: 'keeps social-insurance domain records as a close check without duplicating external tax handling',
     run: () => {
+      const source = socialInsuranceEmployeeRecords[0];
       const rows = buildRows({
         financeRows: [createFinanceTransaction({})],
         ledgerEntries: balancedLedgerEntries,
-        taxMatterRows: [
-          createTaxMatter({ id: 'tax-iit', dataStatus: '待复核', processStatus: '数据待确认' }),
-          createTaxMatter({ id: 'social', dataStatus: '待复核', matterType: '社保缴纳', processStatus: '数据待确认' }),
-          createTaxMatter({
-            id: 'housing',
-            matterType: '公积金缴纳',
-            processStatus: '申报材料待核对',
-            sourceItems: [{
-              id: 'housing-source-pending',
-              name: '公积金缴费明细',
-              sourceModule: '社保公积金',
-              status: '待复核',
-              updatedAt: '2026-07-10'
-            }]
-          })
+        socialInsuranceRows: [
+          { ...source, id: 'social', category: '社保', handlingStatus: '待缴费', period: '2026-06' },
+          { ...source, id: 'housing', category: '公积金', handlingStatus: '待确认', period: '2026-06' }
         ],
+        taxMatterRows: [createTaxMatter({ id: 'tax-iit', dataStatus: '待复核', processStatus: '数据待确认' })],
         voucherRows: [createVoucher('已记账')]
       });
       const period = rows.find((record) => record.accountingPeriod === '2026-06');

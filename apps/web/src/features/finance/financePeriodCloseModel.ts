@@ -21,9 +21,9 @@ import {
   generalLedgerDefaultMonth,
   type GeneralLedgerSubjectBalanceRow
 } from './financeGeneralLedgerModel';
-import type { FinanceTaxMatterRecord, FinanceTaxMatterType } from './financeTaxFilingData';
-import { getTaxMatterAccountingStatus } from './financeTaxMatterModel';
+import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
 import type { FinanceMonthEndMatterRecord } from './financeMonthEndModel';
+import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
 import { financeToday, getAccountingPeriodFromBusinessPeriod } from './financeUtils';
 
 export type FinancePeriodCloseStatus = '可结账' | '需处理' | '已结账';
@@ -272,8 +272,6 @@ function isFinancePeriodCloseCheckCode(code: string): code is FinancePeriodClose
   return currentFinancePeriodCloseCheckCodes.has(code);
 }
 
-const socialInsuranceMatterTypes = new Set<FinanceTaxMatterType>(['社保缴纳', '公积金缴纳']);
-
 type PeriodCloseCheckAction = { label: string; path: string; query?: string };
 
 const periodCloseCheckActions: Partial<Record<FinancePeriodCloseCheckCode, PeriodCloseCheckAction>> = {
@@ -340,10 +338,6 @@ function getTaxMatterAccountingPeriod(record: FinanceTaxMatterRecord) {
   }
 
   return getAccountingPeriodFromBusinessPeriod(record.period);
-}
-
-function isSocialInsuranceMatter(record: FinanceTaxMatterRecord) {
-  return socialInsuranceMatterTypes.has(record.matterType);
 }
 
 function getVoucherSourceReadinessDetail({ pendingSourceCount }: { pendingSourceCount: number }) {
@@ -565,6 +559,7 @@ function collectPeriods({
   ledgerEntries,
   monthEndMatterRows,
   periodLocks,
+  socialInsuranceRows,
   taxMatterRows,
   voucherRows
 }: {
@@ -573,6 +568,7 @@ function collectPeriods({
   ledgerEntries: AccountingLedgerEntry[];
   monthEndMatterRows: FinanceMonthEndMatterRecord[];
   periodLocks: AccountingPeriodLockRecord[];
+  socialInsuranceRows: SocialInsuranceEmployeeRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
 }) {
@@ -586,6 +582,7 @@ function collectPeriods({
   ledgerEntries.forEach((entry) => periods.add(entry.accountingPeriod));
   financeRows.forEach((record) => periods.add(record.accountingPeriod));
   monthEndMatterRows.forEach((record) => periods.add(record.accountingPeriod));
+  socialInsuranceRows.forEach((record) => periods.add(record.period));
   taxMatterRows.forEach((record) => {
     const accountingPeriod = getTaxMatterAccountingPeriod(record);
 
@@ -762,7 +759,7 @@ function buildPeriodCloseRecord({
   monthEndMatterRows,
   period,
   periodLocks,
-  taxMatterRows,
+  socialInsuranceRows,
   voucherRows
 }: {
   financeRows: FinanceTransactionRecord[];
@@ -771,7 +768,7 @@ function buildPeriodCloseRecord({
   monthEndMatterRows: FinanceMonthEndMatterRecord[];
   period: string;
   periodLocks: AccountingPeriodLockRecord[];
-  taxMatterRows: FinanceTaxMatterRecord[];
+  socialInsuranceRows: SocialInsuranceEmployeeRecord[];
   voucherRows: AccountingVoucherRecord[];
 }): FinancePeriodCloseRecord {
   const periodLock = periodLocks.find((record) => record.accountingPeriod === period && record.status === '已结账');
@@ -797,9 +794,8 @@ function buildPeriodCloseRecord({
     record.accountingPeriod === period && record.status === '待复核'
   );
   const pendingReviewCashFlowCount = pendingReviewCashFlowRows.length;
-  const periodTaxMatterRows = taxMatterRows.filter((record) => getTaxMatterAccountingPeriod(record) === period);
-  const pendingSocialInsuranceRows = periodTaxMatterRows.filter((record) =>
-    isSocialInsuranceMatter(record) && getTaxMatterAccountingStatus(record) === '待确认'
+  const pendingSocialInsuranceRows = socialInsuranceRows.filter((record) =>
+    record.period === period && record.handlingStatus !== '已缴费' && record.handlingStatus !== '无需缴纳'
   );
   const socialInsurancePendingCount = pendingSocialInsuranceRows.length;
   const pendingMonthEndMatterRows = monthEndMatterRows.filter(
@@ -905,7 +901,7 @@ function buildPeriodCloseRecord({
       detail: socialInsurancePendingCount === 0 ? '本期社保公积金事项已完成。' : `还有 ${socialInsurancePendingCount} 项社保公积金事项未完成。`,
       nextStep: '需先在社保公积金完成缴费确认、缴费登记或凭证补充',
       passed: socialInsurancePendingCount === 0,
-      sourceSummary: summarizeCheckSources('社保公积金', pendingSocialInsuranceRows.map((record) => record.matterNo)),
+      sourceSummary: summarizeCheckSources('社保公积金', pendingSocialInsuranceRows.map((record) => record.id)),
       title: '社保公积金'
     })
   ];
@@ -1025,6 +1021,7 @@ export function buildFinancePeriodCloseRecords({
   ledgerEntries,
   monthEndMatterRows = [],
   periodLocks = [],
+  socialInsuranceRows = [],
   taxMatterRows,
   voucherRows
 }: {
@@ -1035,12 +1032,13 @@ export function buildFinancePeriodCloseRecords({
   ledgerEntries: AccountingLedgerEntry[];
   monthEndMatterRows?: FinanceMonthEndMatterRecord[];
   periodLocks?: AccountingPeriodLockRecord[];
+  socialInsuranceRows?: SocialInsuranceEmployeeRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
 }) {
   const periods = expandAccountingPeriods({
     accountingPeriodStart,
-    periods: collectPeriods({ financeRows, laterPeriodAdjustmentRows, ledgerEntries, monthEndMatterRows, periodLocks, taxMatterRows, voucherRows })
+    periods: collectPeriods({ financeRows, laterPeriodAdjustmentRows, ledgerEntries, monthEndMatterRows, periodLocks, socialInsuranceRows, taxMatterRows, voucherRows })
   });
   const records = applyPeriodCloseContinuity({
     accountingPeriodStart,
@@ -1054,7 +1052,7 @@ export function buildFinancePeriodCloseRecords({
       monthEndMatterRows,
       period,
       periodLocks,
-      taxMatterRows,
+      socialInsuranceRows,
       voucherRows
     }))
   });
@@ -1083,6 +1081,7 @@ export function buildFinancePeriodCloseReadModel({
   ledgerEntries,
   monthEndMatterRows = [],
   periodLocks = [],
+  socialInsuranceRows = [],
   taxMatterRows,
   voucherRows
 }: {
@@ -1093,6 +1092,7 @@ export function buildFinancePeriodCloseReadModel({
   ledgerEntries: AccountingLedgerEntry[];
   monthEndMatterRows?: FinanceMonthEndMatterRecord[];
   periodLocks?: AccountingPeriodLockRecord[];
+  socialInsuranceRows?: SocialInsuranceEmployeeRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
 }): FinancePeriodCloseReadModel {
@@ -1104,6 +1104,7 @@ export function buildFinancePeriodCloseReadModel({
     ledgerEntries,
     monthEndMatterRows,
     periodLocks,
+    socialInsuranceRows,
     taxMatterRows,
     voucherRows
   });

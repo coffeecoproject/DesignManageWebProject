@@ -1269,8 +1269,6 @@ export function FinanceDeclarationPreparationPage() {
         record={activeStampDutySource}
         resolution={activeStampDutyResolution}
         onClose={() => setActiveStampDutySource(undefined)}
-        onDownloadFile={(fileName) => void messageApi.info(`已下载 ${fileName}`)}
-        onPreviewFile={(fileName) => void messageApi.info(`正在预览 ${fileName}`)}
         onRegisterSettlement={openStampDutySettlement}
         onSave={saveStampDutyResolution}
       />

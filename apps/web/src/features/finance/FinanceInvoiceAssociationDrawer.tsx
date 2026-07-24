@@ -651,7 +651,6 @@ export function FinanceInvoiceAssociationDrawer({ businessRecord, invoice, open,
                         updatedAt: activeInvoice.importedAt.slice(0, 10)
                       }
                     ]}
-                    onDownload={(file) => void messageApi.success(`已开始下载 ${file.name}`)}
                     onPreview={setPreviewFile}
                   />
                 </DetailSection>

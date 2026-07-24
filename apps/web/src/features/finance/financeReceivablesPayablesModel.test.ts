@@ -25,6 +25,7 @@ import {
   isFinanceReceivablePayableOverdue,
   isFinanceReceivablePayableFormValid,
   isFinanceReceivablePayableSettlementFormValid,
+  hasFinanceReceivablePayableActiveSettlement,
   hasFinanceReceivablePayableBookedVoucher,
   linkFinanceReceivablePayableSettlementTransaction,
   matchesFinanceReceivablePayableFilters,
@@ -686,6 +687,24 @@ const tests: UnitTest[] = [
 
       assertEqual(snapshot.settledAmount, 0, 'posted reversal should offset the original receipt');
       assertEqual(snapshot.settlementStatus, '未结清', 'posted reversal should reopen the receivable');
+      assertEqual(
+        hasFinanceReceivablePayableActiveSettlement([receipt, reversal]),
+        false,
+        'a fully posted reversal should close the original active settlement fact'
+      );
+      assertEqual(
+        hasFinanceReceivablePayableActiveSettlement([receipt, { ...reversal, status: '待复核' }]),
+        true,
+        'a pending reversal should keep the settlement under active processing'
+      );
+      assertEqual(
+        hasFinanceReceivablePayableBookedVoucher(record, [{
+          status: '已冲销',
+          voucherId: `voucher-business-${record.id}`
+        }]),
+        false,
+        'a reversed accrual voucher should no longer block source correction as an active booked voucher'
+      );
     }
   }
 ];

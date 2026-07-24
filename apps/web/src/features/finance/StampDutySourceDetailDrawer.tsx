@@ -95,8 +95,8 @@ export function StampDutySourceDetailDrawer({
   record?: FinanceStampDutySourceRecord;
   resolution?: FinanceStampDutySourceResolution;
   onClose: () => void;
-  onDownloadFile: (fileName: string) => void;
-  onPreviewFile: (fileName: string) => void;
+  onDownloadFile?: (fileName: string) => void;
+  onPreviewFile?: (fileName: string) => void;
   onRegisterSettlement?: (record: FinanceStampDutySourceRecord) => void;
   onSave: (resolution: FinanceStampDutySourceResolution) => void;
 }) {
@@ -322,8 +322,8 @@ export function StampDutySourceDetailDrawer({
               <DetailSection icon={<FileProtectOutlined />} title="凭证文件">
                 <RelatedFileTable
                   records={record.evidenceFiles}
-                  onDownload={(file) => onDownloadFile(file.name)}
-                  onPreview={(file) => onPreviewFile(file.name)}
+                  onDownload={onDownloadFile ? (file) => onDownloadFile(file.name) : undefined}
+                  onPreview={onPreviewFile ? (file) => onPreviewFile(file.name) : undefined}
                 />
               </DetailSection>
             )

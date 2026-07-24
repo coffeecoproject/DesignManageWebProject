@@ -1,6 +1,7 @@
 import { BankOutlined, CalendarOutlined, WalletOutlined, WarningOutlined } from '@ant-design/icons';
-import { Alert, message, Select } from 'antd';
+import { Alert, Button, message, Select } from 'antd';
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { DateScopeFilter } from '../../components/DateFilterFields';
 import { useDrawerFormState } from '../../components/DrawerForm';
 import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../components/FilterControls';
@@ -19,6 +20,7 @@ import {
 } from '../system/PublicAccountConfigState';
 import type { FinanceTransactionRecord } from './financeData';
 import { useFinanceManagement } from './FinanceManagementState';
+import type { CustomerTaskSettlementMergeIssue } from './financeCustomerTaskSettlementModel';
 import {
   buildFinanceReceivablePayableColumns
 } from './FinanceReceivablesPayablesColumns';
@@ -119,6 +121,7 @@ function isInvoiceLinkedToReceivablePayable(
 }
 
 export function FinanceReceivablesPayablesPage() {
+  const navigate = useNavigate();
   const {
     accountingVoucherLifecycleRows,
     customerTaskSettlementIssues,
@@ -133,6 +136,7 @@ export function FinanceReceivablesPayablesPage() {
   const { publicAccounts } = usePublicAccountConfigState();
   const [messageApi, messageContextHolder] = message.useMessage();
   const [activeRecordId, setActiveRecordId] = useState<string>();
+  const [activeTaskSettlementIssueId, setActiveTaskSettlementIssueId] = useState<string>();
   const [invoiceAssociationRecordId, setInvoiceAssociationRecordId] = useState<string>();
   const [previewFile, setPreviewFile] = useState<RelatedFileRecord>();
   const [activeTab, setActiveTab] = useState<FinanceReceivablePayableListTabKey>('open');
@@ -193,6 +197,11 @@ export function FinanceReceivablesPayablesPage() {
     () => receivablePayableRows.find((record) => record.id === activeRecordId),
     [activeRecordId, receivablePayableRows]
   );
+  const activeTaskSettlementIssue = activeRecord && activeTaskSettlementIssueId
+    ? customerTaskSettlementIssues.find(
+        (issue) => issue.issueId === activeTaskSettlementIssueId && issue.recordId === activeRecord.id
+      )
+    : undefined;
   const invoiceAssociationRecord = useMemo(
     () => receivablePayableRows.find((record) => record.id === invoiceAssociationRecordId),
     [invoiceAssociationRecordId, receivablePayableRows]
@@ -246,32 +255,6 @@ export function FinanceReceivablesPayablesPage() {
     : activeRecordLockedReason
       ? '只读回看'
       : '已有收付进度，事项锁定';
-  const missingTaskSettlementSourceCount = customerTaskSettlementIssues.filter(
-    (issue) => issue.kind === '来源主数据缺失'
-  ).length;
-  const missingTaskSettlementSnapshotCount = customerTaskSettlementIssues.filter(
-    (issue) => issue.kind === '来源快照缺失'
-  ).length;
-  const changedTaskSettlementBatchCount = customerTaskSettlementIssues.filter(
-    (issue) => issue.kind === '批次差异'
-  ).length;
-  const reversedTaskSettlementCount = customerTaskSettlementIssues.filter(
-    (issue) => issue.kind === '来源撤销待财务更正'
-  ).length;
-  const customerTaskSettlementIssueMessage = [
-    missingTaskSettlementSourceCount > 0
-      ? `${missingTaskSettlementSourceCount} 条任务结算缺少来源档案，尚未生成应收`
-      : undefined,
-    missingTaskSettlementSnapshotCount > 0
-      ? `${missingTaskSettlementSnapshotCount} 条任务应收缺少来源快照`
-      : undefined,
-    changedTaskSettlementBatchCount > 0
-      ? `${changedTaskSettlementBatchCount} 条任务结算需后续调整`
-      : undefined,
-    reversedTaskSettlementCount > 0
-      ? `${reversedTaskSettlementCount} 条撤销验收需财务冲销或后续调整`
-      : undefined
-  ].filter((message): message is string => Boolean(message)).join('；');
   const activeRecordCanRegisterSettlement = activeRecord
     ? canRegisterFinanceReceivablePayableSettlement(activeRecord, linkedTransactionRows) && !activeRecordLockedReason
     : false;
@@ -294,10 +277,44 @@ export function FinanceReceivablesPayablesPage() {
     const initialSettlementForm = createFinanceReceivablePayableSettlementForm(record, getDefaultPublicAccountId(record));
 
     setActiveRecordId(record.id);
+    setActiveTaskSettlementIssueId(undefined);
     setSettlementForm({
       ...initialSettlementForm,
       amount: getFinanceReceivablePayableRegisterableAmount(record, recordLinkedTransactionRows)
     });
+  }
+
+  function handleOpenTaskSettlementIssue(issue: CustomerTaskSettlementMergeIssue) {
+    const record = issue.recordId
+      ? receivablePayableRows.find((candidate) => candidate.id === issue.recordId)
+      : undefined;
+
+    if (record) {
+      handleOpenDetailDrawer(record);
+      setActiveTaskSettlementIssueId(issue.issueId);
+    }
+  }
+
+  function handleOpenLinkedTransaction(record: FinanceTransactionRecord) {
+    const pathname = record.status === '待复核' ? '/finance/review' : '/finance/transactions';
+    navigate(`${pathname}?transactionNo=${encodeURIComponent(record.transactionNo)}`);
+  }
+
+  function handleOpenAccountingVoucher(
+    record: FinanceReceivablePayableRecord,
+    issue?: CustomerTaskSettlementMergeIssue
+  ) {
+    const correctionQuery = issue
+      ? `&correctionIssueId=${encodeURIComponent(issue.issueId)}&correctionBatchId=${encodeURIComponent(issue.batchId)}&correctionRecordId=${encodeURIComponent(record.id)}&differenceAmount=${encodeURIComponent(String(issue.differenceAmount))}`
+      : '';
+
+    navigate(
+      `/finance/accounting-vouchers?sourceNo=${encodeURIComponent(record.documentNo)}&period=${encodeURIComponent(record.accountingPeriod)}${correctionQuery}`
+    );
+  }
+
+  function handleOpenInvoiceCorrection(invoice: FinanceInvoiceRecord) {
+    navigate(`/finance/invoices?invoiceNo=${encodeURIComponent(invoice.invoiceNo)}`);
   }
 
   function handleAssociateInvoice(record: FinanceReceivablePayableRecord) {
@@ -552,7 +569,21 @@ export function FinanceReceivablesPayablesPage() {
       {customerTaskSettlementIssues.length > 0 ? (
         <Alert
           data-testid="finance-rp-task-settlement-issue"
-          message={customerTaskSettlementIssueMessage}
+          description={(
+            <div className="finance-rp-task-settlement-issue-list">
+              {customerTaskSettlementIssues.map((issue) => (
+                <div className="finance-rp-task-settlement-issue-row" key={issue.issueId}>
+                  <span>{issue.message}</span>
+                  {issue.recordId ? (
+                    <Button size="small" type="link" onClick={() => handleOpenTaskSettlementIssue(issue)}>
+                      查看处理
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+          message={`任务结算待处理 ${customerTaskSettlementIssues.length} 条`}
           showIcon
           type="warning"
         />
@@ -580,6 +611,7 @@ export function FinanceReceivablesPayablesPage() {
         linkedTransactionRows={linkedTransactionRows}
         invoiceAssociationLockedReason={activeRecordLockedReason ?? (activeRecordHasBookedVoucher ? '已记账，需通过凭证调整' : undefined)}
         invoiceBusinessAllocationRows={invoiceBusinessAllocationRows}
+        recordHasBookedVoucher={activeRecordHasBookedVoucher}
         registerableAmount={registerableAmount}
         record={activeRecord}
         recordEditBlockedReason={activeRecordEditBlockedReason}
@@ -587,6 +619,7 @@ export function FinanceReceivablesPayablesPage() {
         recordLockedReason={activeRecordLockedReason}
         settlementForm={settlementForm}
         settlementSubmitDisabled={!settlementFormValid}
+        taskSettlementIssue={activeTaskSettlementIssue}
         onDownloadFile={handleDownloadFile}
         onEdit={handleOpenEditDrawer}
         onPreviewFile={handlePreviewFile}
@@ -594,8 +627,14 @@ export function FinanceReceivablesPayablesPage() {
         onSelectSettlementFile={handleSettlementFileSelect}
         onSubmitSettlement={handleRegisterSettlement}
         onUpdateSettlementForm={updateSettlementForm}
-        onClose={() => setActiveRecordId(undefined)}
+        onClose={() => {
+          setActiveRecordId(undefined);
+          setActiveTaskSettlementIssueId(undefined);
+        }}
         onAssociateInvoice={handleAssociateInvoice}
+        onOpenAccountingVoucher={handleOpenAccountingVoucher}
+        onOpenInvoiceCorrection={handleOpenInvoiceCorrection}
+        onOpenLinkedTransaction={handleOpenLinkedTransaction}
       />
 
       <FinanceInvoiceAssociationDrawer

@@ -875,6 +875,7 @@ function AccountingVoucherLaterAdjustmentDrawer({
         actor: '当前账号',
         existingRows,
         input: {
+          ...form,
           accountingPeriod: previewAccountingPeriod,
           adjustedAt: previewAdjustedAt,
           reason: form.reason.trim()
@@ -913,6 +914,15 @@ function AccountingVoucherLaterAdjustmentDrawer({
       onClose={onClose}
     >
       <DetailSection icon={<FileTextOutlined />} title="调整内容">
+        {form.adjustmentMode === '差额调整' ? (
+          <DetailInfoGrid
+            columns={2}
+            items={[
+              { label: '调整方式', value: '差额调整' },
+              { label: '调整金额', value: formatMoney(form.signedAmount ?? 0) }
+            ]}
+          />
+        ) : null}
         <DrawerFormGrid>
           <DrawerFormField label="调整期间" required>
             <DatePicker
@@ -1012,6 +1022,7 @@ export function FinanceAccountingVouchersPage() {
   const [searchParams] = useSearchParams();
   const deepLinkQuery = searchParams.toString();
   const handledDeepLinkRef = useRef('');
+  const handledCorrectionIssueRef = useRef('');
   const [filters, setFilters] = useState<AccountingVoucherFilters>(() =>
     getAccountingVoucherFiltersFromQueryString(deepLinkQuery, defaultAccountingVoucherFilters)
   );
@@ -1027,6 +1038,17 @@ export function FinanceAccountingVouchersPage() {
     reason: '',
     reversedAt: ''
   });
+
+  const correctionContext = useMemo(() => {
+    const issueId = searchParams.get('correctionIssueId');
+    const batchId = searchParams.get('correctionBatchId');
+    const recordId = searchParams.get('correctionRecordId');
+    const signedAmount = Number(searchParams.get('differenceAmount'));
+
+    return issueId && batchId && recordId && Number.isFinite(signedAmount) && Math.abs(signedAmount) >= 0.01
+      ? { batchId, issueId, recordId, signedAmount }
+      : undefined;
+  }, [searchParams]);
 
   useEffect(() => {
     setFilters((currentFilters) => getAccountingVoucherFiltersFromQueryString(deepLinkQuery, currentFilters));
@@ -1046,6 +1068,49 @@ export function FinanceAccountingVouchersPage() {
     handledDeepLinkRef.current = deepLinkQuery;
     setActiveVoucherId(targetId);
   }, [deepLinkQuery, voucherRows]);
+
+  useEffect(() => {
+    if (!correctionContext || handledCorrectionIssueRef.current === correctionContext.issueId) {
+      return;
+    }
+
+    const targetId = getAccountingVoucherDeepLinkTargetId(voucherRows, deepLinkQuery);
+    const targetRecord = voucherRows.find((record) => record.id === targetId);
+    if (!targetRecord || !isAccountingPeriodLocked(accountingPeriodLocks, targetRecord.accountingPeriod)) {
+      return;
+    }
+
+    const accountingPeriod = getAvailableLaterPeriodAdjustmentAccountingPeriod(
+      targetRecord,
+      accountingPeriodLocks,
+      accountingVoucherLaterPeriodAdjustmentRows,
+      correctionContext.issueId
+    );
+    if (!accountingPeriod) {
+      return;
+    }
+
+    handledCorrectionIssueRef.current = correctionContext.issueId;
+    setLaterAdjustmentForm({
+      accountingPeriod,
+      adjustmentMode: '差额调整',
+      adjustedAt: `${accountingPeriod}-01`,
+      correctionContext: {
+        batchId: correctionContext.batchId,
+        issueId: correctionContext.issueId,
+        recordId: correctionContext.recordId
+      },
+      reason: '甲方验收结果更正',
+      signedAmount: correctionContext.signedAmount
+    });
+    setLaterAdjustmentVoucherId(targetRecord.id);
+  }, [
+    accountingPeriodLocks,
+    accountingVoucherLaterPeriodAdjustmentRows,
+    correctionContext,
+    deepLinkQuery,
+    voucherRows
+  ]);
 
   const filteredRows = useMemo(
     () => sortAccountingVoucherWorkbenchRows(voucherRows.filter((record) => matchesAccountingVoucherFilters(record, filters))),
@@ -1157,8 +1222,11 @@ export function FinanceAccountingVouchersPage() {
 
     setLaterAdjustmentForm({
       accountingPeriod: defaultAccountingPeriod,
+      adjustmentMode: '冲销原凭证',
       adjustedAt: `${defaultAccountingPeriod}-01`,
-      reason: ''
+      correctionContext: undefined,
+      reason: '',
+      signedAmount: undefined
     });
     setLaterAdjustmentVoucherId(record.id);
   }

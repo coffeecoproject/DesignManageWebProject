@@ -113,7 +113,7 @@ const tests: UnitTest[] = [
     run: () => {
       const bankRow = createBankRow({
         amount: 3200,
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '出账',
         summary: '空间设计外协任务结算'
       });
@@ -133,7 +133,7 @@ const tests: UnitTest[] = [
       const origin = createFinanceRecord({
         amount: 3200,
         category: '外协付款',
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         counterpartyType: '外协',
         direction: '支出',
         id: 'finance-bank-link-origin',
@@ -145,7 +145,7 @@ const tests: UnitTest[] = [
       });
       const adjustment = createFinanceRecord({
         amount: 200,
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '收入',
         id: 'finance-bank-link-adjustment',
         paymentMethod: '对公账户收款',
@@ -175,7 +175,7 @@ const tests: UnitTest[] = [
       const origin = createFinanceRecord({
         amount: 3200,
         category: '外协付款',
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         counterpartyType: '外协',
         direction: '支出',
         id: 'finance-bank-reconcile-origin',
@@ -188,7 +188,7 @@ const tests: UnitTest[] = [
       const bankRow = createBankRow({
         amount: 3000,
         bankSerialNo: 'CMB202606120002',
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '出账',
         matchedTransactionIds: [origin.id, 'finance-bank-reconcile-adjust-pending'],
         matchStatus: '金额不一致',
@@ -196,7 +196,7 @@ const tests: UnitTest[] = [
       });
       const pendingAdjustment = createFinanceRecord({
         amount: 200,
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '收入',
         id: 'finance-bank-reconcile-adjust-pending',
         paymentMethod: '对公账户收款',
@@ -219,7 +219,7 @@ const tests: UnitTest[] = [
       const origin = createFinanceRecord({
         amount: 3200,
         category: '外协付款',
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         counterpartyType: '外协',
         direction: '支出',
         id: 'finance-bank-reconcile-origin',
@@ -232,7 +232,7 @@ const tests: UnitTest[] = [
       const bankRow = createBankRow({
         amount: 3000,
         bankSerialNo: 'CMB202606120002',
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '出账',
         matchedTransactionIds: [origin.id, 'finance-bank-reconcile-adjust-reviewed'],
         matchStatus: '金额不一致',
@@ -240,7 +240,7 @@ const tests: UnitTest[] = [
       });
       const reviewedAdjustment = createFinanceRecord({
         amount: 200,
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '收入',
         id: 'finance-bank-reconcile-adjust-reviewed',
         paymentMethod: '对公账户收款',

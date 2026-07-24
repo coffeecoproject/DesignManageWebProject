@@ -26,7 +26,7 @@ function createFinanceRecord(overrides: Partial<FinanceTransactionRecord> = {}):
     amount: 3200,
     category,
     categorySnapshot: getFinanceCategorySnapshot(category),
-    counterparty: '示例兼职 B',
+    counterparty: '林悦',
     counterpartyType: '外协',
     currency: 'CNY',
     direction: '支出',
@@ -83,7 +83,7 @@ const tests: UnitTest[] = [
       const bankContext: FinanceTransactionAdjustmentBankContext = {
         amount: 3000,
         bankSerialNo: 'CMB202606120002',
-        counterparty: '示例兼职 B',
+        counterparty: '林悦',
         direction: '出账',
         statementDate: '2026-06-12',
         summary: '空间设计外协任务结算'

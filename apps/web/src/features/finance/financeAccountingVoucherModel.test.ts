@@ -541,7 +541,7 @@ const tests: UnitTest[] = [
         documentNo: 'AR-PROJECT-STAGE-SUMMARY',
         files: [{
           id: 'project-stage-acceptance',
-          name: '光谷商业空间方案阶段验收记录.pdf',
+          name: '武汉城设商业运营有限公司方案阶段验收记录.pdf',
           source: '业务服务器',
           status: '已生成',
           type: '验收记录',
@@ -549,7 +549,7 @@ const tests: UnitTest[] = [
           url: '/records/tasks/TASK-PROJECT-STAGE/acceptance/2026-06-18.pdf'
         }],
         id: 'rp-project-stage-summary',
-        sourceTitle: '光谷商业空间方案阶段',
+        sourceTitle: '武汉城设商业运营有限公司方案阶段',
         sourceType: '任务结算' as const
       };
       const vouchers = buildAccountingVouchersForTest(
@@ -559,7 +559,7 @@ const tests: UnitTest[] = [
       );
       const voucher = getVoucherBySourceNo(vouchers, projectStageRecord.documentNo);
 
-      assertEqual(voucher.summary, '任务结算确认：光谷商业空间方案阶段', 'task settlement summary should use the source label once');
+      assertEqual(voucher.summary, '任务结算确认：武汉城设商业运营有限公司方案阶段', 'task settlement summary should use the source label once');
       assertEqual(voucher.summary.includes('确认确认'), false, 'project stage summary should not contain duplicated confirmation wording');
     }
   },
@@ -582,8 +582,13 @@ const tests: UnitTest[] = [
       assertEqual(getLineBySubjectCode(salaryVoucher, '2221.03').amount, 300, 'salary confirmation should credit withheld IIT liability');
       assertEqual(getLineBySubjectCode(salaryVoucher, '2211.03').amount, 800, 'salary confirmation should credit employee social insurance liability');
       assertEqual(getLineBySubjectCode(salaryVoucher, '2211.04').amount, 400, 'salary confirmation should credit employee housing fund liability');
-      assertEqual(getAccountingVoucherDebitTotal(salaryVoucher), 12000, 'salary expense debit should retain the original payroll result');
-      assertEqual(getAccountingVoucherCreditTotal(salaryVoucher), 12000, 'split salary liabilities should remain balanced');
+      assertEqual(
+        salaryVoucher.lines.filter((line) => line.side === '借方' && (line.subject?.code ?? line.subjectCode) === '5602.02').reduce((total, line) => total + line.amount, 0),
+        3000,
+        'employer social-insurance and housing-fund contributions should enter employee-benefit expense'
+      );
+      assertEqual(getAccountingVoucherDebitTotal(salaryVoucher), 15000, 'salary accrual should include gross payroll and employer contributions');
+      assertEqual(getAccountingVoucherCreditTotal(salaryVoucher), 15000, 'split salary and contribution liabilities should remain balanced');
       assertEqual(getLineSubjectCode(outsourceVoucher, '借方'), '5401', 'outsourcing payable confirmation should debit main business cost');
       assertEqual(getLineSubjectCode(outsourceVoucher, '贷方'), '2202', 'outsourcing payable confirmation should credit accounts payable');
       assertEqual(outsourceVoucher.invoiceRefs.length, 1, 'matched input invoice should be retained as cost basis');
@@ -2191,6 +2196,89 @@ const tests: UnitTest[] = [
       assertEqual(voucher.lines[0]?.subjectCode, '2221.05', 'payment debits stamp duty liability');
       assertEqual(voucher.lines[1]?.subjectCode, '1002', 'payment credits bank deposit');
       assertEqual(voucher.amount, 10, 'payment voucher amount');
+    }
+  },
+  {
+    name: 'splits social-insurance arrears principal and late fee in the cash voucher',
+    run: () => {
+      const sourceTransaction = financeTransactionRecords.find((record) => record.status === '已入账');
+      if (!sourceTransaction) throw new Error('expected posted transaction fixture');
+
+      const voucher = buildAccountingVoucherFromTransaction({
+        ...sourceTransaction,
+        accountingAllocations: [
+          { amount: 1640, label: '2026-06 公积金补缴本金', subjectCode: '2211.04' },
+          { amount: 18.5, label: '补缴滞纳金', subjectCode: '5711' }
+        ],
+        amount: 1658.5,
+        category: '公积金缴费',
+        direction: '支出',
+        files: [{
+          id: 'housing-arrears-receipt',
+          name: '公积金补缴回单.pdf',
+          status: '已上传',
+          type: '补缴回单',
+          updatedAt: '2026-07-18'
+        }],
+        id: 'housing-arrears-payment',
+        reconciliationStatus: '未对账',
+        sourceNo: 'social-correction-housing-202606',
+        sourceTitle: '2026-06 公积金补缴',
+        sourceType: '社保公积金缴费',
+        status: '已入账',
+        transactionNo: 'FIN-202607-ARREARS',
+        voucherStatus: '已上传'
+      }, 0);
+
+      if (!voucher) throw new Error('expected social-insurance arrears cash voucher');
+      assertEqual(voucher.status, '待记账', 'balanced arrears voucher should be ready to book');
+      assertEqual(voucher.lines.some((line) => line.side === '借方' && line.subjectCode === '2211.04' && line.amount === 1640), true, 'principal should clear housing-fund liability');
+      assertEqual(voucher.lines.some((line) => line.side === '借方' && line.subjectCode === '5711' && line.amount === 18.5), true, 'late fee should enter non-operating expense');
+      assertEqual(voucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '1002' && line.amount === 1658.5), true, 'total payment should credit bank deposit');
+    }
+  },
+  {
+    name: 'builds a balanced difference-only voucher for a closed-period task correction',
+    run: () => {
+      const vouchers = buildAccountingVouchersForTest(
+        financeReceivablePayableRecords,
+        financeTransactionRecords,
+        financeInvoiceRecords
+      );
+      const readyVoucher = getVoucherBySourceNo(vouchers, 'AR-202606-001');
+      const bookedVoucher = getVoucherBySourceNo(
+        applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(readyVoucher)]),
+        readyVoucher.sourceNo
+      );
+      const adjustment = createLaterPeriodAccountingVoucherAdjustmentRecord({
+        actor: '李明',
+        existingRows: [],
+        input: {
+          accountingPeriod: '2026-07',
+          adjustmentMode: '差额调整',
+          adjustedAt: '2026-07-01',
+          correctionContext: {
+            batchId: 'task-batch-correction',
+            issueId: 'task-settlement-issue-correction',
+            recordId: financeReceivablePayableRecords[0].id
+          },
+          reason: '甲方验收金额下调',
+          signedAmount: -6800
+        },
+        originalRecord: bookedVoucher
+      });
+      const adjustmentVoucher = buildAccountingVoucherFromLaterPeriodAdjustment(adjustment, 0);
+
+      if (!adjustmentVoucher) throw new Error('difference adjustment should generate a voucher');
+      assertEqual(adjustmentVoucher.amount, 6800, 'voucher amount should equal the absolute correction difference');
+      assertEqual(isAccountingVoucherBalanced(adjustmentVoucher), true, 'difference adjustment voucher must remain balanced');
+      assertEqual(getAccountingVoucherDebitTotal(adjustmentVoucher), 6800, 'difference debit total should equal the correction amount');
+      assertEqual(getAccountingVoucherCreditTotal(adjustmentVoucher), 6800, 'difference credit total should equal the correction amount');
+      assertEqual(
+        adjustmentVoucher.lines[0]?.side,
+        bookedVoucher.lines[0]?.side === '借方' ? '贷方' : '借方',
+        'a negative correction should reverse the original line direction'
+      );
     }
   },
   {
