@@ -1,26 +1,49 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
 import { financeToday, getAccountingPeriod } from '../finance/financeUtils';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 import {
+  applyExpenseReviewRecordToCollection,
+  buildMyWorkExpenseReviewRecords,
   buildMyWorkExpenseApprovalExecutionPlan,
-  myWorkExpenseReviewSeedRecords,
   returnExpenseReviewRecord,
   revokeExpenseReviewRecord,
   supplementExpenseReviewEvidence,
   type MyWorkExpenseApprovalDecision,
   type MyWorkExpenseReviewRecord
 } from './myWorkExpenseReviewModel';
-import type { MyWorkExpenseVoucherComplianceConclusion } from './myWorkExpenseCollectionModel';
+import {
+  myWorkExpenseCollectionSeedRecords,
+  validateMyWorkExpenseCollectionSave,
+  type MyWorkExpenseCollectionRecord,
+  type MyWorkExpenseVoucherComplianceConclusion
+} from './myWorkExpenseCollectionModel';
 
 type ExpenseReviewStateResult = { reason?: string; success: boolean };
 
 type MyExpenseReviewStateValue = {
   approveExpenseReview: (recordId: string, decision: MyWorkExpenseApprovalDecision) => ExpenseReviewStateResult;
+  canSaveExpenseCollectionRecord: (
+    record: MyWorkExpenseCollectionRecord,
+    mode: 'create' | 'update'
+  ) => ExpenseReviewStateResult;
+  collectionRecords: MyWorkExpenseCollectionRecord[];
   records: MyWorkExpenseReviewRecord[];
   returnExpenseReview: (recordId: string, reason: string, reviewerName: string) => ExpenseReviewStateResult;
   revokeExpenseReview: (recordId: string, reason: string, reviewerName: string) => ExpenseReviewStateResult;
+  saveExpenseCollectionRecord: (
+    record: MyWorkExpenseCollectionRecord,
+    mode: 'create' | 'update'
+  ) => ExpenseReviewStateResult;
   supplementExpenseEvidence: (
     recordId: string,
     file: RelatedFileRecord,
@@ -47,7 +70,54 @@ export function MyExpenseReviewProvider({ children }: { children: ReactNode }) {
     salaryMonthlyWorkflows,
     salaryPaymentRecords
   } = useSalaryManagementState();
-  const [records, setRecords] = useState<MyWorkExpenseReviewRecord[]>(() => myWorkExpenseReviewSeedRecords);
+  const [collectionRecords, setCollectionRecords] = useState<MyWorkExpenseCollectionRecord[]>(
+    () => myWorkExpenseCollectionSeedRecords
+  );
+  const collectionRecordsRef = useRef(collectionRecords);
+  const records = useMemo(
+    () => buildMyWorkExpenseReviewRecords(collectionRecords),
+    [collectionRecords]
+  );
+
+  const commitCollectionRecords = useCallback((nextRecords: MyWorkExpenseCollectionRecord[]) => {
+    collectionRecordsRef.current = nextRecords;
+    setCollectionRecords(nextRecords);
+  }, []);
+
+  const canSaveExpenseCollectionRecord = useCallback((
+    record: MyWorkExpenseCollectionRecord,
+    mode: 'create' | 'update'
+  ): ExpenseReviewStateResult => {
+    return validateMyWorkExpenseCollectionSave(collectionRecordsRef.current, record, mode);
+  }, []);
+
+  const saveExpenseCollectionRecord = useCallback((
+    record: MyWorkExpenseCollectionRecord,
+    mode: 'create' | 'update'
+  ): ExpenseReviewStateResult => {
+    const guard = canSaveExpenseCollectionRecord(record, mode);
+
+    if (!guard.success) {
+      return guard;
+    }
+
+    const nextRecords = mode === 'create'
+      ? [record, ...collectionRecordsRef.current]
+      : collectionRecordsRef.current.map((currentRecord) => (
+          currentRecord.id === record.id ? record : currentRecord
+        ));
+    commitCollectionRecords(nextRecords);
+    return { success: true };
+  }, [canSaveExpenseCollectionRecord, commitCollectionRecords]);
+
+  const commitReviewRecord = useCallback((reviewRecord: MyWorkExpenseReviewRecord) => {
+    const nextRecords = collectionRecordsRef.current.map((record) => (
+      record.code === reviewRecord.code
+        ? applyExpenseReviewRecordToCollection(record, reviewRecord)
+        : record
+    ));
+    commitCollectionRecords(nextRecords);
+  }, [commitCollectionRecords]);
 
   const value = useMemo<MyExpenseReviewStateValue>(() => ({
     approveExpenseReview(recordId, decision) {
@@ -84,13 +154,11 @@ export function MyExpenseReviewProvider({ children }: { children: ReactNode }) {
         return { reason: '报销财务结果未提交', success: false };
       }
 
-      setRecords((currentRecords) =>
-        currentRecords.map((currentRecord) =>
-          currentRecord.id === recordId ? executionPlan.approvedRecord : currentRecord
-        )
-      );
+      commitReviewRecord(executionPlan.approvedRecord);
       return { success: true };
     },
+    canSaveExpenseCollectionRecord,
+    collectionRecords,
     records,
     returnExpenseReview(recordId, reason, reviewerName) {
       const record = records.find((currentRecord) => currentRecord.id === recordId);
@@ -105,9 +173,7 @@ export function MyExpenseReviewProvider({ children }: { children: ReactNode }) {
       }
 
       const nextRecord = returnExpenseReviewRecord(record, { returnedReason: reason, reviewerName });
-      setRecords((currentRecords) =>
-        currentRecords.map((currentRecord) => currentRecord.id === recordId ? nextRecord : currentRecord)
-      );
+      commitReviewRecord(nextRecord);
       return { success: true };
     },
     revokeExpenseReview(recordId, reason, reviewerName) {
@@ -143,11 +209,10 @@ export function MyExpenseReviewProvider({ children }: { children: ReactNode }) {
         return { reason: error instanceof Error ? error.message : '撤销审核失败', success: false };
       }
 
-      setRecords((currentRecords) =>
-        currentRecords.map((currentRecord) => currentRecord.id === recordId ? nextRecord : currentRecord)
-      );
+      commitReviewRecord(nextRecord);
       return { success: true };
     },
+    saveExpenseCollectionRecord,
     supplementExpenseEvidence(recordId, file, voucherCompliance, actor) {
       const record = records.find((currentRecord) => currentRecord.id === recordId);
 
@@ -165,13 +230,14 @@ export function MyExpenseReviewProvider({ children }: { children: ReactNode }) {
         return { reason: error instanceof Error ? error.message : '补充报销凭证失败', success: false };
       }
 
-      setRecords((currentRecords) =>
-        currentRecords.map((currentRecord) => currentRecord.id === recordId ? nextRecord : currentRecord)
-      );
+      commitReviewRecord(nextRecord);
       return { success: true };
     }
   }), [
     commitExpenseApprovalFinancialPlan,
+    commitReviewRecord,
+    canSaveExpenseCollectionRecord,
+    collectionRecords,
     getAccountingPeriodGuard,
     receivablePayableRows,
     records,
@@ -179,6 +245,7 @@ export function MyExpenseReviewProvider({ children }: { children: ReactNode }) {
     salaryAdjustments,
     salaryMonthlyWorkflows,
     salaryPaymentRecords,
+    saveExpenseCollectionRecord,
     supplementExpenseApprovalEvidence
   ]);
 

@@ -13,8 +13,11 @@ import type { SalaryIitProfile } from '../salary/salaryPersonalIncomeTaxModel';
 import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
 import { buildSocialInsurancePayrollDeductions } from './financeSocialInsuranceModel';
 import {
+  applyAccountingVoucherLifecycle,
+  buildAccountingLedgerEntries,
   buildAccountingVoucherFromReceivablePayable,
-  buildAccountingVoucherFromTransaction
+  buildAccountingVoucherFromTransaction,
+  createAccountingVoucherLifecycleRecord
 } from './financeAccountingVoucherModel';
 import { financeTransactionRecords, getFinanceSeedPublicAccountRef } from './financeData';
 import {
@@ -135,11 +138,21 @@ function createSocialInsuranceRecords(month: string): SocialInsuranceEmployeeRec
   const common = {
     contributionBase: 12000,
     department: '财务部',
-    employeeName: '示例全职 B',
+    employeeName: '陈浩',
     employeeNo: '20250018',
-    handlingStatus: '已确认' as const,
+    handlingStatus: '待缴费' as const,
     operationRecords: [],
     period: month,
+    originalPeriod: month,
+    handlingPeriod: month,
+    eligibilitySnapshot: '应参保' as const,
+    items: [],
+    estimatedEmployerAmount: 0,
+    estimatedEmployeeAmount: 0,
+    assessedEmployerAmount: 0,
+    assessedEmployeeAmount: 0,
+    assessmentFileIds: ['assessment-file-001'],
+    paymentFileIds: [],
     position: '主案设计师',
     salaryBase: 12000,
     updatedAt: `${month}-28`
@@ -150,6 +163,10 @@ function createSocialInsuranceRecords(month: string): SocialInsuranceEmployeeRec
       ...common,
       category: '社保',
       companyAmount: 2214,
+      estimatedEmployerAmount: 2214,
+      estimatedEmployeeAmount: 861,
+      assessedEmployerAmount: 2214,
+      assessedEmployeeAmount: 861,
       id: `social-20250018-${month}`,
       personalAmount: 861
     },
@@ -157,6 +174,10 @@ function createSocialInsuranceRecords(month: string): SocialInsuranceEmployeeRec
       ...common,
       category: '公积金',
       companyAmount: 820,
+      estimatedEmployerAmount: 820,
+      estimatedEmployeeAmount: 820,
+      assessedEmployerAmount: 820,
+      assessedEmployeeAmount: 820,
       id: `housing-20250018-${month}`,
       personalAmount: 820
     }
@@ -230,7 +251,7 @@ function createPaidSalaryReversalFixture() {
     withheldPersonalIncomeTaxAmount: 79.17
   };
   const payment: SalaryPaymentRecord = {
-    employeeName: '示例全职 B',
+    employeeName: '陈浩',
     employeeNo: '20250018',
     financeTransactionNo: originTransaction.transactionNo,
     id: 'salary-payment-reversal-fixture',
@@ -334,12 +355,36 @@ const tests: UnitTest[] = [
       );
       const settlement = report.settlementSnapshot;
 
-      assertEqual(debitTotal, settlement.employeeGrossPayableAmount, 'salary expense should retain the confirmed gross payroll');
+      assertEqual(debitTotal, settlement.totalEmploymentCostAmount, 'salary expense should include gross payroll and employer contributions');
       assertEqual(creditTotal, debitTotal, 'split salary liabilities should keep the accrual voucher balanced');
       assertEqual(getVoucherLineAmount(voucher, '2211.01'), settlement.employeeNetPayableAmount, 'net salary should enter employee payable');
       assertEqual(getVoucherLineAmount(voucher, '2221.03'), settlement.withheldPersonalIncomeTaxAmount, 'IIT withholding should enter the IIT liability');
-      assertEqual(getVoucherLineAmount(voucher, '2211.03'), settlement.employeeSocialInsuranceAmount, 'employee social insurance should enter the social-insurance liability');
-      assertEqual(getVoucherLineAmount(voucher, '2211.04'), settlement.employeeHousingFundAmount, 'employee housing fund should enter the housing-fund liability');
+      assertEqual(
+        voucher.lines.filter((line) => (line.subject?.code ?? line.subjectCode) === '2211.03').reduce((total, line) => total + line.amount, 0),
+        settlement.employeeSocialInsuranceAmount + settlement.employerSocialInsuranceAmount,
+        'employee and employer social insurance should enter the social-insurance liability'
+      );
+      assertEqual(
+        voucher.lines.filter((line) => (line.subject?.code ?? line.subjectCode) === '2211.04').reduce((total, line) => total + line.amount, 0),
+        settlement.employeeHousingFundAmount + settlement.employerHousingFundAmount,
+        'employee and employer housing fund should enter the housing-fund liability'
+      );
+      assertEqual(buildAccountingLedgerEntries([voucher]).length, 0, 'unbooked salary accrual must not enter the general ledger');
+      const bookedVoucher = applyAccountingVoucherLifecycle(
+        [voucher],
+        [createAccountingVoucherLifecycleRecord(voucher, '记-202607-101', '李明', '2026-07-31 11:00')]
+      );
+      const salaryLedgerEntries = buildAccountingLedgerEntries(bookedVoucher);
+
+      assertEqual(
+        salaryLedgerEntries.length,
+        voucher.lines.length,
+        'booked salary accrual should create one general-ledger entry per split liability line'
+      );
+      assert(
+        salaryLedgerEntries.some((entry) => entry.subjectCode === '2211.01' && entry.creditAmount === settlement.employeeNetPayableAmount),
+        'booked salary accrual should retain employee net payable in the ledger'
+      );
 
       const socialInsurance = socialInsuranceRecords.find((record) => record.category === '社保');
       const housingFund = socialInsuranceRecords.find((record) => record.category === '公积金');
@@ -456,6 +501,22 @@ const tests: UnitTest[] = [
         paymentVoucher.lines.find((line) => line.side === '贷方')?.subjectCode,
         '1002',
         'salary payment should credit bank deposit'
+      );
+      assertEqual(buildAccountingLedgerEntries([paymentVoucher]).length, 0, 'unbooked salary payment must not enter the general ledger');
+      const bookedPaymentVoucher = applyAccountingVoucherLifecycle(
+        [paymentVoucher],
+        [createAccountingVoucherLifecycleRecord(paymentVoucher, '记-202608-101', '李明', '2026-08-15 11:10')]
+      );
+      const paymentLedgerEntries = buildAccountingLedgerEntries(bookedPaymentVoucher);
+
+      assertEqual(paymentLedgerEntries.length, 2, 'booked salary payment should create payable and bank ledger entries');
+      assert(
+        paymentLedgerEntries.some((entry) => entry.subjectCode === '2211.01' && entry.debitAmount === payable.amount),
+        'booked salary payment should clear employee net payable'
+      );
+      assert(
+        paymentLedgerEntries.some((entry) => entry.subjectCode === '1002' && entry.creditAmount === payable.amount),
+        'booked salary payment should reduce bank deposit'
       );
       const confirmedReport = {
         ...report,

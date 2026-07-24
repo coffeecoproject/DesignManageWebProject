@@ -31,8 +31,8 @@ type PerformanceRuleDrawerProps = {
   canDeleteDraft: boolean;
   onAction: (rule: PerformanceRulePreset, action: RuleDrawerAction) => void;
   onClose: () => void;
-  onDownloadFile: (file: RuleRelatedFileRecord) => void;
-  onPreviewFile: (file: RuleRelatedFileRecord) => void;
+  onDownloadFile?: (file: RuleRelatedFileRecord) => void;
+  onPreviewFile?: (file: RuleRelatedFileRecord) => void;
   rule: PerformanceRulePreset | null;
   taskConfigRows: TaskConfigRow[];
 };

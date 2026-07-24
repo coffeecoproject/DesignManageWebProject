@@ -33,7 +33,7 @@ const partTimeLaborSettlementResult202606 = buildPartTimeLaborSettlementBatches(
   people: [
     {
       id: '20260006',
-      name: '示例兼职 B',
+      name: '林悦',
       personnelType: '兼职',
       taxIdentityProfile: { identityType: '居民个人', status: '已确认' }
     }

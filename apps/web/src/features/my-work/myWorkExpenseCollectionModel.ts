@@ -70,9 +70,20 @@ export type MyWorkExpenseCollectionRecord = {
   relatedTarget?: string;
   status: MyWorkExpenseCollectionStatus;
   submitterId?: string;
+  submitterName?: string;
   title: string;
   transferFiles?: RelatedFileRecord[];
   updatedAt: string;
+};
+
+export type MyWorkExpenseSubmitter = {
+  id: string;
+  name: string;
+};
+
+export type MyWorkExpenseCollectionSaveResult = {
+  reason?: string;
+  success: boolean;
 };
 
 export type MyWorkExpenseCollectionFormValue = {
@@ -166,23 +177,17 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
         object: 'EC-202606-001',
         summary: '提交差旅交通报销 486.50 元',
         time: '2026-06-12 18:20'
-      },
-      {
-        action: '财务确认',
-        actor: '财务专员',
-        id: 'expense-op-002',
-        object: 'EC-202606-001',
-        summary: '费用凭证已确认，待进入付款处理',
-        time: '2026-06-13 10:10'
       }
     ],
     originalType: '电子原件',
     paperStatus: '无需提交',
     paymentMethod: '微信',
     relatedTarget: '新岚茶集 / 长沙岳麓首店',
-    status: '已确认',
+    status: '待审核',
+    submitterId: '20260001',
+    submitterName: '李明',
     title: '长沙现场交通费',
-    updatedAt: '2026-06-13 10:10'
+    updatedAt: '2026-06-12 18:20'
   },
   {
     amount: 9800,
@@ -216,6 +221,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
     relatedReceivableNo: 'AR-202606-001',
     publicAccountId: getFinanceSeedPublicAccountRef().publicAccountId,
     status: '待复核',
+    submitterId: '20260001',
+    submitterName: '李明',
     title: '星际空间客户回款',
     transferFiles: [
       {
@@ -252,6 +259,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
     relatedReceivableNo: 'AR-202606-001',
     publicAccountId: '',
     status: '草稿',
+    submitterId: '20260001',
+    submitterName: '李明',
     title: '新岚客户临时代收',
     transferFiles: [],
     updatedAt: '2026-06-15 09:20'
@@ -280,6 +289,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
     paymentMethod: '现金',
     relatedTarget: '办公室用品',
     status: '退回修改',
+    submitterId: '20260001',
+    submitterName: '李明',
     title: '门店样品包装材料',
     updatedAt: '2026-06-11 09:40'
   }
@@ -521,6 +532,7 @@ function buildMyWorkExpenseCollectionOperation({
 export function createMyWorkExpenseCollectionRecordFromForm(
   form: MyWorkExpenseCollectionFormValue,
   sequence: number,
+  submitter: MyWorkExpenseSubmitter,
   mode: 'draft' | 'submit' = 'submit'
 ): MyWorkExpenseCollectionRecord {
   const code = `EC-${form.occurredAt.slice(0, 7).replace('-', '')}-${String(sequence).padStart(3, '0')}`;
@@ -556,15 +568,76 @@ export function createMyWorkExpenseCollectionRecordFromForm(
     relatedTarget: form.kind === '费用报销' ? form.relatedTarget : undefined,
     publicAccountId: form.kind === '代收登记' ? form.publicAccountId : undefined,
     status,
+    submitterId: submitter.id,
+    submitterName: submitter.name,
     title: form.title,
     transferFiles: form.kind === '代收登记' ? form.transferFiles : undefined,
     updatedAt: `${financeToday} 09:00`
   };
 }
 
+export function validateMyWorkExpenseCollectionSave(
+  records: readonly MyWorkExpenseCollectionRecord[],
+  record: MyWorkExpenseCollectionRecord,
+  mode: 'create' | 'update'
+): MyWorkExpenseCollectionSaveResult {
+  const existingById = records.find((currentRecord) => currentRecord.id === record.id);
+  const existingByCode = records.find((currentRecord) => currentRecord.code === record.code);
+  const evidenceNames = [...record.files, ...(record.transferFiles ?? [])]
+    .map((file) => file.name.trim().toLowerCase())
+    .sort()
+    .join('|');
+  const duplicateBusinessRecord = record.status === '草稿'
+    ? undefined
+    : records.find((currentRecord) => {
+        if (
+          currentRecord.id === record.id
+          || currentRecord.status === '草稿'
+          || currentRecord.status === '已关闭'
+        ) {
+          return false;
+        }
+
+        const currentEvidenceNames = [...currentRecord.files, ...(currentRecord.transferFiles ?? [])]
+          .map((file) => file.name.trim().toLowerCase())
+          .sort()
+          .join('|');
+
+        return (
+          Boolean(record.submitterId)
+          && currentRecord.submitterId === record.submitterId
+          && currentRecord.kind === record.kind
+          && currentRecord.occurredAt === record.occurredAt
+          && currentRecord.amount === record.amount
+          && currentRecord.title.trim().toLowerCase() === record.title.trim().toLowerCase()
+          && Boolean(evidenceNames)
+          && currentEvidenceNames === evidenceNames
+        );
+      });
+
+  if (mode === 'create' && (existingById || existingByCode)) {
+    return { reason: '该事项已经保存，请勿重复提交', success: false };
+  }
+  if (mode === 'update' && !existingById) {
+    return { reason: '未找到需要更新的事项', success: false };
+  }
+  if (mode === 'update' && existingByCode && existingByCode.id !== record.id) {
+    return { reason: '事项编号已存在，不能重复保存', success: false };
+  }
+  if (duplicateBusinessRecord) {
+    return {
+      reason: `疑似与 ${duplicateBusinessRecord.code} 重复，请核对日期、金额、事由和附件`,
+      success: false
+    };
+  }
+
+  return { success: true };
+}
+
 export function resubmitMyWorkExpenseCollectionRecordFromForm(
   record: MyWorkExpenseCollectionRecord,
   form: MyWorkExpenseCollectionFormValue,
+  submitter: MyWorkExpenseSubmitter,
   mode: 'draft' | 'submit' = 'submit'
 ): MyWorkExpenseCollectionRecord {
   const paperStatus = normalizeMyWorkPaperStatus(form.originalType, record.paperStatus);
@@ -599,6 +672,8 @@ export function resubmitMyWorkExpenseCollectionRecordFromForm(
     relatedTarget: form.kind === '费用报销' ? form.relatedTarget : undefined,
     publicAccountId: form.kind === '代收登记' ? form.publicAccountId : undefined,
     status,
+    submitterId: submitter.id,
+    submitterName: submitter.name,
     title: form.title,
     transferFiles: form.kind === '代收登记' ? form.transferFiles : undefined,
     updatedAt: `${financeToday} 09:00`

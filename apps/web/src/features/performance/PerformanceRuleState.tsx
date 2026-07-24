@@ -3,7 +3,7 @@ import { performanceRulePresets } from './performanceMockData';
 import type { PerformanceRulePreset } from './performanceTypes';
 
 type PerformanceRuleStateValue = {
-  deletePerformanceRule: (ruleId: string) => void;
+  deletePerformanceRule: (ruleId: string) => boolean;
   performanceRuleRows: PerformanceRulePreset[];
   savePerformanceRule: (record: PerformanceRulePreset) => void;
   setPerformanceRuleRows: (updater: (currentRows: PerformanceRulePreset[]) => PerformanceRulePreset[]) => void;
@@ -25,8 +25,14 @@ export function PerformanceRuleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deletePerformanceRule = useCallback((ruleId: string) => {
+    const target = performanceRuleRows.find((record) => record.id === ruleId);
+    if (!target || target.status !== '草稿') {
+      return false;
+    }
+
     setPerformanceRuleRowsState((currentRows) => currentRows.filter((record) => record.id !== ruleId));
-  }, []);
+    return true;
+  }, [performanceRuleRows]);
 
   const setPerformanceRuleRows = useCallback((updater: (currentRows: PerformanceRulePreset[]) => PerformanceRulePreset[]) => {
     setPerformanceRuleRowsState(updater);

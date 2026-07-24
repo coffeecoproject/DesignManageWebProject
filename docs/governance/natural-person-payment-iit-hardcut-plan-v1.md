@@ -437,7 +437,7 @@ type ExpenseReviewDisposition = {
 必须同步重构 Mock，不能只增加类型：
 
 1. 删除陈思独立绩效应付和独立绩效付款，或将陈思补齐为真实人员后把绩效并入其薪酬；首选删除独立付款路径。
-2. 将 `示例兼职 B / 3,200 元`改为任务验收可追溯的税前劳务结算：预扣 480 元、实付 2,720 元。
+2. 将 `林悦 / 3,200 元`改为任务验收可追溯的税前劳务结算：预扣 480 元、实付 2,720 元。
 3. 兼职付款来源保存任务 ID、人员 ID 和结算批次号。
 4. 增加真实报销拆分样例：全额报销、部分员工承担、部分转薪酬、待补凭证。
 5. 删除已关联但缺少来源、人员不存在、名称匹配等不一致样例。
@@ -511,8 +511,9 @@ type ExpenseReviewDisposition = {
 | NP-17 | 报销拆分金额不平 | 保存禁用并显示字段级错误 | `myWorkExpenseReviewModel.test.ts` |
 | NP-18 | 绩效重复进入两个薪酬批次 | 第二次承接被唯一性约束阻断 | `salaryDomain.test.ts` |
 | NP-19 | 工资结算金额拆分 | 业务计算结果不变；员工实发形成工资应付，个人扣缴与单位承担独立核算，凭证借贷平衡 | `salaryDomain.test.ts`、`financeAccountingVoucherModel.test.ts`、`salaryFinanceFrontendWorkflow.test.ts` |
+| NP-20 | 兼职验收撤销与重新验收 | 未消费劳务应付随来源撤销作废，重新验收恢复同一事实身份且不重复生成 | `partTimeLaborFrontendWorkflow.test.ts` |
 
-`apps/web/scripts/natural-person-payment-acceptance.mjs` 将 NP-01 至 NP-19 绑定到已注册测试模块。`test:web` 必须读取测试运行器实际返回的已执行、已通过场景，不得通过扫描源码中的测试名称构造证据。模型场景证据和前端完整链路证据分别统计，具体状态以 `docs/testing/natural-person-payment-acceptance-traceability.md` 为准。
+`apps/web/scripts/natural-person-payment-acceptance.mjs` 将 NP-01 至 NP-20 绑定到已注册测试模块。`test:web` 必须读取测试运行器实际返回的已执行、已通过场景，不得通过扫描源码中的测试名称构造证据。模型场景证据和前端完整链路证据分别统计，具体状态以 `docs/testing/natural-person-payment-acceptance-traceability.md` 为准。
 
 ## 16. 自动化门禁
 
@@ -592,9 +593,9 @@ corepack pnpm ai-native:check
 
 当前自动化证据：
 
-- 自然人付款验收编号覆盖：`19/19`。
-- 自然人付款前端完整链路：`8/19`，已闭合 `NP-04`、`NP-05`、`NP-06` 的任务验收至劳务应付链路，`NP-07` 的劳务付款登记、复核与付款月个税链路，`NP-14` 的未申报付款冲正回退链路，`NP-15` 的已申报冲正、更正版本与历史申报保留链路，`NP-16` 的复核入账至劳务待记账凭证链路，以及 `NP-19` 的薪酬确认至会计勾稽链路。
-- 后端持久化完整链路：`0/19`；本轮未接入数据库、API、事务、幂等或并发控制。
+- 自然人付款验收编号覆盖：`20/20`。
+- 自然人付款前端完整链路：`20/20`，每项闭合边界及交叉承接关系以验收追踪表为准；`NP-20` 新增兼职验收撤销与重新验收的来源反向证据。
+- 后端持久化完整链路：`0/20`；本轮未接入数据库、API、事务、幂等或并发控制。
 - `corepack pnpm typecheck`：Web 与 API 通过。
 - `corepack pnpm build:web`：通过。
 - `corepack pnpm --filter @startupmanage/web lint`：通过。
@@ -615,4 +616,4 @@ corepack pnpm ai-native:check
 - 付款、应付、代扣负债、申报快照和冲正的数据库事务与幂等控制。
 - 正式税率版本、敏感身份信息保护、正式申报和更正结果接入。
 
-本状态表示 `NP-04`、`NP-05`、`NP-06`、`NP-07`、`NP-14`、`NP-15`、`NP-16`、`NP-19` 已取得页面状态同源的前端跨模块执行证据，其余验收项仍按追踪表等级推进。它不表示自然人付款全部业务链、正式扣缴申报、后端一致性、浏览器验收或生产合规已经就绪。
+本状态表示 `NP-01` 至 `NP-20` 已分别取得其验收边界内的前端可执行证据。它不表示正式扣缴申报、后端一致性、浏览器验收、权限控制或生产合规已经就绪。

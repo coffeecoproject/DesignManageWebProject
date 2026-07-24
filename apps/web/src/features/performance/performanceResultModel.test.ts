@@ -48,7 +48,7 @@ function createCategoryRecord(
 ): PerformanceMonthlyCategoryRecord {
   return {
     category: '绘图任务制',
-    employeeName: '示例全职 B',
+    employeeName: '陈浩',
     events: [],
     id: 'task-performance:2026-06:20250018:perf-rule-space-design-2026-final',
     monthlyAmount: 1200,
@@ -151,7 +151,7 @@ const tests: UnitTest[] = [
     name: 'PF-32 bootstraps the current demo employee from task-backed source as a formal result',
     run() {
       const record = createDrawingRecord({
-        employeeName: '示例全职 A',
+        employeeName: '李明',
         position: 'CEO',
         ruleApplicability: {
           applicablePositions: ['CEO'],
@@ -170,7 +170,7 @@ const tests: UnitTest[] = [
       });
       const member = {
         id: '20260001',
-        name: '示例全职 A',
+        name: '李明',
         personnelType: '全职',
         position: 'CEO',
         status: '在职',

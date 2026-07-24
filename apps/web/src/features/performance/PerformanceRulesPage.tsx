@@ -33,7 +33,6 @@ import {
   type PerformanceRuleFilters,
   type RuleCategoryFilter,
   type RuleDrawerAction,
-  type RuleRelatedFileRecord,
   type RuleStatusFilter,
   type RuleTypeFilter
 } from './performanceRuleModel';
@@ -105,14 +104,6 @@ export function PerformanceRulesPage() {
     setSelectedRule(null);
   }
 
-  function handlePreviewRuleFile(file: RuleRelatedFileRecord) {
-    void messageApi.info(`${file.name} 预览仍为前端原型，未接入真实文件服务`);
-  }
-
-  function handleDownloadRuleFile(file: RuleRelatedFileRecord) {
-    void messageApi.success(`${file.name} 下载请求已记录`);
-  }
-
   function handleRuleAction(rule: PerformanceRulePreset, action: RuleDrawerAction) {
     if (action === 'deleteDraft') {
       if (rule.status !== '草稿') {
@@ -120,7 +111,10 @@ export function PerformanceRulesPage() {
         return;
       }
 
-      deletePerformanceRule(rule.id);
+      if (!deletePerformanceRule(rule.id)) {
+        void messageApi.warning('当前规则不可删除');
+        return;
+      }
       setSelectedRule(null);
       void messageApi.success('草稿规则已删除');
       return;
@@ -236,8 +230,6 @@ export function PerformanceRulesPage() {
           taskConfigRows={taskConfigRows}
           onClose={handleCloseRuleDrawer}
           onAction={handleRuleAction}
-          onDownloadFile={handleDownloadRuleFile}
-          onPreviewFile={handlePreviewRuleFile}
         />
     </ManagementPageScaffold>
   );

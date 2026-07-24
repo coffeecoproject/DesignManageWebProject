@@ -1,9 +1,26 @@
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import {
+  applyAccountingVoucherLifecycle,
+  buildAccountingLedgerEntries,
+  buildAccountingVoucherFromReceivablePayable,
+  buildAccountingVoucherFromTransaction,
+  createAccountingVoucherLifecycleRecord
+} from '../finance/financeAccountingVoucherModel';
+import { getFinanceSeedPublicAccountRef } from '../finance/financeData';
+import {
   buildFinanceExpenseApprovalCommit,
   buildFinanceExpenseApprovalReversal,
   buildFinanceExpenseEvidenceSupplement
 } from '../finance/financeExpenseApprovalCommitModel';
+import {
+  buildFinanceReceivablePayableSettlementTransaction,
+  createFinanceReceivablePayableSettlementForm,
+  deriveFinanceReceivablePayableSettlementRows
+} from '../finance/financeReceivablesPayablesModel';
+import {
+  commitFinanceReceivablePayableSettlementRegistration,
+  commitFinanceTransactionReview
+} from '../finance/financeSettlementWorkflow';
 import {
   approveExpenseReviewRecord,
   buildMyWorkExpenseReviewCompletedRows,
@@ -394,6 +411,69 @@ const tests: UnitTest[] = [
       assertEqual(commit.payableRows.length, 1, 'approval should commit one reimbursement payable');
       assertEqual(commit.salaryAdjustments.length, 0, 'truthful compliant reimbursement must not enter salary IIT');
       assertEqual(commit.payableRows[0]?.naturalPersonPayment?.incomeType, '费用返还', 'payable should retain explicit non-taxable nature');
+
+      const payable = commit.payableRows[0];
+      assert(payable, 'approved reimbursement should retain the payable record for settlement');
+      const publicAccountRef = getFinanceSeedPublicAccountRef();
+      const settlementForm = {
+        ...createFinanceReceivablePayableSettlementForm(payable, publicAccountRef.publicAccountId),
+        files: [createFile('报销付款回单.pdf')],
+        occurredAt: '2026-06-20'
+      };
+      const transaction = buildFinanceReceivablePayableSettlementTransaction(
+        payable,
+        settlementForm,
+        [],
+        publicAccountRef
+      );
+      const registration = commitFinanceReceivablePayableSettlementRegistration(
+        { financeRows: [], receivablePayableRows: [payable] },
+        payable.id,
+        transaction
+      );
+      assert(registration.success, 'reimbursement payment should register from the payable record');
+      const review = commitFinanceTransactionReview(registration, {
+        operationId: 'expense-payment-review',
+        reviewedAt: '2026-06-20 15:00',
+        reviewer: '财务复核',
+        transactionId: transaction.id
+      });
+      assert(review.success, 'reimbursement payment should post after voucher review');
+      const settledPayable = deriveFinanceReceivablePayableSettlementRows(
+        review.receivablePayableRows,
+        review.financeRows
+      )[0];
+      assertEqual(settledPayable?.settlementStatus, '已结清', 'posted reimbursement payment should settle its payable');
+
+      const accrualVoucher = buildAccountingVoucherFromReceivablePayable(payable, 0);
+      const postedTransaction = review.financeRows.find((row) => row.id === transaction.id);
+      assert(accrualVoucher, 'approved reimbursement should create an accrual voucher from its legal expense evidence');
+      assert(postedTransaction, 'reviewed reimbursement payment should retain the posted transaction');
+      const paymentVoucher = buildAccountingVoucherFromTransaction(postedTransaction, 1);
+      assert(paymentVoucher, 'posted reimbursement payment should create a funds voucher');
+      const bookedVouchers = applyAccountingVoucherLifecycle(
+        [accrualVoucher, paymentVoucher],
+        [
+          createAccountingVoucherLifecycleRecord(accrualVoucher, '记-202606-201', '李明', '2026-06-20 15:10'),
+          createAccountingVoucherLifecycleRecord(paymentVoucher, '记-202606-202', '李明', '2026-06-20 15:15')
+        ]
+      );
+      const ledgerEntries = buildAccountingLedgerEntries(bookedVouchers);
+
+      assertEqual(
+        ledgerEntries.length,
+        accrualVoucher.lines.length + paymentVoucher.lines.length,
+        'booked reimbursement accrual and payment should enter the general ledger line by line'
+      );
+      assertEqual(
+        ledgerEntries.filter((entry) => entry.subjectCode === '2241').length,
+        2,
+        'reimbursement payable should be recognized and cleared once'
+      );
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '1002' && entry.creditAmount === 486.5),
+        'reimbursement payment should reduce bank deposit after booking'
+      );
     }
   },
   {

@@ -93,18 +93,74 @@ export function buildPartTimeLaborReceivablePayableRecord(
 
 export function mergePartTimeLaborReceivablePayableRecords({
   batches,
+  canDirectCorrect = (record) => record.settledAmount <= 0 && record.linkedTransactionNos.length === 0,
   people,
   records
 }: {
   batches: readonly PartTimeLaborSettlementBatch[];
+  canDirectCorrect?: (record: FinanceReceivablePayableRecord) => boolean;
   people: readonly PeopleMember[];
   records: FinanceReceivablePayableRecord[];
 }): FinanceReceivablePayableRecord[] {
-  const existingPaymentFactIds = new Set(
-    records
-      .map((record) => record.naturalPersonPayment?.paymentFactId)
-      .filter((paymentFactId): paymentFactId is string => Boolean(paymentFactId))
+  const batchesByPaymentFactId = new Map(
+    batches.map((batch) => [`labor:${batch.batchKey}`, batch])
   );
+  const existingPaymentFactIds = new Set<string>();
+  const reconciledRecords = records.map((record) => {
+    const paymentFactId = record.naturalPersonPayment?.paymentFactId;
+
+    if (record.sourceType !== '外协结算' || !paymentFactId) {
+      return record;
+    }
+
+    existingPaymentFactIds.add(paymentFactId);
+    const batch = batchesByPaymentFactId.get(paymentFactId);
+
+    if (!batch) {
+      if (record.confirmationStatus === '已作废' || !canDirectCorrect(record)) {
+        return record;
+      }
+
+      return {
+        ...record,
+        confirmationStatus: '已作废' as const,
+        note: [record.note, '任务验收已撤销'].filter(Boolean).join('；'),
+        operationRecords: [
+          {
+            action: '作废劳务应付',
+            actor: '系统',
+            id: `op-void-${record.id}`,
+            object: record.documentNo,
+            summary: '兼职任务验收撤销，原劳务应付作废',
+            time: record.updatedAt
+          },
+          ...record.operationRecords
+        ]
+      };
+    }
+
+    const person = people.find((member) => member.id === batch.employeeNo);
+    if (!person) {
+      return record;
+    }
+
+    const nextRecord = buildPartTimeLaborReceivablePayableRecord(batch, person);
+    const sourceNos = record.naturalPersonPayment?.sourceRecordNos ?? [];
+    const nextSourceNos = nextRecord.naturalPersonPayment?.sourceRecordNos ?? [];
+    const sourceUnchanged = sourceNos.length === nextSourceNos.length
+      && sourceNos.every((sourceNo) => nextSourceNos.includes(sourceNo));
+    const amountUnchanged = Math.abs(record.amount - nextRecord.amount) < 0.01;
+
+    if (
+      record.confirmationStatus !== '已作废'
+      && sourceUnchanged
+      && amountUnchanged
+    ) {
+      return record;
+    }
+
+    return canDirectCorrect(record) ? nextRecord : record;
+  });
   const generatedRecords = batches.flatMap((batch) => {
     const paymentFactId = `labor:${batch.batchKey}`;
     if (existingPaymentFactIds.has(paymentFactId)) {
@@ -115,5 +171,5 @@ export function mergePartTimeLaborReceivablePayableRecords({
     return person ? [buildPartTimeLaborReceivablePayableRecord(batch, person)] : [];
   });
 
-  return generatedRecords.length > 0 ? [...records, ...generatedRecords] : records;
+  return generatedRecords.length > 0 ? [...reconciledRecords, ...generatedRecords] : reconciledRecords;
 }

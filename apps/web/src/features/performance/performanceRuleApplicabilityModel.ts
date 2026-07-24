@@ -1,4 +1,5 @@
 import type { PeopleMember } from '../people/peopleTypes';
+import { getPeopleMemberPositions } from '../people/peopleDomain';
 import type {
   PerformanceMonthlyCategoryRecord,
   PerformanceRuleApplicability,
@@ -116,14 +117,17 @@ export function resolvePerformanceRuleForMember({
     };
   }
 
-  const positionRules = personnelRules.filter((rule) => rule.applicablePositions.includes(member.position));
+  const memberPositions = getPeopleMemberPositions(member);
+  const positionRules = personnelRules.filter((rule) =>
+    rule.applicablePositions.some((position) => memberPositions.includes(position))
+  );
 
   if (positionRules.length === 0) {
     return {
       applicability: buildApplicability(
         record,
         '岗位不适用',
-        `岗位“${member.position}”不在规则适用范围内。`,
+        `任职岗位“${memberPositions.join('、')}”不在规则适用范围内。`,
         personnelRules[0],
         member
       )
@@ -162,7 +166,7 @@ export function resolvePerformanceRuleForMember({
     applicability: buildApplicability(
       record,
       '适用',
-      `按${member.personnelType}、岗位“${member.position}”和${performanceMonth}生效期间自动适用。`,
+      `按${member.personnelType}、任职岗位“${memberPositions.join('、')}”和${performanceMonth}生效期间自动适用。`,
       rule,
       member
     ),
@@ -205,7 +209,7 @@ export function resolvePerformanceRuleApplicability({
   return buildApplicability(
     record,
     '适用',
-    `按${member.personnelType}、岗位“${member.position}”和${record.performanceMonth}生效期间自动适用。`,
+    `按${member.personnelType}、任职岗位“${getPeopleMemberPositions(member).join('、')}”和${record.performanceMonth}生效期间自动适用。`,
     rule,
     member
   );

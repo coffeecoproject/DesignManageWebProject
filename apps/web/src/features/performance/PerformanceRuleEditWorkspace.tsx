@@ -48,7 +48,7 @@ type RuleEditWorkspaceProps = {
   onFilesChange: (files: UploadFile[]) => void;
   onPerformanceTypeChange: (performanceType: PerformanceRuleType) => void;
   onPositionsChange: (positions: string[]) => void;
-  onPreviewFile: (file: RuleRelatedFileRecord) => void;
+  onPreviewFile?: (file: RuleRelatedFileRecord) => void;
   onRemoveTask: (itemId: string) => void;
   onUpdateTask: <K extends keyof PerformanceTaskScoreItem>(itemId: string, key: K, value: PerformanceTaskScoreItem[K]) => void;
   taskConfigRows: TaskConfigRow[];
@@ -349,7 +349,7 @@ export function PerformanceRuleEditWorkspace({
                         status={draftBasisFile ? '已选择' : '未上传'}
                         statusTone={draftBasisFile ? 'green' : 'amber'}
                         title="规则依据文件 *"
-                        onPreview={draftBasisFileRecord ? () => onPreviewFile(draftBasisFileRecord) : undefined}
+                        onPreview={draftBasisFileRecord && onPreviewFile ? () => onPreviewFile(draftBasisFileRecord) : undefined}
                         onRemove={() => onFilesChange([])}
                         onSelect={(file) => onFilesChange([file])}
                       />

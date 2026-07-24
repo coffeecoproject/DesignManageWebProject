@@ -1,7 +1,12 @@
 import { peopleMembers } from '../people/mockData';
+import { defaultBrandAcceptancePolicy } from '../customers/brandAcceptancePolicyModel';
 import { performanceRulePresets } from '../performance/performanceMockData';
 import type { AcceptanceScoringDraft } from '../tasks/taskAcceptanceModel';
-import { applyTaskAcceptanceCommit, type TaskWorkflowState } from '../tasks/taskAcceptanceCommitModel';
+import {
+  applyTaskAcceptanceCommit,
+  applyTaskAcceptanceReversal,
+  type TaskWorkflowState
+} from '../tasks/taskAcceptanceCommitModel';
 import { prepareTaskAcceptanceCommit } from '../tasks/taskAcceptanceWorkflow';
 import type { StoreTaskRecord } from '../tasks/TaskManagementState';
 import { buildPartTimeLaborSettlementBatches } from '../tasks/partTimeLaborSettlementModel';
@@ -80,12 +85,13 @@ function createReadyTask({
 }): StoreTaskRecord {
   return {
     acceptorId: '20260001',
-    acceptorName: '示例全职 A',
+    acceptorName: '李明',
     brandId: 'brand-starry-space',
     code,
     createdAt: '2026-06-10 09:00',
     customerId: 'customer-starry',
     customerBillingSnapshot: {
+      acceptancePolicy: defaultBrandAcceptancePolicy,
       billable: true,
       brandId: 'brand-starry-space',
       brandName: '星际空间',
@@ -94,7 +100,7 @@ function createReadyTask({
       contractAmountMode: '无固定金额',
       currency: 'CNY',
       customerId: 'customer-starry',
-      customerName: '星河餐饮集团',
+      customerName: '湖南新岚餐饮管理有限公司',
       id: `task-billing-snapshot-${id}`,
       priceVersion: 1,
       priceVersionId: 'brand-price-starry-image-v1',
@@ -136,6 +142,9 @@ function createReadyTask({
     storeId: 'store-starry-test',
     submittedAt: '2026-06-14 17:00',
     taskConfigId: 'task-type-store-image',
+    taskDefinitionSnapshot: {
+      capturedAt: '2026-06-10 09:00', category: '设计交付', code: 'TASK-IMAGE', deliveryHints: [], id: 'task-type-store-image', name: '门店图'
+    },
     updatedAt: '2026-06-14 17:00'
   };
 }
@@ -283,6 +292,45 @@ const tests: UnitTest[] = [
       assertEqual(acceptedState.taskPerformanceScoringRows.length, 2, 'customer acceptance should retain performance scoring');
       assertEqual(settlementResult.blockers.length, 2, 'labor settlement should surface both source blockers');
       assertEqual(settlementResult.batches.length, 0, 'invalid labor sources should not derive a labor settlement batch');
+    }
+  },
+  {
+    name: 'NP-20 FRONTEND-CHAIN voids an unconsumed labor payable after acceptance reversal and restores it after reacceptance',
+    run: () => {
+      const task = createReadyTask({ amount: 3200, code: 'TASK-PT-REV-001', id: 'task-pt-rev-001' });
+      const committedState = acceptTask(createWorkflowState([task]), task);
+      const initialBatches = buildSettlementResult(committedState).batches;
+      const initialPayables = mergePartTimeLaborReceivablePayableRecords({
+        batches: initialBatches,
+        people: [partTimePerson],
+        records: []
+      });
+      const reversedState = applyTaskAcceptanceReversal(committedState, {
+        actor: '验收人',
+        occurredAt: '2026-06-16 09:00',
+        reason: '验收材料有误',
+        taskId: task.id
+      });
+      const reversedPayables = mergePartTimeLaborReceivablePayableRecords({
+        batches: buildSettlementResult(reversedState).batches,
+        canDirectCorrect: () => true,
+        people: [partTimePerson],
+        records: initialPayables
+      });
+
+      assertEqual(reversedPayables[0]?.confirmationStatus, '已作废', 'acceptance reversal should void an unconsumed labor payable');
+
+      const reacceptedState = acceptTask(reversedState, task);
+      const restoredPayables = mergePartTimeLaborReceivablePayableRecords({
+        batches: buildSettlementResult(reacceptedState).batches,
+        canDirectCorrect: () => true,
+        people: [partTimePerson],
+        records: reversedPayables
+      });
+
+      assertEqual(restoredPayables.length, 1, 'reacceptance should reuse the deterministic labor payable identity');
+      assertEqual(restoredPayables[0]?.confirmationStatus, '已确认', 'reacceptance should restore the current labor payable');
+      assertEqual(restoredPayables[0]?.amount, 3200, 'restored labor payable should use the current accepted gross amount');
     }
   }
 ];

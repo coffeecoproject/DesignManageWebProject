@@ -5,9 +5,9 @@ import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
 import { getLatestPublishedPerformanceSummary } from '../performance/performanceResultConsumerModel';
 import { usePerformanceResults } from '../performance/usePerformanceResults';
 import { useSalaryMonthlyReportBuilder } from '../salary/salaryReportBuilder';
-import { useTaskConfigState } from '../system/TaskConfigState';
 import { taskManagementNow, type StoreTaskRecord } from '../tasks/TaskManagementState';
 import { useTaskManagementState } from '../tasks/TaskManagementState';
+import { getTaskPerformanceRule, getTaskScoreItem } from '../tasks/taskAcceptanceModel';
 import type { TaskDetailTableRow } from '../tasks/components/TaskDetailTable';
 import { getTaskTypeName as resolveTaskTypeName } from '../tasks/taskDisplayModel';
 import {
@@ -26,7 +26,6 @@ export function useMyWorkData() {
   const { performanceRuleRows } = usePerformanceRuleState();
   const { publishedMonthlyRecords } = usePerformanceResults();
   const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
-  const { taskConfigRows } = useTaskConfigState();
   const { storeTaskRows } = useTaskManagementState();
 
   const member = useMemo(() => getMyWorkMember(peopleRows, currentMyWorkMemberId), [peopleRows]);
@@ -82,13 +81,12 @@ export function useMyWorkData() {
   }
 
   function getTaskTypeName(task: StoreTaskRecord) {
-    return resolveTaskTypeName(task.taskConfigId, taskConfigRows);
+    return resolveTaskTypeName(task);
   }
 
   function getTaskScoreText(task: StoreTaskRecord) {
-    const brand = getBrandById(task.brandId);
-    const rule = performanceRuleRows.find((row) => row.id === brand?.performanceRuleId);
-    const scoreItem = rule?.taskScoreItems.find((item) => item.taskConfigId === task.taskConfigId);
+    const rule = getTaskPerformanceRule(task, member, performanceRuleRows);
+    const scoreItem = getTaskScoreItem(task, rule);
 
     return scoreItem ? `${scoreItem.score} 分` : '-';
   }

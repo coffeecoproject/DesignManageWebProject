@@ -6,14 +6,11 @@ import { FilterBar, FilterField, FilterPanel, KeywordFilter } from '../../compon
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
-import {
-  type PerformanceEmployeeSignatureArchive,
-  type PerformanceSignatureFile
-} from './performanceSignatureArchiveData';
 import { PerformanceSignatureCreateDrawer } from './PerformanceSignatureCreateDrawer';
 import { PerformanceSignatureDrawer } from './PerformanceSignatureDrawer';
 import { PerformanceSignatureListTabs } from './PerformanceSignatureListTabs';
 import { usePerformanceRuleState } from './PerformanceRuleState';
+import { usePerformanceSignatureState } from './PerformanceSignatureState';
 import {
   addPerformanceSignatureArchive,
   archivePerformanceSignatureRelation,
@@ -22,14 +19,12 @@ import {
   defaultPerformanceSignatureFilters,
   filterPerformanceSignatureRows,
   getCurrentCategories,
-  getInitialSignatureEmployees,
   getPerformanceSignatureFilterOptions,
   getPerformanceSignatureMetrics,
   getRuleOption,
   getSelectedSignatureFileName,
   getSignatureRelationRows,
   updatePerformanceSignatureArchive,
-  type PerformanceSignatureFileAction,
   type PerformanceSignatureFilters,
   type SignatureCategoryFilter,
   type SignatureCreateForm,
@@ -41,14 +36,14 @@ import type { PerformanceRuleCategory } from './performanceTypes';
 export function PerformanceSignaturesPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const { performanceRuleRows } = usePerformanceRuleState();
+  const { employees, updateEmployeeSignature } = usePerformanceSignatureState();
   const ruleOptions = useMemo(() => buildPerformanceSignatureRuleOptions(performanceRuleRows), [performanceRuleRows]);
   const [filters, setFilters] = useState<PerformanceSignatureFilters>(defaultPerformanceSignatureFilters);
-  const [employees, setEmployees] = useState<PerformanceEmployeeSignatureArchive[]>(() => getInitialSignatureEmployees());
   const [activeListTab, setActiveListTab] = useState<SignatureListTabKey>('current');
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
   const [createForm, setCreateForm] = useState<SignatureCreateForm>(() =>
-    buildSignatureCreateForm(getInitialSignatureEmployees(), ruleOptions)
+    buildSignatureCreateForm(employees, ruleOptions)
   );
 
   const filterOptions = useMemo(() => getPerformanceSignatureFilterOptions(employees), [employees]);
@@ -59,19 +54,6 @@ export function PerformanceSignaturesPage() {
   const selectedRelation = selectedRelationId ? allRelationRows.find((row) => row.id === selectedRelationId) ?? null : null;
   const activeRows = activeListTab === 'current' ? currentRelationRows : historyRelationRows;
   const filteredRelationRows = useMemo(() => filterPerformanceSignatureRows(activeRows, filters), [activeRows, filters]);
-
-  function handleFileAction(action: PerformanceSignatureFileAction, file: PerformanceSignatureFile) {
-    const actionText: Record<PerformanceSignatureFileAction, string> = {
-      download: '下载',
-      preview: '预览'
-    };
-
-    void messageApi.info(`${file.fileName} 的${actionText[action]}能力仍为前端原型`);
-  }
-
-  function updateEmployeeSignature(employeeId: string, updater: (employee: PerformanceEmployeeSignatureArchive) => PerformanceEmployeeSignatureArchive) {
-    setEmployees((current) => current.map((employee) => (employee.id === employeeId ? updater(employee) : employee)));
-  }
 
   function handleOpenCreateDrawer() {
     setCreateForm(buildSignatureCreateForm(employees, ruleOptions));
@@ -242,7 +224,6 @@ export function PerformanceSignaturesPage() {
         onAddRelation={handleAddRelation}
         onArchiveRelation={handleArchiveRelation}
         onClose={() => setSelectedRelationId(null)}
-        onFileAction={handleFileAction}
         onUpdateRelation={handleUpdateRelation}
       />
 

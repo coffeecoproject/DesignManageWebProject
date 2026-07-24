@@ -85,7 +85,10 @@ function createTask(overrides: Partial<StoreTaskRecord> = {}): StoreTaskRecord {
     submittedAt: '2026-06-18 15:00',
     taskConfigId: 'task-type-floor-plan',
     updatedAt: '2026-06-18 16:00',
-    ...overrides
+    ...overrides,
+    taskDefinitionSnapshot: overrides.taskDefinitionSnapshot ?? {
+      capturedAt: overrides.createdAt ?? '2026-06-10 09:00', category: '设计交付', code: 'TASK-FLOOR', deliveryHints: [], id: overrides.taskConfigId ?? 'task-type-floor-plan', name: '平面方案'
+    }
   };
 }
 

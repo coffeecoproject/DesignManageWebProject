@@ -348,7 +348,6 @@ export function SalaryPersonalIncomeTaxDeductionsPage() {
           {activeRow.firstEmploymentEvidenceFiles.length > 0 ? (
             <RelatedFileTable
               records={activeRow.firstEmploymentEvidenceFiles}
-              onDownload={(file) => void messageApi.success(`${file.name}已准备下载`)}
               onPreview={(file) => setPreviewFile({ ...file, category: file.type })}
             />
           ) : null}
@@ -370,7 +369,6 @@ export function SalaryPersonalIncomeTaxDeductionsPage() {
             {activeRow.evidenceFiles.length > 0 ? (
               <RelatedFileTable
                 records={activeRow.evidenceFiles}
-                onDownload={(file) => void messageApi.success(`${file.name}已准备下载`)}
                 onPreview={(file) => setPreviewFile({ ...file, category: file.type })}
               />
             ) : <DetailInfoGrid columns={2} items={[{ label: '信息来源', value: activeRow.source ?? '-' }, { label: '资料文件', value: '-' }]} />}
@@ -467,7 +465,6 @@ export function SalaryPersonalIncomeTaxDeductionsPage() {
                 files={drawer.form.firstEmploymentEvidenceFiles}
                 title="首次就业佐证"
                 variant="list"
-                onDownload={(file) => void messageApi.success(`${file.name}已准备下载`)}
                 onPreview={(file) => setPreviewFile({ ...file, category: file.type })}
                 onRemove={() => drawer.updateForm('firstEmploymentEvidenceFiles', [])}
                 onSelect={handleFirstEmploymentEvidenceSelect}
@@ -487,7 +484,6 @@ export function SalaryPersonalIncomeTaxDeductionsPage() {
                 files={drawer.form.evidenceFiles}
                 title="扣除信息表"
                 variant="list"
-                onDownload={(file) => void messageApi.success(`${file.name}已准备下载`)}
                 onPreview={(file) => setPreviewFile({ ...file, category: file.type })}
                 onRemove={() => drawer.updateForm('evidenceFiles', [])}
                 onSelect={handleEvidenceSelect}

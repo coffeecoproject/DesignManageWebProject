@@ -1,6 +1,9 @@
 import { getFinanceSeedPublicAccountRef } from './financeData';
 import {
+  applyAccountingVoucherLifecycle,
+  buildAccountingLedgerEntries,
   buildAccountingVouchers,
+  createAccountingVoucherLifecycleRecord,
   isAccountingVoucherBalanced
 } from './financeAccountingVoucherModel';
 import {
@@ -289,6 +292,26 @@ const tests: UnitTest[] = [
         voucher.lines.find((line) => line.side === '贷方' && line.subjectCode === '2221.03')?.amount,
         480,
         'labor voucher must credit withheld IIT'
+      );
+      assertEqual(buildAccountingLedgerEntries([voucher]).length, 0, 'unbooked labor voucher must not enter the general ledger');
+      const bookedVoucher = applyAccountingVoucherLifecycle(
+        [voucher],
+        [createAccountingVoucherLifecycleRecord(voucher, '记-202607-201', '李明', '2026-07-02 15:40')]
+      );
+      const ledgerEntries = buildAccountingLedgerEntries(bookedVoucher);
+
+      assertEqual(ledgerEntries.length, 3, 'booked labor voucher should retain gross payable, net payment, and IIT liability entries');
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '2202' && entry.debitAmount === 3200),
+        'booked labor payment should clear the gross labor payable'
+      );
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '1002' && entry.creditAmount === 2720),
+        'booked labor payment should reduce bank by the net payment'
+      );
+      assert(
+        ledgerEntries.some((entry) => entry.subjectCode === '2221.03' && entry.creditAmount === 480),
+        'booked labor payment should retain withheld IIT as a liability'
       );
     }
   },

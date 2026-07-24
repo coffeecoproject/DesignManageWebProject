@@ -14,7 +14,7 @@ import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DrawerFormField, DrawerFormGrid, DrawerFormShell } from '../../components/DrawerForm';
 import { OperationRecordTable } from '../../components/OperationRecordTable';
-import type { PerformanceSignatureFile, PerformanceSignatureRuleOption } from './performanceSignatureArchiveData';
+import type { PerformanceSignatureRuleOption } from './performanceSignatureArchiveData';
 import { PerformanceSignatureEmptyBlock } from './PerformanceSignatureEmptyBlock';
 import { PerformanceSignatureFileTable } from './PerformanceSignatureFileTable';
 import { PerformanceSignatureUploadSlot } from './PerformanceSignatureUploadSlot';
@@ -24,7 +24,6 @@ import {
   getNewSignatureRuleOptions,
   getSameCategoryRuleOptions,
   getSelectedSignatureFileName,
-  type PerformanceSignatureFileAction,
   type PerformanceSignatureRelationRow
 } from './performanceSignatureModel';
 import type { PerformanceRuleCategory } from './performanceTypes';
@@ -35,7 +34,6 @@ type PerformanceSignatureDrawerProps = {
   onAddRelation: (employeeId: string, ruleId: string, fileName: string) => void;
   onArchiveRelation: (employeeId: string, category: PerformanceRuleCategory) => void;
   onClose: () => void;
-  onFileAction: (action: PerformanceSignatureFileAction, file: PerformanceSignatureFile) => void;
   onUpdateRelation: (employeeId: string, category: PerformanceRuleCategory, ruleId: string, fileName: string) => void;
 };
 
@@ -45,7 +43,6 @@ export function PerformanceSignatureDrawer({
   onAddRelation,
   onArchiveRelation,
   onClose,
-  onFileAction,
   onUpdateRelation
 }: PerformanceSignatureDrawerProps) {
   const [editMode, setEditMode] = useState(false);
@@ -305,7 +302,7 @@ export function PerformanceSignatureDrawer({
                 label: '当前档案',
                 children:
                   currentFiles.length > 0 ? (
-                    <PerformanceSignatureFileTable files={currentFiles} mode="current" onFileAction={onFileAction} />
+                    <PerformanceSignatureFileTable files={currentFiles} mode="current" />
                   ) : (
                     <PerformanceSignatureEmptyBlock text="该员工暂无当前档案" />
                   )
@@ -315,7 +312,7 @@ export function PerformanceSignatureDrawer({
                 label: '历史档案',
                 children:
                   historyFiles.length > 0 ? (
-                    <PerformanceSignatureFileTable files={historyFiles} mode="history" onFileAction={onFileAction} />
+                    <PerformanceSignatureFileTable files={historyFiles} mode="history" />
                   ) : (
                     <PerformanceSignatureEmptyBlock text="该员工该绩效类别暂无历史档案" />
                   )

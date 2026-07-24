@@ -13,11 +13,21 @@ function assertEqual<T>(actual: T, expected: T, message: string) {
 }
 
 function member(overrides: Partial<PeopleMember> = {}) {
+  const position = overrides.position ?? '空间设计师';
+
   return {
     id: '20269999',
     name: '规则适用测试人员',
     personnelType: '全职',
-    position: '空间设计师',
+    position,
+    positionAssignments: overrides.positionAssignments ?? [{
+      effectiveFrom: '2026-01-01',
+      id: 'assignment-performance-test',
+      isPrimary: true,
+      positionId: `position-${position}`,
+      positionName: position,
+      status: '生效中'
+    }],
     status: '在职',
     ...overrides
   } as PeopleMember;
@@ -88,6 +98,55 @@ const tests: UnitTest[] = [
       });
 
       assertEqual(result.status, '岗位不适用', 'position mismatch should block rule applicability');
+    }
+  },
+  {
+    name: 'an applicable secondary position can select the published rule',
+    run() {
+      const result = resolvePerformanceRuleApplicability({
+        peopleRows: [
+          member({
+            position: '财务专员',
+            positionAssignments: [
+              { effectiveFrom: '2026-01-01', id: 'assignment-finance', isPrimary: true, positionId: 'position-finance', positionName: '财务专员', status: '生效中' },
+              { effectiveFrom: '2026-01-01', id: 'assignment-space', isPrimary: false, positionId: 'position-space-designer', positionName: '空间设计师', status: '生效中' }
+            ]
+          })
+        ],
+        record: record({ position: '财务专员' }),
+        ruleRows: rules()
+      });
+
+      assertEqual(result.status, '适用', 'a matching secondary position should make the rule applicable');
+      assertEqual(result.ruleVersion, 'V1', 'the effective rule version should still resolve by month');
+    }
+  },
+  {
+    name: 'multiple assigned positions cannot silently select overlapping rules',
+    run() {
+      const v1 = rules()[0];
+      const financeRule: PerformanceRulePreset = {
+        ...v1,
+        applicablePositions: ['财务专员'],
+        currentVersion: 'V8',
+        id: 'rule-finance-v8',
+        name: '绘图任务制V8'
+      };
+      const result = resolvePerformanceRuleApplicability({
+        peopleRows: [
+          member({
+            position: '财务专员',
+            positionAssignments: [
+              { effectiveFrom: '2026-01-01', id: 'assignment-finance', isPrimary: true, positionId: 'position-finance', positionName: '财务专员', status: '生效中' },
+              { effectiveFrom: '2026-01-01', id: 'assignment-space', isPrimary: false, positionId: 'position-space-designer', positionName: '空间设计师', status: '生效中' }
+            ]
+          })
+        ],
+        record: record({ position: '财务专员' }),
+        ruleRows: [v1, financeRule]
+      });
+
+      assertEqual(result.status, '规则冲突', 'rules matched through different assigned positions must surface a conflict');
     }
   },
   {

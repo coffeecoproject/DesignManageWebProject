@@ -1,4 +1,5 @@
 import type { AttendanceMonthlyReport } from '../people/peopleAttendanceMonthlyDomain';
+import { defaultBrandAcceptancePolicy } from '../customers/brandAcceptancePolicyModel';
 import type { PeopleMember } from '../people/peopleTypes';
 import type { SocialInsuranceEmployeeRecord, SocialInsurancePayrollDeductionRecord } from '../finance/financeSocialInsuranceData';
 import { performanceRulePresets } from '../performance/performanceMockData';
@@ -20,6 +21,7 @@ import {
   getSalaryAdjustmentDisplayStatus,
   getSalaryAdjustmentSignedAmount,
   getSalaryScheduledPaymentDate,
+  invalidateSalaryMonthlySources,
   parseSalaryAmount,
   recalculateSalaryMonthlyPayment,
   toAttendanceMonthlySalarySettlementRecords,
@@ -157,6 +159,7 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     emergencyContact: '测试联系人',
     emergencyContactPhone: '13800000000',
     emergencyContactRelation: '家属',
+    employmentRelationshipType: '全日制劳动关系',
     gender: '女',
     graduatedAt: '2014-06-30',
     graduationSchool: '武汉大学',
@@ -194,7 +197,15 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     taskCapabilityIds: [],
     taskRecords: [],
     wechat: 'test-wechat',
-    ...overrides
+    ...overrides,
+    positionAssignments: overrides.positionAssignments ?? [{
+      effectiveFrom: '2026-01-01',
+      id: 'assignment-salary-test',
+      isPrimary: true,
+      positionId: 'position-designer',
+      positionName: overrides.position ?? '设计师',
+      status: '生效中'
+    }]
   };
 }
 
@@ -309,7 +320,7 @@ function createSocialInsuranceDeduction(
     contributionBase: 8000,
     employeeName: '测试人员',
     employeeNo: '20260001',
-    handlingStatus: '已确认',
+    handlingStatus: '待缴费',
     id: 'social-insurance-deduction-001',
     payrollMonth: '2026-06',
     personalAmount: 800,
@@ -329,8 +340,18 @@ function createSocialInsuranceSource(
     department: '设计部',
     employeeName: '测试人员',
     employeeNo: '20260001',
-    handlingStatus: '已确认',
+    handlingStatus: '待缴费',
     id: 'social-insurance-source-001',
+    originalPeriod: '2026-06',
+    handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保',
+    items: [],
+    estimatedEmployerAmount: 1000,
+    estimatedEmployeeAmount: 800,
+    assessedEmployerAmount: 1000,
+    assessedEmployeeAmount: 800,
+    assessmentFileIds: ['assessment-file-001'],
+    paymentFileIds: [],
     operationRecords: [],
     period: '2026-06',
     personalAmount: 800,
@@ -417,6 +438,7 @@ function createAcceptedPerformanceTask(overrides: Partial<StoreTaskRecord> = {})
     executorName: '测试人员',
     files: [],
     customerBillingSnapshot: {
+      acceptancePolicy: defaultBrandAcceptancePolicy,
       billable: true,
       brandId: 'brand-test',
       brandName: '测试品牌',
@@ -448,7 +470,10 @@ function createAcceptedPerformanceTask(overrides: Partial<StoreTaskRecord> = {})
     submittedAt: '2026-06-13 17:00',
     taskConfigId: 'task-type-floor-plan',
     updatedAt: '2026-06-13 18:00',
-    ...overrides
+    ...overrides,
+    taskDefinitionSnapshot: overrides.taskDefinitionSnapshot ?? {
+      capturedAt: overrides.createdAt ?? '2026-06-10 09:00', category: '设计交付', code: 'TASK-FLOOR', deliveryHints: [], id: overrides.taskConfigId ?? 'task-type-floor-plan', name: '平面方案'
+    }
   };
 }
 
@@ -1892,7 +1917,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'treats deferred or skipped social-insurance decisions as handled without current deduction',
+    name: 'blocks salary for unassessed sources and does not carry arrears into the current deduction',
     run: () => {
       const report = buildSalaryMonthlyReports({
         attendanceReports: [createAttendanceReport()],
@@ -1904,13 +1929,13 @@ const tests: UnitTest[] = [
         socialInsuranceSourceRecords: [
           createSocialInsuranceSource({
             category: '社保',
-            handlingStatus: '延期补缴',
+            handlingStatus: '待核定',
             personalAmount: 800,
             reason: '账户信息待核对'
           }),
           createSocialInsuranceSource({
             category: '公积金',
-            handlingStatus: '本月不缴',
+            handlingStatus: '欠缴待补',
             id: 'housing-source-001',
             personalAmount: 800,
             reason: '当月未缴'
@@ -1920,12 +1945,12 @@ const tests: UnitTest[] = [
       const socialSource = report.settlementSourceRecords.find((record) => record.key === 'social-insurance');
       const housingSource = report.settlementSourceRecords.find((record) => record.key === 'housing-fund');
 
-      assertEqual(socialSource?.status, '本月不扣', 'deferred social insurance should be treated as handled without current deduction');
-      assertEqual(housingSource?.status, '本月不扣', 'skipped housing fund should be treated as handled without current deduction');
-      assertEqual(report.settlementPendingSourceLabels.includes('社保'), false, 'deferred social insurance should not block salary confirmation');
-      assertEqual(report.settlementPendingSourceLabels.includes('公积金'), false, 'skipped housing fund should not block salary confirmation');
-      assertEqual(report.socialInsuranceDeductionAmount, 0, 'deferred or skipped records should not deduct current salary');
-      assertEqual(report.status, '待确认', 'salary should be pending confirmation when all source decisions are handled');
+      assertEqual(socialSource?.status, '待确认', 'unassessed social insurance must remain pending');
+      assertEqual(housingSource?.status, '本月不扣', 'arrears must wait for an explicit correction instead of automatic carryover');
+      assertEqual(report.settlementPendingSourceLabels.includes('社保'), true, 'unassessed social insurance must block salary confirmation');
+      assertEqual(report.settlementPendingSourceLabels.includes('公积金'), false, 'arrears are handled outside the current deduction');
+      assertEqual(report.socialInsuranceDeductionAmount, 0, 'unassessed or arrears records must not deduct current salary');
+      assertEqual(report.status, '结算中', 'salary must stay settling while a mandatory source is unassessed');
     }
   },
   {
@@ -2022,6 +2047,43 @@ const tests: UnitTest[] = [
       assertEqual(report.canPay, false, 'paid monthly salary should not be paid again');
       assertEqual(attendanceLocks.length, 1, 'settled salary should export one attendance lock record');
       assertEqual(attendanceLocks[0].settlementNo, 'PAY-TEST-001', 'attendance lock should use salary payroll number');
+    }
+  },
+  {
+    name: 'invalidates confirmed salary when attendance sources change and blocks paid months',
+    run: () => {
+      const confirmedWorkflow = createWorkflow({
+        paidAt: undefined,
+        paidBy: undefined,
+        status: '已确认'
+      });
+      const invalidated = invalidateSalaryMonthlySources(
+        [confirmedWorkflow],
+        [],
+        confirmedWorkflow.memberId,
+        [confirmedWorkflow.month],
+        '考勤记录变更后需重新核定薪酬',
+        '2026-06-19 09:00'
+      );
+
+      assertEqual(invalidated.success, true, 'confirmed salary should allow source correction before payment');
+      assertEqual(invalidated.invalidatedMonths[0], '2026-06', 'source correction should identify the invalidated month');
+      assertEqual(invalidated.workflows[0].status, '待确认', 'confirmed salary should return to pending confirmation');
+      assertEqual(invalidated.workflows[0].settlementSnapshot, undefined, 'invalidated salary should discard the frozen settlement snapshot');
+
+      const paidWorkflow = createWorkflow();
+      const blocked = invalidateSalaryMonthlySources(
+        [paidWorkflow],
+        [],
+        paidWorkflow.memberId,
+        [paidWorkflow.month],
+        '考勤记录变更后需重新核定薪酬',
+        '2026-06-19 09:00'
+      );
+
+      assertEqual(blocked.success, false, 'paid salary should block direct attendance source correction');
+      assertEqual(blocked.blockedMonths[0], '2026-06', 'paid month should be returned as the blocking period');
+      assertEqual(blocked.workflows[0].status, '已发放', 'blocked correction should not mutate the paid workflow');
     }
   },
   {

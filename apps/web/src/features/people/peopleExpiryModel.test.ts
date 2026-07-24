@@ -70,11 +70,16 @@ const tests: UnitTest[] = [
       const probationRow = rows.find((row) => row.id === 'EXP-20260001-probation');
       const sourceMember = snapshot.peopleRows.find((member) => member.id === '20260001');
       const metrics = getPeopleExpiryMetrics(rows);
+      const expectedContractRelated = snapshot.peopleRows.filter((member) =>
+        member.status !== '离职'
+        && member.status !== '结束合作'
+        && (member.contractType === '劳动合同' || member.contractType === '合作协议')
+      ).length;
 
       assert(probationRow, 'probation row should exist');
       assert(sourceMember, 'source member should exist');
       assertEqual(probationRow.status, '待处理', 'probation expiry should remain a reminder status');
-      assertEqual(metrics.contractRelated, 3, 'contract-related metric should count active labor contract and cooperation agreement rows');
+      assertEqual(metrics.contractRelated, expectedContractRelated, 'contract-related metric should count active labor contract and cooperation agreement rows');
       assertEqual(sourceMember.status, '试用期', 'expiry reminder should not mutate personnel lifecycle source data');
     }
   }

@@ -1,14 +1,136 @@
 import { defaultWorkCalendarId } from '../system/WorkCalendarState';
-import type { PeopleMember } from './peopleTypes';
+import { getPositionId } from './rolePermissionModel';
+import type { PeopleMember, PeoplePositionAssignment } from './peopleTypes';
+
+function createPositionAssignments({
+  effectiveFrom,
+  memberId,
+  positions,
+  primaryPosition
+}: {
+  effectiveFrom: string;
+  memberId: string;
+  positions: string[];
+  primaryPosition: string;
+}): PeoplePositionAssignment[] {
+  return positions.map((positionName, index) => ({
+    effectiveFrom,
+    id: `${memberId}-position-${index + 1}`,
+    isPrimary: positionName === primaryPosition,
+    positionId: getPositionId(positionName),
+    positionName,
+    status: '生效中'
+  }));
+}
+
+function createActiveEmployee(input: {
+  birthDate: string;
+  educationMajor: string;
+  gender: PeopleMember['gender'];
+  graduationSchool: string;
+  id: string;
+  identityNo: string;
+  joinedAt: string;
+  name: string;
+  position: string;
+  probationEndAt?: string;
+  regularSalary: number;
+  taskCapabilityIds: string[];
+}): PeopleMember {
+  const inProbation = Boolean(input.probationEndAt && input.probationEndAt >= '2026-06-30');
+  const contractEndYear = Number(input.joinedAt.slice(0, 4)) + 3;
+
+  return {
+    address: `湖北省武汉市洪山区关山大道 ${input.id.slice(-2)} 号`,
+    archiveFiles: [
+      { id: `FILE-${input.id}-001`, name: '身份证人像面照片', category: '身份资料', status: '已上传', updatedAt: input.joinedAt },
+      { id: `FILE-${input.id}-002`, name: '身份证国徽面照片', category: '身份资料', status: '已上传', updatedAt: input.joinedAt },
+      { id: `FILE-${input.id}-003`, name: '劳动合同', category: '合同协议', status: '已上传', updatedAt: input.joinedAt },
+      { id: `FILE-${input.id}-004`, name: '银行卡确认单', category: '收款资料', status: '已上传', updatedAt: input.joinedAt }
+    ],
+    archiveStatus: '资料完整',
+    archiveUpdatedAt: '2026-06-14',
+    auditRecords: [
+      { time: '2026-06-14 10:30', actor: '李明', action: '复核人员档案', result: '成功', note: '核对任职、薪酬和签署资料' }
+    ],
+    birthDate: input.birthDate,
+    city: '武汉',
+    contractEndAt: `${contractEndYear}-${input.joinedAt.slice(5)}`,
+    contractNo: `HT-FT-${input.joinedAt.slice(0, 4)}-${input.id.slice(-4)}`,
+    contractStartAt: input.joinedAt,
+    contractStatus: inProbation ? '劳动合同有效' : '正式合同',
+    contractType: '劳动合同',
+    education: '本科',
+    educationMajor: input.educationMajor,
+    email: `person${input.id}@example.com`,
+    emergencyContact: '档案联系人',
+    emergencyContactPhone: `1390000${input.id.slice(-4)}`,
+    emergencyContactRelation: '家属',
+    employmentRelationshipType: '全日制劳动关系',
+    gender: input.gender,
+    graduatedAt: '2018-06-30',
+    graduationSchool: input.graduationSchool,
+    housingFundEffectiveMonth: input.joinedAt.slice(0, 7),
+    housingFundStatus: '缴存',
+    hukouAddress: `湖北省武汉市洪山区关山街道 ${input.id.slice(-2)} 号`,
+    id: input.id,
+    idDocumentType: '居民身份证',
+    idValidUntil: '2036-12-31',
+    identityNo: input.identityNo,
+    joinedAt: input.joinedAt,
+    mobile: `1380000${input.id.slice(-4)}`,
+    name: input.name,
+    nationality: '中国',
+    paymentProfile: {
+      accountName: input.name,
+      bankAccount: `6225880000${input.id}`,
+      bankName: '招商银行',
+      mode: '工资发放',
+      payCycle: '月度'
+    },
+    personnelType: '全职',
+    position: input.position,
+    positionAssignments: createPositionAssignments({
+      effectiveFrom: input.joinedAt,
+      memberId: input.id,
+      positions: [input.position],
+      primaryPosition: input.position
+    }),
+    probationEndAt: input.probationEndAt,
+    salaryProfile: {
+      effectiveAt: input.joinedAt,
+      note: inProbation ? '试用期结束后按正式薪资执行' : '按劳动合同月薪约定执行',
+      payCycle: '月度',
+      probationSalary: inProbation ? `${Math.round(input.regularSalary * 0.8)} 元/月` : undefined,
+      regularSalary: `${input.regularSalary} 元/月`,
+      status: '已配置',
+      structure: inProbation ? '试用期工资 + 转正工资' : '正式工资'
+    },
+    source: '社会招聘',
+    status: inProbation ? '试用期' : '在职',
+    taskAccessStatus: '可参与任务',
+    taskCapabilityIds: input.taskCapabilityIds,
+    taskRecords: [],
+    wechat: `wx_person_${input.id}`,
+    workCalendarId: defaultWorkCalendarId
+  };
+}
 
 export const peopleMembers: PeopleMember[] = [
   {
     id: '20260001',
-    name: '示例全职 A',
+    name: '李明',
     personnelType: '全职',
+    employmentRelationshipType: '全日制劳动关系',
     housingFundEffectiveMonth: '2026-04',
     housingFundStatus: '缴存',
     position: 'CEO',
+    positionAssignments: createPositionAssignments({
+      effectiveFrom: '2026-04-01',
+      memberId: '20260001',
+      positions: ['CEO'],
+      primaryPosition: 'CEO'
+    }),
     workCalendarId: defaultWorkCalendarId,
     status: '试用期',
     gender: '女',
@@ -28,8 +150,8 @@ export const peopleMembers: PeopleMember[] = [
     idDocumentType: '居民身份证',
     identityNo: '420111199403181024',
     idValidUntil: '2034-08-31',
-    hukouAddress: '湖北省武汉市洪山区珞南街道示例路 18 号',
-    address: '湖北省武汉市洪山区软件园示例小区 3 栋 1201',
+    hukouAddress: '湖北省武汉市洪山区珞南街道珞瑜路 18 号',
+    address: '湖北省武汉市洪山区软件园路清江山水 3 栋 1201',
     emergencyContact: '王敏',
     emergencyContactRelation: '家属',
     emergencyContactPhone: '13900008101',
@@ -67,7 +189,7 @@ export const peopleMembers: PeopleMember[] = [
       mode: '工资发放',
       payCycle: '月度',
       bankName: '招商银行',
-      accountName: '示例全职 A',
+      accountName: '李明',
       bankAccount: '6225880000002101',
     },
     salaryProfile: {
@@ -86,11 +208,18 @@ export const peopleMembers: PeopleMember[] = [
   },
   {
     id: '20250018',
-    name: '示例全职 B',
+    name: '陈浩',
     personnelType: '全职',
+    employmentRelationshipType: '全日制劳动关系',
     housingFundEffectiveMonth: '2025-11',
     housingFundStatus: '缴存',
     position: '主案设计师',
+    positionAssignments: createPositionAssignments({
+      effectiveFrom: '2025-11-15',
+      memberId: '20250018',
+      positions: ['主案设计师', '财务专员'],
+      primaryPosition: '主案设计师'
+    }),
     workCalendarId: defaultWorkCalendarId,
     status: '在职',
     gender: '男',
@@ -110,8 +239,8 @@ export const peopleMembers: PeopleMember[] = [
     idDocumentType: '居民身份证',
     identityNo: '420102199108062048',
     idValidUntil: '2031-11-30',
-    hukouAddress: '湖北省武汉市江岸区后湖街道示例路 36 号',
-    address: '湖北省武汉市江岸区建设大道示例公寓 8 栋 901',
+    hukouAddress: '湖北省武汉市江岸区后湖街道兴业路 36 号',
+    address: '湖北省武汉市江岸区建设大道华银城 8 栋 901',
     emergencyContact: '李娜',
     emergencyContactRelation: '配偶',
     emergencyContactPhone: '13900008102',
@@ -150,7 +279,7 @@ export const peopleMembers: PeopleMember[] = [
       mode: '工资发放',
       payCycle: '月度',
       bankName: '建设银行',
-      accountName: '示例全职 B',
+      accountName: '陈浩',
       bankAccount: '6217000000002102',
     },
     salaryProfile: {
@@ -168,10 +297,17 @@ export const peopleMembers: PeopleMember[] = [
   },
   {
     id: '20240009',
-    name: '示例全职 C',
+    name: '孙宁',
     personnelType: '全职',
+    employmentRelationshipType: '全日制劳动关系',
     housingFundStatus: '暂不缴存',
     position: '行政专员',
+    positionAssignments: createPositionAssignments({
+      effectiveFrom: '2024-08-01',
+      memberId: '20240009',
+      positions: ['行政专员'],
+      primaryPosition: '行政专员'
+    }),
     workCalendarId: defaultWorkCalendarId,
     status: '离职',
     gender: '男',
@@ -191,8 +327,8 @@ export const peopleMembers: PeopleMember[] = [
     idDocumentType: '居民身份证',
     identityNo: '420106198912123096',
     idValidUntil: '2030-04-30',
-    hukouAddress: '湖北省武汉市武昌区水果湖街道示例路 9 号',
-    address: '湖北省武汉市武昌区中北路示例小区 2 栋 606',
+    hukouAddress: '湖北省武汉市武昌区水果湖街道东湖路 9 号',
+    address: '湖北省武汉市武昌区中北路楚河汉街 2 栋 606',
     emergencyContact: '赵强',
     emergencyContactRelation: '家属',
     emergencyContactPhone: '13900008103',
@@ -229,7 +365,7 @@ export const peopleMembers: PeopleMember[] = [
       mode: '工资发放',
       payCycle: '月度',
       bankName: '工商银行',
-      accountName: '示例全职 C',
+      accountName: '孙宁',
       bankAccount: '6222000000002103',
     },
     salaryProfile: {
@@ -247,9 +383,16 @@ export const peopleMembers: PeopleMember[] = [
   },
   {
     id: '20260006',
-    name: '示例兼职 B',
+    name: '林悦',
     personnelType: '兼职',
+    employmentRelationshipType: '独立劳务合作',
     position: '空间设计师',
+    positionAssignments: createPositionAssignments({
+      effectiveFrom: '2026-03-10',
+      memberId: '20260006',
+      positions: ['空间设计师'],
+      primaryPosition: '空间设计师'
+    }),
     status: '合作中',
     gender: '女',
     birthDate: '1996-05-19',
@@ -272,8 +415,8 @@ export const peopleMembers: PeopleMember[] = [
       status: '已确认'
     },
     idValidUntil: '2036-02-28',
-    hukouAddress: '湖南省长沙市岳麓区银盆岭街道示例路 22 号',
-    address: '湖南省长沙市岳麓区麓谷示例公寓 5 栋 1502',
+    hukouAddress: '湖南省长沙市岳麓区银盆岭街道岳麓大道 22 号',
+    address: '湖南省长沙市岳麓区麓谷大道麓谷新城 5 栋 1502',
     emergencyContact: '周琳',
     emergencyContactRelation: '家属',
     emergencyContactPhone: '13800007201',
@@ -312,7 +455,7 @@ export const peopleMembers: PeopleMember[] = [
       mode: '按任务付款',
       payCycle: '验收后付款',
       bankName: '中国银行',
-      accountName: '示例兼职 B',
+      accountName: '林悦',
       bankAccount: '6216000000003201',
     },
     salaryProfile: {
@@ -330,9 +473,16 @@ export const peopleMembers: PeopleMember[] = [
   },
   {
     id: '20250011',
-    name: '示例兼职 C',
+    name: '高远',
     personnelType: '兼职',
+    employmentRelationshipType: '独立劳务合作',
     position: '主案设计师',
+    positionAssignments: createPositionAssignments({
+      effectiveFrom: '2025-09-01',
+      memberId: '20250011',
+      positions: ['主案设计师'],
+      primaryPosition: '主案设计师'
+    }),
     status: '结束合作',
     gender: '男',
     birthDate: '1990-10-23',
@@ -351,8 +501,8 @@ export const peopleMembers: PeopleMember[] = [
     idDocumentType: '居民身份证',
     identityNo: '430102199010232160',
     idValidUntil: '2032-05-31',
-    hukouAddress: '湖南省长沙市芙蓉区定王台街道示例路 11 号',
-    address: '湖南省长沙市芙蓉区五一大道示例公寓 7 栋 803',
+    hukouAddress: '湖南省长沙市芙蓉区定王台街道五一大道 11 号',
+    address: '湖南省长沙市芙蓉区五一大道华美欧 7 栋 803',
     emergencyContact: '陈杰',
     emergencyContactRelation: '家属',
     emergencyContactPhone: '13800007202',
@@ -392,7 +542,7 @@ export const peopleMembers: PeopleMember[] = [
       mode: '按任务付款',
       payCycle: '验收后付款',
       bankName: '农业银行',
-      accountName: '示例兼职 C',
+      accountName: '高远',
       bankAccount: '6228000000003202',
     },
     salaryProfile: {
@@ -407,5 +557,45 @@ export const peopleMembers: PeopleMember[] = [
       { time: '2026-06-01 10:00', actor: '周倩', action: '结束合作', result: '成功', note: '关闭任务参与状态' },
       { time: '2026-05-25 13:22', actor: '周倩', action: '查看收款资料', result: '成功', note: '合作结束前资料复核' }
     ]
-  }
+  },
+  createActiveEmployee({
+    birthDate: '1993-04-12',
+    educationMajor: '人力资源管理',
+    gender: '女',
+    graduationSchool: '湖北大学',
+    id: '20260004',
+    identityNo: '420106199304122624',
+    joinedAt: '2026-02-10',
+    name: '赵倩',
+    position: '行政专员',
+    regularSalary: 8500,
+    taskCapabilityIds: []
+  }),
+  createActiveEmployee({
+    birthDate: '1995-09-08',
+    educationMajor: '环境设计',
+    gender: '男',
+    graduationSchool: '武汉理工大学',
+    id: '20260008',
+    identityNo: '420111199509083116',
+    joinedAt: '2026-03-01',
+    name: '刘宇',
+    position: '空间设计师',
+    regularSalary: 9500,
+    taskCapabilityIds: ['task-type-full-drawing', 'task-type-drawing-detail', 'task-type-floor-plan']
+  }),
+  createActiveEmployee({
+    birthDate: '1997-01-16',
+    educationMajor: '室内设计',
+    gender: '女',
+    graduationSchool: '中南林业科技大学',
+    id: '20260011',
+    identityNo: '430103199701162128',
+    joinedAt: '2026-05-15',
+    name: '陈思',
+    position: '主案设计师',
+    probationEndAt: '2026-08-14',
+    regularSalary: 11000,
+    taskCapabilityIds: ['task-type-full-drawing', 'task-type-floor-plan', 'task-type-store-image']
+  })
 ];

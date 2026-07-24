@@ -1,19 +1,26 @@
 import type { PeopleMember } from '../people/peopleTypes';
-import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
+import type { SocialInsuranceEmployeeRecord, SocialInsuranceEnrollmentProfile } from './financeSocialInsuranceData';
 import {
+  buildContributionCorrectionRecord,
+  buildContributionCorrectionPaymentTransaction,
+  buildDerivedEnrollmentProfiles,
+  buildMonthlyContributionCandidates,
+  buildSocialInsurancePaymentTransaction,
   buildSocialInsurancePayrollDeductions,
-  buildSocialInsuranceRecordsWithCarryovers,
-  getNextSocialInsurancePeriod,
+  getAppliedContributionBase,
   getSocialInsurancePayrollSourceState,
   getSocialInsuranceRecordEligibility,
   getVisibleSocialInsuranceRecords,
-  isSocialInsuranceRecordApplicable
+  isEnrollmentEffectiveForPeriod,
+  isSocialInsuranceRecordApplicable,
+  resolveContributionCorrectionPaymentStatus,
+  resolveSocialInsuranceRecordPaymentStatus
 } from './financeSocialInsuranceModel';
+import { financePrimaryCategorySeeds, financeSecondaryCategorySeeds } from './financeData';
+import { buildPublicAccountRef, publicAccountSeeds } from '../system/PublicAccountConfigState';
+import { socialInsurancePolicyVersions } from '../system/socialInsurancePolicyData';
 
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
+type UnitTest = { name: string; run: () => void };
 
 function assertEqual<T>(actual: T, expected: T, message: string) {
   if (actual !== expected) {
@@ -32,239 +39,356 @@ function assertDeepEqual<T>(actual: T, expected: T, message: string) {
 
 function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
   return {
-    archiveFiles: [],
-    archiveStatus: '资料完整',
-    archiveUpdatedAt: '2026-06-01',
-    auditRecords: [],
-    address: '武汉市洪山区测试路 1 号',
-    birthDate: '1990-01-01',
-    city: '武汉',
-    contractNo: 'HT-001',
-    contractStartAt: '2026-01-01',
-    contractStatus: '劳动合同有效',
-    contractType: '劳动合同',
-    education: '本科',
-    educationMajor: '管理',
-    email: 'demo@example.com',
-    emergencyContact: '联系人',
-    emergencyContactPhone: '13900000000',
-    emergencyContactRelation: '家属',
-    gender: '女',
-    graduatedAt: '2012-06-30',
-    graduationSchool: '武汉大学',
-    housingFundEffectiveMonth: '2026-01',
-    housingFundStatus: '缴存',
-    hukouAddress: '武汉',
-    id: 'EMP-001',
-    idDocumentType: '居民身份证',
-    idValidUntil: '2036-01-01',
-    identityNo: '420100199001010000',
-    joinedAt: '2026-01-01',
-    mobile: '13800000000',
-    name: '测试员工',
-    nationality: '中国',
-    paymentProfile: {
-      accountName: '测试员工',
-      bankAccount: '6222000000000000',
-      bankName: '招商银行',
-      mode: '工资发放',
-      payCycle: '月度'
-    },
-    personnelType: '全职',
-    position: '财务专员',
-    salaryProfile: {
-      effectiveAt: '2026-01-01',
-      note: '',
-      payCycle: '月度',
-      regularSalary: '10000 元/月',
-      status: '已配置',
-      structure: '月薪制'
-    },
-    source: '社会招聘',
-    status: '在职',
-    taskAccessStatus: '可参与任务',
-    taskCapabilityIds: [],
-    taskRecords: [],
-    wechat: 'wx_demo',
-    ...overrides
+    archiveFiles: [], archiveStatus: '资料完整', archiveUpdatedAt: '2026-06-01', auditRecords: [],
+    address: '武汉市洪山区测试路 1 号', birthDate: '1990-01-01', city: '武汉', contractNo: 'HT-001',
+    contractStartAt: '2026-01-01', contractStatus: '劳动合同有效', contractType: '劳动合同', education: '本科',
+    educationMajor: '管理', email: 'demo@example.com', emergencyContact: '联系人', emergencyContactPhone: '13900000000',
+    emergencyContactRelation: '家属', employmentRelationshipType: '全日制劳动关系', gender: '女', graduatedAt: '2012-06-30',
+    graduationSchool: '武汉大学', housingFundEffectiveMonth: '2026-01', housingFundStatus: '缴存', hukouAddress: '武汉',
+    id: 'EMP-001', idDocumentType: '居民身份证', idValidUntil: '2036-01-01', identityNo: '420100199001010000',
+    joinedAt: '2026-01-01', mobile: '13800000000', name: '测试员工', nationality: '中国',
+    paymentProfile: { accountName: '测试员工', bankAccount: '6222000000000000', bankName: '招商银行', mode: '工资发放', payCycle: '月度' },
+    personnelType: '全职', position: '财务专员',
+    salaryProfile: { effectiveAt: '2026-01-01', note: '', payCycle: '月度', regularSalary: '10000 元/月', status: '已配置', structure: '月薪制' },
+    source: '社会招聘', status: '在职', taskAccessStatus: '可参与任务', taskCapabilityIds: [], taskRecords: [], wechat: 'wx_demo',
+    ...overrides,
+    positionAssignments: overrides.positionAssignments ?? [{
+      effectiveFrom: '2026-01-01',
+      id: 'assignment-finance-test',
+      isPrimary: true,
+      positionId: 'position-finance',
+      positionName: overrides.position ?? '财务专员',
+      status: '生效中'
+    }]
+  };
+}
+
+function createProfile(overrides: Partial<SocialInsuranceEnrollmentProfile> = {}): SocialInsuranceEnrollmentProfile {
+  return {
+    personId: 'EMP-001', employmentRelationshipType: '全日制劳动关系', obligation: '应参保', insuredRegionCode: '420100',
+    socialSecurityStatus: '已增员', medicalInsuranceStatus: '已增员', plannedEnrollmentMonth: '2026-01',
+    socialSecurityEffectiveMonth: '2026-01', medicalInsuranceEffectiveMonth: '2026-01', officialReferenceNo: 'WH-SI-001',
+    evidenceFileIds: ['file-001'], updatedAt: '2026-01-03', ...overrides
   };
 }
 
 function createRecord(overrides: Partial<SocialInsuranceEmployeeRecord> = {}): SocialInsuranceEmployeeRecord {
   return {
-    category: '社保',
-    companyAmount: 2700,
-    contributionBase: 10000,
-    department: '财务部',
-    employeeName: '测试员工',
-    employeeNo: 'EMP-001',
-    handlingStatus: '待确认',
-    id: 'record-001',
-    operationRecords: [],
-    period: '2026-06',
-    personalAmount: 1050,
-    position: '财务专员',
-    salaryBase: 10000,
-    updatedAt: '2026-06-18',
-    ...overrides
+    category: '社保', companyAmount: 2700, contributionBase: 10000, department: '财务部', employeeName: '测试员工',
+    employeeNo: 'EMP-001', handlingStatus: '待核定', id: 'record-001', originalPeriod: '2026-06', handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保', items: [], estimatedEmployerAmount: 2700, estimatedEmployeeAmount: 1050,
+    assessmentFileIds: [], paymentFileIds: [], operationRecords: [], period: '2026-06', personalAmount: 1050, position: '财务专员',
+    salaryBase: 10000, updatedAt: '2026-06-18', ...overrides
   };
 }
 
 const tests: UnitTest[] = [
   {
-    name: 'keeps only full-time active personnel records',
+    name: 'uses explicit enrollment obligation instead of display personnel type',
     run: () => {
-      const activeFulltime = createMember({ id: 'EMP-001', personnelType: '全职', status: '在职' });
-      const parttime = createMember({ id: 'EMP-002', personnelType: '兼职', status: '合作中' });
-      const ended = createMember({ id: 'EMP-003', status: '离职' });
-      const records = [
-        createRecord({ employeeNo: 'EMP-001', id: 'social-active' }),
-        createRecord({ employeeNo: 'EMP-002', id: 'social-parttime' }),
-        createRecord({ employeeNo: 'EMP-003', id: 'social-ended' }),
-        createRecord({ employeeNo: 'EMP-404', id: 'social-missing' })
+      const nonFulltimeEmployee = createMember({ personnelType: '兼职', employmentRelationshipType: '非全日制劳动关系', status: '合作中' });
+      const independentContractor = createMember({ id: 'EMP-002', personnelType: '兼职', employmentRelationshipType: '独立劳务合作', status: '合作中' });
+      const records = [createRecord(), createRecord({ employeeNo: 'EMP-002', id: 'record-002' })];
+      const profiles = [
+        createProfile({ employmentRelationshipType: '非全日制劳动关系' }),
+        createProfile({ personId: 'EMP-002', employmentRelationshipType: '独立劳务合作', obligation: '无需参保', noObligationReason: '独立劳务合作', socialSecurityStatus: '不适用', medicalInsuranceStatus: '不适用', socialSecurityEffectiveMonth: undefined, medicalInsuranceEffectiveMonth: undefined })
       ];
 
       assertDeepEqual(
-        getVisibleSocialInsuranceRecords(records, [activeFulltime, parttime, ended]).map((record) => record.id),
-        ['social-active'],
-        'social insurance confirmation rows should follow personnel archive scope'
+        getVisibleSocialInsuranceRecords(records, [nonFulltimeEmployee, independentContractor], profiles).map((record) => record.id),
+        ['record-001'],
+        'non-fulltime employment must not be excluded by the part-time display type while independent labor is excluded'
       );
     }
   },
   {
-    name: 'uses personnel housing-fund policy before showing housing-fund rows',
+    name: 'keeps an existing stop-effective record visible for official no-contribution registration',
     run: () => {
-      const contributing = createMember({ id: 'EMP-001', housingFundEffectiveMonth: '2026-05', housingFundStatus: '缴存' });
-      const notContributing = createMember({ id: 'EMP-002', housingFundStatus: '暂不缴存' });
-      const futureEffective = createMember({ id: 'EMP-003', housingFundEffectiveMonth: '2026-07', housingFundStatus: '缴存' });
-      const records = [
-        createRecord({ category: '公积金', employeeNo: 'EMP-001', id: 'housing-current' }),
-        createRecord({ category: '公积金', employeeNo: 'EMP-002', id: 'housing-not-enabled' }),
-        createRecord({ category: '公积金', employeeNo: 'EMP-003', id: 'housing-future' })
-      ];
+      const record = createRecord({ handlingStatus: '待申报', period: '2026-07' });
+      const profile = createProfile({
+        socialSecurityStatus: '已停保',
+        medicalInsuranceStatus: '已停保',
+        socialSecurityStopEffectiveMonth: '2026-07',
+        medicalInsuranceStopEffectiveMonth: '2026-07'
+      });
 
       assertDeepEqual(
-        getVisibleSocialInsuranceRecords(records, [contributing, notContributing, futureEffective]).map((record) => record.id),
-        ['housing-current'],
-        'housing-fund confirmation rows should only appear when archive status is contributing and effective'
-      );
-      assertEqual(
-        getSocialInsuranceRecordEligibility(records[1], notContributing),
-        '公积金暂不缴存',
-        'non-contributing archive should explain why housing-fund row is excluded'
-      );
-      assertEqual(
-        getSocialInsuranceRecordEligibility(records[2], futureEffective),
-        '公积金未到生效月份',
-        'future effective month should explain why housing-fund row is excluded'
+        getVisibleSocialInsuranceRecords([record], [createMember()], [profile]).map((item) => item.id),
+        ['record-001'],
+        'an existing stop-effective item must remain actionable until the official no-contribution result is recorded'
       );
     }
   },
   {
-    name: 'builds payroll deductions only from confirmed current or makeup records',
+    name: 'keeps pending enrollment as an obligation blocker',
     run: () => {
-      const deductions = buildSocialInsurancePayrollDeductions(
-        [
-          createRecord({ handlingStatus: '已确认', id: 'social-confirmed', personalAmount: 1050 }),
-          createRecord({
-            category: '公积金',
-            handlingStatus: '已确认',
-            id: 'housing-makeup',
-            makeupPeriod: '2026-05',
-            personalAmount: 900
-          }),
-          createRecord({ handlingStatus: '待确认', id: 'social-pending', personalAmount: 800 }),
-          createRecord({ handlingStatus: '延期补缴', id: 'social-deferred', personalAmount: 700 }),
-          createRecord({ handlingStatus: '本月不缴', id: 'social-skipped', personalAmount: 600 }),
-          createRecord({ handlingStatus: '已确认', id: 'social-other-month', period: '2026-05', personalAmount: 500 })
-        ],
+      const member = createMember();
+      const profile = createProfile({ socialSecurityStatus: '待增员', socialSecurityEffectiveMonth: undefined, officialReferenceNo: undefined, evidenceFileIds: [] });
+      const record = createRecord();
+
+      assertEqual(getSocialInsuranceRecordEligibility(record, member, profile), '尚未增员', 'missing enrollment is not a no-obligation reason');
+      assertEqual(isSocialInsuranceRecordApplicable(record, member, profile), false, 'monthly record must wait for official enrollment effect');
+    }
+  },
+  {
+    name: 'derives monthly eligibility from official effective and stop months',
+    run: () => {
+      const profile = createProfile({
+        socialSecurityEffectiveMonth: '2026-04',
+        medicalInsuranceEffectiveMonth: '2026-04',
+        socialSecurityStopEffectiveMonth: '2026-07',
+        medicalInsuranceStopEffectiveMonth: '2026-07'
+      });
+
+      assertEqual(isEnrollmentEffectiveForPeriod(profile, '2026-03'), false, 'period before official enrollment must be excluded');
+      assertEqual(isEnrollmentEffectiveForPeriod(profile, '2026-06'), true, 'period before stop-effective month remains payable');
+      assertEqual(isEnrollmentEffectiveForPeriod(profile, '2026-07'), false, 'stop-effective month must be excluded');
+    }
+  },
+  {
+    name: 'derives enrollment work items from employment relationships and departures',
+    run: () => {
+      const newEmployee = createMember({ id: 'EMP-NEW', joinedAt: '2026-06-08' });
+      const contractor = createMember({ id: 'EMP-LABOR', personnelType: '兼职', employmentRelationshipType: '独立劳务合作', status: '合作中' });
+      const departedEmployee = createMember({ id: 'EMP-LEFT', status: '离职', contractEndAt: '2026-06-20' });
+      const profiles = buildDerivedEnrollmentProfiles(
+        [newEmployee, contractor, departedEmployee],
+        [createProfile({ personId: 'EMP-LEFT' })],
         '2026-06'
       );
 
+      assertEqual(profiles.find((profile) => profile.personId === 'EMP-NEW')?.socialSecurityStatus, '待增员', 'new employee must create enrollment work');
+      assertEqual(profiles.find((profile) => profile.personId === 'EMP-LABOR')?.obligation, '无需参保', 'independent labor must keep a structured no-obligation result');
+      assertEqual(profiles.find((profile) => profile.personId === 'EMP-LEFT')?.socialSecurityStatus, '待停保', 'departure must create stop-enrollment work');
+    }
+  },
+  {
+    name: 'generates monthly candidates from enrollment interval, base and period policy',
+    run: () => {
+      const member = createMember({ id: 'EMP-GENERATED', housingFundStatus: '缴存', housingFundEffectiveMonth: '2026-06' });
+      const profile = createProfile({ personId: member.id });
+      const candidates = buildMonthlyContributionCandidates({
+        contributionBaseRecords: (['社保', '公积金'] as const).map((category) => ({
+          category,
+          personId: member.id,
+          policyYear: '2026',
+          regionCode: '420100',
+          source: '新入职首月工资',
+          sourceAmount: 9000,
+          lowerLimit: 4224,
+          upperLimit: 21120,
+          appliedBase: 9000,
+          effectiveFrom: '2026-06',
+          policyVersionId: 'wuhan-social-insurance-2026-06-v1',
+          evidenceFileIds: []
+        })),
+        existingRecords: [],
+        peopleRows: [member],
+        period: '2026-06',
+        policies: socialInsurancePolicyVersions,
+        profiles: [profile]
+      });
+
+      assertDeepEqual(candidates.map((record) => [record.category, record.handlingStatus]), [['社保', '待申报'], ['公积金', '待申报']], 'eligible employee must receive both monthly candidates');
+      assertEqual(candidates[0]?.items.every((item) => item.policyVersionId === 'wuhan-social-insurance-2026-06-v1'), true, 'candidate must freeze the applicable period policy version');
+    }
+  },
+  {
+    name: 'clamps contribution bases to policy bounds',
+    run: () => {
+      assertEqual(getAppliedContributionBase(3000, 4224, 21120), 4224, 'low source amount must use the lower limit');
+      assertEqual(getAppliedContributionBase(12000, 4224, 21120), 12000, 'in-range source amount must remain unchanged');
+      assertEqual(getAppliedContributionBase(30000, 4224, 21120), 21120, 'high source amount must use the upper limit');
+    }
+  },
+  {
+    name: 'salary consumes formally assessed amounts before payment completion',
+    run: () => {
+      const deductions = buildSocialInsurancePayrollDeductions([
+        createRecord({ handlingStatus: '待缴费', assessedEmployerAmount: 2800, assessedEmployeeAmount: 1080, assessmentNo: 'ASSESS-001', assessmentFileIds: ['file-assess'] }),
+        createRecord({ id: 'pending', handlingStatus: '待核定' }),
+        createRecord({ id: 'arrears', handlingStatus: '欠缴待补' })
+      ], '2026-06');
+
+      assertDeepEqual(deductions.map((record) => [record.id, record.personalAmount]), [['record-001', 1080]], 'only formally assessed records enter payroll');
+      assertEqual(getSocialInsurancePayrollSourceState(createRecord({ handlingStatus: '待缴费' })), '计入扣款', 'payment completion is not a payroll prerequisite');
+      assertEqual(getSocialInsurancePayrollSourceState(createRecord({ handlingStatus: '待核定' })), '待处理', 'unassessed records block payroll');
+      assertEqual(getSocialInsurancePayrollSourceState(createRecord({ handlingStatus: '欠缴待补' })), '本月不扣', 'arrears require an explicit correction record rather than automatic carryover');
+    }
+  },
+  {
+    name: 'keeps arrears correction in its original period while splitting principal and late fee',
+    run: () => {
+      const correction = buildContributionCorrectionRecord({
+        evidenceFileIds: ['arrears-assessment.pdf'],
+        handlingPeriod: '2026-07',
+        lateFeeAmount: 18.5,
+        officialReferenceNo: 'WH-ARREARS-202607-001',
+        principalEmployeeAmount: 820,
+        principalEmployerAmount: 820,
+        reason: '补缴 2026-06 公积金',
+        sourceRecord: createRecord({ category: '公积金', handlingStatus: '欠缴待补', originalPeriod: '2026-06' })
+      });
+
+      assertEqual(correction?.originalPeriod, '2026-06', 'arrears must retain the original obligation period');
+      assertEqual(correction?.handlingPeriod, '2026-07', 'arrears must record the actual handling period');
       assertDeepEqual(
-        deductions.map((record) => [record.id, record.personalAmount, record.sourceMonth]),
-        [
-          ['housing-makeup', 900, '2026-05'],
-          ['social-confirmed', 1050, '2026-06']
-        ],
-        'payroll deductions should include confirmed current records and confirmed makeup records only'
+        [correction?.principalEmployerAmount, correction?.principalEmployeeAmount, correction?.lateFeeAmount],
+        [820, 820, 18.5],
+        'employer principal, employee principal and late fee must remain separate'
       );
-      assertEqual(getSocialInsurancePayrollSourceState(createRecord({ handlingStatus: '延期补缴' })), '本月不扣', 'deferred records should be handled but not deducted this month');
-      assertEqual(getSocialInsurancePayrollSourceState(createRecord({ handlingStatus: '本月不缴' })), '本月不扣', 'skipped records should be handled but not deducted this month');
-      assertEqual(getSocialInsurancePayrollSourceState(createRecord({ handlingStatus: '待确认' })), '待处理', 'pending records should still block source readiness');
+      assertEqual(correction?.salaryAdjustmentPeriod, '2026-07', 'employee principal must enter the handling-period salary adjustment source');
     }
   },
   {
-    name: 'rolls deferred records into the next month as pending makeup items',
+    name: 'creates an arrears payment with liability principal and late-fee expense allocations',
     run: () => {
-      const records = buildSocialInsuranceRecordsWithCarryovers([
-        createRecord({
-          category: '公积金',
-          handlingStatus: '延期补缴',
-          id: 'housing-deferred',
-          period: '2026-06',
-          reason: '账户信息待核对'
-        })
-      ]);
-      const carryover = records.find((record) => record.id === 'carryover-EMP-001-公积金-2026-07-2026-06');
+      const correction = buildContributionCorrectionRecord({
+        evidenceFileIds: ['arrears-assessment.pdf'],
+        handlingPeriod: '2026-07',
+        lateFeeAmount: 18.5,
+        officialReferenceNo: 'WH-ARREARS-202607-001',
+        principalEmployeeAmount: 820,
+        principalEmployerAmount: 820,
+        reason: '补缴 2026-06 公积金',
+        sourceRecord: createRecord({ category: '公积金', handlingStatus: '欠缴待补', originalPeriod: '2026-06' })
+      });
+      if (!correction) throw new Error('expected correction record');
 
-      assertEqual(getNextSocialInsurancePeriod('2026-12'), '2027-01', 'next period should cross calendar years');
-      assertEqual(records.length, 2, 'deferred source should create one carryover record');
-      assertEqual(carryover?.handlingStatus, '待确认', 'carryover record should be pending confirmation');
-      assertEqual(carryover?.makeupPeriod, '2026-06', 'carryover should keep original makeup month');
-      assertEqual(carryover?.period, '2026-07', 'carryover should enter the next period');
+      const transaction = buildContributionCorrectionPaymentTransaction({
+        correction,
+        financePrimaryCategories: financePrimaryCategorySeeds,
+        financeRows: [],
+        financeSecondaryCategories: financeSecondaryCategorySeeds,
+        paidAt: '2026-07-18',
+        paymentFileIds: ['arrears-payment.pdf'],
+        publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0])
+      });
+
+      assertEqual(transaction?.amount, 1658.5, 'arrears cash amount must include principal and late fee');
+      assertDeepEqual(
+        transaction?.accountingAllocations?.map((allocation) => [allocation.subjectCode, allocation.amount]),
+        [['2211.04', 1640], ['5711', 18.5]],
+        'principal must clear housing-fund liability while late fee enters non-operating expense'
+      );
+      assertEqual(transaction?.status, '待复核', 'arrears payment must enter finance review');
+      assertEqual(transaction?.sourceNo, correction.id, 'cash flow must retain the correction source');
     }
   },
   {
-    name: 'does not duplicate existing carryover records',
+    name: 'creates one pending-review payment transaction from a confirmed monthly batch',
     run: () => {
-      const source = createRecord({
-        category: '公积金',
-        handlingStatus: '延期补缴',
-        id: 'housing-deferred',
-        period: '2026-06'
-      });
-      const existingCarryover = createRecord({
-        category: '公积金',
-        employeeNo: source.employeeNo,
-        handlingStatus: '待确认',
-        id: 'existing-carryover',
-        makeupPeriod: '2026-06',
-        period: '2026-07'
+      const transaction = buildSocialInsurancePaymentTransaction({
+        category: '社保',
+        financePrimaryCategories: financePrimaryCategorySeeds,
+        financeRows: [],
+        financeSecondaryCategories: financeSecondaryCategorySeeds,
+        paidAt: '2026-07-10',
+        paymentFileIds: ['social-payment.pdf'],
+        period: '2026-06',
+        publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0]),
+        records: [createRecord({
+          assessedEmployeeAmount: 1080,
+          assessedEmployerAmount: 2800,
+          assessmentFileIds: ['assessment.pdf'],
+          assessmentNo: 'WH-ASSESS-001',
+          handlingStatus: '待缴费'
+        })]
       });
 
-      assertEqual(
-        buildSocialInsuranceRecordsWithCarryovers([source, existingCarryover]).length,
-        2,
-        'existing carryover should prevent duplicate generated rows'
-      );
+      assertEqual(transaction?.amount, 3880, 'payment transaction must use assessed employer and employee amounts');
+      assertEqual(transaction?.status, '待复核', 'registered payment must enter finance review instead of direct booking');
+      assertEqual(transaction?.accountingPeriod, '2026-07', 'cash-flow period must follow actual payment date');
+      assertEqual(transaction?.sourceNo, 'SI-2026-06-社保', 'cash flow must retain the contribution obligation period');
+    }
+  },
+  {
+    name: 'marks contribution obligations paid only after the linked cash flow is reviewed and posted',
+    run: () => {
+      const sourceRecord = createRecord({ handlingStatus: '待缴费', transactionNo: 'FIN-SI-001' });
+      const pendingTransaction = buildSocialInsurancePaymentTransaction({
+        category: '社保',
+        financePrimaryCategories: financePrimaryCategorySeeds,
+        financeRows: [],
+        financeSecondaryCategories: financeSecondaryCategorySeeds,
+        paidAt: '2026-07-10',
+        paymentFileIds: ['social-payment.pdf'],
+        period: '2026-06',
+        publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0]),
+        records: [createRecord({ assessedEmployeeAmount: 1050, assessedEmployerAmount: 2700, handlingStatus: '待缴费' })]
+      });
+      if (!pendingTransaction) throw new Error('expected pending social-insurance transaction');
+      const linkedPendingTransaction = { ...pendingTransaction, transactionNo: 'FIN-SI-001' };
+
+      assertEqual(resolveSocialInsuranceRecordPaymentStatus(sourceRecord, [linkedPendingTransaction]).handlingStatus, '待缴费', 'pending review must not be represented as paid');
+      assertEqual(resolveSocialInsuranceRecordPaymentStatus(sourceRecord, [{ ...linkedPendingTransaction, status: '已入账' }]).handlingStatus, '已缴费', 'reviewed and posted cash flow completes the obligation');
+      assertEqual(buildSocialInsurancePaymentTransaction({
+        category: '社保',
+        financePrimaryCategories: financePrimaryCategorySeeds,
+        financeRows: [linkedPendingTransaction],
+        financeSecondaryCategories: financeSecondaryCategorySeeds,
+        paidAt: '2026-07-10',
+        paymentFileIds: ['social-payment.pdf'],
+        period: '2026-06',
+        publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0]),
+        records: [sourceRecord]
+      }), undefined, 'an obligation with a pending-review cash flow must not create a duplicate payment');
+    }
+  },
+  {
+    name: 'completes an arrears correction only after its linked cash flow is reviewed and posted',
+    run: () => {
+      const correction = buildContributionCorrectionRecord({
+        evidenceFileIds: ['arrears-assessment.pdf'],
+        handlingPeriod: '2026-07',
+        lateFeeAmount: 18.5,
+        officialReferenceNo: 'WH-ARREARS-202607-001',
+        principalEmployeeAmount: 820,
+        principalEmployerAmount: 820,
+        reason: '补缴 2026-06 公积金',
+        sourceRecord: createRecord({ category: '公积金', handlingStatus: '欠缴待补', originalPeriod: '2026-06' })
+      });
+      if (!correction) throw new Error('expected correction record');
+      const linkedCorrection = { ...correction, transactionNo: 'FIN-SI-002' };
+      const transaction = buildContributionCorrectionPaymentTransaction({
+        correction,
+        financePrimaryCategories: financePrimaryCategorySeeds,
+        financeRows: [],
+        financeSecondaryCategories: financeSecondaryCategorySeeds,
+        paidAt: '2026-07-18',
+        paymentFileIds: ['arrears-payment.pdf'],
+        publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0])
+      });
+      if (!transaction) throw new Error('expected correction transaction');
+      const linkedPendingTransaction = { ...transaction, transactionNo: 'FIN-SI-002' };
+
+      assertEqual(resolveContributionCorrectionPaymentStatus(linkedCorrection, [linkedPendingTransaction]).status, '待缴费', 'pending review must keep correction open');
+      assertEqual(resolveContributionCorrectionPaymentStatus(linkedCorrection, [{ ...linkedPendingTransaction, status: '已入账' }]).status, '已完成', 'reviewed and posted cash flow completes correction');
+      assertEqual(buildContributionCorrectionPaymentTransaction({
+        correction: linkedCorrection,
+        financePrimaryCategories: financePrimaryCategorySeeds,
+        financeRows: [linkedPendingTransaction],
+        financeSecondaryCategories: financeSecondaryCategorySeeds,
+        paidAt: '2026-07-18',
+        paymentFileIds: ['arrears-payment.pdf'],
+        publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0])
+      }), undefined, 'a correction with a pending-review cash flow must not create a duplicate payment');
     }
   },
   {
     name: 'marks orphan records as inapplicable',
     run: () => {
       const record = createRecord({ employeeNo: 'EMP-404' });
-
-      assertEqual(getSocialInsuranceRecordEligibility(record, undefined), '人员不存在', 'orphan records should not enter confirmation workbench');
-      assertEqual(isSocialInsuranceRecordApplicable(record, undefined), false, 'orphan records should be hidden');
+      assertEqual(getSocialInsuranceRecordEligibility(record, undefined), '人员不存在', 'orphan records must not enter the workbench');
+      assertEqual(isSocialInsuranceRecordApplicable(record, undefined), false, 'orphan records must be hidden');
     }
   }
 ];
 
 export function runFinanceSocialInsuranceModelTests() {
   const failures: string[] = [];
-
   for (const test of tests) {
-    try {
-      test.run();
-    } catch (error) {
-      failures.push(`${test.name}: ${(error as Error).message}`);
-    }
+    try { test.run(); } catch (error) { failures.push(`${test.name}: ${(error as Error).message}`); }
   }
-
-  return {
-    failures,
-    passed: tests.length - failures.length,
-    total: tests.length
-  };
+  return { failures, passed: tests.length - failures.length, total: tests.length };
 }

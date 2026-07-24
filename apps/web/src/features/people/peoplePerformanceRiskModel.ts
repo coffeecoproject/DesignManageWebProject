@@ -1,11 +1,17 @@
 import type { PerformanceMonthlyCategoryRecord, PerformanceRulePreset } from '../performance/performanceTypes';
 import type { PeopleMember } from './peopleTypes';
+import { getPeopleMemberPositions } from './peopleDomain';
 
 export const peoplePerformanceTerminationRiskLabel = '绩效规则低分风险';
 
 function getPublishedApplicableRules(member: PeopleMember, performanceRuleRows: PerformanceRulePreset[]) {
+  const memberPositions = getPeopleMemberPositions(member);
+
   return performanceRuleRows.filter(
-    (rule) => rule.status === '已发布' && rule.personnelType === member.personnelType && rule.applicablePositions.includes(member.position)
+    (rule) =>
+      rule.status === '已发布'
+      && rule.personnelType === member.personnelType
+      && rule.applicablePositions.some((position) => memberPositions.includes(position))
   );
 }
 

@@ -83,7 +83,7 @@ function createMonthlyRecord({
 }): PerformanceMonthlyCategoryRecord {
   return {
     category: '绘图任务制',
-    employeeName: '示例全职 A',
+    employeeName: '李明',
     events: [],
     id: `task-performance:${month}:20260001:quarter-rule`,
     monthlyAmount,

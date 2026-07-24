@@ -759,6 +759,60 @@ export function isSalaryMonthlyPaid(
   return workflows.some((workflow) => workflow.memberId === memberId && workflow.month === month && workflow.status === '已发放');
 }
 
+export type InvalidateSalaryMonthlySourcesResult = {
+  blockedMonths: string[];
+  invalidatedMonths: string[];
+  success: boolean;
+  workflows: SalaryMonthlyWorkflowRecord[];
+};
+
+export function invalidateSalaryMonthlySources(
+  workflows: SalaryMonthlyWorkflowRecord[],
+  payments: SalaryPaymentRecord[],
+  memberId: string,
+  months: string[],
+  reason: string,
+  updatedAt: string
+): InvalidateSalaryMonthlySourcesResult {
+  const targetMonths = [...new Set(months)].sort();
+  const blockedMonths = targetMonths.filter((month) =>
+    isSalaryMonthlyPaid(workflows, memberId, month)
+    || payments.some((payment) => payment.employeeNo === memberId && payment.payrollMonth === month)
+  );
+
+  if (blockedMonths.length > 0) {
+    return { blockedMonths, invalidatedMonths: [], success: false, workflows };
+  }
+
+  const invalidatedMonths = targetMonths.filter((month) =>
+    workflows.some((workflow) =>
+      workflow.memberId === memberId && workflow.month === month && workflow.status === '已确认'
+    )
+  );
+
+  return {
+    blockedMonths: [],
+    invalidatedMonths,
+    success: true,
+    workflows: workflows.map((workflow) =>
+      workflow.memberId === memberId
+      && invalidatedMonths.includes(workflow.month)
+      && workflow.status === '已确认'
+        ? {
+            ...workflow,
+            confirmedAt: undefined,
+            confirmedBy: undefined,
+            note: reason,
+            personalIncomeTaxPeriod: undefined,
+            settlementSnapshot: undefined,
+            status: '待确认',
+            updatedAt
+          }
+        : workflow
+    )
+  };
+}
+
 export function getSalaryAdjustmentDisplayStatus(
   record: SalaryAdjustmentRecord,
   workflows: SalaryMonthlyWorkflowRecord[]
@@ -988,7 +1042,7 @@ function getSocialInsuranceSourceNote(category: string, record: SocialInsuranceE
     return `${category}扣减来源未生成`;
   }
 
-  if (record.handlingStatus === '已确认') {
+  if (record.handlingStatus === '待缴费' || record.handlingStatus === '已缴费') {
     return record.makeupPeriod ? `补缴 ${record.makeupPeriod}` : '本月来源已确认';
   }
 

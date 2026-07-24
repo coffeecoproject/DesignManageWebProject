@@ -41,19 +41,19 @@ function SocialInsuranceContributionActions({
   const actions: InlineRowAction[] =
     record.handlingStatus === '待确认'
       ? [
-          { disabled: isLocked, key: 'confirm', label: '确认', onClick: () => onStatusChange('已确认') },
-          { disabled: isLocked, key: 'defer', label: '延期', onClick: () => onStatusChange('延期补缴') },
-          { disabled: isLocked, key: 'skip', label: '不缴', tone: 'danger', onClick: () => onStatusChange('本月不缴') }
+          { disabled: isLocked, key: 'confirm', label: '确认核定', onClick: () => onStatusChange('待缴费') }
         ]
-      : [
+      : record.handlingStatus === '待缴费'
+        ? [
           {
             disabled: isLocked,
             icon: <RollbackOutlined />,
             key: 'rollback',
-            label: record.handlingStatus === '已确认' ? '退回' : '恢复',
+            label: '退回核对',
             onClick: () => onStatusChange('待确认')
           }
-        ];
+        ]
+        : [];
 
   return <InlineRowActions actions={actions} />;
 }

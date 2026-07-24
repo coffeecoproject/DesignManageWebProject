@@ -4,7 +4,12 @@ import { getFinanceCategorySnapshot } from '../finance/financeData';
 import type { FinanceReceivablePayableRecord } from '../finance/financeReceivablesPayablesData';
 import { getDefaultReceivablePayableTaxBasis } from '../finance/financeTaxBasisModel';
 import { buildExpenseReimbursementPaymentSnapshot } from '../finance/financeNaturalPersonPaymentModel';
-import { financeToday, formatMoney, getAccountingPeriod } from '../finance/financeUtils';
+import {
+  financeToday,
+  formatMoney,
+  getAccountingPeriod,
+  getDefaultFinanceReviewDueAt
+} from '../finance/financeUtils';
 import type {
   SalaryAdjustmentRecord,
   SalaryMonthlyWorkflowRecord,
@@ -87,12 +92,25 @@ export type MyWorkExpenseApprovalExecutionPlan = {
 
 export const myWorkExpenseReviewToday = financeToday;
 
-function toReviewRecord(record: MyWorkExpenseCollectionRecord, overrides: Partial<MyWorkExpenseReviewRecord> = {}): MyWorkExpenseReviewRecord {
+function getExpenseReviewStatus(record: MyWorkExpenseCollectionRecord): MyWorkExpenseReviewStatus {
+  switch (record.status) {
+    case '退回修改':
+      return '需调整';
+    case '已确认':
+      return '已通过';
+    case '已关闭':
+      return '已撤销';
+    default:
+      return '待审核';
+  }
+}
+
+export function toReviewRecord(record: MyWorkExpenseCollectionRecord): MyWorkExpenseReviewRecord {
   return {
     amount: record.amount,
     category: record.category,
     code: record.code,
-    dueAt: record.occurredAt,
+    dueAt: getDefaultFinanceReviewDueAt(record.occurredAt),
     expenseReviewResult: record.expenseReviewResult,
     files: record.files,
     id: `review-${record.id}`,
@@ -102,67 +120,45 @@ function toReviewRecord(record: MyWorkExpenseCollectionRecord, overrides: Partia
     originalType: record.originalType ?? '电子原件',
     paymentMethod: record.paymentMethod ?? '微信',
     relatedTarget: record.relatedTarget ?? '-',
-    reviewStatus: record.status === '退回修改' ? '需调整' : '待审核',
+    reviewStatus: getExpenseReviewStatus(record),
     submittedAt: record.updatedAt,
     submitterId: record.submitterId,
-    submitterName: '李明',
+    submitterName: record.submitterName ?? '未知提交人',
     title: record.title,
     updatedAt: record.updatedAt,
-    ...overrides
   };
 }
 
-const expenseSeedRows = myWorkExpenseCollectionSeedRecords.filter((record) => record.kind === '费用报销');
+export function buildMyWorkExpenseReviewRecords(records: MyWorkExpenseCollectionRecord[]) {
+  return records
+    .filter((record) => record.kind === '费用报销' && record.status !== '草稿')
+    .map(toReviewRecord);
+}
 
-export const myWorkExpenseReviewSeedRecords: MyWorkExpenseReviewRecord[] = [
-  toReviewRecord(expenseSeedRows[0], {
-    dueAt: '2026-06-15',
-    reviewStatus: '待审核',
-    submittedAt: '2026-06-12 18:20'
-  }),
-  toReviewRecord(expenseSeedRows[1], {
-    dueAt: '2026-06-12',
-    reviewStatus: '需调整',
-    submittedAt: '2026-06-10 17:10'
-  }),
-  {
-    amount: 320,
-    category: '办公费用',
-    code: 'EC-202606-004',
-    dueAt: '2026-06-18',
-    files: [
-      {
-        id: 'expense-review-file-001',
-        name: '办公用品发票.pdf',
-        status: '已上传',
-        type: '费用凭证',
-        updatedAt: '2026-06-16'
-      }
-    ],
-    id: 'review-expense-collection-004',
-    note: '会议资料打印和办公用品补充。',
-    occurredAt: '2026-06-16',
-    operationRecords: [
-      {
-        action: '提交报销',
-        actor: '示例全职 A',
-        id: 'expense-review-op-001',
-        object: 'EC-202606-004',
-        summary: '提交办公费用报销 320.00 元',
-        time: '2026-06-16 14:30'
-      }
-    ],
-    originalType: '电子原件',
-    paymentMethod: '银行卡',
-    relatedTarget: '办公室用品',
-    reviewStatus: '待审核',
-    submittedAt: '2026-06-16 14:30',
-    submitterId: '20260001',
-    submitterName: '示例全职 A',
-    title: '会议资料与办公用品',
-    updatedAt: '2026-06-16 14:30'
-  }
-];
+export function applyExpenseReviewRecordToCollection(
+  record: MyWorkExpenseCollectionRecord,
+  reviewRecord: MyWorkExpenseReviewRecord
+): MyWorkExpenseCollectionRecord {
+  const statusByReview: Record<MyWorkExpenseReviewStatus, MyWorkExpenseCollectionRecord['status']> = {
+    已撤销: '已关闭',
+    已通过: '已确认',
+    待审核: '待审核',
+    需调整: '退回修改'
+  };
+
+  return {
+    ...record,
+    expenseReviewResult: reviewRecord.expenseReviewResult,
+    files: reviewRecord.files,
+    operationRecords: reviewRecord.operationRecords,
+    status: statusByReview[reviewRecord.reviewStatus],
+    submitterId: reviewRecord.submitterId,
+    submitterName: reviewRecord.submitterName,
+    updatedAt: reviewRecord.updatedAt
+  };
+}
+
+export const myWorkExpenseReviewSeedRecords = buildMyWorkExpenseReviewRecords(myWorkExpenseCollectionSeedRecords);
 
 export function getExpenseReviewCategoryLabel(record: Pick<MyWorkExpenseReviewRecord, 'category'>) {
   const primaryCategoryId = getMyWorkExpensePrimaryCategoryId(record.category);

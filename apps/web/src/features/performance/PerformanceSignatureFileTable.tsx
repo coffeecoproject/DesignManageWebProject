@@ -1,34 +1,17 @@
 import { Table } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { FileActionButtons } from '../../components/FileActionButtons';
 import { CellText, CompactCell } from '../../components/TableCell';
 import type { PerformanceSignatureFile } from './performanceSignatureArchiveData';
-import type { PerformanceSignatureFileAction } from './performanceSignatureModel';
 
 type PerformanceSignatureFileTableProps = {
   files: PerformanceSignatureFile[];
   mode: 'current' | 'history';
-  onFileAction: (action: PerformanceSignatureFileAction, file: PerformanceSignatureFile) => void;
 };
 
 export function PerformanceSignatureFileTable({
   files,
-  mode,
-  onFileAction
+  mode
 }: PerformanceSignatureFileTableProps) {
-  const actionColumn: TableColumnsType<PerformanceSignatureFile>[number] = {
-    title: '操作',
-    key: 'actions',
-    align: 'center',
-    width: 148,
-    render: (_, record) => (
-      <FileActionButtons
-        record={record}
-        onDownload={(file) => onFileAction('download', file)}
-        onPreview={(file) => onFileAction('preview', file)}
-      />
-    )
-  };
   const currentColumns: TableColumnsType<PerformanceSignatureFile> = [
     {
       title: '文件名称',
@@ -40,8 +23,7 @@ export function PerformanceSignatureFileTable({
       title: '上传时间',
       dataIndex: 'uploadedAt',
       width: 148
-    },
-    actionColumn
+    }
   ];
   const historyColumns: TableColumnsType<PerformanceSignatureFile> = [
     {
@@ -72,8 +54,7 @@ export function PerformanceSignatureFileTable({
       dataIndex: 'note',
       width: 196,
       render: (note: string) => <span className="detail-table-sub">{note}</span>
-    },
-    actionColumn
+    }
   ];
   const columns = mode === 'current' ? currentColumns : historyColumns;
 

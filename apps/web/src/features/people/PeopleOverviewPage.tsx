@@ -24,7 +24,11 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { TagChipList } from '../../components/TagChip';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
+import { useAuthorizationState } from '../auth/AuthorizationState';
+import { canAccessPerson } from '../auth/authorizationModel';
+import { useFinanceSocialInsuranceState } from '../finance/FinanceSocialInsuranceState';
 import type { FinanceTransactionRecord } from '../finance/financeData';
+import type { SocialInsuranceEnrollmentProfile } from '../finance/financeSocialInsuranceData';
 import { usePerformanceRuleState } from '../performance/PerformanceRuleState';
 import type { PerformanceMonthlyCategoryRecord, PerformanceRulePreset } from '../performance/performanceTypes';
 import { usePerformanceResults } from '../performance/usePerformanceResults';
@@ -265,8 +269,12 @@ function getPeopleOverviewSummary(
   };
 }
 
-function getSocialInsuranceText(member: PeopleMember) {
-  return member.personnelType === '全职' ? '缴纳' : '不缴纳';
+function getSocialInsuranceText(profile?: SocialInsuranceEnrollmentProfile) {
+  if (!profile || profile.obligation === '待判定' || ['待增员', '增员办理中', '待停保', '停保办理中', '办理异常'].includes(profile.socialSecurityStatus)) {
+    return '待办理';
+  }
+
+  return profile.obligation === '无需参保' || profile.socialSecurityStatus === '已停保' ? '不缴纳' : '缴纳';
 }
 
 function getHousingFundText(member: PeopleMember) {
@@ -288,7 +296,7 @@ function getParttimeActualPayAmount(member: PeopleMember, financeRows: FinanceTr
 
   const settlementRows = financeRows.filter(
     (record) =>
-      record.counterparty === member.name &&
+      record.counterpartyId === member.id &&
       record.counterpartyType === '外协' &&
       record.direction === '支出' &&
       record.sourceType === '外协结算' &&
@@ -433,6 +441,7 @@ function PeopleStatusDrawer({
   open,
   performanceRecords,
   performanceRuleRows,
+  socialInsuranceProfile,
   storeTaskRows,
   workCalendarRows,
   onClose
@@ -444,6 +453,7 @@ function PeopleStatusDrawer({
   open: boolean;
   performanceRecords: PerformanceMonthlyCategoryRecord[];
   performanceRuleRows: PerformanceRulePreset[];
+  socialInsuranceProfile?: SocialInsuranceEnrollmentProfile;
   storeTaskRows: StoreTaskRecord[];
   workCalendarRows: WorkCalendarRow[];
   onClose: () => void;
@@ -552,7 +562,7 @@ function PeopleStatusDrawer({
                     { label: '岗位', value: member.position },
                     { label: '常驻城市', value: member.city },
                     { label: '人员来源', value: member.source },
-                    { label: '社保', value: getSocialInsuranceText(member) },
+                    { label: '社保', value: getSocialInsuranceText(socialInsuranceProfile) },
                     { label: '公积金', value: getHousingFundText(member) },
                     { label: '关系起始', value: member.personnelType === '兼职' ? member.cooperationStartAt ?? member.joinedAt : member.joinedAt },
                     { label: '关系摘要', value: getPeopleRelationPeriodText(member) }
@@ -646,7 +656,9 @@ function PeopleStatusDrawer({
 
 export function PeopleOverviewPage() {
   const { attendanceRecords, peopleRows } = usePeopleOrganizationState();
+  const { authorization } = useAuthorizationState();
   const { financeRows } = useFinanceManagement();
+  const { enrollmentProfiles } = useFinanceSocialInsuranceState();
   const { performanceRuleRows } = usePerformanceRuleState();
   const { publishedMonthlyRecords } = usePerformanceResults();
   const { storeTaskRows } = useTaskManagementState();
@@ -656,7 +668,14 @@ export function PeopleOverviewPage() {
   const [activeMemberId, setActiveMemberId] = useState<string>();
   const [detailOpen, setDetailOpen] = useState(false);
 
-  const overviewMembers = useMemo(() => peopleRows.filter(isPeopleRelationshipActive), [peopleRows]);
+  const overviewMembers = useMemo(
+    () => peopleRows.filter((member) => isPeopleRelationshipActive(member) && canAccessPerson(authorization, member.id)),
+    [authorization, peopleRows]
+  );
+  const enrollmentProfilesByMemberId = useMemo(
+    () => new Map(enrollmentProfiles.map((profile) => [profile.personId, profile])),
+    [enrollmentProfiles]
+  );
   const expiryRows = useMemo(() => createPeopleExpiryRows(overviewMembers, { today: peopleOrganizationToday }), [overviewMembers]);
   const expiryRowsByMemberId = useMemo(() => {
     const groupedRows = new Map<string, PeopleExpiryRow[]>();
@@ -780,7 +799,7 @@ export function PeopleOverviewPage() {
         key: 'socialInsurance',
         align: 'center',
         width: 76,
-        render: (_, record) => <CellText>{getSocialInsuranceText(record)}</CellText>
+        render: (_, record) => <CellText>{getSocialInsuranceText(enrollmentProfilesByMemberId.get(record.id))}</CellText>
       },
       {
         title: '公积金',
@@ -847,7 +866,7 @@ export function PeopleOverviewPage() {
         }
       }
     ],
-    [annualExceptionRows, attendanceRecords, expiryRowsByMemberId, performanceRuleRows, publishedMonthlyRecords, workCalendarRows]
+    [annualExceptionRows, attendanceRecords, enrollmentProfilesByMemberId, expiryRowsByMemberId, performanceRuleRows, publishedMonthlyRecords, workCalendarRows]
   );
 
   return (
@@ -955,6 +974,7 @@ export function PeopleOverviewPage() {
         open={detailOpen}
         performanceRecords={publishedMonthlyRecords}
         performanceRuleRows={performanceRuleRows}
+        socialInsuranceProfile={activeMember ? enrollmentProfilesByMemberId.get(activeMember.id) : undefined}
         storeTaskRows={storeTaskRows}
         workCalendarRows={workCalendarRows}
         onClose={() => {

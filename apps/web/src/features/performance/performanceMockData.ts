@@ -42,7 +42,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         unitKey: 'store_set',
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_space_plan',
-        confirmationMode: '经甲方确认有效后计分',
+        confirmationMode: '内部验收通过后计分',
         evidence: '任务单、项目记录、提审/确认记录'
       },
       {
@@ -54,7 +54,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         unitKey: 'store_set',
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_construction_drawing',
-        confirmationMode: '经甲方确认有效后计分',
+        confirmationMode: '内部验收通过后计分',
         evidence: '任务单、项目记录、提审/确认记录'
       },
       {
@@ -67,7 +67,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_material_order_flow',
         confirmationMode: '完成相应流程节点后计分',
-        evidence: '流程记录、下单记录、甲方确认'
+        evidence: '流程记录、下单记录、内部验收记录'
       },
       {
         id: 'store-photoshop',
@@ -78,8 +78,8 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         unitKey: 'store_set',
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_store_photoshop',
-        confirmationMode: '经甲方确认有效后计分',
-        evidence: '任务单、项目记录、甲方确认'
+        confirmationMode: '内部验收通过后计分',
+        evidence: '任务单、项目记录、内部验收记录'
       }
     ],
     qualityDimensions: [
@@ -89,7 +89,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         score: 40,
         weight: 0.4,
         focus: '成果符合品牌标准、现场条件及施工落地要求，重大错误、漏项、反复返工情况较少',
-        evidence: '成果文件、审核意见、返工记录、甲方确认'
+        evidence: '成果文件、审核意见、返工记录、内部验收记录'
       },
       {
         id: 'timeliness',
@@ -521,7 +521,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         unitKey: 'store_set',
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_space_plan',
-        confirmationMode: '经甲方确认有效后计分',
+        confirmationMode: '内部验收通过后计分',
         evidence: '任务单、项目记录、提审/确认记录'
       },
       {
@@ -533,7 +533,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         unitKey: 'store_set',
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_construction_drawing',
-        confirmationMode: '经甲方确认有效后计分',
+        confirmationMode: '内部验收通过后计分',
         evidence: '任务单、项目记录、提审/确认记录'
       },
       {
@@ -546,7 +546,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_material_order_flow',
         confirmationMode: '完成相应流程节点后计分',
-        evidence: '流程记录、下单记录、甲方确认'
+        evidence: '流程记录、下单记录、内部验收记录'
       },
       {
         id: 'store-photoshop-v2',
@@ -557,8 +557,8 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         unitKey: 'store_set',
         requiresConfirmation: true,
         scoreFieldKey: 'task_score_store_photoshop',
-        confirmationMode: '经甲方确认有效后计分',
-        evidence: '任务单、项目记录、甲方确认'
+        confirmationMode: '内部验收通过后计分',
+        evidence: '任务单、项目记录、内部验收记录'
       }
     ],
     qualityDimensions: [
@@ -568,7 +568,7 @@ export const performanceRulePresets: PerformanceRulePreset[] = [
         score: 40,
         weight: 0.4,
         focus: '成果符合品牌标准、现场条件及施工落地要求，重大错误、漏项、反复返工情况较少',
-        evidence: '成果文件、审核意见、返工记录、甲方确认'
+        evidence: '成果文件、审核意见、返工记录、内部验收记录'
       },
       {
         id: 'timeliness-v2',

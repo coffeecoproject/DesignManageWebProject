@@ -127,6 +127,11 @@ export const naturalPersonPaymentAcceptanceEvidence = [
       'src/features/finance/financeAccountingVoucherModel.test.ts',
       'src/features/finance/salaryFinanceFrontendWorkflow.test.ts'
     ]
+  },
+  {
+    id: 'NP-20',
+    frontendChainSources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts'],
+    sources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts']
   }
 ];
 
@@ -135,7 +140,7 @@ function containsAcceptanceId(testName, acceptanceId) {
 }
 
 export function assertNaturalPersonPaymentAcceptanceEvidence(registeredTestEntries, executedTestModules) {
-  const expectedIds = Array.from({ length: 19 }, (_, index) => `NP-${String(index + 1).padStart(2, '0')}`);
+  const expectedIds = Array.from({ length: 20 }, (_, index) => `NP-${String(index + 1).padStart(2, '0')}`);
   const actualIds = naturalPersonPaymentAcceptanceEvidence.map((entry) => entry.id);
 
   if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {

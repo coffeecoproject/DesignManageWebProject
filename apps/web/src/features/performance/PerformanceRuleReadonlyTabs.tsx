@@ -42,8 +42,8 @@ import type {
 
 type RuleReadonlyTabsProps = {
   activeRule: PerformanceRulePreset;
-  onDownloadFile: (file: RuleRelatedFileRecord) => void;
-  onPreviewFile: (file: RuleRelatedFileRecord) => void;
+  onDownloadFile?: (file: RuleRelatedFileRecord) => void;
+  onPreviewFile?: (file: RuleRelatedFileRecord) => void;
   taskConfigRows: TaskConfigRow[];
 };
 

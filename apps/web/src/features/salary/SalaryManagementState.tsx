@@ -5,6 +5,7 @@ import {
   createConfirmedSalaryMonthlyWorkflow,
   createPaidSalaryMonthlyWorkflow,
   getSalaryScheduledPaymentDate,
+  invalidateSalaryMonthlySources as invalidateSalaryMonthlySourcesDomain,
   isSalaryMonthlyPaid,
   recalculateSalaryMonthlyPayment as recalculateSalaryMonthlyPaymentDomain,
   reverseSalaryPaymentByFinanceTransaction,
@@ -56,6 +57,12 @@ type SalaryManagementStateValue = {
     reason: string
   ) => { reason?: string; success: boolean };
   isSalaryAdjustmentPeriodOpen: (record: SalaryAdjustmentRecord) => boolean;
+  invalidateSalaryMonthlySources: (
+    memberId: string,
+    months: string[],
+    reason: string,
+    updatedAt: string
+  ) => { blockedMonths: string[]; invalidatedMonths: string[]; success: boolean };
   saveSalaryAdjustment: (record: SalaryAdjustmentRecord) => boolean;
   savePersonalIncomeTaxProfile: (profile: SalaryIitProfile) => boolean;
 };
@@ -185,7 +192,7 @@ const initialSalaryMonthlyWorkflows: SalaryMonthlyWorkflowRecord[] = [
 
 const initialSalaryPaymentRecords: SalaryPaymentRecord[] = [
   {
-    employeeName: '示例全职 B',
+    employeeName: '陈浩',
     employeeNo: '20250018',
     id: 'salary-payment-2026-05-20250018',
     identityNo: '420102199108062048',
@@ -211,7 +218,7 @@ const initialSalaryPaymentRecords: SalaryPaymentRecord[] = [
       currentOtherDeductionAmount: 0,
       currentSpecialDeductionAmount: 861,
       currentTaxableIncomeAmount: 3639,
-      employeeName: '示例全职 B',
+      employeeName: '陈浩',
       employeeNo: '20250018',
       id: 'personal-tax-2026-06-20250018',
       payrollMonth: '2026-05',
@@ -276,6 +283,26 @@ export function SalaryManagementProvider({ children }: { children: ReactNode }) 
     () => ({
       attendanceMonthlySalarySettlements,
       isSalaryAdjustmentPeriodOpen,
+      invalidateSalaryMonthlySources(memberId, months, reason, updatedAt) {
+        const result = invalidateSalaryMonthlySourcesDomain(
+          salaryMonthlyWorkflows,
+          salaryPaymentRecords,
+          memberId,
+          months,
+          reason,
+          updatedAt
+        );
+
+        if (result.success && result.invalidatedMonths.length > 0) {
+          setSalaryMonthlyWorkflows(result.workflows);
+        }
+
+        return {
+          blockedMonths: result.blockedMonths,
+          invalidatedMonths: result.invalidatedMonths,
+          success: result.success
+        };
+      },
       confirmSalaryMonthlyReport(report, note = '薪酬明细已确认') {
         const result = confirmSalaryMonthlyReportState({
           confirmedAt: `${salaryToday} 10:30`,

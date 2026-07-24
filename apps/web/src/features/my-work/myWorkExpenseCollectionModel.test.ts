@@ -17,6 +17,7 @@ import {
   linkMyWorkCollectionFinanceTransaction,
   matchesMyWorkExpenseCollectionFilters,
   resubmitMyWorkExpenseCollectionRecordFromForm,
+  validateMyWorkExpenseCollectionSave,
   type MyWorkExpenseCollectionFilters,
   type MyWorkExpenseCollectionRecord
 } from './myWorkExpenseCollectionModel';
@@ -25,6 +26,8 @@ type UnitTest = {
   name: string;
   run: () => void;
 };
+
+const testSubmitter = { id: '20260001', name: '测试员工' };
 
 function fail(message: string): never {
   throw new Error(message);
@@ -107,6 +110,8 @@ function createExpenseCollectionRecord(overrides: Partial<MyWorkExpenseCollectio
     paymentMethod: '微信',
     relatedTarget: '测试项目',
     status: '待审核',
+    submitterId: testSubmitter.id,
+    submitterName: testSubmitter.name,
     title: '测试费用',
     updatedAt: '2026-06-15 09:00',
     ...overrides
@@ -194,7 +199,7 @@ const tests: UnitTest[] = [
         relatedTarget: '测试项目',
         title: '现场交通费'
       };
-      const record = createMyWorkExpenseCollectionRecordFromForm(form, 5);
+      const record = createMyWorkExpenseCollectionRecordFromForm(form, 5, testSubmitter);
 
       assert(!Object.prototype.hasOwnProperty.call(invalidForm, 'paperStatus'), 'submitter form should not expose paper original handling status');
       assertEqual(isMyWorkExpenseCollectionFormValid(invalidForm), false, 'empty form should be invalid');
@@ -203,8 +208,53 @@ const tests: UnitTest[] = [
       assertEqual(record.paperStatus, '待提交', 'paper original should require submission by default');
       assertEqual(record.paymentMethod, '微信', 'expense payment method should be retained');
       assertEqual(record.status, '待审核', 'new expense record should start from approval');
+      assertEqual(record.submitterId, testSubmitter.id, 'new expense record should retain the employee number');
       assertEqual(record.expenseReviewResult, undefined, 'submission should not prefill expense review conclusions');
       assertEqual(record.files.length, 1, 'attachment should be retained');
+    }
+  },
+  {
+    name: 'prevents duplicate expense submissions and validates update identity',
+    run() {
+      const existing = createExpenseCollectionRecord({
+        code: 'EC-DUPLICATE-001',
+        id: 'expense-duplicate-001'
+      });
+      const duplicateCode = createExpenseCollectionRecord({
+        code: existing.code,
+        id: 'expense-duplicate-002'
+      });
+      const duplicateBusinessFact = createExpenseCollectionRecord({
+        code: 'EC-DUPLICATE-002',
+        id: 'expense-duplicate-002',
+        submitterId: existing.submitterId
+      });
+
+      assertEqual(
+        validateMyWorkExpenseCollectionSave([existing], existing, 'create').success,
+        false,
+        'the same expense must not be created twice'
+      );
+      assertEqual(
+        validateMyWorkExpenseCollectionSave([existing], duplicateCode, 'create').success,
+        false,
+        'a duplicated expense code must be rejected'
+      );
+      assertEqual(
+        validateMyWorkExpenseCollectionSave([existing], duplicateBusinessFact, 'create').success,
+        false,
+        'the same employee expense fact must not bypass duplicate control with a new sequence number'
+      );
+      assertEqual(
+        validateMyWorkExpenseCollectionSave([existing], { ...existing, amount: 120 }, 'update').success,
+        true,
+        'an existing expense may update its own record'
+      );
+      assertEqual(
+        validateMyWorkExpenseCollectionSave([existing], duplicateCode, 'update').success,
+        false,
+        'an unknown expense identity must not overwrite another record'
+      );
     }
   },
   {
@@ -250,7 +300,7 @@ const tests: UnitTest[] = [
           }
         ]
       };
-      const record = createMyWorkExpenseCollectionRecordFromForm(collectionWithTransferFile, 6);
+      const record = createMyWorkExpenseCollectionRecordFromForm(collectionWithTransferFile, 6, testSubmitter);
 
       assertEqual(isMyWorkExpenseCollectionFormValid(missingVoucherForm), false, 'missing formal voucher should require reason in note');
       assertEqual(isMyWorkExpenseCollectionFormValid({ ...missingVoucherForm, note: '客户未提供正式票据' }), true, 'missing formal voucher reason should make form valid');
@@ -262,7 +312,8 @@ const tests: UnitTest[] = [
 
       const missingVoucherRecord = createMyWorkExpenseCollectionRecordFromForm(
         { ...missingVoucherForm, note: '客户未提供正式票据' },
-        9
+        9,
+        testSubmitter
       );
       assertEqual(missingVoucherRecord.expenseReviewResult, undefined, 'missing formal voucher should not prefill reimbursement or salary-tax outcome');
     }
@@ -276,7 +327,7 @@ const tests: UnitTest[] = [
         files: [],
         title: '临时草稿'
       };
-      const draft = createMyWorkExpenseCollectionRecordFromForm(form, 7, 'draft');
+      const draft = createMyWorkExpenseCollectionRecordFromForm(form, 7, testSubmitter, 'draft');
 
       assertEqual(isMyWorkExpenseCollectionDraftSavable(createMyWorkExpenseCollectionForm()), false, 'blank draft should not be saved');
       assertEqual(isMyWorkExpenseCollectionDraftSavable(form), true, 'partial form should be savable as draft');
@@ -308,7 +359,7 @@ const tests: UnitTest[] = [
           }
         ]
       };
-      const collectionRecord = createMyWorkExpenseCollectionRecordFromForm(collectionForm, 8);
+      const collectionRecord = createMyWorkExpenseCollectionRecordFromForm(collectionForm, 8, testSubmitter);
       const financeRecord = buildFinanceTransactionFromMyWorkCollection(collectionRecord, [], testPublicAccountRef);
 
       assert(financeRecord, 'submitted collection should produce finance transaction');
@@ -396,7 +447,7 @@ const tests: UnitTest[] = [
         amount: 168,
         title: '补充后的费用'
       };
-      const resubmitted = resubmitMyWorkExpenseCollectionRecordFromForm(returnedRecord, form);
+      const resubmitted = resubmitMyWorkExpenseCollectionRecordFromForm(returnedRecord, form, testSubmitter);
       const metrics = buildMyWorkExpenseCollectionMetrics([
         returnedRecord,
         createExpenseCollectionRecord({ id: 'draft', status: '草稿' }),

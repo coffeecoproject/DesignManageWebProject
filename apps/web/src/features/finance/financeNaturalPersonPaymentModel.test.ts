@@ -47,7 +47,7 @@ function createLaborTransaction(
     identityNo: '430104199605191128',
     paymentFactId: 'labor:TASK-001:20260006',
     personId: 'people-parttime-001',
-    personName: '示例兼职 B',
+    personName: '林悦',
     sourceBatchNo: 'TASK-001',
     taxPeriod: '2026-06'
   });
@@ -57,7 +57,7 @@ function createLaborTransaction(
     amount: naturalPersonPayment.netPaymentAmount,
     category: '外协付款',
     categorySnapshot: getFinanceCategorySnapshot('外协付款'),
-    counterparty: '示例兼职 B',
+    counterparty: '林悦',
     counterpartyType: '外协',
     currency: 'CNY',
     direction: '支出',
@@ -96,7 +96,7 @@ const tests: UnitTest[] = [
       const payable = buildPartTimeLaborReceivablePayableRecord(
         {
           batchKey: 'part-time-labor:2026-06:20260006:project-a',
-          employeeName: '示例兼职 B',
+          employeeName: '林悦',
           employeeNo: '20260006',
           grossAmount: 3200,
           id: 'part-time-labor:2026-06:20260006:project-a',
@@ -107,7 +107,7 @@ const tests: UnitTest[] = [
               acceptanceId: 'acceptance-a',
               acceptedAt: '2026-06-18 16:00',
               agreementVersion: 'AGREEMENT-A',
-              employeeName: '示例兼职 B',
+              employeeName: '林悦',
               employeeNo: '20260006',
               grossAmount: 3200,
               grossAmountSource: { field: 'agreedGrossAmount', kind: '任务约定', recordId: 'task-a/agreement' },

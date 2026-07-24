@@ -32,6 +32,7 @@ import { OperationRecordSection } from '../../components/OperationRecordSection'
 import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
+import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { buildPublicAccountOptions, resolveActivePublicAccountRef, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
 import { financeToday, formatMoney, getAccountingPeriod } from '../finance/financeUtils';
@@ -53,7 +54,6 @@ import {
   myWorkCollectionMethodOptions,
   myWorkExpenseCollectionCurrentMonth,
   myWorkExpenseCollectionKindOptions,
-  myWorkExpenseCollectionSeedRecords,
   myWorkExpenseCollectionStatusOptions,
   myWorkExpenseOriginalTypeOptions,
   myWorkExpensePaymentMethodOptions,
@@ -67,6 +67,8 @@ import {
   type MyWorkExpenseOriginalType,
   type MyWorkReceivableOption
 } from './myWorkExpenseCollectionModel';
+import { useMyExpenseReviewState } from './MyExpenseReviewState';
+import { currentMyWorkMemberId } from './myWorkModel';
 
 const expenseCollectionKindTone = {
   费用报销: 'red',
@@ -560,9 +562,14 @@ function MyExpenseCollectionDetailDrawer({
 export function MyExpenseCollectionPage() {
   const { customerRows } = useCustomerManagementState();
   const { addFinanceTransaction, financeRows, getAccountingPeriodGuard, receivablePayableRows } = useFinanceManagement();
+  const { peopleRows } = usePeopleOrganizationState();
   const { publicAccounts } = usePublicAccountConfigState();
+  const {
+    canSaveExpenseCollectionRecord,
+    collectionRecords: records,
+    saveExpenseCollectionRecord
+  } = useMyExpenseReviewState();
   const [messageApi, messageContextHolder] = message.useMessage();
-  const [records, setRecords] = useState<MyWorkExpenseCollectionRecord[]>(() => myWorkExpenseCollectionSeedRecords);
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [filters, setFilters] = useState<MyWorkExpenseCollectionFilters>(defaultMyWorkExpenseCollectionFilters);
   const formDrawer = useDrawerFormState<MyWorkExpenseCollectionRecord, MyWorkExpenseCollectionFormValue>({
@@ -584,6 +591,7 @@ export function MyExpenseCollectionPage() {
   );
   const formValid = isMyWorkExpenseCollectionFormValid(formDrawer.form);
   const draftSavable = isMyWorkExpenseCollectionDraftSavable(formDrawer.form);
+  const submitter = peopleRows.find((member) => member.id === currentMyWorkMemberId);
   const columns = useMemo<TableColumnsType<MyWorkExpenseCollectionRecord>>(
     () => [
       {
@@ -657,6 +665,11 @@ export function MyExpenseCollectionPage() {
       return;
     }
 
+    if (!submitter) {
+      void messageApi.warning('当前账号未关联人员档案，不能保存费用或代收事项');
+      return;
+    }
+
     if (
       mode === 'submit' &&
       formDrawer.form.kind === '代收登记' &&
@@ -700,9 +713,21 @@ export function MyExpenseCollectionPage() {
     }
 
     if (formDrawer.isEditMode && formDrawer.record) {
-      const nextRecord = resubmitMyWorkExpenseCollectionRecordFromForm(formDrawer.record, formDrawer.form, mode);
+      const nextRecord = resubmitMyWorkExpenseCollectionRecordFromForm(
+        formDrawer.record,
+        formDrawer.form,
+        { id: submitter.id, name: submitter.name },
+        mode
+      );
 
       if (!guardSubmitAccountingPeriod(nextRecord)) {
+        return;
+      }
+
+      const saveGuard = canSaveExpenseCollectionRecord(nextRecord, 'update');
+
+      if (!saveGuard.success) {
+        void messageApi.warning(saveGuard.reason);
         return;
       }
 
@@ -725,15 +750,32 @@ export function MyExpenseCollectionPage() {
         }
       }
 
-      setRecords((currentRecords) => currentRecords.map((record) => (record.id === recordToPersist.id ? recordToPersist : record)));
+      const saveResult = saveExpenseCollectionRecord(recordToPersist, 'update');
+
+      if (!saveResult.success) {
+        void messageApi.warning(saveResult.reason);
+        return;
+      }
       formDrawer.close();
       void messageApi.success(mode === 'draft' ? '草稿已保存' : formDrawer.record.status === '退回修改' ? '已重新提交' : '已提交');
       return;
     }
 
-    const nextRecord = createMyWorkExpenseCollectionRecordFromForm(formDrawer.form, allRecords.length + 1, mode);
+    const nextRecord = createMyWorkExpenseCollectionRecordFromForm(
+      formDrawer.form,
+      allRecords.length + 1,
+      { id: submitter.id, name: submitter.name },
+      mode
+    );
 
     if (!guardSubmitAccountingPeriod(nextRecord)) {
+      return;
+    }
+
+    const saveGuard = canSaveExpenseCollectionRecord(nextRecord, 'create');
+
+    if (!saveGuard.success) {
+      void messageApi.warning(saveGuard.reason);
       return;
     }
 
@@ -756,7 +798,12 @@ export function MyExpenseCollectionPage() {
       }
     }
 
-    setRecords((currentRecords) => [recordToPersist, ...currentRecords]);
+    const saveResult = saveExpenseCollectionRecord(recordToPersist, 'create');
+
+    if (!saveResult.success) {
+      void messageApi.warning(saveResult.reason);
+      return;
+    }
     formDrawer.close();
     void messageApi.success(mode === 'draft' ? '草稿已保存' : '已提交');
   }
