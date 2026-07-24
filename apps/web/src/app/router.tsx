@@ -52,6 +52,11 @@ const SystemTaxPolicyPage = lazy(() =>
     default: module.SystemTaxPolicyPage
   }))
 );
+const SystemRolesPage = lazy(() =>
+  import('../features/system/SystemRolesPage').then((module) => ({
+    default: module.SystemRolesPage
+  }))
+);
 const PerformanceDashboardPage = lazy(() =>
   import('../features/performance/PerformanceDashboardPage').then((module) => ({
     default: module.PerformanceDashboardPage
@@ -153,7 +158,7 @@ const FinanceTaxFilingsPage = lazy(() =>
   }))
 );
 const FinanceSocialInsurancePage = lazy(() =>
-  import('../features/finance/FinanceTaxFilingsPage').then((module) => ({
+  import('../features/finance/FinanceSocialInsurancePage').then((module) => ({
     default: module.FinanceSocialInsurancePage
   }))
 );
@@ -383,6 +388,10 @@ export const router = createBrowserRouter([
       {
         path: 'system/roles',
         element: withPageSuspense(<PeopleRolesPage />)
+      },
+      {
+        path: 'system/system-roles',
+        element: withPageSuspense(<SystemRolesPage />)
       },
       {
         path: 'system/task-config',

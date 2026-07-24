@@ -41,7 +41,7 @@ export function RelatedFileTable<T extends RelatedFileRecord>({
   onDownload,
   onPreview
 }: RelatedFileTableProps<T>) {
-  const hasActions = Boolean(onDelete || onDownload || onPreview);
+  const hasActions = Boolean(onDelete || onDownload || onPreview || records.some((record) => record.url));
   const columns: TableColumnsType<T> = [
     {
       title: '文件名称',
@@ -83,6 +83,7 @@ export function RelatedFileTable<T extends RelatedFileRecord>({
       render: (_, record) => (
         <FileActionButtons
           downloadHref={!onDownload ? record.url : undefined}
+          previewHref={!onPreview ? record.url : undefined}
           record={record}
           onDelete={onDelete}
           onDownload={onDownload}

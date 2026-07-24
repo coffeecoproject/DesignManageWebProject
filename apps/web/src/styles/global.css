@@ -1129,6 +1129,13 @@ body {
   margin-bottom: 10px;
 }
 
+.task-acceptance-reversal-impact {
+  margin-bottom: 12px;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .task-rework-upload {
   background: #fbfcfe;
   border: 1px solid #e5ecf5;
@@ -3464,6 +3471,48 @@ body {
   min-height: 76px;
 }
 
+.brand-acceptance-conversion {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #e3eaf3;
+  border-radius: 6px;
+}
+
+.brand-acceptance-conversion__item {
+  display: flex;
+  min-height: 76px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.brand-acceptance-conversion__item + .brand-acceptance-conversion__item {
+  border-left: 1px solid #e3eaf3;
+}
+
+.brand-acceptance-conversion__label {
+  color: var(--sms-color-text-secondary);
+  font-size: var(--sms-font-size-xs);
+}
+
+.brand-acceptance-fixed-outcomes {
+  margin-top: 12px;
+}
+
+@media (max-width: 720px) {
+  .brand-acceptance-conversion {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-acceptance-conversion__item + .brand-acceptance-conversion__item {
+    border-top: 1px solid #e3eaf3;
+    border-left: 0;
+  }
+}
+
 .contact-editor-toolbar {
   align-items: center;
   display: flex;
@@ -5546,6 +5595,30 @@ body {
   display: flex;
   justify-content: flex-end;
   margin-bottom: 10px;
+}
+
+.finance-rp-task-settlement-issue-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.finance-rp-task-settlement-issue-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.finance-rp-task-settlement-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 0;
+  margin-top: 12px;
+}
+
+.finance-rp-task-settlement-correction-alert + .detail-info-grid {
+  margin-top: 12px;
 }
 
 .compact-detail-table-scroll {

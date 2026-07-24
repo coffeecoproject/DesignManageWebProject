@@ -9,6 +9,7 @@ type FileActionButtonsProps<T> = {
   onDelete?: (record: T) => void;
   onDownload?: (record: T) => void;
   onPreview?: (record: T) => void;
+  previewHref?: string;
   previewLabel?: ReactNode;
   record: T;
 };
@@ -20,19 +21,30 @@ export function FileActionButtons<T>({
   onDelete,
   onDownload,
   onPreview,
+  previewHref,
   previewLabel = '预览',
   record
 }: FileActionButtonsProps<T>) {
   const hasDownloadAction = Boolean(onDownload || downloadHref);
 
-  if (!onPreview && !hasDownloadAction && !onDelete) {
+  const hasPreviewAction = Boolean(onPreview || previewHref);
+
+  if (!hasPreviewAction && !hasDownloadAction && !onDelete) {
     return null;
   }
 
   return (
     <Space className="archive-file-actions" size={2}>
-      {onPreview ? (
-        <Button icon={<EyeOutlined />} size="small" type="link" onClick={() => onPreview(record)}>
+      {hasPreviewAction ? (
+        <Button
+          href={previewHref}
+          icon={<EyeOutlined />}
+          rel={previewHref ? 'noreferrer' : undefined}
+          size="small"
+          target={previewHref ? '_blank' : undefined}
+          type="link"
+          onClick={onPreview ? () => onPreview(record) : undefined}
+        >
           {previewLabel}
         </Button>
       ) : null}

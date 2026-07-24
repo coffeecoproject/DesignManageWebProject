@@ -7,6 +7,7 @@ import { assertCorporateIncomeTaxAcceptanceEvidence } from './corporate-income-t
 import { assertNaturalPersonPaymentAcceptanceEvidence } from './natural-person-payment-acceptance.mjs';
 import { assertPerformancePhase6ConsumerHardcut } from './performance-phase6-consumer-hardcut.mjs';
 import { assertPerformancePhase7ResidualHardcut } from './performance-phase7-residual-hardcut.mjs';
+import { assertFrontendDomainStateHardcut } from './frontend-domain-state-hardcut.mjs';
 import { assertStampDutyAcceptanceEvidence } from './stamp-duty-acceptance.mjs';
 import { assertTaxHandlingSettlementAcceptanceEvidence } from './tax-handling-settlement-acceptance.mjs';
 
@@ -16,12 +17,15 @@ const bundledTestFile = join(outDir, 'peopleDomain.test.mjs');
 const bundledAttendanceMonthlyTestFile = join(outDir, 'peopleAttendanceMonthlyDomain.test.mjs');
 const bundledPeopleMovementRecordModelTestFile = join(outDir, 'peopleMovementRecordModel.test.mjs');
 const bundledPeopleExpiryModelTestFile = join(outDir, 'peopleExpiryModel.test.mjs');
+const bundledPeopleLifecycleFrontendWorkflowTestFile = join(outDir, 'peopleLifecycleFrontendWorkflow.test.mjs');
+const bundledAuthorizationModelTestFile = join(outDir, 'authorizationModel.test.mjs');
 const bundledTaskAssignmentCandidateTestFile = join(outDir, 'taskAssignmentCandidates.test.mjs');
 const bundledRegionSearchSelectTestFile = join(outDir, 'RegionSearchSelect.test.mjs');
 const bundledPublicAccountConfigStateTestFile = join(outDir, 'PublicAccountConfigState.test.mjs');
 const bundledTaskDomainModelTestFile = join(outDir, 'taskDomainModel.test.mjs');
 const bundledTaskCustomerBillingModelTestFile = join(outDir, 'taskCustomerBillingModel.test.mjs');
 const bundledBrandTaskPricingModelTestFile = join(outDir, 'brandTaskPricingModel.test.mjs');
+const bundledContractReceiptModelTestFile = join(outDir, 'contractReceiptModel.test.mjs');
 const bundledTaskFeedbackModelTestFile = join(outDir, 'taskFeedbackModel.test.mjs');
 const bundledPersonTaskViewModelTestFile = join(outDir, 'personTaskViewModel.test.mjs');
 const bundledSalaryDomainTestFile = join(outDir, 'salaryDomain.test.mjs');
@@ -69,8 +73,19 @@ const bundledPerformanceResultWorkflowTestFile = join(outDir, 'performanceResult
 const bundledPerformanceQuarterlyResultModelTestFile = join(outDir, 'performanceQuarterlyResultModel.test.mjs');
 const bundledPerformanceRuleApplicabilityModelTestFile = join(outDir, 'performanceRuleApplicabilityModel.test.mjs');
 const bundledTaskPerformanceMonthlySourceModelTestFile = join(outDir, 'taskPerformanceMonthlySourceModel.test.mjs');
+const bundledBusinessScenarioTestFile = join(outDir, 'businessScenario.test.mjs');
 
 const testModules = [
+  {
+    bundledFile: bundledAuthorizationModelTestFile,
+    entry: 'src/features/auth/authorizationModel.test.ts',
+    runExport: 'runAuthorizationModelTests'
+  },
+  {
+    bundledFile: bundledBusinessScenarioTestFile,
+    entry: 'src/mocks/businessScenario.test.ts',
+    runExport: 'runBusinessScenarioTests'
+  },
   {
     bundledFile: bundledTestFile,
     entry: 'src/features/people/peopleDomain.test.ts',
@@ -92,6 +107,11 @@ const testModules = [
     runExport: 'runPeopleExpiryModelTests'
   },
   {
+    bundledFile: bundledPeopleLifecycleFrontendWorkflowTestFile,
+    entry: 'src/features/people/peopleLifecycleFrontendWorkflow.test.ts',
+    runExport: 'runPeopleLifecycleFrontendWorkflowTests'
+  },
+  {
     bundledFile: bundledTaskAssignmentCandidateTestFile,
     entry: 'src/features/tasks/taskAssignmentCandidates.test.ts',
     runExport: 'runTaskAssignmentCandidateTests'
@@ -110,6 +130,11 @@ const testModules = [
     bundledFile: bundledBrandTaskPricingModelTestFile,
     entry: 'src/features/customers/brandTaskPricingModel.test.ts',
     runExport: 'runBrandTaskPricingModelTests'
+  },
+  {
+    bundledFile: bundledContractReceiptModelTestFile,
+    entry: 'src/features/customers/contractReceiptModel.test.ts',
+    runExport: 'runContractReceiptModelTests'
   },
   {
     bundledFile: bundledTaskCustomerBillingModelTestFile,
@@ -412,6 +437,7 @@ let stampDutyAcceptanceResult;
 let taxHandlingSettlementAcceptanceResult;
 let performancePhase6ConsumerHardcutResult;
 let performancePhase7ResidualHardcutResult;
+let frontendDomainStateHardcutResult;
 
 try {
   corporateIncomeTaxAcceptanceResult = assertCorporateIncomeTaxAcceptanceEvidence(
@@ -461,6 +487,12 @@ try {
   allFailures.push(`performance phase 7 residual hardcut: ${error instanceof Error ? error.message : String(error)}`);
 }
 
+try {
+  frontendDomainStateHardcutResult = await assertFrontendDomainStateHardcut(webRoot);
+} catch (error) {
+  allFailures.push(`frontend domain state hardcut: ${error instanceof Error ? error.message : String(error)}`);
+}
+
 if (allFailures.length > 0) {
   console.error(`Unit tests failed: ${passed}/${total} passed`);
   for (const failure of allFailures) {
@@ -488,5 +520,8 @@ if (allFailures.length > 0) {
   );
   console.log(
     `Performance Phase 7 residual hardcut: ${performancePhase7ResidualHardcutResult.checkedSourceFiles} source files, ${performancePhase7ResidualHardcutResult.sharedDrawerConsumers} shared consumers, ${performancePhase7ResidualHardcutResult.tabCount} tabs`
+  );
+  console.log(
+    `Frontend domain state hardcut: ${frontendDomainStateHardcutResult.checkedSourceFiles} source files, ${frontendDomainStateHardcutResult.providerCount} providers, ${frontendDomainStateHardcutResult.stateContractCount} state contracts`
   );
 }

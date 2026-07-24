@@ -34,6 +34,9 @@ import {
 import { Avatar, Badge, Breadcrumb, Button, Layout, Menu, Space, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { AuthorizationBoundary } from '../features/auth/AuthorizationBoundary';
+import { useAuthorizationState } from '../features/auth/AuthorizationState';
+import { canAccessRoute, routeByMenuKey } from '../features/auth/routeAuthorization';
 
 const { Header, Sider, Content } = Layout;
 
@@ -234,6 +237,10 @@ const pageMeta: Record<string, { module: string; title: string }> = {
     module: '系统管理',
     title: '业务角色'
   },
+  '/system/system-roles': {
+    module: '系统管理',
+    title: '系统角色'
+  },
   '/system/task-config': {
     module: '系统管理',
     title: '任务配置'
@@ -323,6 +330,10 @@ function getSelectedKeys(pathname: string) {
     }
 
     return ['people-attendance'];
+  }
+
+  if (pathname.startsWith('/system/system-roles')) {
+    return ['system-system-roles'];
   }
 
   if (pathname.startsWith('/system/roles') || pathname.startsWith('/people/roles')) {
@@ -507,6 +518,7 @@ function getSelectedKeys(pathname: string) {
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { authorization } = useAuthorizationState();
   const [collapsed, setCollapsed] = useState(false);
   const page = pageMeta[location.pathname] ?? {
     module: '系统',
@@ -817,6 +829,11 @@ export function AppShell() {
             label: '业务角色'
           },
           {
+            key: 'system-system-roles',
+            icon: <LockOutlined />,
+            label: '系统角色'
+          },
+          {
             key: 'system-task-config',
             icon: <ProfileOutlined />,
             label: '任务配置'
@@ -856,6 +873,18 @@ export function AppShell() {
     ],
     []
   );
+  const visibleMenuItems = useMemo(
+    () => menuItems
+      .map((group) => ({
+        ...group,
+        children: group.children.filter((item) => {
+          const route = routeByMenuKey[item.key];
+          return Boolean(route && canAccessRoute(authorization, route));
+        })
+      }))
+      .filter((group) => group.children.length > 0),
+    [authorization, menuItems]
+  );
 
   return (
     <Layout className="app-shell">
@@ -878,7 +907,7 @@ export function AppShell() {
           mode="inline"
           selectedKeys={getSelectedKeys(location.pathname)}
           theme="dark"
-          items={menuItems}
+          items={visibleMenuItems}
           onClick={({ key }) => {
             if (key === 'my-work-overview') {
               navigate('/my-work/overview');
@@ -1072,6 +1101,10 @@ export function AppShell() {
               navigate('/system/roles');
             }
 
+            if (key === 'system-system-roles') {
+              navigate('/system/system-roles');
+            }
+
             if (key === 'system-task-config') {
               navigate('/system/task-config');
             }
@@ -1139,7 +1172,9 @@ export function AppShell() {
           </Space>
         </Header>
         <Content className="app-content">
-          <Outlet />
+          <AuthorizationBoundary pathname={location.pathname}>
+            <Outlet />
+          </AuthorizationBoundary>
         </Content>
       </Layout>
     </Layout>
