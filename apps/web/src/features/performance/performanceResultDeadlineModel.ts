@@ -1,6 +1,6 @@
 import type { PeopleMember } from '../people/peopleTypes';
+import { getMemberWorkCalendar } from '../people/peopleDomain';
 import {
-  defaultWorkCalendarId,
   type AnnualExceptionConfigRow,
   type AnnualExceptionItem,
   type WorkCalendarRow
@@ -47,9 +47,9 @@ export function buildPerformanceResponseDeadline({
   workCalendarRows
 }: BuildPerformanceResponseDeadlineInput): PerformanceResponseDeadline | undefined {
   const deliveredDate = parseDeliveredDate(deliveredAt);
-  const calendar =
-    workCalendarRows.find((row) => row.id === member.workCalendarId) ??
-    workCalendarRows.find((row) => row.id === defaultWorkCalendarId);
+  const calendar = deliveredDate
+    ? getMemberWorkCalendar(member, workCalendarRows, formatCalendarDateKey(deliveredDate))
+    : undefined;
 
   if (!deliveredDate || !calendar || calendar.status !== '启用' || requiredWorkingDays < 1) {
     return undefined;

@@ -1,7 +1,8 @@
-import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendarRow } from '../system/WorkCalendarState';
+import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import type { PeopleAttendanceRecord } from '../people/PeopleOrganizationState';
 import type { PeopleMember } from '../people/peopleTypes';
+import { getMemberWorkCalendar, getPeopleRelationshipRangeBlockers } from '../people/peopleDomain';
 import { getLatestPublishedPerformanceSummary } from '../performance/performanceResultConsumerModel';
 import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import { formatTaskDuration, normalizeTaskHourText, type StoreTaskRecord } from './TaskManagementState';
@@ -33,6 +34,7 @@ type BuildExecutorCandidatesInput = {
   publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeTaskRows: StoreTaskRecord[];
   taskConfigId: string;
+  plannedDurationHours?: number | null;
   window?: TaskAssignmentWindow;
   annualExceptionRows: AnnualExceptionConfigRow[];
   workCalendarRows: WorkCalendarRow[];
@@ -43,6 +45,7 @@ type BuildAcceptorCandidatesInput = {
   executorId: string;
   peopleRows: PeopleMember[];
   publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
+  plannedDurationHours?: number | null;
   storeTaskRows: StoreTaskRecord[];
   window?: TaskAssignmentWindow;
   annualExceptionRows: AnnualExceptionConfigRow[];
@@ -95,14 +98,6 @@ function overlapsDateRange(leftStart: Date, leftEnd: Date, rightStart: Date, rig
 
 function coversDateRange(coverStart: Date, coverEnd: Date, targetStart: Date, targetEnd: Date) {
   return coverStart <= targetStart && coverEnd >= targetEnd;
-}
-
-function getMemberCalendar(member: PeopleMember, workCalendarRows: WorkCalendarRow[]) {
-  return (
-    workCalendarRows.find((calendar) => calendar.id === member.workCalendarId) ??
-    workCalendarRows.find((calendar) => calendar.id === defaultWorkCalendarId) ??
-    workCalendarRows[0]
-  );
 }
 
 function getWindowWorkSegmentForDate(date: Date, window: TaskAssignmentWindow) {
@@ -159,13 +154,15 @@ function getUsableWorkSegments(
   workCalendarRows: WorkCalendarRow[],
   annualExceptionRows: AnnualExceptionConfigRow[]
 ) {
-  const calendar = getMemberCalendar(member, workCalendarRows);
-
-  if (!window || !calendar || calendar.status !== '启用') {
+  if (!window) {
     return [];
   }
 
   return getWindowDateRange(window).flatMap((date) => {
+    const calendar = getMemberWorkCalendar(member, workCalendarRows, formatTaskDate(date));
+    if (!calendar || calendar.status !== '启用') {
+      return [];
+    }
     const isWorkday = isWorkCalendarDateWorkday(calendar, date, annualExceptionRows);
     const hasMakeupWorkday = hasMakeupWorkdayCoverage(member.id, date, window, attendanceRecords);
 
@@ -177,6 +174,13 @@ function getUsableWorkSegments(
 
     return segment ? [segment] : [];
   });
+}
+
+function formatTaskDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function getAttendanceConflicts(
@@ -221,7 +225,7 @@ function buildCalendarWarnings(
   workCalendarRows: WorkCalendarRow[],
   annualExceptionRows: AnnualExceptionConfigRow[]
 ) {
-  const calendar = getMemberCalendar(member, workCalendarRows);
+  const calendar = getMemberWorkCalendar(member, workCalendarRows, window?.startAt.slice(0, 10));
 
   if (!window) {
     return {
@@ -243,9 +247,9 @@ function buildCalendarWarnings(
 
   if (!calendar || calendar.status !== '启用') {
     return {
-      blockers: ['工作日历不可用'],
+      blockers: [] as string[],
       calendarName: calendar?.name ?? '未配置工作日历',
-      warnings: [] as string[]
+      warnings: ['未配置可用工作日历']
     };
   }
 
@@ -254,9 +258,9 @@ function buildCalendarWarnings(
 
   if (usableWorkSegments.length === 0) {
     return {
-      blockers: ['任务周期无可用工作时间'],
+      blockers: [] as string[],
       calendarName: calendar.name,
-      warnings: [] as string[]
+      warnings: ['任务周期内无日历可用工时，请自行安排']
     };
   }
 
@@ -291,6 +295,7 @@ function buildBaseCandidate({
   attendanceRecords,
   annualExceptionRows,
   member,
+  plannedDurationHours,
   publishedPerformanceRecords,
   storeTaskRows,
   window,
@@ -302,6 +307,7 @@ function buildBaseCandidate({
   publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeTaskRows: StoreTaskRecord[];
   window?: TaskAssignmentWindow;
+  plannedDurationHours?: number | null;
   workCalendarRows: WorkCalendarRow[];
 }) {
   const blockers: string[] = [];
@@ -328,6 +334,10 @@ function buildBaseCandidate({
     blockers.push('人员状态不可用');
   }
 
+  if (window) {
+    blockers.push(...getPeopleRelationshipRangeBlockers(member, window.startAt, window.endAt));
+  }
+
   const taskAccessBlocker = getTaskAccessBlocker(member);
 
   if (taskAccessBlocker) {
@@ -335,7 +345,7 @@ function buildBaseCandidate({
   }
 
   if (attendanceConflicts.length > 0) {
-    blockers.push(attendanceConflicts.map((record) => `${record.type}覆盖工作时段`).join('；'));
+    warnings.push(attendanceConflicts.map((record) => `${record.type}覆盖工作时段`).join('；'));
   }
 
   blockers.push(...calendarResult.blockers);
@@ -349,6 +359,20 @@ function buildBaseCandidate({
   }
 
   warnings.push(...calendarResult.warnings);
+
+  if (shouldCheckTimeAvailability && window && plannedDurationHours && plannedDurationHours > 0) {
+    const availableHours = getUsableWorkSegments(
+      member,
+      window,
+      attendanceRecords,
+      workCalendarRows,
+      annualExceptionRows
+    ).reduce((total, segment) => total + (segment.end.getTime() - segment.start.getTime()) / (60 * 60 * 1000), 0);
+
+    if (availableHours < plannedDurationHours) {
+      warnings.push(`日历可用约 ${availableHours} 小时，低于任务计划 ${plannedDurationHours} 小时`);
+    }
+  }
 
   return {
     blockers,
@@ -399,6 +423,7 @@ export function buildTaskExecutorCandidates({
   attendanceRecords,
   annualExceptionRows,
   peopleRows,
+  plannedDurationHours,
   publishedPerformanceRecords,
   storeTaskRows,
   taskConfigId,
@@ -412,6 +437,7 @@ export function buildTaskExecutorCandidates({
         annualExceptionRows,
         member,
         publishedPerformanceRecords,
+        plannedDurationHours,
         storeTaskRows,
         window,
         workCalendarRows
@@ -428,6 +454,7 @@ export function buildTaskAcceptorCandidates({
   annualExceptionRows,
   executorId,
   peopleRows,
+  plannedDurationHours,
   publishedPerformanceRecords,
   storeTaskRows,
   window,
@@ -440,6 +467,7 @@ export function buildTaskAcceptorCandidates({
         annualExceptionRows,
         member,
         publishedPerformanceRecords,
+        plannedDurationHours,
         storeTaskRows,
         window,
         workCalendarRows

@@ -20,7 +20,7 @@ export type PositionRequiredFileSlot = RequiredFileSlot<
 >;
 
 export type MovementRequiredFileSlotKey = 'renewal-agreement' | 'resignation-certificate' | 'cooperation-end-confirmation';
-export type MovementFileSlotType = '转正' | '薪资标准调整' | '续签' | '离职' | '结束合作' | '暂停任务参与' | '恢复任务参与';
+export type MovementFileSlotType = '转正' | '岗位调整' | '工作日历变更' | '薪资标准调整' | '续签' | '离职' | '结束合作' | '暂停任务参与' | '恢复任务参与';
 export type MovementRequiredFileSlot = RequiredFileSlot<PeopleArchiveFile['category'], MovementRequiredFileSlotKey>;
 
 export const archiveIdentityFileMaxSizeMb = 10;

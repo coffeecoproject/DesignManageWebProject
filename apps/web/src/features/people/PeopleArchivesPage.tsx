@@ -16,6 +16,8 @@ import type { TableColumnsType } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useEffect, useMemo, useState } from 'react';
 import { AuditTrailSection } from '../../components/AuditTrailSection';
+import { useAuthorizationState } from '../auth/AuthorizationState';
+import { canAccessPerson } from '../auth/authorizationModel';
 import type { AuditTrailRecord } from '../../components/AuditTrailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, ReadOnlyField, StatusTag } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
@@ -34,6 +36,8 @@ import { MetricGrid } from '../../components/MetricGrid';
 import { RegionSearchSelect, defaultRegionPath, getRegionCity, getRegionPathByCity } from '../../components/RegionSearchSelect';
 import { TagChip } from '../../components/TagChip';
 import { CellText, CompactCell } from '../../components/TableCell';
+import { useFinanceSocialInsuranceState } from '../finance/FinanceSocialInsuranceState';
+import type { SocialInsuranceEnrollmentProfile } from '../finance/financeSocialInsuranceData';
 import { useTaskConfigState, type TaskConfigRow } from '../system/TaskConfigState';
 import { defaultWorkCalendarId, useWorkCalendarState, type WorkCalendarRow } from '../system/WorkCalendarState';
 import { getArchiveRequiredFileSlots, type ArchiveRequiredFileSlot } from './peopleFileSlotModel';
@@ -46,6 +50,9 @@ import {
   getPeopleBaseSalaryText,
   getPeopleEmployeeCategoryText,
   getPeopleHousingFundStatus,
+  getPeopleMemberPositions,
+  getNextPeopleWorkNo,
+  getPeoplePositionSummary,
   getPeoplePendingArchiveFiles,
   getPeopleSalaryModeText,
   getPeopleTaskAccessStatusFromArchive,
@@ -59,6 +66,7 @@ import {
   type PeopleSalaryMode
 } from './peopleDomain';
 import type { PeopleArchiveFile, PeopleHousingFundStatus, PeopleMember } from './peopleTypes';
+import { getPositionId } from './rolePermissionModel';
 
 type ArchiveFileStatusFilter = '全部' | PeopleArchiveFile['status'];
 type ArchiveListStatus = PeopleArchiveListStatus;
@@ -89,6 +97,7 @@ type ArchiveMaintenanceSnapshot = {
   emergencyContact: string;
   emergencyContactPhone: string;
   emergencyContactRelation: string;
+  employmentRelationshipType: PeopleMember['employmentRelationshipType'];
   gender: PeopleMember['gender'];
   graduatedAt: string;
   graduationSchool: string;
@@ -103,6 +112,7 @@ type ArchiveMaintenanceSnapshot = {
   nationality: string;
   personnelType: PeopleMember['personnelType'];
   position: string;
+  positions: string[];
   salaryMode: ArchiveSalaryMode;
   source: string;
   startAt: string;
@@ -182,7 +192,7 @@ function getArchiveRequiredMissingLabels(snapshot: ArchiveMaintenanceSnapshot) {
   const requiredFields: Array<[string, string]> = [
     ['姓名', snapshot.name],
     ['员工类别', snapshot.personnelType],
-    ['岗位', snapshot.position],
+    ['任职岗位', snapshot.positions.join(' / ')],
     ['性别', snapshot.gender],
     ['出生日期', snapshot.birthDate],
     ['国籍', snapshot.nationality],
@@ -283,6 +293,7 @@ function getMemberArchiveMaintenanceSnapshot(member: PeopleMember): ArchiveMaint
     emergencyContact: normalizeArchiveText(member.emergencyContact),
     emergencyContactPhone: normalizeArchiveText(member.emergencyContactPhone),
     emergencyContactRelation: normalizeArchiveText(member.emergencyContactRelation),
+    employmentRelationshipType: member.employmentRelationshipType,
     gender: member.gender,
     graduatedAt: normalizeArchiveText(member.graduatedAt),
     graduationSchool: normalizeArchiveText(member.graduationSchool),
@@ -297,6 +308,7 @@ function getMemberArchiveMaintenanceSnapshot(member: PeopleMember): ArchiveMaint
     nationality: normalizeArchiveText(member.nationality || '中国'),
     personnelType: member.personnelType,
     position: normalizeArchiveText(member.position),
+    positions: getPeopleMemberPositions(member),
     salaryMode,
     source: normalizeArchiveText(member.source),
     startAt: normalizeArchiveText(member.personnelType === '兼职' ? member.cooperationStartAt ?? member.joinedAt : member.joinedAt),
@@ -306,25 +318,9 @@ function getMemberArchiveMaintenanceSnapshot(member: PeopleMember): ArchiveMaint
   };
 }
 
-function getNextPeopleSequence(rows: PeopleMember[]) {
-  return (
-    rows.reduce((maxSequence, row) => {
-      const matched = row.id.match(/^2026(\d{4})$/);
-
-      if (!matched) {
-        return maxSequence;
-      }
-
-      const sequence = Number.parseInt(matched[1], 10);
-      return Number.isFinite(sequence) ? Math.max(maxSequence, sequence) : maxSequence;
-    }, 0) + 1
-  );
-}
-
 function createDraftArchiveMember(rows: PeopleMember[]): PeopleMember {
-  const sequence = getNextPeopleSequence(rows);
-  const paddedSequence = String(sequence).padStart(4, '0');
-  const memberId = `2026${paddedSequence}`;
+  const memberId = getNextPeopleWorkNo(rows);
+  const paddedSequence = memberId.slice(-4);
 
   return {
     address: '',
@@ -344,6 +340,7 @@ function createDraftArchiveMember(rows: PeopleMember[]): PeopleMember {
     education: '本科',
     educationMajor: '',
     email: '',
+    employmentRelationshipType: '全日制劳动关系',
     emergencyContact: '',
     emergencyContactPhone: '',
     emergencyContactRelation: '',
@@ -369,6 +366,16 @@ function createDraftArchiveMember(rows: PeopleMember[]): PeopleMember {
     },
     personnelType: '全职',
     position: '空间设计师',
+    positionAssignments: [
+      {
+        effectiveFrom: prototypeToday,
+        id: `${memberId}-position-1`,
+        isPrimary: true,
+        positionId: getPositionId('空间设计师'),
+        positionName: '空间设计师',
+        status: '生效中'
+      }
+    ],
     probationEndAt: '2026-09-11',
     salaryProfile: {
       effectiveAt: prototypeToday,
@@ -435,7 +442,7 @@ function getArchiveFileColumns({
   onDownload,
   onPreview
 }: {
-  onDownload: (file: PeopleArchiveFile) => void;
+  onDownload?: (file: PeopleArchiveFile) => void;
   onPreview: (file: PeopleArchiveFile) => void;
 }): TableColumnsType<PeopleArchiveFile> {
   return [
@@ -566,30 +573,36 @@ function getArchiveAuditTrailRecords(member: PeopleMember): AuditTrailRecord[] {
 }
 
 function ArchiveDetailDrawer({
+  canManage,
   member,
   mode,
   open,
+  socialInsuranceProfile,
   onClose,
   onModeChange,
   positionOptions,
   workCalendarRows,
   onSave
 }: {
+  canManage: boolean;
   member?: PeopleMember;
   mode: ArchiveDrawerMode;
   open: boolean;
+  socialInsuranceProfile?: SocialInsuranceEnrollmentProfile;
   onClose: () => void;
   onModeChange: (mode: ArchiveDrawerMode) => void;
   positionOptions: string[];
   workCalendarRows: WorkCalendarRow[];
-  onSave: (member: PeopleMember) => void;
+  onSave: (member: PeopleMember) => { reason?: string; success: boolean };
 }) {
   const [messageApi, contextHolder] = message.useMessage();
   const { taskConfigRows } = useTaskConfigState();
   const [previewFile, setPreviewFile] = useState<PeopleArchiveFile>();
   const [draftName, setDraftName] = useState('');
   const [draftPersonnelType, setDraftPersonnelType] = useState<PeopleMember['personnelType']>('全职');
+  const [draftEmploymentRelationshipType, setDraftEmploymentRelationshipType] = useState<PeopleMember['employmentRelationshipType']>('全日制劳动关系');
   const [draftPosition, setDraftPosition] = useState('空间设计师');
+  const [draftPositions, setDraftPositions] = useState<string[]>(['空间设计师']);
   const [draftWorkCalendarId, setDraftWorkCalendarId] = useState(defaultWorkCalendarId);
   const [draftGender, setDraftGender] = useState<PeopleMember['gender']>('女');
   const [draftBirthDate, setDraftBirthDate] = useState('');
@@ -642,9 +655,6 @@ function ArchiveDetailDrawer({
   const archiveFileColumns = useMemo(
     () =>
       getArchiveFileColumns({
-        onDownload: (file) => {
-          void messageApi.success(`${file.name} 下载请求已记录`);
-        },
         onPreview: setPreviewFile
       }),
     [messageApi]
@@ -665,7 +675,10 @@ function ArchiveDetailDrawer({
 
     setDraftName(member.name === '新人员' ? '' : member.name);
     setDraftPersonnelType(member.personnelType);
+    setDraftEmploymentRelationshipType(member.employmentRelationshipType);
+    const memberPositions = getPeopleMemberPositions(member);
     setDraftPosition(member.position);
+    setDraftPositions(memberPositions);
     setDraftWorkCalendarId(getArchiveWorkCalendarId(member.personnelType, member.workCalendarId));
     setDraftGender(member.gender);
     setDraftBirthDate(member.birthDate);
@@ -730,6 +743,7 @@ function ArchiveDetailDrawer({
     emergencyContact: normalizeArchiveText(draftEmergencyContact),
     emergencyContactPhone: normalizeArchiveText(draftEmergencyContactPhone),
     emergencyContactRelation: normalizeArchiveText(draftEmergencyContactRelation),
+    employmentRelationshipType: draftEmploymentRelationshipType,
     gender: draftGender,
     graduatedAt: normalizeArchiveText(draftGraduatedAt),
     graduationSchool: normalizeArchiveText(draftGraduationSchool),
@@ -744,6 +758,7 @@ function ArchiveDetailDrawer({
     nationality: normalizeArchiveText(draftNationality || '中国'),
     personnelType: draftPersonnelType,
     position: normalizeArchiveText(draftPosition),
+    positions: normalizeTaskCapabilityIds(draftPositions),
     salaryMode: inferredSalaryMode,
     source: normalizeArchiveText(draftSource),
     startAt: normalizeArchiveText(draftStartAt),
@@ -793,9 +808,23 @@ function ArchiveDetailDrawer({
     }
 
     if (personnelType === '兼职') {
+      setDraftEmploymentRelationshipType('独立劳务合作');
       setDraftWorkCalendarId('');
       setDraftHousingFundEffectiveMonth('');
       setDraftHousingFundStatus('暂不缴存');
+    }
+
+    if (personnelType === '全职') {
+      setDraftEmploymentRelationshipType('全日制劳动关系');
+    }
+  }
+
+  function handleDraftPositionsChange(positions: string[]) {
+    const normalizedPositions = normalizeTaskCapabilityIds(positions);
+    setDraftPositions(normalizedPositions);
+
+    if (!normalizedPositions.includes(draftPosition)) {
+      setDraftPosition(normalizedPositions[0] ?? '');
     }
   }
 
@@ -855,19 +884,20 @@ function ArchiveDetailDrawer({
       ],
       birthDate: draftSnapshot.birthDate,
       city: draftSnapshot.city,
-      contractEndAt: endAt,
+      contractEndAt: isCreateMode ? endAt : sourceMember.contractEndAt,
       contractNo: isCreateMode ? getGeneratedContractNo(sourceMember.id, draftPersonnelType) : sourceMember.contractNo,
-      contractStartAt: startAt,
-      contractStatus,
-      contractType: draftContractType,
-      cooperationEndAt: isParttime ? endAt : undefined,
-      cooperationStartAt: isParttime ? startAt : undefined,
+      contractStartAt: isCreateMode ? startAt : sourceMember.contractStartAt,
+      contractStatus: isCreateMode ? contractStatus : sourceMember.contractStatus,
+      contractType: isCreateMode ? draftContractType : sourceMember.contractType,
+      cooperationEndAt: isCreateMode ? (isParttime ? endAt : undefined) : sourceMember.cooperationEndAt,
+      cooperationStartAt: isCreateMode ? (isParttime ? startAt : undefined) : sourceMember.cooperationStartAt,
       education: draftSnapshot.education,
       educationMajor: draftSnapshot.educationMajor,
       email: draftSnapshot.email,
       emergencyContact: draftSnapshot.emergencyContact,
       emergencyContactPhone: draftSnapshot.emergencyContactPhone,
       emergencyContactRelation: draftSnapshot.emergencyContactRelation,
+      employmentRelationshipType: draftSnapshot.employmentRelationshipType,
       gender: draftGender,
       graduatedAt: draftSnapshot.graduatedAt,
       graduationSchool: draftSnapshot.graduationSchool,
@@ -878,7 +908,7 @@ function ArchiveDetailDrawer({
       housingFundEffectiveMonth:
         !isParttime && draftSnapshot.housingFundStatus === '缴存' ? draftSnapshot.housingFundEffectiveMonth : undefined,
       housingFundStatus: isParttime ? undefined : draftSnapshot.housingFundStatus,
-      joinedAt: startAt,
+      joinedAt: isCreateMode ? startAt : sourceMember.joinedAt,
       mobile: draftSnapshot.mobile,
       name: draftSnapshot.name,
       nationality: draftSnapshot.nationality || '中国',
@@ -889,9 +919,19 @@ function ArchiveDetailDrawer({
         mode: isTaskMode ? '按任务付款' : '工资发放',
         payCycle: isTaskMode ? '按任务' : '月度'
       },
-      personnelType: draftPersonnelType,
-      position: draftPosition,
-      probationEndAt: !isParttime ? endAt ?? sourceMember.probationEndAt : undefined,
+      personnelType: isCreateMode ? draftPersonnelType : sourceMember.personnelType,
+      position: isCreateMode ? draftPosition : sourceMember.position,
+      positionAssignments: isCreateMode
+        ? draftSnapshot.positions.map((positionName, index) => ({
+            effectiveFrom: startAt,
+            id: `${sourceMember.id}-position-${index + 1}`,
+            isPrimary: positionName === draftPosition,
+            positionId: getPositionId(positionName),
+            positionName,
+            status: '生效中' as const
+          }))
+        : sourceMember.positionAssignments.map((assignment) => ({ ...assignment })),
+      probationEndAt: isCreateMode ? (!isParttime ? endAt ?? sourceMember.probationEndAt : undefined) : sourceMember.probationEndAt,
       salaryProfile: isCreateMode
         ? {
             effectiveAt: startAt,
@@ -905,14 +945,33 @@ function ArchiveDetailDrawer({
           }
         : sourceMember.salaryProfile,
       source: draftSnapshot.source,
-      status: resolvedStatus,
+      status: isCreateMode ? resolvedStatus : sourceMember.status,
       taskAccessStatus: getPeopleTaskAccessStatusFromArchive(resolvedStatus, draftSnapshot.taskCapabilityIds),
       taskCapabilityIds: draftSnapshot.taskCapabilityIds,
       wechat: draftSnapshot.wechat,
-      workCalendarId: isParttime ? undefined : draftSnapshot.workCalendarId
+      workCalendarAssignments: isCreateMode && !isParttime
+        ? [{
+            effectiveFrom: startAt,
+            id: `${sourceMember.id}-calendar-1`,
+            mode: draftSnapshot.workCalendarId === defaultWorkCalendarId
+              ? '跟随公司默认日历'
+              : '指定工作日历',
+            status: '生效中',
+            workCalendarId: draftSnapshot.workCalendarId === defaultWorkCalendarId
+              ? undefined
+              : draftSnapshot.workCalendarId
+          }]
+        : sourceMember.workCalendarAssignments?.map((assignment) => ({ ...assignment })),
+      workCalendarId: isCreateMode ? (isParttime ? undefined : draftSnapshot.workCalendarId) : sourceMember.workCalendarId
     };
 
-    onSave(nextMember);
+    const saveResult = onSave(nextMember);
+
+    if (!saveResult.success) {
+      void messageApi.warning(saveResult.reason ?? '档案未能保存');
+      return;
+    }
+
     void messageApi.success(isCreateMode ? '人员已新增' : '档案已保存');
   }
 
@@ -998,10 +1057,10 @@ function ArchiveDetailDrawer({
       label: '关闭',
       onClick: handleDrawerClose
     },
-    primaryAction: {
+    primaryAction: canManage ? {
       label: '编辑档案',
       onClick: () => onModeChange('edit')
-    }
+    } : undefined
   };
 
   const archiveFormActions = {
@@ -1182,22 +1241,54 @@ function ArchiveDetailDrawer({
                         <>
 	                          <DetailSection icon={<TeamOutlined />} title="任职信息">
 	                            <DrawerFormGrid>
-	                              <DrawerFormField required label="岗位">
+	                              <DrawerFormField required label="劳动关系类型">
 	                                <Select
-	                                  value={draftPosition}
-	                                  options={positionOptions.map((position) => ({ label: position, value: position }))}
-	                                  onChange={setDraftPosition}
+	                                  value={draftEmploymentRelationshipType}
+	                                  options={[
+	                                    { label: '全日制劳动关系', value: '全日制劳动关系' },
+	                                    { label: '非全日制劳动关系', value: '非全日制劳动关系' },
+	                                    { label: '独立劳务合作', value: '独立劳务合作' },
+	                                    { label: '企业供应商', value: '企业供应商' }
+	                                  ]}
+	                                  onChange={setDraftEmploymentRelationshipType}
 	                                />
 	                              </DrawerFormField>
-	                              {draftPersonnelType === '全职' ? (
-	                                <DrawerFormField label="适用工作日历">
-	                                  <Select
-	                                    value={draftWorkCalendarId || defaultWorkCalendarId}
-	                                    options={workCalendarOptions}
-	                                    onChange={setDraftWorkCalendarId}
-	                                  />
-	                                </DrawerFormField>
-	                              ) : null}
+	                              {isCreateMode ? (
+	                                <>
+	                                  <DrawerFormField required wide label="任职岗位">
+	                                    <Select
+	                                      mode="multiple"
+	                                      value={draftPositions}
+	                                      options={positionOptions.map((position) => ({ label: position, value: position }))}
+	                                      onChange={handleDraftPositionsChange}
+	                                    />
+	                                  </DrawerFormField>
+	                                  <DrawerFormField required label="主岗位">
+	                                    <Select
+	                                      value={draftPosition}
+	                                      options={draftPositions.map((position) => ({ label: position, value: position }))}
+	                                      onChange={setDraftPosition}
+	                                    />
+	                                  </DrawerFormField>
+	                                  {draftPersonnelType === '全职' ? (
+	                                    <DrawerFormField label="适用工作日历">
+	                                      <Select
+	                                        value={draftWorkCalendarId || defaultWorkCalendarId}
+	                                        options={workCalendarOptions}
+	                                        onChange={setDraftWorkCalendarId}
+	                                      />
+	                                    </DrawerFormField>
+	                                  ) : null}
+	                                </>
+	                              ) : (
+	                                <>
+	                                  <ReadOnlyField label="任职岗位" value={getPeoplePositionSummary(member)} />
+	                                  <ReadOnlyField label="主岗位" value={member.position} />
+	                                  {draftPersonnelType === '全职' ? (
+	                                    <ReadOnlyField label="适用工作日历" value={visibleWorkCalendarName} />
+	                                  ) : null}
+	                                </>
+	                              )}
 	                              <DrawerFormField required label="人员来源">
 	                                <Select
 	                                  value={draftSource}
@@ -1205,22 +1296,37 @@ function ArchiveDetailDrawer({
 	                                  onChange={setDraftSource}
 	                                />
 	                              </DrawerFormField>
-	                              <DrawerFormField required label={draftPersonnelType === '兼职' ? '合作起始日期' : '入职日期'}>
-	                                <DatePicker
-	                                  className="archive-create-date-picker"
-	                                  format="YYYY-MM-DD"
-	                                  placeholder="选择日期"
-	                                  onChange={(_, dateString) => setDraftStartAt(normalizeDateString(dateString))}
-	                                />
-	                              </DrawerFormField>
-	                              <DrawerFormField label={draftPersonnelType === '兼职' ? '终止合作日期' : '合同结束日期'}>
-	                                <DatePicker
-	                                  className="archive-create-date-picker"
-	                                  format="YYYY-MM-DD"
-	                                  placeholder="选择日期"
-	                                  onChange={(_, dateString) => setDraftEndAt(normalizeDateString(dateString))}
-	                                />
-	                              </DrawerFormField>
+	                              {isCreateMode ? (
+	                                <>
+	                                  <DrawerFormField required label={draftPersonnelType === '兼职' ? '合作起始日期' : '入职日期'}>
+	                                    <DatePicker
+	                                      className="archive-create-date-picker"
+	                                      format="YYYY-MM-DD"
+	                                      placeholder="选择日期"
+	                                      onChange={(_, dateString) => setDraftStartAt(normalizeDateString(dateString))}
+	                                    />
+	                                  </DrawerFormField>
+	                                  <DrawerFormField label={draftPersonnelType === '兼职' ? '终止合作日期' : '合同结束日期'}>
+	                                    <DatePicker
+	                                      className="archive-create-date-picker"
+	                                      format="YYYY-MM-DD"
+	                                      placeholder="选择日期"
+	                                      onChange={(_, dateString) => setDraftEndAt(normalizeDateString(dateString))}
+	                                    />
+	                                  </DrawerFormField>
+	                                </>
+	                              ) : (
+	                                <>
+	                                  <ReadOnlyField
+	                                    label={draftPersonnelType === '兼职' ? '合作起始日期' : '入职日期'}
+	                                    value={draftStartAt}
+	                                  />
+	                                  <ReadOnlyField
+	                                    label={draftPersonnelType === '兼职' ? '终止合作日期' : '合同结束日期'}
+	                                    value={draftEndAt || '-'}
+	                                  />
+	                                </>
+	                              )}
 	                            </DrawerFormGrid>
 	                          </DetailSection>
 
@@ -1437,11 +1543,17 @@ function ArchiveDetailDrawer({
                             <DetailInfoGrid
                               columns={2}
                               items={[
-                                { label: '岗位', value: member.position },
+                                { label: '任职岗位', value: getPeoplePositionSummary(member) },
+                                { label: '主岗位', value: member.position },
                                 ...(member.personnelType === '全职'
                                   ? [{ label: '适用工作日历', value: visibleWorkCalendarName }]
                                   : []),
                                 { label: '人员来源', value: member.source },
+                                { label: '劳动关系类型', value: member.employmentRelationshipType },
+                                { label: '参保义务', value: socialInsuranceProfile?.obligation ?? '待判定' },
+                                { label: '社保办理', value: socialInsuranceProfile?.socialSecurityStatus ?? '待办理' },
+                                { label: '医保办理', value: socialInsuranceProfile?.medicalInsuranceStatus ?? '待办理' },
+                                { label: '参保生效月份', value: socialInsuranceProfile?.socialSecurityEffectiveMonth ?? '-' },
                                 { label: '入职/建档日期', value: member.joinedAt },
                                 { label: '关系类型', value: member.contractType },
                                 { label: '关系状态', value: member.contractStatus },
@@ -1570,8 +1682,18 @@ function ArchiveDetailDrawer({
 
 export function PeopleArchivesPage() {
   const { activePositionOptions, peopleRows, savePeopleMember } = usePeopleOrganizationState();
+  const { authorization, can } = useAuthorizationState();
+  const canManageArchives = can('people.archive.manage');
+  const { enrollmentProfiles } = useFinanceSocialInsuranceState();
   const { workCalendarRows } = useWorkCalendarState();
-  const archiveMembers = peopleRows;
+  const archiveMembers = useMemo(
+    () => peopleRows.filter((member) => canAccessPerson(authorization, member.id)),
+    [authorization, peopleRows]
+  );
+  const enrollmentProfilesByMemberId = useMemo(
+    () => new Map(enrollmentProfiles.map((profile) => [profile.personId, profile])),
+    [enrollmentProfiles]
+  );
   const [archiveFilters, setArchiveFilters] = useState<ArchiveSearchFilters>(defaultArchiveFilters);
   const [activeMember, setActiveMember] = useState<PeopleMember>();
   const [archiveDrawerMode, setArchiveDrawerMode] = useState<ArchiveDrawerMode>('detail');
@@ -1596,10 +1718,16 @@ export function PeopleArchivesPage() {
   }
 
   function saveArchiveMember(member: PeopleMember) {
-    savePeopleMember(member);
+    const result = savePeopleMember(member);
+
+    if (!result.success) {
+      return result;
+    }
+
     setActiveMember(member);
     setArchiveDrawerMode('detail');
     setDetailOpen(true);
+    return result;
   }
 
   const filteredMembers = useMemo(
@@ -1700,7 +1828,7 @@ export function PeopleArchivesPage() {
       title: '岗位',
       dataIndex: 'position',
       width: 104,
-      render: (position: string) => <CellText>{position}</CellText>
+      render: (_: string, record) => <CellText>{getPeoplePositionSummary(record)}</CellText>
     },
     {
       title: '学历',
@@ -1785,16 +1913,18 @@ export function PeopleArchivesPage() {
         columns={columns}
         count={{ value: filteredMembers.length, unit: '人' }}
         dataSource={filteredMembers}
-        primaryAction={{ icon: <PlusOutlined />, label: '新增人员', onClick: openCreateArchiveDrawer }}
+        primaryAction={canManageArchives ? { icon: <PlusOutlined />, label: '新增人员', onClick: openCreateArchiveDrawer } : undefined}
         rowTestIdPrefix="people-archive-table-row"
         rowKey="id"
         tableTestId="people-archive-table"
         onRowClick={openArchiveDetail}
       />
       <ArchiveDetailDrawer
+        canManage={canManageArchives}
         member={activeMember}
         mode={archiveDrawerMode}
         open={detailOpen}
+        socialInsuranceProfile={activeMember ? enrollmentProfilesByMemberId.get(activeMember.id) : undefined}
         onModeChange={setArchiveDrawerMode}
         positionOptions={activePositionOptions}
         workCalendarRows={workCalendarRows}

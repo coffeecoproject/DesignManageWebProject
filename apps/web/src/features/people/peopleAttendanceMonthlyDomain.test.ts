@@ -1,7 +1,13 @@
-import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
+import {
+  statutoryHolidayItems2026,
+  type AnnualExceptionConfigRow,
+  type WorkCalendarRow
+} from '../system/WorkCalendarState';
+import { isWorkCalendarDateWorkday, resolveWorkCalendarRule } from '../system/workCalendarRules';
 import type { PeopleAttendanceRecord } from './peopleDomain';
 import {
   buildAttendanceMonthlyReports,
+  createAttendanceMonthlyConfirmationSnapshot,
   getAdjustmentDirectionFromType,
   getAttendanceMonthlyConfirmationTimestamp,
   getAttendanceMonthRange,
@@ -124,6 +130,7 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     emergencyContact: '测试联系人',
     emergencyContactPhone: '13800000000',
     emergencyContactRelation: '家属',
+    employmentRelationshipType: '全日制劳动关系',
     gender: '女',
     graduatedAt: '2014-06',
     graduationSchool: '武汉大学',
@@ -160,7 +167,15 @@ function createMember(overrides: Partial<PeopleMember> = {}): PeopleMember {
     taskRecords: [],
     wechat: 'test-wechat',
     workCalendarId: weekdayCalendar.id,
-    ...overrides
+    ...overrides,
+    positionAssignments: overrides.positionAssignments ?? [{
+      effectiveFrom: '2026-01-01',
+      id: 'assignment-attendance-test',
+      isPrimary: true,
+      positionId: 'position-designer',
+      positionName: overrides.position ?? '设计师',
+      status: '生效中'
+    }]
   };
 }
 
@@ -322,6 +337,25 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'keeps rest-day leave as a record without deducting payroll attendance',
+    run: () => {
+      const report = buildReports({
+        attendanceRecords: [
+          createAttendanceRecord({
+            endAt: '2026-06-14 18:00',
+            id: 'rest-day-leave',
+            startAt: '2026-06-14 10:00',
+            type: '请假'
+          })
+        ]
+      })[0];
+
+      assertEqual(report.recordedLeaveHours, 8, 'rest-day leave should remain visible in recorded hours');
+      assertEqual(report.leaveHours, 0, 'rest-day leave should not become effective leave');
+      assertEqual(report.payrollDeductionHours, 0, 'rest-day leave should not deduct payroll attendance');
+    }
+  },
+  {
     name: 'covers compensatory rest with prior make-up work credit',
     run: () => {
       const report = buildReports({
@@ -329,9 +363,9 @@ const tests: UnitTest[] = [
           createAttendanceRecord({
             durationHours: 8,
             effect: '可用',
-            endAt: '2026-06-09 18:00',
+            endAt: '2026-06-06 18:00',
             id: 'makeup-before-rest',
-            startAt: '2026-06-09 10:00',
+            startAt: '2026-06-06 10:00',
             type: '补班'
           }),
           createAttendanceRecord({ durationHours: 8, id: 'covered-rest', type: '调休' })
@@ -517,6 +551,83 @@ const tests: UnitTest[] = [
       assertEqual(getAdjustmentDirectionFromType('增加计薪出勤'), '增加', 'increase type should map to increase direction');
       assertEqual(getAdjustmentDirectionFromType('扣减计薪出勤'), '扣减', 'deduction type should map to deduction direction');
       assertEqual(getAdjustmentDirectionFromType('备注修正'), '备注', 'remark type should map to remark direction');
+    }
+  },
+  {
+    name: 'freezes confirmed monthly calculation against later calendar changes',
+    run: () => {
+      const originalReport = buildReports()[0];
+      const confirmation: AttendanceMonthlyConfirmationRecord = {
+        actor: '确认人',
+        confirmedAt: '2026-06-17 10:00',
+        memberId: originalReport.member.id,
+        month: originalReport.month,
+        note: '确认并冻结',
+        snapshot: createAttendanceMonthlyConfirmationSnapshot(originalReport)
+      };
+      const rebuiltReport = buildReports({
+        confirmations: [confirmation],
+        peopleRows: [createMember({ workCalendarId: disabledCalendar.id })],
+        workCalendarRows: [disabledCalendar]
+      })[0];
+
+      assertEqual(rebuiltReport.status, '已确认', 'confirmed report should remain confirmed');
+      assertEqual(rebuiltReport.expectedWorkdays, originalReport.expectedWorkdays, 'confirmed workdays should use the frozen snapshot');
+      assertEqual(rebuiltReport.payableAttendanceHours, originalReport.payableAttendanceHours, 'confirmed payable hours should not drift');
+      assertEqual(rebuiltReport.workCalendarName, originalReport.workCalendarName, 'confirmed calendar label should remain auditable');
+    }
+  },
+  {
+    name: 'keeps the official 2026 statutory holiday correction set',
+    run: () => {
+      const itemByDate = new Map(statutoryHolidayItems2026.map((item) => [item.date, item.type]));
+
+      assertEqual(itemByDate.get('2026-02-15'), '休息日', 'Spring Festival should include February 15');
+      assertEqual(itemByDate.get('2026-09-20'), '特殊工作日', 'September 20 should be a special workday');
+      assertEqual(itemByDate.get('2026-09-25'), '休息日', 'Mid-Autumn Festival should start on September 25');
+      assertEqual(itemByDate.get('2026-09-27'), '休息日', 'Mid-Autumn Festival should include September 27');
+      assertEqual(itemByDate.get('2026-10-10'), '特殊工作日', 'October 10 should be a special workday');
+      assertEqual(itemByDate.has('2026-04-26'), false, 'April 26 should not be configured as a special workday');
+      assertEqual(itemByDate.has('2026-10-08'), false, 'October 8 should not be configured as a holiday');
+    }
+  },
+  {
+    name: 'resolves work-calendar rule versions by effective date',
+    run: () => {
+      const versionedCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        currentVersionId: 'calendar-version-2',
+        versions: [
+          {
+            alternateWorkdays: [],
+            createdAt: '2026-01-01',
+            effectiveFrom: '2026-01-01',
+            effectiveTo: '2026-06-15',
+            fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
+            id: 'calendar-version-1',
+            note: '双休',
+            type: '双休',
+            version: 1
+          },
+          {
+            alternateWorkdays: [],
+            createdAt: '2026-06-16',
+            effectiveFrom: '2026-06-16',
+            fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
+            id: 'calendar-version-2',
+            note: '周一休息',
+            type: '自定义',
+            version: 2
+          }
+        ]
+      };
+      const beforeEffectiveDate = new Date('2026-06-15T00:00:00');
+      const afterEffectiveDate = new Date('2026-06-22T00:00:00');
+
+      assertEqual(resolveWorkCalendarRule(versionedCalendar, beforeEffectiveDate)?.id, 'calendar-version-1', 'date before change should resolve the old version');
+      assertEqual(resolveWorkCalendarRule(versionedCalendar, afterEffectiveDate)?.id, 'calendar-version-2', 'date after change should resolve the new version');
+      assertEqual(isWorkCalendarDateWorkday(versionedCalendar, beforeEffectiveDate), true, 'Monday should be a workday before the change');
+      assertEqual(isWorkCalendarDateWorkday(versionedCalendar, afterEffectiveDate), false, 'Monday should be a rest day after the change');
     }
   }
 ];

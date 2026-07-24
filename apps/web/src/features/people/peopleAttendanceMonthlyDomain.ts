@@ -27,12 +27,37 @@ export type AttendanceMonthlyAdjustmentRecord = {
   type: AttendanceMonthlyAdjustmentType;
 };
 
+export type AttendanceMonthlyConfirmationSnapshot = AttendanceMonthlyExceptionSummary & {
+  adjustmentDays: number;
+  adjustmentHours: number;
+  expectedWorkdayDates: string[];
+  expectedWorkdays: number;
+  expectedWorkHours: number;
+  payableAttendanceDays: number;
+  payableAttendanceHours: number;
+  payrollDeductionEntries: AttendanceMonthlyPayrollDeductionEntry[];
+  payrollDeductionDays: number;
+  payrollDeductionHours: number;
+  payrollIncreaseDays: number;
+  payrollIncreaseHours: number;
+  recordedLeaveDays: number;
+  recordedLeaveHours: number;
+  restBalanceDays: number;
+  restBalanceHours: number;
+  restCoveredDays: number;
+  restCoveredHours: number;
+  restUncoveredDays: number;
+  restUncoveredHours: number;
+  workCalendarName: string;
+};
+
 export type AttendanceMonthlyConfirmationRecord = {
   actor: string;
   confirmedAt: string;
   memberId: string;
   month: string;
   note: string;
+  snapshot?: AttendanceMonthlyConfirmationSnapshot;
 };
 
 export type AttendanceMonthlySalarySettlementRecord = {
@@ -84,6 +109,8 @@ export type AttendanceMonthlyReport = AttendanceMonthlyExceptionSummary & {
   restUncoveredHours: number;
   relatedAdjustments: AttendanceMonthlyAdjustmentRecord[];
   relatedExceptions: PeopleAttendanceRecord[];
+  recordedLeaveDays?: number;
+  recordedLeaveHours?: number;
   salarySettlement?: AttendanceMonthlySalarySettlementRecord;
   salarySettlementStatus: AttendanceMonthlySalarySettlementStatus;
   status: AttendanceMonthlyReportStatus;
@@ -212,14 +239,15 @@ function getExpectedWorkdayDates(
     return [];
   }
 
-  const calendar = getMemberWorkCalendar(member, workCalendarRows);
   const workdayDates: string[] = [];
 
   for (let cursorTime = effectiveStartTime; cursorTime <= effectiveEndTime; cursorTime += dayMilliseconds) {
     const cursor = new Date(cursorTime);
+    const dateText = formatDateKey(cursor);
+    const calendar = getMemberWorkCalendar(member, workCalendarRows, dateText);
 
     if (isWorkCalendarDateWorkday(calendar, cursor, annualExceptionRows)) {
-      workdayDates.push(formatDateKey(cursor));
+      workdayDates.push(dateText);
     }
   }
 
@@ -264,7 +292,11 @@ function getExceptionHours(record: PeopleAttendanceRecord, month: string) {
   return roundPayrollHours(Math.min(Math.max(record.durationHours, 0), maxCoveredHours));
 }
 
-function getExceptionDateHourEntries(record: PeopleAttendanceRecord, month: string) {
+function getExceptionDateHourEntries(
+  record: PeopleAttendanceRecord,
+  month: string,
+  includeDate?: (dateText: string) => boolean
+) {
   const monthRange = getAttendanceMonthRange(month);
   const recordRange = getRecordDateRange(record);
   const rangeStartTime = Math.max(recordRange.startDate.getTime(), monthRange.startDate.getTime());
@@ -279,20 +311,25 @@ function getExceptionDateHourEntries(record: PeopleAttendanceRecord, month: stri
 
   for (let cursorTime = rangeStartTime; cursorTime <= rangeEndTime && remainingHours > 0; cursorTime += dayMilliseconds) {
     const hours = Math.min(standardPayrollDayHours, remainingHours);
-    entries.push({
-      dateText: formatDateKey(new Date(cursorTime)),
-      hours
-    });
+    const dateText = formatDateKey(new Date(cursorTime));
+    if (!includeDate || includeDate(dateText)) {
+      entries.push({ dateText, hours });
+    }
     remainingHours = roundPayrollHours(remainingHours - hours);
   }
 
   return entries;
 }
 
-function getUncoveredRestDeductionEntries(record: PeopleAttendanceRecord, month: string, coveredHours: number) {
+function getUncoveredRestDeductionEntries(
+  record: PeopleAttendanceRecord,
+  month: string,
+  coveredHours: number,
+  expectedWorkdayDates: Set<string>
+) {
   let remainingCoveredHours = coveredHours;
 
-  return getExceptionDateHourEntries(record, month).flatMap<AttendanceMonthlyPayrollDeductionEntry>((entry) => {
+  return getExceptionDateHourEntries(record, month, (dateText) => expectedWorkdayDates.has(dateText)).flatMap<AttendanceMonthlyPayrollDeductionEntry>((entry) => {
     if (remainingCoveredHours >= entry.hours) {
       remainingCoveredHours = roundPayrollHours(remainingCoveredHours - entry.hours);
       return [];
@@ -312,11 +349,15 @@ function getUncoveredRestDeductionEntries(record: PeopleAttendanceRecord, month:
   });
 }
 
-function buildLeaveDeductionEntries(records: PeopleAttendanceRecord[], month: string): AttendanceMonthlyPayrollDeductionEntry[] {
+function buildLeaveDeductionEntries(
+  records: PeopleAttendanceRecord[],
+  month: string,
+  expectedWorkdayDates: Set<string>
+): AttendanceMonthlyPayrollDeductionEntry[] {
   return records
     .filter((record) => record.type === '请假')
     .flatMap((record) =>
-      getExceptionDateHourEntries(record, month).map((entry) => ({
+      getExceptionDateHourEntries(record, month, (dateText) => expectedWorkdayDates.has(dateText)).map((entry) => ({
         dateText: entry.dateText,
         hours: entry.hours,
         recordId: record.id,
@@ -325,7 +366,7 @@ function buildLeaveDeductionEntries(records: PeopleAttendanceRecord[], month: st
     );
 }
 
-function summarizeCompensatoryRest(records: PeopleAttendanceRecord[], month: string) {
+function summarizeCompensatoryRest(records: PeopleAttendanceRecord[], month: string, expectedWorkdayDates: Set<string>) {
   let availableCreditHours = 0;
   let coveredHours = 0;
   let creditHours = 0;
@@ -336,7 +377,15 @@ function summarizeCompensatoryRest(records: PeopleAttendanceRecord[], month: str
     .filter((record) => record.type === '补班' || record.type === '调休')
     .sort((left, right) => left.startAt.localeCompare(right.startAt) || left.id.localeCompare(right.id))
     .forEach((record) => {
-      const hours = getExceptionHours(record, month);
+      const hours = roundPayrollHours(
+        getExceptionDateHourEntries(
+          record,
+          month,
+          record.type === '补班'
+            ? (dateText) => !expectedWorkdayDates.has(dateText)
+            : (dateText) => expectedWorkdayDates.has(dateText)
+        ).reduce((total, entry) => total + entry.hours, 0)
+      );
 
       if (record.type === '补班') {
         creditHours = roundPayrollHours(creditHours + hours);
@@ -349,7 +398,7 @@ function summarizeCompensatoryRest(records: PeopleAttendanceRecord[], month: str
       availableCreditHours = roundPayrollHours(availableCreditHours - recordCoveredHours);
       coveredHours = roundPayrollHours(coveredHours + recordCoveredHours);
       uncoveredHours = roundPayrollHours(uncoveredHours + recordUncoveredHours);
-      deductionEntries.push(...getUncoveredRestDeductionEntries(record, month, recordCoveredHours));
+      deductionEntries.push(...getUncoveredRestDeductionEntries(record, month, recordCoveredHours, expectedWorkdayDates));
     });
 
   return {
@@ -430,14 +479,29 @@ export function getAdjustmentDirectionFromType(type: AttendanceMonthlyAdjustment
   return '备注';
 }
 
-function getWorkCalendarName(member: PeopleMember, workCalendarRows: WorkCalendarRow[]) {
-  const calendar = getMemberWorkCalendar(member, workCalendarRows);
+function getWorkCalendarName(member: PeopleMember, workCalendarRows: WorkCalendarRow[], month: string) {
+  const { endDate, startDate } = getAttendanceMonthRange(month);
+  const calendarLabels: string[] = [];
 
-  if (!calendar) {
+  for (let cursorTime = startDate.getTime(); cursorTime <= endDate.getTime(); cursorTime += dayMilliseconds) {
+    const calendar = getMemberWorkCalendar(member, workCalendarRows, formatDateKey(new Date(cursorTime)));
+
+    if (!calendar) {
+      continue;
+    }
+
+    const label = `${calendar.name} / ${calendar.type}`;
+
+    if (calendarLabels.at(-1) !== label) {
+      calendarLabels.push(label);
+    }
+  }
+
+  if (calendarLabels.length === 0) {
     return '未匹配工作日历';
   }
 
-  return `${calendar.name} / ${calendar.type}`;
+  return calendarLabels.join(' -> ');
 }
 
 function getEffectiveConfirmation(
@@ -472,13 +536,21 @@ export function buildAttendanceMonthlyReports({
       const relatedAdjustments = adjustments
         .filter((record) => record.memberId === member.id && record.month === month)
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-      const exceptionSummary = summarizeMonthlyExceptions(relatedExceptions, month);
-      const compensatoryRestSummary = summarizeCompensatoryRest(relatedExceptions, month);
       const expectedWorkdayDates = getExpectedWorkdayDates(member, month, workCalendarRows, annualExceptionRows);
+      const expectedWorkdayDateSet = new Set(expectedWorkdayDates);
+      const recordedExceptionSummary = summarizeMonthlyExceptions(relatedExceptions, month);
+      const leaveDeductionEntries = buildLeaveDeductionEntries(relatedExceptions, month, expectedWorkdayDateSet);
+      const effectiveLeaveHours = roundPayrollHours(leaveDeductionEntries.reduce((total, entry) => total + entry.hours, 0));
+      const exceptionSummary = {
+        ...recordedExceptionSummary,
+        leaveDays: getPayrollAttendanceDaysFromHours(effectiveLeaveHours),
+        leaveHours: effectiveLeaveHours
+      };
+      const compensatoryRestSummary = summarizeCompensatoryRest(relatedExceptions, month, expectedWorkdayDateSet);
       const expectedWorkdays = expectedWorkdayDates.length;
       const expectedWorkHours = expectedWorkdays * standardPayrollDayHours;
       const payrollDeductionEntries = [
-        ...buildLeaveDeductionEntries(relatedExceptions, month),
+        ...leaveDeductionEntries,
         ...compensatoryRestSummary.deductionEntries
       ];
       const payrollDeductionHours = roundPayrollHours(exceptionSummary.leaveHours + compensatoryRestSummary.uncoveredHours);
@@ -501,19 +573,16 @@ export function buildAttendanceMonthlyReports({
         0,
         getPayrollAttendanceDaysFromHours(payableAttendanceHours)
       );
-
-      return {
+      const confirmedSnapshot = confirmation?.snapshot;
+      const calculatedSnapshot: AttendanceMonthlyConfirmationSnapshot = {
         ...exceptionSummary,
         adjustmentDays,
         adjustmentHours,
-        canAdjust: salarySettlementStatus !== '已结算',
-        confirmation,
         expectedWorkdayDates,
         expectedWorkdays,
         expectedWorkHours,
-        id: `${month}-${member.id}`,
-        member,
-        month,
+        makeupWorkDays: recordedExceptionSummary.makeupWorkDays,
+        makeupWorkHours: recordedExceptionSummary.makeupWorkHours,
         payableAttendanceDays,
         payableAttendanceHours,
         payrollDeductionEntries,
@@ -521,20 +590,67 @@ export function buildAttendanceMonthlyReports({
         payrollDeductionHours,
         payrollIncreaseDays,
         payrollIncreaseHours,
+        recordedLeaveDays: recordedExceptionSummary.leaveDays,
+        recordedLeaveHours: recordedExceptionSummary.leaveHours,
         restBalanceDays: getPayrollAttendanceDaysFromHours(compensatoryRestSummary.balanceHours),
         restBalanceHours: compensatoryRestSummary.balanceHours,
         restCoveredDays: getPayrollAttendanceDaysFromHours(compensatoryRestSummary.coveredHours),
         restCoveredHours: compensatoryRestSummary.coveredHours,
         restUncoveredDays: getPayrollAttendanceDaysFromHours(compensatoryRestSummary.uncoveredHours),
         restUncoveredHours: compensatoryRestSummary.uncoveredHours,
+        workCalendarName: getWorkCalendarName(member, workCalendarRows, month)
+      };
+
+      return {
+        ...(confirmedSnapshot ?? calculatedSnapshot),
+        canAdjust: salarySettlementStatus !== '已结算',
+        confirmation,
+        id: `${month}-${member.id}`,
+        member,
+        month,
         relatedAdjustments,
         relatedExceptions,
         salarySettlement,
         salarySettlementStatus,
-        status: confirmation ? '已确认' : '待确认',
-        workCalendarName: getWorkCalendarName(member, workCalendarRows)
+        status: confirmation ? '已确认' : '待确认'
       };
     });
+}
+
+export function createAttendanceMonthlyConfirmationSnapshot(
+  report: AttendanceMonthlyReport
+): AttendanceMonthlyConfirmationSnapshot {
+  return {
+    adjustmentDays: report.adjustmentDays,
+    adjustmentHours: report.adjustmentHours,
+    expectedWorkdayDates: [...report.expectedWorkdayDates],
+    expectedWorkdays: report.expectedWorkdays,
+    expectedWorkHours: report.expectedWorkHours,
+    leaveDays: report.leaveDays,
+    leaveHours: report.leaveHours,
+    makeupWorkDays: report.makeupWorkDays,
+    makeupWorkHours: report.makeupWorkHours,
+    payableAttendanceDays: report.payableAttendanceDays,
+    payableAttendanceHours: report.payableAttendanceHours,
+    payrollDeductionEntries: report.payrollDeductionEntries.map((entry) => ({ ...entry })),
+    payrollDeductionDays: report.payrollDeductionDays,
+    payrollDeductionHours: report.payrollDeductionHours,
+    payrollIncreaseDays: report.payrollIncreaseDays,
+    payrollIncreaseHours: report.payrollIncreaseHours,
+    recordedLeaveDays: report.recordedLeaveDays ?? report.leaveDays,
+    recordedLeaveHours: report.recordedLeaveHours ?? report.leaveHours,
+    restBalanceDays: report.restBalanceDays,
+    restBalanceHours: report.restBalanceHours,
+    restCoveredDays: report.restCoveredDays,
+    restCoveredHours: report.restCoveredHours,
+    restDays: report.restDays,
+    restHours: report.restHours,
+    restUncoveredDays: report.restUncoveredDays,
+    restUncoveredHours: report.restUncoveredHours,
+    temporaryUnavailableDays: report.temporaryUnavailableDays,
+    temporaryUnavailableHours: report.temporaryUnavailableHours,
+    workCalendarName: report.workCalendarName
+  };
 }
 
 export function toPayrollAttendanceMonthlyContract(report: AttendanceMonthlyReport): PayrollAttendanceMonthlyContract {

@@ -1,5 +1,11 @@
 export type PersonnelType = '全职' | '兼职';
 
+export type EmploymentRelationshipType =
+  | '全日制劳动关系'
+  | '非全日制劳动关系'
+  | '独立劳务合作'
+  | '企业供应商';
+
 export type FulltimeStatus = '试用期' | '在职' | '离职';
 
 export type ParttimeStatus = '合作中' | '结束合作';
@@ -53,14 +59,37 @@ export type PeopleArchiveFile = {
   updatedAt: string;
 };
 
+export type PeoplePositionAssignment = {
+  id: string;
+  positionId: string;
+  positionName: string;
+  isPrimary: boolean;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  status: '生效中' | '已结束';
+};
+
+export type PeopleWorkCalendarAssignment = {
+  effectiveFrom: string;
+  effectiveTo?: string;
+  id: string;
+  mode: '跟随公司默认日历' | '指定工作日历';
+  status: '生效中' | '已结束';
+  workCalendarId?: string;
+};
+
 export type PeopleMember = {
   id: string;
   name: string;
   personnelType: PersonnelType;
+  employmentRelationshipType: EmploymentRelationshipType;
   housingFundEffectiveMonth?: string;
   housingFundStatus?: PeopleHousingFundStatus;
+  positionAssignments: PeoplePositionAssignment[];
+  /** Current primary-position projection for dense list and report rendering. */
   position: string;
   workCalendarId?: string;
+  workCalendarAssignments?: PeopleWorkCalendarAssignment[];
   status: PeopleStatus;
   gender: '男' | '女';
   birthDate: string;

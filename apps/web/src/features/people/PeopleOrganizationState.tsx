@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import {
   applyPeopleMovementEffect,
+  getPeopleAttendanceRecordMonths,
+  getMovementAffectedSalaryMonths,
   getPositionRowsWithMemberCount,
   restorePeopleMovementSnapshot,
   toPositionManagementRecord,
@@ -13,12 +15,17 @@ import {
 } from './peopleDomain';
 import { peopleMockRepository } from './peopleRepository';
 import type { PeopleMember } from './peopleTypes';
+import { createInitialPeopleMovementRows, type PeopleMovementRow } from './peopleMovementRecordModel';
 import type {
   AttendanceMonthlyAdjustmentRecord,
   AttendanceMonthlyConfirmationRecord,
+  AttendanceMonthlyReport,
   AttendanceMonthlySalarySettlementRecord
 } from './peopleAttendanceMonthlyDomain';
-import { getAttendanceMonthlyConfirmationTimestamp } from './peopleAttendanceMonthlyDomain';
+import {
+  createAttendanceMonthlyConfirmationSnapshot,
+  getAttendanceMonthlyConfirmationTimestamp
+} from './peopleAttendanceMonthlyDomain';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 export type {
   PeopleAttendanceEffect,
@@ -52,28 +59,46 @@ type PeopleOrganizationStateValue = {
   attendanceMonthlySalarySettlements: AttendanceMonthlySalarySettlementRecord[];
   attendanceRecords: PeopleAttendanceRecord[];
   peopleRows: PeopleMember[];
+  movementRows: PeopleMovementRow[];
   positionRows: PositionManagementRow[];
   applyMovementEffect: (effect: PeopleMovementEffect) => void;
-  cancelAttendanceRecord: (recordId: string, cancelReason: string) => void;
-  confirmAttendanceMonthlyReport: (memberId: string, month: string, note?: string) => void;
-  restoreMovementSnapshot: (memberId: string, snapshot: PeopleMovementSnapshot, options: Omit<RestorePeopleMovementSnapshotOptions, 'today'>) => void;
-  saveAttendanceMonthlyAdjustment: (record: AttendanceMonthlyAdjustmentRecord) => void;
-  saveAttendanceRecord: (record: PeopleAttendanceRecord) => void;
-  savePeopleMember: (member: PeopleMember) => void;
+  cancelAttendanceRecord: (recordId: string, cancelReason: string) => PeopleAttendanceMutationResult;
+  confirmAttendanceMonthlyReport: (report: AttendanceMonthlyReport, note?: string) => void;
+  restoreMovementSnapshot: (
+    memberId: string,
+    snapshot: PeopleMovementSnapshot,
+    options: Omit<RestorePeopleMovementSnapshotOptions, 'today'> & {
+      sourceEffectiveAt: string;
+      sourceType: PeopleMovementEffect['type'];
+    }
+  ) => PeopleMovementMutationResult;
+  saveMovementRecord: (record: PeopleMovementRow, effect?: PeopleMovementEffect) => PeopleMovementMutationResult;
+  setMovementRows: (updater: (currentRows: PeopleMovementRow[]) => PeopleMovementRow[]) => void;
+  saveAttendanceMonthlyAdjustment: (record: AttendanceMonthlyAdjustmentRecord) => PeopleAttendanceMutationResult;
+  saveAttendanceRecord: (record: PeopleAttendanceRecord) => PeopleAttendanceMutationResult;
+  savePeopleMember: (member: PeopleMember) => PeopleMovementMutationResult;
   savePosition: (record: PositionManagementRow) => PositionManagementRow[];
 };
+
+export type PeopleAttendanceMutationResult = {
+  invalidatedSalaryMonths: string[];
+  reason?: string;
+  success: boolean;
+};
+
+export type PeopleMovementMutationResult = PeopleAttendanceMutationResult;
 
 export const peopleOrganizationToday = '2026-06-13';
 export const peopleAttendanceToday = '2026-06-16';
 const initialPeopleSnapshot = peopleMockRepository.getInitialSnapshot();
-
 const initialPositionRecords: PositionManagementRecord[] = [
   {
     id: 'position-ceo',
     code: 'POS-2026-001',
     position: 'CEO',
     roleBindings: ['经营管理角色'],
-    extraPermissions: ['人员总览查看', '人员档案查看'],
+    extraPermissions: ['people.overview.read', 'people.archive.read'],
+    dataScopes: { people: '全部人员', tasks: '全部任务', customers: '全部客户', finance: '管理', salary: '全部人员' },
     files: [
       { id: 'POSFILE-CEO-001', name: 'CEO岗位说明书.pdf', category: '岗位说明书', status: '生效中', updatedAt: '2026-06-10', updatedBy: '李明' },
       { id: 'POSFILE-CEO-002', name: 'CEO任职要求.pdf', category: '任职要求', status: '生效中', updatedAt: '2026-06-10', updatedBy: '李明' }
@@ -87,6 +112,7 @@ const initialPositionRecords: PositionManagementRecord[] = [
     position: '财务专员',
     roleBindings: ['财务角色'],
     extraPermissions: [],
+    dataScopes: { people: '全部人员', tasks: '本人参与', customers: '全部客户', finance: '管理', salary: '全部人员' },
     files: [
       { id: 'POSFILE-FIN-001', name: '财务专员岗位说明书.pdf', category: '岗位说明书', status: '生效中', updatedAt: '2026-06-09', updatedBy: '李明' },
       { id: 'POSFILE-FIN-002', name: '财务专员任职要求.pdf', category: '任职要求', status: '生效中', updatedAt: '2026-06-09', updatedBy: '李明' }
@@ -100,6 +126,7 @@ const initialPositionRecords: PositionManagementRecord[] = [
     position: '行政专员',
     roleBindings: ['行政人事角色'],
     extraPermissions: [],
+    dataScopes: { people: '全部人员', tasks: '本人参与', customers: '关联品牌', finance: '不可访问', salary: '全部人员' },
     files: [
       { id: 'POSFILE-ADM-001', name: '行政专员岗位说明书.pdf', category: '岗位说明书', status: '生效中', updatedAt: '2026-06-08', updatedBy: '李明' },
       { id: 'POSFILE-ADM-002', name: '行政专员任职要求.pdf', category: '任职要求', status: '生效中', updatedAt: '2026-06-08', updatedBy: '李明' }
@@ -113,6 +140,7 @@ const initialPositionRecords: PositionManagementRecord[] = [
     position: '空间设计师',
     roleBindings: ['设计执行角色'],
     extraPermissions: [],
+    dataScopes: { people: '本人', tasks: '本人参与', customers: '关联品牌', finance: '不可访问', salary: '本人' },
     files: [
       { id: 'POSFILE-SPA-001', name: '空间设计师岗位说明书.pdf', category: '岗位说明书', status: '生效中', updatedAt: '2026-06-06', updatedBy: '李明' },
       { id: 'POSFILE-SPA-002', name: '空间设计师任职要求.pdf', category: '任职要求', status: '生效中', updatedAt: '2026-06-06', updatedBy: '李明' }
@@ -126,6 +154,7 @@ const initialPositionRecords: PositionManagementRecord[] = [
     position: '主案设计师',
     roleBindings: ['设计执行角色', '设计审核角色'],
     extraPermissions: [],
+    dataScopes: { people: '本人', tasks: '负责验收', customers: '关联品牌', finance: '不可访问', salary: '本人' },
     files: [
       { id: 'POSFILE-LEAD-001', name: '主案设计师岗位说明书.pdf', category: '岗位说明书', status: '生效中', updatedAt: '2026-06-05', updatedBy: '李明' },
       { id: 'POSFILE-LEAD-002', name: '主案设计师任职要求.pdf', category: '任职要求', status: '生效中', updatedAt: '2026-06-05', updatedBy: '李明' }
@@ -139,6 +168,7 @@ const initialPositionRecords: PositionManagementRecord[] = [
     position: '外协设计师',
     roleBindings: ['外协执行角色'],
     extraPermissions: [],
+    dataScopes: { people: '本人', tasks: '本人参与', customers: '关联品牌', finance: '不可访问', salary: '本人' },
     files: [
       { id: 'POSFILE-EXT-001', name: '外协设计师岗位说明书.pdf', category: '岗位说明书', status: '生效中', updatedAt: '2026-06-04', updatedBy: '李明' },
       { id: 'POSFILE-EXT-002', name: '外协设计师任职要求.pdf', category: '任职要求', status: '生效中', updatedAt: '2026-06-04', updatedBy: '李明' }
@@ -238,8 +268,11 @@ const initialAttendanceMonthlyConfirmations: AttendanceMonthlyConfirmationRecord
 const PeopleOrganizationStateContext = createContext<PeopleOrganizationStateValue | undefined>(undefined);
 
 export function PeopleOrganizationProvider({ children }: { children: ReactNode }) {
-  const { attendanceMonthlySalarySettlements } = useSalaryManagementState();
+  const { attendanceMonthlySalarySettlements, invalidateSalaryMonthlySources, salaryDetailMonths } = useSalaryManagementState();
   const [peopleRows, setPeopleRows] = useState<PeopleMember[]>(() => initialPeopleSnapshot.peopleRows);
+  const [movementRows, setMovementRowsState] = useState<PeopleMovementRow[]>(() =>
+    createInitialPeopleMovementRows(initialPeopleSnapshot.peopleRows)
+  );
   const [positionRecords, setPositionRecords] = useState<PositionManagementRecord[]>(() => initialPositionRecords);
   const [attendanceRecords, setAttendanceRecords] = useState<PeopleAttendanceRecord[]>(() => initialAttendanceRecords);
   const [attendanceMonthlyAdjustments, setAttendanceMonthlyAdjustments] = useState<AttendanceMonthlyAdjustmentRecord[]>(
@@ -255,13 +288,48 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
     [positionRecords]
   );
 
-  const savePeopleMember = useCallback((member: PeopleMember) => {
+  const savePeopleMember = useCallback((member: PeopleMember): PeopleMovementMutationResult => {
+    const existingMember = peopleRows.find((currentMember) => currentMember.id === member.id);
+    const housingFundChanged = Boolean(
+      existingMember
+      && (
+        existingMember.housingFundStatus !== member.housingFundStatus
+        || existingMember.housingFundEffectiveMonth !== member.housingFundEffectiveMonth
+      )
+    );
+    const effectiveMonth = [existingMember?.housingFundEffectiveMonth, member.housingFundEffectiveMonth]
+      .filter((month): month is string => Boolean(month))
+      .sort()[0];
+    const affectedSalaryMonths = housingFundChanged
+      ? salaryDetailMonths.filter((month) => !effectiveMonth || month >= effectiveMonth)
+      : [];
+    const salaryInvalidation = affectedSalaryMonths.length > 0
+      ? invalidateSalaryMonthlySources(
+          member.id,
+          affectedSalaryMonths,
+          '公积金缴存信息变更后需重新核定薪酬',
+          member.archiveUpdatedAt
+        )
+      : { blockedMonths: [], invalidatedMonths: [], success: true };
+
+    if (!salaryInvalidation.success) {
+      return {
+        invalidatedSalaryMonths: [],
+        reason: `${salaryInvalidation.blockedMonths.join('、')} 薪酬已发放，不能直接修改公积金缴存信息`,
+        success: false
+      };
+    }
+
     setPeopleRows((currentMembers) =>
       currentMembers.some((currentMember) => currentMember.id === member.id)
         ? currentMembers.map((currentMember) => (currentMember.id === member.id ? member : currentMember))
         : [member, ...currentMembers]
     );
-  }, []);
+    return {
+      invalidatedSalaryMonths: salaryInvalidation.invalidatedMonths,
+      success: true
+    };
+  }, [invalidateSalaryMonthlySources, peopleRows, salaryDetailMonths]);
 
   const savePosition = useCallback(
     (row: PositionManagementRow) => {
@@ -272,7 +340,24 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
         : [nextRecord, ...positionRecords];
       const nextPeopleRows =
         existingRecord && existingRecord.position !== nextRecord.position
-          ? peopleRows.map((member) => (member.position === existingRecord.position ? { ...member, position: nextRecord.position } : member))
+          ? peopleRows.map((member) => {
+              if (!member.positionAssignments.some((assignment) => assignment.positionId === existingRecord.id)) {
+                return member;
+              }
+
+              const nextAssignments = member.positionAssignments.map((assignment) =>
+                assignment.positionId === existingRecord.id
+                  ? { ...assignment, positionName: nextRecord.position }
+                  : assignment
+              );
+
+              return {
+                ...member,
+                position: nextAssignments.find((assignment) => assignment.isPrimary && assignment.status === '生效中')?.positionName
+                  ?? member.position,
+                positionAssignments: nextAssignments
+              };
+            })
           : peopleRows;
 
       setPositionRecords(nextPositionRecords);
@@ -289,33 +374,154 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
     );
   }, []);
 
+  const saveMovementRecord = useCallback((record: PeopleMovementRow, effect?: PeopleMovementEffect): PeopleMovementMutationResult => {
+    const affectedSalaryMonths = effect ? getMovementAffectedSalaryMonths(effect, salaryDetailMonths) : [];
+    const salaryInvalidation = effect && affectedSalaryMonths.length > 0
+      ? invalidateSalaryMonthlySources(
+          effect.memberId,
+          affectedSalaryMonths,
+          `${effect.type}生效后需重新核定薪酬`,
+          record.updatedAt
+        )
+      : { blockedMonths: [], invalidatedMonths: [], success: true };
+
+    if (!salaryInvalidation.success) {
+      return {
+        invalidatedSalaryMonths: [],
+        reason: `${salaryInvalidation.blockedMonths.join('、')} 薪酬已发放，不能直接生效该异动`,
+        success: false
+      };
+    }
+
+    if (effect) {
+      setPeopleRows((currentPeopleRows) =>
+        currentPeopleRows.map((member) => applyPeopleMovementEffect(member, effect, { today: peopleOrganizationToday }))
+      );
+      if (effect.type === '工作日历变更') {
+        setAttendanceMonthlyConfirmations((currentRecords) =>
+          currentRecords.filter(
+            (confirmation) =>
+              confirmation.memberId !== effect.memberId || !affectedSalaryMonths.includes(confirmation.month)
+          )
+        );
+      }
+    }
+
+    setMovementRowsState((currentRows) => [record, ...currentRows]);
+    return {
+      invalidatedSalaryMonths: salaryInvalidation.invalidatedMonths,
+      success: true
+    };
+  }, [invalidateSalaryMonthlySources, salaryDetailMonths]);
+
+  const setMovementRows = useCallback((updater: (currentRows: PeopleMovementRow[]) => PeopleMovementRow[]) => {
+    setMovementRowsState(updater);
+  }, []);
+
   const restoreMovementSnapshot = useCallback(
-    (memberId: string, snapshot: PeopleMovementSnapshot, options: Omit<RestorePeopleMovementSnapshotOptions, 'today'>) => {
+    (
+      memberId: string,
+      snapshot: PeopleMovementSnapshot,
+      options: Omit<RestorePeopleMovementSnapshotOptions, 'today'> & {
+        sourceEffectiveAt: string;
+        sourceType: PeopleMovementEffect['type'];
+      }
+    ): PeopleMovementMutationResult => {
+      const affectedSalaryMonths = getMovementAffectedSalaryMonths(
+        { effectiveAt: options.sourceEffectiveAt, memberId, type: options.sourceType },
+        salaryDetailMonths
+      );
+      const salaryInvalidation = affectedSalaryMonths.length > 0
+        ? invalidateSalaryMonthlySources(
+            memberId,
+            affectedSalaryMonths,
+            '人事异动冲正后需重新核定薪酬',
+            options.effectiveAt
+          )
+        : { blockedMonths: [], invalidatedMonths: [], success: true };
+
+      if (!salaryInvalidation.success) {
+        return {
+          invalidatedSalaryMonths: [],
+          reason: `${salaryInvalidation.blockedMonths.join('、')} 薪酬已发放，不能直接冲正该异动`,
+          success: false
+        };
+      }
+
       setPeopleRows((currentPeopleRows) =>
         currentPeopleRows.map((member) =>
           member.id === memberId ? restorePeopleMovementSnapshot(member, snapshot, { ...options, today: peopleOrganizationToday }) : member
         )
       );
+      if (options.sourceType === '工作日历变更') {
+        setAttendanceMonthlyConfirmations((currentRecords) =>
+          currentRecords.filter(
+            (confirmation) =>
+              confirmation.memberId !== memberId || !affectedSalaryMonths.includes(confirmation.month)
+          )
+        );
+      }
+      return {
+        invalidatedSalaryMonths: salaryInvalidation.invalidatedMonths,
+        success: true
+      };
     },
-    []
+    [invalidateSalaryMonthlySources, salaryDetailMonths]
   );
 
-  const saveAttendanceRecord = useCallback((record: PeopleAttendanceRecord) => {
+  const saveAttendanceRecord = useCallback((record: PeopleAttendanceRecord): PeopleAttendanceMutationResult => {
+    const existingRecord = attendanceRecords.find((currentRecord) => currentRecord.id === record.id);
+    const affectedMonths = [
+      ...getPeopleAttendanceRecordMonths(record),
+      ...(existingRecord ? getPeopleAttendanceRecordMonths(existingRecord) : [])
+    ];
+    const salaryInvalidation = invalidateSalaryMonthlySources(
+      record.memberId,
+      affectedMonths,
+      '考勤记录变更后需重新核定薪酬',
+      record.updatedAt
+    );
+
+    if (!salaryInvalidation.success) {
+      return {
+        invalidatedSalaryMonths: [],
+        reason: `${salaryInvalidation.blockedMonths.join('、')} 薪酬已发放，不能直接修改考勤记录`,
+        success: false
+      };
+    }
+
     setAttendanceRecords((currentRecords) =>
       currentRecords.some((currentRecord) => currentRecord.id === record.id)
         ? currentRecords.map((currentRecord) => (currentRecord.id === record.id ? record : currentRecord))
         : [record, ...currentRecords]
     );
-  }, []);
+    setAttendanceMonthlyConfirmations((currentRecords) =>
+      currentRecords.filter(
+        (confirmation) =>
+          confirmation.memberId !== record.memberId || !affectedMonths.includes(confirmation.month)
+      )
+    );
+    return {
+      invalidatedSalaryMonths: salaryInvalidation.invalidatedMonths,
+      success: true
+    };
+  }, [attendanceRecords, invalidateSalaryMonthlySources]);
 
   const saveAttendanceMonthlyAdjustment = useCallback(
-    (record: AttendanceMonthlyAdjustmentRecord) => {
-      const isSalarySettled = attendanceMonthlySalarySettlements.some(
-        (settlement) => settlement.memberId === record.memberId && settlement.month === record.month && settlement.status === '已结算'
+    (record: AttendanceMonthlyAdjustmentRecord): PeopleAttendanceMutationResult => {
+      const salaryInvalidation = invalidateSalaryMonthlySources(
+        record.memberId,
+        [record.month],
+        '薪酬考勤调整后需重新核定薪酬',
+        record.createdAt
       );
 
-      if (isSalarySettled) {
-        return;
+      if (!salaryInvalidation.success) {
+        return {
+          invalidatedSalaryMonths: [],
+          reason: `${salaryInvalidation.blockedMonths.join('、')} 薪酬已发放，不能直接调整考勤月报`,
+          success: false
+        };
       }
 
       setAttendanceMonthlyAdjustments((currentRecords) =>
@@ -326,12 +532,19 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
       setAttendanceMonthlyConfirmations((currentRecords) =>
         currentRecords.filter((currentRecord) => !(currentRecord.memberId === record.memberId && currentRecord.month === record.month))
       );
+
+      return {
+        invalidatedSalaryMonths: salaryInvalidation.invalidatedMonths,
+        success: true
+      };
     },
-    [attendanceMonthlySalarySettlements]
+    [invalidateSalaryMonthlySources]
   );
 
   const confirmAttendanceMonthlyReport = useCallback(
-    (memberId: string, month: string, note = '考勤月报已确认') => {
+    (report: AttendanceMonthlyReport, note = '考勤月报已确认') => {
+      const { member, month } = report;
+      const memberId = member.id;
       const isSalarySettled = attendanceMonthlySalarySettlements.some(
         (settlement) => settlement.memberId === memberId && settlement.month === month && settlement.status === '已结算'
       );
@@ -350,7 +563,8 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
           confirmedAt,
           memberId,
           month,
-          note
+          note,
+          snapshot: createAttendanceMonthlyConfirmationSnapshot(report)
         };
 
         return currentRecords.some((record) => record.memberId === memberId && record.month === month)
@@ -361,7 +575,28 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
     [attendanceMonthlyAdjustments, attendanceMonthlySalarySettlements]
   );
 
-  const cancelAttendanceRecord = useCallback((recordId: string, cancelReason: string) => {
+  const cancelAttendanceRecord = useCallback((recordId: string, cancelReason: string): PeopleAttendanceMutationResult => {
+    const existingRecord = attendanceRecords.find((record) => record.id === recordId);
+
+    if (!existingRecord) {
+      return { invalidatedSalaryMonths: [], reason: '假勤记录不存在', success: false };
+    }
+
+    const salaryInvalidation = invalidateSalaryMonthlySources(
+      existingRecord.memberId,
+      getPeopleAttendanceRecordMonths(existingRecord),
+      '考勤记录取消后需重新核定薪酬',
+      peopleAttendanceToday
+    );
+
+    if (!salaryInvalidation.success) {
+      return {
+        invalidatedSalaryMonths: [],
+        reason: `${salaryInvalidation.blockedMonths.join('、')} 薪酬已发放，不能直接取消考勤记录`,
+        success: false
+      };
+    }
+
     setAttendanceRecords((currentRecords) =>
       currentRecords.map((record) =>
         record.id === recordId
@@ -376,7 +611,18 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
           : record
       )
     );
-  }, []);
+    const affectedMonths = getPeopleAttendanceRecordMonths(existingRecord);
+    setAttendanceMonthlyConfirmations((currentRecords) =>
+      currentRecords.filter(
+        (confirmation) =>
+          confirmation.memberId !== existingRecord.memberId || !affectedMonths.includes(confirmation.month)
+      )
+    );
+    return {
+      invalidatedSalaryMonths: salaryInvalidation.invalidatedMonths,
+      success: true
+    };
+  }, [attendanceRecords, invalidateSalaryMonthlySources]);
 
   const value = useMemo<PeopleOrganizationStateValue>(
     () => ({
@@ -388,13 +634,16 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
       applyMovementEffect,
       cancelAttendanceRecord,
       confirmAttendanceMonthlyReport,
+      movementRows,
       peopleRows,
       positionRows,
       restoreMovementSnapshot,
       saveAttendanceMonthlyAdjustment,
       saveAttendanceRecord,
+      saveMovementRecord,
       savePeopleMember,
-      savePosition
+      savePosition,
+      setMovementRows
     }),
     [
       activePositionOptions,
@@ -405,13 +654,16 @@ export function PeopleOrganizationProvider({ children }: { children: ReactNode }
       applyMovementEffect,
       cancelAttendanceRecord,
       confirmAttendanceMonthlyReport,
+      movementRows,
       peopleRows,
       positionRows,
       restoreMovementSnapshot,
       saveAttendanceMonthlyAdjustment,
       saveAttendanceRecord,
+      saveMovementRecord,
       savePeopleMember,
-      savePosition
+      savePosition,
+      setMovementRows
     ]
   );
 

@@ -1,4 +1,8 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import {
+  validateTaskConfigStatusChange,
+  type MasterDataMutationResult
+} from './masterDataLifecycleModel';
 
 export const taskConfigCategories = ['设计交付', '图像处理', '下单支持'] as const;
 
@@ -10,7 +14,7 @@ export type TaskConfigRow = {
   code: string;
   name: string;
   category: TaskConfigCategory;
-  deliveryFileRequirements: string[];
+  deliveryHints: string[];
   status: TaskConfigStatus;
   updatedAt: string;
   note: string;
@@ -18,23 +22,39 @@ export type TaskConfigRow = {
 
 export type TaskConfigFormValue = Pick<
   TaskConfigRow,
-  'category' | 'deliveryFileRequirements' | 'name' | 'note'
+  'category' | 'deliveryHints' | 'name' | 'note'
 >;
+
+export type TaskDefinitionSnapshot = Pick<TaskConfigRow, 'category' | 'code' | 'id' | 'name'> & {
+  capturedAt: string;
+  deliveryHints: string[];
+};
+
+export function buildTaskDefinitionSnapshot(taskConfig: TaskConfigRow, capturedAt: string): TaskDefinitionSnapshot {
+  return {
+    capturedAt,
+    category: taskConfig.category,
+    code: taskConfig.code,
+    deliveryHints: [...taskConfig.deliveryHints],
+    id: taskConfig.id,
+    name: taskConfig.name
+  };
+}
 
 type TaskConfigStateValue = {
   createTaskConfig: (nextValue: TaskConfigFormValue) => void;
   taskConfigRows: TaskConfigRow[];
   updateTaskConfig: (id: string, nextValue: TaskConfigFormValue) => void;
-  updateTaskConfigStatus: (id: string, status: TaskConfigStatus) => void;
+  updateTaskConfigStatus: (id: string, status: TaskConfigStatus, activeTaskCount?: number) => MasterDataMutationResult;
 };
 
 const prototypeToday = '2026-06-14';
 
-const seedTaskConfigRows: TaskConfigRow[] = [
+export const seedTaskConfigRows: TaskConfigRow[] = [
   {
     category: '设计交付',
     code: 'TT-2026-001',
-    deliveryFileRequirements: ['全套施工图文件', '交付说明'],
+    deliveryHints: ['建议提供全套施工图文件', '建议附交付说明'],
     id: 'task-type-full-drawing',
     name: '全套施工图',
     note: '门店完整施工图交付任务，后续由品牌配置决定是否启用。',
@@ -44,7 +64,7 @@ const seedTaskConfigRows: TaskConfigRow[] = [
   {
     category: '设计交付',
     code: 'TT-2026-002',
-    deliveryFileRequirements: ['深化图纸文件'],
+    deliveryHints: ['建议提供深化图纸文件'],
     id: 'task-type-drawing-detail',
     name: '施工图深化',
     note: '基于已有方案进行施工图深化。',
@@ -54,7 +74,7 @@ const seedTaskConfigRows: TaskConfigRow[] = [
   {
     category: '设计交付',
     code: 'TT-2026-003',
-    deliveryFileRequirements: ['平面方案文件'],
+    deliveryHints: ['建议提供平面方案文件'],
     id: 'task-type-floor-plan',
     name: '平面方案',
     note: '用于门店前期平面布局方案。',
@@ -64,7 +84,7 @@ const seedTaskConfigRows: TaskConfigRow[] = [
   {
     category: '图像处理',
     code: 'TT-2026-004',
-    deliveryFileRequirements: ['效果图文件'],
+    deliveryHints: ['建议提供效果图文件'],
     id: 'task-type-rendering',
     name: '效果图表现',
     note: '面向效果表现和展示确认。',
@@ -74,7 +94,7 @@ const seedTaskConfigRows: TaskConfigRow[] = [
   {
     category: '图像处理',
     code: 'TT-2026-005',
-    deliveryFileRequirements: ['P图源文件', '导出图片'],
+    deliveryHints: ['建议提供P图源文件', '建议提供导出图片'],
     id: 'task-type-store-image',
     name: '门店P图',
     note: '用于门店图片处理和快速交付。',
@@ -84,7 +104,7 @@ const seedTaskConfigRows: TaskConfigRow[] = [
   {
     category: '下单支持',
     code: 'TT-2026-006',
-    deliveryFileRequirements: ['下单资料', '物料清单'],
+    deliveryHints: ['建议附下单资料', '建议附物料清单'],
     id: 'task-type-material-order',
     name: '物料下单支持',
     note: '偏执行支持类任务，具体处理规则由后续任务模板定义。',
@@ -138,7 +158,12 @@ export function TaskConfigProvider({ children }: { children: ReactNode }) {
           )
         );
       },
-      updateTaskConfigStatus(id, status) {
+      updateTaskConfigStatus(id, status, activeTaskCount = 0) {
+        const validation = validateTaskConfigStatusChange(status, activeTaskCount);
+        if (!validation.success) {
+          return validation;
+        }
+
         setTaskConfigRows((currentRows) =>
           currentRows.map((row) =>
             row.id === id
@@ -150,6 +175,7 @@ export function TaskConfigProvider({ children }: { children: ReactNode }) {
               : row
           )
         );
+        return validation;
       }
     }),
     [taskConfigRows]

@@ -50,7 +50,6 @@ export function TaskCreateDrawer({
       generatedPlannedDeliveryAt,
       generatedTaskName,
       selectedBrand,
-      selectedBrandTaskOption,
       selectedCustomer,
       selectedStore,
       selectedTaskConfig,
@@ -82,7 +81,7 @@ export function TaskCreateDrawer({
               <Select
                 value={form.storeId}
                 options={storeRows
-                  .filter((store) => store.brandId === form.brandId)
+                  .filter((store) => store.brandId === form.brandId && !['暂停', '闭店'].includes(store.status))
                   .map((store) => ({ label: `${store.name} / ${store.city}`, value: store.id }))}
                 onChange={onStoreChange}
               />
@@ -199,13 +198,12 @@ export function TaskCreateDrawer({
                 { label: '门店', value: selectedStore ? `${selectedStore.name} / ${selectedStore.city}` : '-' },
                 { label: '任务类型', value: selectedTaskConfig?.name },
                 {
-                  label: '绩效分值',
-                  value: selectedBrandTaskOption ? `${selectedBrandTaskOption.scoreItem.score} 分 / ${selectedBrandTaskOption.scoreItem.unit}` : '-'
+                  label: '预计用时',
+                  value: form.plannedDurationHours ? formatTaskDuration(form.plannedDurationHours) : '-'
                 },
-                { label: '预计用时', value: form.plannedDurationHours ? formatTaskDuration(form.plannedDurationHours) : '-' },
                 { label: '预计交付', value: generatedPlannedDeliveryAt || '-' },
                 { label: '排期规则', value: `默认工作日历 / ${taskWorkdayStartHour}:00-${taskWorkdayEndHour}:00 / 法定节假日覆盖` },
-                { label: '交付要求', value: selectedTaskConfig?.deliveryFileRequirements.join(' / ') ?? '-' }
+                { label: '交付提示', value: selectedTaskConfig?.deliveryHints.join(' / ') ?? '-' }
               ]}
             />
           </DetailSection>

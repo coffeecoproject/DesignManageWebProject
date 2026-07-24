@@ -60,6 +60,7 @@ import {
 } from './peopleAttendanceDisplayModel';
 import {
   peopleAttendanceToday,
+  type PeopleAttendanceMutationResult,
   type PeopleAttendanceRecord,
   type PeopleAttendanceStatus,
   type PeopleAttendanceType,
@@ -293,10 +294,10 @@ function AttendanceRecordDrawer({
   workCalendarRows: WorkCalendarRow[];
   onBackToDetail: () => void;
   onCancel: () => void;
-  onCancelRecord: (record: PeopleAttendanceRecord, cancelReason: string) => void;
+  onCancelRecord: (record: PeopleAttendanceRecord, cancelReason: string) => PeopleAttendanceMutationResult;
   onClose: () => void;
   onEdit: () => void;
-  onSave: (record: PeopleAttendanceRecord) => void;
+  onSave: (record: PeopleAttendanceRecord) => PeopleAttendanceMutationResult;
   onUpdateForm: <K extends keyof AttendanceFormValue>(field: K, value: AttendanceFormValue[K]) => void;
 }) {
   const [messageApi, contextHolder] = message.useMessage();
@@ -356,8 +357,17 @@ function AttendanceRecordDrawer({
       return;
     }
 
-    onSave(buildAttendanceRecord({ form, record, selectedMember }));
-    void messageApi.success(isEditMode ? '假勤记录已保存' : '假勤记录已新增');
+    const result = onSave(buildAttendanceRecord({ form, record, selectedMember }));
+
+    if (!result.success) {
+      void messageApi.warning(result.reason ?? '假勤记录未保存');
+      return;
+    }
+
+    const salaryNote = result.invalidatedSalaryMonths.length > 0
+      ? `，${result.invalidatedSalaryMonths.join('、')} 薪酬需重新核定`
+      : '';
+    void messageApi.success(`${isEditMode ? '假勤记录已保存' : '假勤记录已新增'}${salaryNote}`);
   }
 
   function handleConfirmCancel() {
@@ -370,10 +380,19 @@ function AttendanceRecordDrawer({
       return;
     }
 
-    onCancelRecord(record, cancelReason.trim());
+    const result = onCancelRecord(record, cancelReason.trim());
+
+    if (!result.success) {
+      void messageApi.warning(result.reason ?? '假勤记录未取消');
+      return;
+    }
+
     setCancelModalOpen(false);
     setCancelReason('');
-    void messageApi.success('假勤记录已取消');
+    const salaryNote = result.invalidatedSalaryMonths.length > 0
+      ? `，${result.invalidatedSalaryMonths.join('、')} 薪酬需重新核定`
+      : '';
+    void messageApi.success(`假勤记录已取消${salaryNote}`);
   }
 
   return (
@@ -513,15 +532,24 @@ export function PeopleAttendancePage() {
   }
 
   function handleSave(record: PeopleAttendanceRecord) {
-    saveAttendanceRecord(record);
-    attendanceDrawer.openDetail(record);
+    const result = saveAttendanceRecord(record);
+
+    if (result.success) {
+      attendanceDrawer.openDetail(record);
+    }
+
+    return result;
   }
 
   function handleCancelRecord(record: PeopleAttendanceRecord, cancelReason: string) {
     const nextRecord = buildCanceledAttendanceRecord(record, cancelReason);
+    const result = cancelAttendanceRecord(record.id, cancelReason);
 
-    cancelAttendanceRecord(record.id, cancelReason);
-    attendanceDrawer.openDetail(nextRecord);
+    if (result.success) {
+      attendanceDrawer.openDetail(nextRecord);
+    }
+
+    return result;
   }
 
   const columns: TableColumnsType<AttendanceTableRow> = [

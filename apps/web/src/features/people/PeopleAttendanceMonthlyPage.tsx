@@ -188,7 +188,8 @@ function MonthlyReportDetailDrawer({
                     { label: '适用工作日历', value: report.workCalendarName },
                     { label: '状态', value: <StatusTag toneMap={reportStatusTone} value={report.status} /> },
                     { label: '应出勤', value: formatDays(report.expectedWorkdays) },
-                    { label: '请假', value: formatPayrollTime(report.leaveDays, report.leaveHours) },
+                    { label: '请假记录', value: formatPayrollTime(report.recordedLeaveDays ?? report.leaveDays, report.recordedLeaveHours ?? report.leaveHours) },
+                    { label: '有效请假', value: formatPayrollTime(report.leaveDays, report.leaveHours) },
                     { label: '调休', value: formatPayrollTime(report.restDays, report.restHours) },
                     { label: '补班', value: formatPayrollTime(report.makeupWorkDays, report.makeupWorkHours) },
                     { label: '调休已覆盖', value: formatPayrollTime(report.restCoveredDays, report.restCoveredHours) },
@@ -249,9 +250,9 @@ function MonthlyReportDetailDrawer({
                   items={[
                     { label: '月份范围', value: `${getAttendanceMonthRange(report.month).startDateText} 至 ${getAttendanceMonthRange(report.month).endDateText}` },
                     { label: '默认规则', value: '有效全职人员按适用工作日历默认全勤' },
-                    { label: '请假', value: '计入薪酬考勤扣减' },
-                    { label: '补班', value: '产生调休额度，不自动计入薪酬增加' },
-                    { label: '调休', value: '按已发生补班额度抵扣；额度不足部分计入考勤扣减' },
+                    { label: '请假', value: '仅工作日内的请假时长计入薪酬考勤扣减' },
+                    { label: '补班', value: '仅休息日补班产生调休额度，不自动增加薪酬' },
+                    { label: '调休', value: '仅工作日调休参与抵扣；额度不足部分计入考勤扣减' },
                     { label: '临时不可用', value: '作为例外列示，默认不扣减计薪出勤' },
                     { label: '人工调整', value: '只影响薪酬考勤口径，不回写考勤假勤', wide: true }
                   ]}
@@ -491,7 +492,13 @@ export function PeopleAttendanceMonthlyPage() {
   }
 
   function handleSaveAdjustment(record: AttendanceMonthlyAdjustmentRecord) {
-    saveAttendanceMonthlyAdjustment(record);
+    const result = saveAttendanceMonthlyAdjustment(record);
+
+    if (!result.success) {
+      void messageApi.warning(result.reason ?? '薪酬考勤调整未保存');
+      return;
+    }
+
     setFilters((currentFilters) => ({
       ...currentFilters,
       keyword: '',
@@ -500,7 +507,8 @@ export function PeopleAttendanceMonthlyPage() {
     }));
     setActiveReportId(`${record.month}-${record.memberId}`);
     adjustmentDrawer.close();
-    void messageApi.success('薪酬考勤调整已保存');
+    const salaryNote = result.invalidatedSalaryMonths.length > 0 ? '，薪酬需重新核定' : '';
+    void messageApi.success(`薪酬考勤调整已保存${salaryNote}`);
   }
 
   function handleConfirm(report: AttendanceMonthlyReport) {
@@ -509,7 +517,7 @@ export function PeopleAttendanceMonthlyPage() {
       return;
     }
 
-    confirmAttendanceMonthlyReport(report.member.id, report.month);
+    confirmAttendanceMonthlyReport(report);
     setActiveReportId(report.id);
     void messageApi.success('考勤月报已确认');
   }

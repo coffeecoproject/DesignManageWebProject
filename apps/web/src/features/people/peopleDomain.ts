@@ -1,11 +1,12 @@
 import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendarRow, type WorkCalendarWeekday } from '../system/WorkCalendarState';
 import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import type { PeopleArchiveFile, PeopleHousingFundStatus, PeopleMember, PeopleStatus, PersonnelType } from './peopleTypes';
-import type { AccessRole } from './rolePermissionModel';
+import { getPositionId, type AccessRole } from './rolePermissionModel';
+import type { PositionDataScope } from '../auth/authorizationModel';
 
 export type PositionManagementStatus = '启用' | '停用';
 export type PositionManagementFileStatus = '生效中';
-export type PeopleMovementType = '转正' | '薪资标准调整' | '续签' | '离职' | '结束合作' | '暂停任务参与' | '恢复任务参与';
+export type PeopleMovementType = '转正' | '岗位调整' | '工作日历变更' | '薪资标准调整' | '续签' | '离职' | '结束合作' | '暂停任务参与' | '恢复任务参与';
 export type PeopleAttendanceType = '请假' | '调休' | '补班' | '临时不可用';
 export type PeopleAttendanceEffect = '不可用' | '可用';
 export type PeopleAttendanceStatus = '待生效' | '生效中' | '已结束' | '已取消';
@@ -15,6 +16,13 @@ export type PeopleSalaryMode = '月薪制' | '任务制';
 export type PeopleHousingFundDisplayStatus = PeopleHousingFundStatus | '不适用';
 export type PeopleOverviewAvailabilityStatus = '在岗' | '休息' | '-';
 export type PeopleSemanticTone = 'green' | 'gray' | 'amber' | 'blue' | 'purple';
+const salaryAffectingMovementTypes = new Set<PeopleMovementType>(['转正', '岗位调整', '工作日历变更', '薪资标准调整', '离职']);
+
+function getPreviousCalendarDate(date: string) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+}
 
 export type PositionManagementFile = {
   id: string;
@@ -31,6 +39,7 @@ export type PositionManagementRow = {
   code: string;
   roleBindings: AccessRole[];
   extraPermissions: string[];
+  dataScopes: PositionDataScope;
   files: PositionManagementFile[];
   memberCount: number;
   status: PositionManagementStatus;
@@ -44,7 +53,11 @@ export type PeopleMovementEffect = {
   type: PeopleMovementType;
   effectiveAt: string;
   newContractEndAt?: string;
+  newPositions?: string[];
+  newPrimaryPosition?: string;
   newSalaryText?: string;
+  newWorkCalendarId?: string;
+  newWorkCalendarMode?: '跟随公司默认日历' | '指定工作日历';
 };
 
 export type PeopleMovementSnapshot = {
@@ -53,9 +66,13 @@ export type PeopleMovementSnapshot = {
   contractStatus: PeopleMember['contractStatus'];
   cooperationEndAt: PeopleMember['cooperationEndAt'];
   probationEndAt: PeopleMember['probationEndAt'];
+  position: PeopleMember['position'];
+  positionAssignments: PeopleMember['positionAssignments'];
   salaryProfile: PeopleMember['salaryProfile'];
   status: PeopleMember['status'];
   taskAccessStatus: PeopleMember['taskAccessStatus'];
+  workCalendarAssignments: NonNullable<PeopleMember['workCalendarAssignments']>;
+  workCalendarId: PeopleMember['workCalendarId'];
 };
 
 export type RestorePeopleMovementSnapshotOptions = {
@@ -87,6 +104,35 @@ export type PeopleAttendanceRecord = {
   updatedAt: string;
 };
 
+export function getPeopleAttendanceRecordMonths(
+  record: Pick<PeopleAttendanceRecord, 'endAt' | 'startAt'>
+) {
+  const startMonth = record.startAt.slice(0, 7);
+  const endMonth = record.endAt.slice(0, 7);
+
+  if (!/^\d{4}-\d{2}$/.test(startMonth) || !/^\d{4}-\d{2}$/.test(endMonth) || startMonth > endMonth) {
+    return [];
+  }
+
+  const [startYear, startMonthNumber] = startMonth.split('-').map(Number);
+  const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
+  const months: string[] = [];
+  let year = startYear;
+  let month = startMonthNumber;
+
+  while (year < endYear || (year === endYear && month <= endMonthNumber)) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+
+    if (month === 13) {
+      month = 1;
+      year += 1;
+    }
+  }
+
+  return months;
+}
+
 export type PeopleOverviewAvailabilitySummary = {
   status: PeopleOverviewAvailabilityStatus;
   tone: PeopleSemanticTone;
@@ -115,12 +161,61 @@ export function normalizeTaskCapabilityIds(taskCapabilityIds: string[]) {
   return Array.from(new Set(taskCapabilityIds)).sort();
 }
 
+export function getMovementAffectedSalaryMonths(effect: PeopleMovementEffect, salaryMonths: string[]) {
+  if (!salaryAffectingMovementTypes.has(effect.type)) {
+    return [];
+  }
+
+  const effectiveMonth = effect.effectiveAt.slice(0, 7);
+
+  if (!/^\d{4}-\d{2}$/.test(effectiveMonth)) {
+    return [];
+  }
+
+  return salaryMonths.filter((month) => month >= effectiveMonth);
+}
+
 export function isPeopleRelationshipEnded(member: Pick<PeopleMember, 'status'>) {
   return member.status === '离职' || member.status === '结束合作';
 }
 
 export function isPeopleRelationshipActive(member: Pick<PeopleMember, 'status'>) {
   return !isPeopleRelationshipEnded(member);
+}
+
+export function getPeopleRelationshipDateRange(
+  member: Pick<PeopleMember, 'contractEndAt' | 'cooperationEndAt' | 'cooperationStartAt' | 'joinedAt' | 'personnelType'>
+) {
+  return member.personnelType === '兼职'
+    ? {
+        endAt: normalizePeopleText(member.cooperationEndAt ?? member.contractEndAt),
+        startAt: normalizePeopleText(member.cooperationStartAt ?? member.joinedAt)
+      }
+    : {
+        endAt: normalizePeopleText(member.contractEndAt),
+        startAt: normalizePeopleText(member.joinedAt)
+      };
+}
+
+export function getPeopleRelationshipRangeBlockers(
+  member: Pick<PeopleMember, 'contractEndAt' | 'cooperationEndAt' | 'cooperationStartAt' | 'joinedAt' | 'personnelType'>,
+  startAt: string,
+  endAt: string
+) {
+  const relationshipRange = getPeopleRelationshipDateRange(member);
+  const taskStartDate = startAt.slice(0, 10);
+  const taskEndDate = endAt.slice(0, 10);
+  const blockers: string[] = [];
+
+  if (relationshipRange.startAt && taskStartDate && taskStartDate < relationshipRange.startAt.slice(0, 10)) {
+    blockers.push(member.personnelType === '兼职' ? '任务开始早于合作日期' : '任务开始早于入职日期');
+  }
+
+  if (relationshipRange.endAt && taskEndDate && taskEndDate > relationshipRange.endAt.slice(0, 10)) {
+    blockers.push(member.personnelType === '兼职' ? '任务结束晚于合作截止日期' : '任务结束晚于合同截止日期');
+  }
+
+  return blockers;
 }
 
 export function isFulltimePeopleMember(member: Pick<PeopleMember, 'personnelType'>) {
@@ -158,6 +253,21 @@ export function isPeopleHousingFundContributionApplicable(
 
 export function inferCreatePeopleStatus(personnelType: PersonnelType): PeopleStatus {
   return personnelType === '全职' ? '试用期' : '合作中';
+}
+
+export function getNextPeopleWorkNo(rows: Array<Pick<PeopleMember, 'id'>>, year = '2026') {
+  const sequence = rows.reduce((maxSequence, row) => {
+    const matched = row.id.match(new RegExp(`^${year}(\\d{4})$`));
+
+    if (!matched) {
+      return maxSequence;
+    }
+
+    const currentSequence = Number.parseInt(matched[1], 10);
+    return Number.isFinite(currentSequence) ? Math.max(maxSequence, currentSequence) : maxSequence;
+  }, 0) + 1;
+
+  return `${year}${String(sequence).padStart(4, '0')}`;
 }
 
 export function inferPeopleSalaryMode(personnelType: PersonnelType): PeopleSalaryMode {
@@ -377,12 +487,26 @@ export function isWorkCalendarWorkday(calendar: WorkCalendarRow | undefined, dat
   return calendar.fixedWorkdays.includes(weekday);
 }
 
-export function getMemberWorkCalendar(member: PeopleMember, workCalendarRows: WorkCalendarRow[]) {
-  return (
-    workCalendarRows.find((calendar) => calendar.id === member.workCalendarId) ??
-    workCalendarRows.find((calendar) => calendar.id === defaultWorkCalendarId) ??
-    workCalendarRows[0]
+export function getMemberWorkCalendar(
+  member: PeopleMember,
+  workCalendarRows: WorkCalendarRow[],
+  dateText = '9999-12-31'
+) {
+  const assignment = [...(member.workCalendarAssignments ?? [])]
+    .filter((item) => item.effectiveFrom <= dateText && (!item.effectiveTo || item.effectiveTo >= dateText))
+    .sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))[0];
+  const mode = assignment?.mode ?? (
+    member.workCalendarId && member.workCalendarId !== defaultWorkCalendarId
+      ? '指定工作日历'
+      : '跟随公司默认日历'
   );
+  const assignedCalendarId = assignment?.workCalendarId ?? member.workCalendarId;
+
+  if (mode === '指定工作日历') {
+    return workCalendarRows.find((calendar) => calendar.id === assignedCalendarId);
+  }
+
+  return workCalendarRows.find((calendar) => calendar.isDefault || calendar.id === defaultWorkCalendarId);
 }
 
 export function getCurrentPeopleAttendanceRecord(member: PeopleMember, attendanceRecords: PeopleAttendanceRecord[]) {
@@ -439,6 +563,7 @@ export function toPositionManagementRecord(row: PositionManagementRow): Position
     id: row.id,
     position: row.position,
     extraPermissions: row.extraPermissions,
+    dataScopes: { ...row.dataScopes },
     roleBindings: row.roleBindings,
     status: row.status,
     updatedAt: row.updatedAt
@@ -448,8 +573,28 @@ export function toPositionManagementRecord(row: PositionManagementRow): Position
 export function getPositionRowsWithMemberCount(records: PositionManagementRecord[], members: PeopleMember[]): PositionManagementRow[] {
   return records.map((record) => ({
     ...record,
-    memberCount: members.filter((member) => member.position === record.position).length
+    memberCount: members.filter((member) => getPeopleMemberPositions(member).includes(record.position)).length
   }));
+}
+
+export function getPeopleMemberPositions(member: Pick<PeopleMember, 'position' | 'positionAssignments'>) {
+  return [...new Set(
+    member.positionAssignments
+      .filter((assignment) => assignment.status === '生效中')
+      .sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary))
+      .map((assignment) => assignment.positionName.trim())
+      .filter(Boolean)
+  )];
+}
+
+export function getPeoplePositionSummary(member: Pick<PeopleMember, 'position' | 'positionAssignments'>) {
+  const positions = getPeopleMemberPositions(member);
+
+  if (positions.length <= 1) {
+    return positions[0] ?? '-';
+  }
+
+  return `${positions[0]} 等 ${positions.length} 个岗位`;
 }
 
 export function createPeopleMovementSnapshot(member: PeopleMember): PeopleMovementSnapshot {
@@ -459,9 +604,13 @@ export function createPeopleMovementSnapshot(member: PeopleMember): PeopleMoveme
     contractStatus: member.contractStatus,
     cooperationEndAt: member.cooperationEndAt,
     probationEndAt: member.probationEndAt,
+    position: member.position,
+    positionAssignments: member.positionAssignments.map((assignment) => ({ ...assignment })),
     salaryProfile: { ...member.salaryProfile },
     status: member.status,
-    taskAccessStatus: member.taskAccessStatus
+    taskAccessStatus: member.taskAccessStatus,
+    workCalendarAssignments: (member.workCalendarAssignments ?? []).map((assignment) => ({ ...assignment })),
+    workCalendarId: member.workCalendarId
   };
 }
 
@@ -495,9 +644,13 @@ export function restorePeopleMovementSnapshot(
     contractStatus: snapshot.contractStatus,
     cooperationEndAt: snapshot.cooperationEndAt,
     probationEndAt: snapshot.probationEndAt,
+    position: snapshot.position,
+    positionAssignments: snapshot.positionAssignments.map((assignment) => ({ ...assignment })),
     salaryProfile: { ...snapshot.salaryProfile },
     status: snapshot.status,
-    taskAccessStatus: snapshot.taskAccessStatus
+    taskAccessStatus: snapshot.taskAccessStatus,
+    workCalendarAssignments: snapshot.workCalendarAssignments.map((assignment) => ({ ...assignment })),
+    workCalendarId: snapshot.workCalendarId
   };
 }
 
@@ -529,6 +682,75 @@ export function applyPeopleMovementEffect(
     };
   }
 
+  if (effect.type === '岗位调整') {
+    const positions = Array.from(new Set((effect.newPositions ?? []).map(normalizePeopleText).filter(Boolean)));
+    const primaryPosition = normalizePeopleText(effect.newPrimaryPosition);
+
+    if (positions.length === 0 || !positions.includes(primaryPosition)) {
+      return member;
+    }
+
+    return {
+      ...member,
+      archiveUpdatedAt: options.today,
+      auditRecords: [baseAuditRecord, ...member.auditRecords],
+      position: primaryPosition,
+      positionAssignments: [
+        ...member.positionAssignments.map((assignment) => assignment.status === '生效中'
+          ? { ...assignment, effectiveTo: getPreviousCalendarDate(effect.effectiveAt), status: '已结束' as const }
+          : { ...assignment }),
+        ...positions.map((positionName, index) => ({
+          effectiveFrom: effect.effectiveAt,
+          id: `${member.id}-${effect.effectiveAt}-${index + 1}`,
+          isPrimary: positionName === primaryPosition,
+          positionId: getPositionId(positionName),
+          positionName,
+          status: '生效中' as const
+        }))
+      ]
+    };
+  }
+
+  if (effect.type === '工作日历变更') {
+    const mode = effect.newWorkCalendarMode ?? '跟随公司默认日历';
+    const workCalendarId = mode === '指定工作日历' ? normalizePeopleText(effect.newWorkCalendarId) : undefined;
+
+    if (mode === '指定工作日历' && !workCalendarId) {
+      return member;
+    }
+
+    const existingAssignments = member.workCalendarAssignments ?? [
+      {
+        effectiveFrom: member.joinedAt,
+        id: `${member.id}-calendar-initial`,
+        mode: member.workCalendarId && member.workCalendarId !== defaultWorkCalendarId
+          ? '指定工作日历' as const
+          : '跟随公司默认日历' as const,
+        status: '生效中' as const,
+        workCalendarId: member.workCalendarId
+      }
+    ];
+
+    return {
+      ...member,
+      archiveUpdatedAt: options.today,
+      auditRecords: [baseAuditRecord, ...member.auditRecords],
+      workCalendarAssignments: [
+        ...existingAssignments.map((assignment) => assignment.status === '生效中'
+          ? { ...assignment, effectiveTo: getPreviousCalendarDate(effect.effectiveAt), status: '已结束' as const }
+          : assignment),
+        {
+          effectiveFrom: effect.effectiveAt,
+          id: `${member.id}-calendar-${effect.effectiveAt}`,
+          mode,
+          status: '生效中',
+          workCalendarId
+        }
+      ],
+      workCalendarId
+    };
+  }
+
   if (effect.type === '离职') {
     return {
       ...member,
@@ -542,6 +764,11 @@ export function applyPeopleMovementEffect(
         status: '已停用'
       },
       status: '离职',
+      positionAssignments: member.positionAssignments.map((assignment) =>
+        assignment.status === '生效中'
+          ? { ...assignment, effectiveTo: effect.effectiveAt, status: '已结束' as const }
+          : assignment
+      ),
       taskAccessStatus: '已关闭'
     };
   }
@@ -560,6 +787,11 @@ export function applyPeopleMovementEffect(
         status: '已停用'
       },
       status: '结束合作',
+      positionAssignments: member.positionAssignments.map((assignment) =>
+        assignment.status === '生效中'
+          ? { ...assignment, effectiveTo: effect.effectiveAt, status: '已结束' as const }
+          : assignment
+      ),
       taskAccessStatus: '已关闭'
     };
   }
@@ -626,6 +858,8 @@ export function clonePeopleMember(member: PeopleMember): PeopleMember {
     auditRecords: member.auditRecords.map((record) => ({ ...record })),
     paymentProfile: { ...member.paymentProfile },
     salaryProfile: { ...member.salaryProfile },
+    positionAssignments: member.positionAssignments.map((assignment) => ({ ...assignment })),
+    workCalendarAssignments: member.workCalendarAssignments?.map((assignment) => ({ ...assignment })),
     taskCapabilityIds: [...member.taskCapabilityIds],
     taskRecords: member.taskRecords.map((record) => ({ ...record }))
   };

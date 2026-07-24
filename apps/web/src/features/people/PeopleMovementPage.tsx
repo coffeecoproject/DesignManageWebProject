@@ -24,7 +24,6 @@ import { DetailTabs } from '../../components/DetailTabs';
 import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { DrawerProfileCard } from '../../components/DrawerProfileCard';
 import { DrawerShell } from '../../components/DrawerShell';
-import { FileActionButtons } from '../../components/FileActionButtons';
 import { FileSlot, FileSlotGrid } from '../../components/FileSlot';
 import { FileUploadDropzone } from '../../components/FileUploadDropzone';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
@@ -33,6 +32,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { FilterBar, FilterField, FilterPanel } from '../../components/FilterControls';
+import { defaultWorkCalendarId, useWorkCalendarState } from '../system/WorkCalendarState';
 import {
   getMovementRequiredFileSlots,
   movementRequiredFileMaxSizeMb,
@@ -44,9 +44,15 @@ import {
   type PeopleMovementType,
   usePeopleOrganizationState
 } from './PeopleOrganizationState';
-import { applyPeopleMovementEffect, createPeopleMovementSnapshot, isPeopleMovementSnapshotEqual } from './peopleDomain';
 import {
-  createInitialPeopleMovementRows,
+  applyPeopleMovementEffect,
+  createPeopleMovementSnapshot,
+  getPeopleMemberPositions,
+  getWorkCalendarDisplayName,
+  isPeopleMovementSnapshotEqual,
+  normalizeTaskCapabilityIds
+} from './peopleDomain';
+import {
   createPeopleMovementRow,
   type PeopleMovementAttachment as MovementAttachment,
   type PeopleMovementRecordStatus as MovementRecordStatus,
@@ -91,6 +97,8 @@ const statusTone = {
 
 const movementTypeTone = {
   转正: 'blue',
+  岗位调整: 'blue',
+  工作日历变更: 'purple',
   薪资标准调整: 'amber',
   续签: 'blue',
   离职: 'gray',
@@ -116,6 +124,8 @@ const movementSourceTone = {
 const movementTypeFilterOptions: MovementTypeFilter[] = [
   '全部',
   '转正',
+  '岗位调整',
+  '工作日历变更',
   '薪资标准调整',
   '续签',
   '离职',
@@ -194,7 +204,9 @@ function getMovementTypeOptions(member: PeopleMember | undefined): PeopleMovemen
     }
 
     const fulltimeTypes: PeopleMovementType[] =
-      member.status === '试用期' ? ['转正', '薪资标准调整', '续签', '离职'] : ['薪资标准调整', '续签', '离职'];
+      member.status === '试用期'
+        ? ['转正', '岗位调整', '工作日历变更', '薪资标准调整', '续签', '离职']
+        : ['岗位调整', '工作日历变更', '薪资标准调整', '续签', '离职'];
 
     return [...fulltimeTypes, ...taskAccessMovementTypes];
   }
@@ -203,7 +215,7 @@ function getMovementTypeOptions(member: PeopleMember | undefined): PeopleMovemen
     return [];
   }
 
-  return ['薪资标准调整', '续签', '结束合作', ...taskAccessMovementTypes];
+  return ['岗位调整', '薪资标准调整', '续签', '结束合作', ...taskAccessMovementTypes];
 }
 
 function getDefaultMovementType(member: PeopleMember | undefined): PeopleMovementType {
@@ -240,6 +252,8 @@ function getMovementEffectiveDateLabel(type: PeopleMovementType) {
   }
 
   const labels: Record<Exclude<PeopleMovementType, '转正'>, string> = {
+    岗位调整: '生效日期',
+    工作日历变更: '生效日期',
     薪资标准调整: '生效日期',
     续签: '续签日期',
     离职: '离职日期',
@@ -265,6 +279,8 @@ function createMovementAttachmentFromFile(file: UploadFile, slot: MovementRequir
 function getMovementBeforeValue(member: PeopleMember, type: PeopleMovementType) {
   const fixedValues: Record<PeopleMovementType, string> = {
     转正: '全职 / 试用期',
+    岗位调整: getPeopleMemberPositions(member).join(' / '),
+    工作日历变更: member.workCalendarId || '跟随公司默认日历',
     薪资标准调整: getCurrentSalaryText(member),
     续签: getCurrentContractEndText(member),
     离职: member.status === '试用期' ? '全职 / 试用期' : '全职 / 在职',
@@ -279,16 +295,24 @@ function getMovementBeforeValue(member: PeopleMember, type: PeopleMovementType) 
 function getMovementAfterValue({
   member,
   newContractEndAt,
+  newPositions,
+  newPrimaryPosition,
   newSalaryText,
+  newWorkCalendarText,
   type
 }: {
   member: PeopleMember;
   newContractEndAt: string;
+  newPositions: string[];
+  newPrimaryPosition: string;
   newSalaryText: string;
+  newWorkCalendarText: string;
   type: PeopleMovementType;
 }) {
   const fixedValues: Record<PeopleMovementType, string> = {
     转正: '全职 / 正式',
+    岗位调整: newPositions.length > 0 ? `${newPositions.join(' / ')}（主岗位：${newPrimaryPosition}）` : '新岗位待选择',
+    工作日历变更: newWorkCalendarText || '新工作日历待选择',
     薪资标准调整: newSalaryText.trim() || (member.personnelType === '兼职' ? '新任务规则待填写' : '新基础薪资待填写'),
     续签: newContractEndAt || '新结束日期待选择',
     离职: '全职 / 离职',
@@ -306,6 +330,8 @@ function getMovementSummary(type: PeopleMovementType) {
   }
 
   const summaries: Record<Exclude<PeopleMovementType, '转正'>, string> = {
+    岗位调整: '调整任职岗位与主岗位',
+    工作日历变更: '调整适用工作日历',
     薪资标准调整: '调整长期薪资标准',
     续签: '更新合同/协议结束日期',
     离职: '结束全职任职关系',
@@ -320,6 +346,8 @@ function getMovementSummary(type: PeopleMovementType) {
 function getMovementReasonLabel(type: PeopleMovementType) {
   const labels: Record<PeopleMovementType, string> = {
     转正: '转正说明',
+    岗位调整: '调整说明',
+    工作日历变更: '调整说明',
     薪资标准调整: '备注',
     续签: '备注',
     离职: '离职原因',
@@ -521,7 +549,6 @@ function MovementRecordDrawer({
   peopleRows,
   record,
   onClose,
-  onApplyEffect,
   onReverseRecord,
   onSave,
   onVoidRecord
@@ -532,17 +559,25 @@ function MovementRecordDrawer({
   peopleRows: PeopleMember[];
   record?: MovementRow;
   onClose: () => void;
-  onApplyEffect: (effect: PeopleMovementEffect) => void;
   onReverseRecord: (recordId: string, reason: string) => MovementActionResult;
-  onSave: (record: MovementRow) => void;
+  onSave: (
+    record: MovementRow,
+    effect?: PeopleMovementEffect
+  ) => { invalidatedSalaryMonths: string[]; reason?: string; success: boolean };
   onVoidRecord: (recordId: string, reason: string) => MovementActionResult;
 }) {
   const [messageApi, contextHolder] = message.useMessage();
+  const { activePositionOptions } = usePeopleOrganizationState();
+  const { workCalendarRows } = useWorkCalendarState();
   const [selectedMemberId, setSelectedMemberId] = useState(peopleRows[0]?.id ?? '');
   const [movementType, setMovementType] = useState<PeopleMovementType>('薪资标准调整');
   const [effectiveAt, setEffectiveAt] = useState('');
   const [newSalaryText, setNewSalaryText] = useState('');
   const [newContractEndAt, setNewContractEndAt] = useState('');
+  const [newPositions, setNewPositions] = useState<string[]>([]);
+  const [newPrimaryPosition, setNewPrimaryPosition] = useState('');
+  const [newWorkCalendarMode, setNewWorkCalendarMode] = useState<'跟随公司默认日历' | '指定工作日历'>('跟随公司默认日历');
+  const [newWorkCalendarId, setNewWorkCalendarId] = useState('');
   const [note, setNote] = useState('');
   const [recordAction, setRecordAction] = useState<{ reason: string; record: MovementRow; type: MovementRecordAction }>();
   const [movementRequiredFiles, setMovementRequiredFiles] = useState<Partial<Record<MovementRequiredFileSlotKey, UploadFile>>>({});
@@ -557,13 +592,23 @@ function MovementRecordDrawer({
   );
   const missingMovementFileLabels = requiredMovementFileSlots.filter((slot) => !movementRequiredFiles[slot.key]).map((slot) => slot.label);
   const reasonRequired = canUseMovementType ? isMovementReasonRequired(movementType) : false;
-  const movementBeforeValue = selectedMember && canUseMovementType ? getMovementBeforeValue(selectedMember, movementType) : '';
+  const movementBeforeValue = selectedMember && canUseMovementType
+    ? movementType === '工作日历变更'
+      ? getWorkCalendarDisplayName(selectedMember.workCalendarId, workCalendarRows)
+      : getMovementBeforeValue(selectedMember, movementType)
+    : '';
   const movementAfterValue =
     selectedMember && canUseMovementType
       ? getMovementAfterValue({
           member: selectedMember,
           newContractEndAt,
+          newPositions,
+          newPrimaryPosition,
           newSalaryText,
+          newWorkCalendarText:
+            newWorkCalendarMode === '跟随公司默认日历'
+              ? '跟随公司默认日历'
+              : getWorkCalendarDisplayName(newWorkCalendarId, workCalendarRows),
           type: movementType
         })
     : '';
@@ -582,6 +627,8 @@ function MovementRecordDrawer({
     !canUseMovementType ||
     !effectiveAt ||
     (movementType === '薪资标准调整' && !newSalaryText.trim()) ||
+    (movementType === '岗位调整' && (newPositions.length === 0 || !newPositions.includes(newPrimaryPosition))) ||
+    (movementType === '工作日历变更' && newWorkCalendarMode === '指定工作日历' && !newWorkCalendarId) ||
     (movementType === '续签' && !newContractEndAt) ||
     (reasonRequired && !note.trim()) ||
     missingMovementFileLabels.length > 0;
@@ -602,6 +649,14 @@ function MovementRecordDrawer({
     setEffectiveAt('');
     setNewSalaryText('');
     setNewContractEndAt('');
+    setNewPositions(getPeopleMemberPositions(firstMember));
+    setNewPrimaryPosition(firstMember.position);
+    setNewWorkCalendarMode(
+      firstMember.workCalendarId && firstMember.workCalendarId !== defaultWorkCalendarId
+        ? '指定工作日历'
+        : '跟随公司默认日历'
+    );
+    setNewWorkCalendarId(firstMember.workCalendarId ?? '');
     setNote('');
     setMovementRequiredFiles({});
     setMovementSupplementalFiles([]);
@@ -626,6 +681,14 @@ function MovementRecordDrawer({
       setMovementType(getDefaultMovementType(nextMember));
       setNewSalaryText('');
       setNewContractEndAt('');
+      setNewPositions(getPeopleMemberPositions(nextMember));
+      setNewPrimaryPosition(nextMember.position);
+      setNewWorkCalendarMode(
+        nextMember.workCalendarId && nextMember.workCalendarId !== defaultWorkCalendarId
+          ? '指定工作日历'
+          : '跟随公司默认日历'
+      );
+      setNewWorkCalendarId(nextMember.workCalendarId ?? '');
       setNote('');
       setMovementRequiredFiles({});
       setMovementSupplementalFiles([]);
@@ -636,6 +699,14 @@ function MovementRecordDrawer({
     setMovementType(type);
     setNewSalaryText('');
     setNewContractEndAt('');
+    setNewPositions(selectedMember ? getPeopleMemberPositions(selectedMember) : []);
+    setNewPrimaryPosition(selectedMember?.position ?? '');
+    setNewWorkCalendarMode(
+      selectedMember?.workCalendarId && selectedMember.workCalendarId !== defaultWorkCalendarId
+        ? '指定工作日历'
+        : '跟随公司默认日历'
+    );
+    setNewWorkCalendarId(selectedMember?.workCalendarId ?? '');
     setNote('');
     setMovementRequiredFiles({});
     setMovementSupplementalFiles([]);
@@ -715,6 +786,16 @@ function MovementRecordDrawer({
       return;
     }
 
+    if (movementType === '岗位调整' && (newPositions.length === 0 || !newPositions.includes(newPrimaryPosition))) {
+      void messageApi.warning('请选择任职岗位并指定其中一个主岗位');
+      return;
+    }
+
+    if (movementType === '工作日历变更' && newWorkCalendarMode === '指定工作日历' && !newWorkCalendarId) {
+      void messageApi.warning('请选择工作日历');
+      return;
+    }
+
     if (movementType === '续签' && !newContractEndAt) {
       void messageApi.warning('请选择新的结束日期');
       return;
@@ -735,7 +816,11 @@ function MovementRecordDrawer({
       effectiveAt,
       memberId: selectedMember.id,
       newContractEndAt,
+      newPositions,
+      newPrimaryPosition,
       newSalaryText,
+      newWorkCalendarId,
+      newWorkCalendarMode,
       type: movementType
     };
     const afterMember = applyPeopleMovementEffect(selectedMember, movementEffect, { today: prototypeToday });
@@ -760,11 +845,13 @@ function MovementRecordDrawer({
       updatedAt: prototypeToday
     });
 
-    if (recordStatus === '已生效') {
-      onApplyEffect(movementEffect);
+    const saveResult = onSave(nextRecord, recordStatus === '已生效' ? movementEffect : undefined);
+
+    if (!saveResult.success) {
+      void messageApi.warning(saveResult.reason ?? '异动未能保存');
+      return;
     }
 
-    onSave(nextRecord);
     void messageApi.success(recordStatus === '已生效' ? '异动已生效' : '异动已发起');
   }
 
@@ -825,23 +912,6 @@ function MovementRecordDrawer({
       align: 'center',
       width: 108
     },
-    {
-      title: '操作',
-      key: 'actions',
-      align: 'center',
-      width: 112,
-      render: (_, file) => (
-        <FileActionButtons
-          record={file}
-          onDownload={(record) => {
-            void messageApi.info(`原型下载：${record.name}`);
-          }}
-          onPreview={(record) => {
-            void messageApi.info(`原型预览：${record.name}`);
-          }}
-        />
-      )
-    }
   ];
   const detailSecondaryAction =
     detailRecord && detailRecordAction
@@ -952,6 +1022,57 @@ function MovementRecordDrawer({
                             />
                           </DrawerFormField>
                         ) : null}
+                        {movementType === '岗位调整' ? (
+                          <>
+                            <DrawerFormField required wide label="任职岗位">
+                              <Select
+                                mode="multiple"
+                                options={activePositionOptions.map((position) => ({ label: position, value: position }))}
+                                value={newPositions}
+                                onChange={(positions: string[]) => {
+                                  const normalizedPositions = normalizeTaskCapabilityIds(positions);
+                                  setNewPositions(normalizedPositions);
+
+                                  if (!normalizedPositions.includes(newPrimaryPosition)) {
+                                    setNewPrimaryPosition(normalizedPositions[0] ?? '');
+                                  }
+                                }}
+                              />
+                            </DrawerFormField>
+                            <DrawerFormField required label="主岗位">
+                              <Select
+                                options={newPositions.map((position) => ({ label: position, value: position }))}
+                                value={newPrimaryPosition}
+                                onChange={setNewPrimaryPosition}
+                              />
+                            </DrawerFormField>
+                          </>
+                        ) : null}
+                        {movementType === '工作日历变更' ? (
+                          <>
+                            <DrawerFormField required label="适用方式">
+                              <Select
+                                options={[
+                                  { label: '跟随公司默认日历', value: '跟随公司默认日历' },
+                                  { label: '指定工作日历', value: '指定工作日历' }
+                                ]}
+                                value={newWorkCalendarMode}
+                                onChange={setNewWorkCalendarMode}
+                              />
+                            </DrawerFormField>
+                            {newWorkCalendarMode === '指定工作日历' ? (
+                              <DrawerFormField required label="工作日历">
+                                <Select
+                                  options={workCalendarRows
+                                    .filter((calendar) => calendar.status === '启用')
+                                    .map((calendar) => ({ label: `${calendar.name} / ${calendar.type}`, value: calendar.id }))}
+                                  value={newWorkCalendarId || undefined}
+                                  onChange={setNewWorkCalendarId}
+                                />
+                              </DrawerFormField>
+                            ) : null}
+                          </>
+                        ) : null}
                         {movementType === '续签' ? (
                           <DrawerFormField required label="新的结束日期">
                             <DatePicker
@@ -1002,9 +1123,6 @@ function MovementRecordDrawer({
                       status={file ? '已上传' : '未上传'}
                       statusTone={file ? archiveFileStatusTone['已上传'] : 'amber'}
                       title={slot.label}
-                      onPreview={(previewFile) => {
-                        void messageApi.info(`原型预览：${previewFile.name}`);
-                      }}
                       onRemove={() => handleMovementRequiredFileDelete(slot)}
                       onSelect={(uploadFile) => handleMovementRequiredFileUpload(slot, uploadFile)}
                     />
@@ -1174,8 +1292,7 @@ function MovementRecordDrawer({
 }
 
 export function PeopleMovementPage() {
-  const { applyMovementEffect, peopleRows, restoreMovementSnapshot } = usePeopleOrganizationState();
-  const [movementRows, setMovementRows] = useState<MovementRow[]>(() => createInitialPeopleMovementRows(peopleRows));
+  const { movementRows, peopleRows, restoreMovementSnapshot, saveMovementRecord, setMovementRows } = usePeopleOrganizationState();
   const [activeMovement, setActiveMovement] = useState<MovementRow>();
   const [filters, setFilters] = useState<MovementFilters>(defaultMovementFilters);
   const [movementDrawerMode, setMovementDrawerMode] = useState<MovementDrawerMode>('detail');
@@ -1209,11 +1326,17 @@ export function PeopleMovementPage() {
     setMovementDrawerOpen(true);
   }
 
-  function saveMovementRecord(record: MovementRow) {
-    setMovementRows((currentRows) => [record, ...currentRows]);
+  function handleSaveMovementRecord(record: MovementRow, effect?: PeopleMovementEffect) {
+    const result = saveMovementRecord(record, effect);
+
+    if (!result.success) {
+      return result;
+    }
+
     setActiveMovement(record);
     setMovementDrawerMode('detail');
     setMovementDrawerOpen(true);
+    return result;
   }
 
   function voidMovementRecord(recordId: string, reason: string): MovementActionResult {
@@ -1279,12 +1402,19 @@ export function PeopleMovementPage() {
       updatedAt: prototypeToday
     };
 
-    restoreMovementSnapshot(targetRecord.member.id, targetRecord.beforeMemberSnapshot, {
+    const restoreResult = restoreMovementSnapshot(targetRecord.member.id, targetRecord.beforeMemberSnapshot, {
       actor: '李明',
       effectiveAt: prototypeToday,
       reason,
-      sourceRecordId: targetRecord.id
+      sourceEffectiveAt: targetRecord.effectiveAt,
+      sourceRecordId: targetRecord.id,
+      sourceType: targetRecord.type
     });
+
+    if (!restoreResult.success) {
+      return { message: restoreResult.reason ?? '异动冲正失败', ok: false };
+    }
+
     setMovementRows((currentRows) => [reversalRecord, ...currentRows.map((row) => (row.id === recordId ? reversedRecord : row))]);
     setActiveMovement(reversalRecord);
 
@@ -1411,9 +1541,8 @@ export function PeopleMovementPage() {
         open={movementDrawerOpen}
         peopleRows={peopleRows}
         record={activeMovement}
-        onApplyEffect={applyMovementEffect}
         onReverseRecord={reverseMovementRecord}
-        onSave={saveMovementRecord}
+        onSave={handleSaveMovementRecord}
         onVoidRecord={voidMovementRecord}
         onClose={() => {
           setMovementDrawerOpen(false);

@@ -121,12 +121,14 @@ function getExecutorCandidate(
   member: PeopleMember,
   attendanceRecords: PeopleAttendanceRecord[],
   window: { endAt: string; startAt: string },
-  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[] = []
+  publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[] = [],
+  plannedDurationHours?: number
 ) {
   const [candidate] = buildTaskExecutorCandidates({
     annualExceptionRows,
     attendanceRecords,
     peopleRows: [member],
+    plannedDurationHours,
     publishedPerformanceRecords,
     storeTaskRows,
     taskConfigId: 'task-type-floor-plan',
@@ -165,27 +167,39 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'blocks full-time candidates when unavailable records cover working time',
+    name: 'keeps candidates selectable when leave covers working time and exposes a warning',
     run: () => {
       const candidate = getExecutorCandidate(createMember(), [createAttendanceRecord()], {
         endAt: '2026-06-19 18:00',
         startAt: '2026-06-19 10:00'
       });
 
-      assertEqual(candidate.selectable, false, 'working-time leave should hard block assignment');
-      assert(candidate.blockers.includes('请假覆盖工作时段'), 'working-time leave should explain the blocker');
+      assertEqual(candidate.selectable, true, 'working-time leave should remain a scheduling warning');
+      assert(candidate.reasons.includes('请假覆盖工作时段'), 'working-time leave should explain the warning');
     }
   },
   {
-    name: 'blocks full-time candidates when the whole task window has no usable working time',
+    name: 'keeps all-rest-day candidates selectable with a self-arrangement warning',
     run: () => {
       const candidate = getExecutorCandidate(createMember(), [], {
         endAt: '2026-06-21 18:00',
         startAt: '2026-06-20 10:00'
       });
 
-      assertEqual(candidate.selectable, false, 'all-rest-day window should hard block assignment');
-      assert(candidate.blockers.includes('任务周期无可用工作时间'), 'all-rest-day window should explain the blocker');
+      assertEqual(candidate.selectable, true, 'all-rest-day window should remain selectable');
+      assert(candidate.reasons.includes('任务周期内无日历可用工时，请自行安排'), 'all-rest-day window should explain the warning');
+    }
+  },
+  {
+    name: 'warns when member calendar capacity is below the fixed task plan without changing selectability',
+    run: () => {
+      const candidate = getExecutorCandidate(createMember(), [], {
+        endAt: '2026-06-19 18:00',
+        startAt: '2026-06-16 10:00'
+      }, [], 40);
+
+      assertEqual(candidate.selectable, true, 'capacity shortage must not block employee self-arrangement');
+      assert(candidate.reasons.includes('日历可用约 32 小时，低于任务计划 40 小时'), 'capacity warning should show both values');
     }
   },
   {
@@ -205,6 +219,46 @@ const tests: UnitTest[] = [
 
       assertEqual(candidate.selectable, true, 'part-time candidate should ignore time-window records');
       assert(candidate.blockers.length === 0, 'part-time candidate should have no time blockers');
+    }
+  },
+  {
+    name: 'blocks a task planned before the full-time member join date',
+    run: () => {
+      const candidate = getExecutorCandidate(createMember({ joinedAt: '2026-06-20' }), [], {
+        endAt: '2026-06-19 18:00',
+        startAt: '2026-06-19 10:00'
+      });
+
+      assertEqual(candidate.selectable, false, 'pre-employment task should not be selectable');
+      assert(candidate.blockers.includes('任务开始早于入职日期'), 'pre-employment task should explain the relationship blocker');
+    }
+  },
+  {
+    name: 'blocks a part-time task planned after the cooperation end date',
+    run: () => {
+      const member = createMember({
+        cooperationEndAt: '2026-06-18',
+        cooperationStartAt: '2026-06-01',
+        personnelType: '兼职',
+        position: '外协设计师',
+        positionAssignments: [{
+          effectiveFrom: '2026-06-01',
+          id: 'assignment-external-test',
+          isPrimary: true,
+          positionId: 'position-external-designer',
+          positionName: '外协设计师',
+          status: '生效中'
+        }],
+        status: '合作中',
+        workCalendarId: undefined
+      });
+      const candidate = getExecutorCandidate(member, [], {
+        endAt: '2026-06-19 18:00',
+        startAt: '2026-06-19 10:00'
+      });
+
+      assertEqual(candidate.selectable, false, 'post-cooperation task should not be selectable');
+      assert(candidate.blockers.includes('任务结束晚于合作截止日期'), 'post-cooperation task should explain the relationship blocker');
     }
   },
   {

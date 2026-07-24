@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { BrandRecord, CustomerRecord, StoreRecord } from '../customers/customerData';
 import type { PeopleAttendanceRecord } from '../people/PeopleOrganizationState';
 import type { PeopleMember } from '../people/peopleTypes';
-import type { PerformanceMonthlyCategoryRecord, PerformanceRulePreset } from '../performance/performanceTypes';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import type { TaskConfigRow } from '../system/TaskConfigState';
 import {
@@ -18,7 +18,6 @@ import {
   buildDefaultTaskForm,
   buildGeneratedTaskName,
   buildTaskAssignmentWindow,
-  getBrandPerformanceRule,
   getBrandTaskOptions,
   getFirstTaskExecutorId,
   getGeneratedTaskDeliveryAt,
@@ -37,7 +36,6 @@ type UseTaskCreateFormStateInput = {
   brandRows: BrandRecord[];
   getCustomerById: (customerId: string) => CustomerRecord | undefined;
   peopleRows: PeopleMember[];
-  performanceRuleRows: PerformanceRulePreset[];
   publishedPerformanceRecords: PerformanceMonthlyCategoryRecord[];
   storeRows: StoreRecord[];
   storeTaskRows: StoreTaskRecord[];
@@ -50,7 +48,6 @@ type TaskCreateFormDerivedState = {
   generatedPlannedDeliveryAt: string;
   generatedTaskName: string;
   selectedBrand?: BrandRecord;
-  selectedBrandTaskOption?: BrandTaskOption;
   selectedCustomer?: CustomerRecord;
   selectedStore?: StoreRecord;
   selectedTaskConfig?: TaskConfigRow;
@@ -108,7 +105,6 @@ export function useTaskCreateFormState({
   brandRows,
   getCustomerById,
   peopleRows,
-  performanceRuleRows,
   publishedPerformanceRecords,
   storeRows,
   storeTaskRows,
@@ -118,7 +114,6 @@ export function useTaskCreateFormState({
   const [form, setForm] = useState<StoreTaskForm>(() =>
     buildDefaultTaskForm({
       brandRows,
-      performanceRuleRows,
       storeRows,
       taskConfigRows
     })
@@ -128,13 +123,11 @@ export function useTaskCreateFormState({
   const selectedCustomer = selectedBrand ? getCustomerById(selectedBrand.customerId) : undefined;
   const selectedStore = storeRows.find((store) => store.id === form.storeId);
   const selectedTaskConfig = taskConfigRows.find((row) => row.id === form.taskConfigId);
-  const selectedPerformanceRule = getBrandPerformanceRule(selectedBrand, performanceRuleRows);
   const availableTaskOptions = useMemo(
-    () => getBrandTaskOptions(selectedBrand, taskConfigRows, performanceRuleRows),
-    [performanceRuleRows, selectedBrand, taskConfigRows]
+    () => getBrandTaskOptions(selectedBrand, taskConfigRows),
+    [selectedBrand, taskConfigRows]
   );
-  const selectedBrandTaskOption = availableTaskOptions.find((option) => option.taskConfig.id === form.taskConfigId);
-  const unavailableTaskMessage = getTaskUnavailableMessage(selectedPerformanceRule);
+  const unavailableTaskMessage = getTaskUnavailableMessage();
   const generatedTaskName = buildGeneratedTaskName(selectedStore, selectedTaskConfig);
   const generatedPlannedDeliveryAt = getGeneratedTaskDeliveryAt(form.plannedDurationHours, workCalendarRows, annualExceptionRows);
   const assignmentWindow = useMemo(
@@ -147,6 +140,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        plannedDurationHours: form.plannedDurationHours,
         publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId: form.taskConfigId,
@@ -162,6 +156,7 @@ export function useTaskCreateFormState({
         attendanceRecords,
         executorId: form.executorId,
         peopleRows,
+        plannedDurationHours: form.plannedDurationHours,
         publishedPerformanceRecords,
         storeTaskRows,
         window: assignmentWindow,
@@ -194,6 +189,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        plannedDurationHours,
         publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId,
@@ -208,7 +204,6 @@ export function useTaskCreateFormState({
     setForm(
       buildDefaultTaskForm({
         brandRows,
-        performanceRuleRows,
         storeRows,
         taskConfigRows
       })
@@ -225,7 +220,7 @@ export function useTaskCreateFormState({
   function changeBrand(brandId: string) {
     const nextBrand = brandRows.find((brand) => brand.id === brandId);
     const nextStore = storeRows.find((store) => store.brandId === brandId);
-    const nextTaskConfigId = getBrandTaskOptions(nextBrand, taskConfigRows, performanceRuleRows)[0]?.taskConfig.id ?? '';
+    const nextTaskConfigId = getBrandTaskOptions(nextBrand, taskConfigRows)[0]?.taskConfig.id ?? '';
 
     setForm((currentForm) => {
       const nextExecutorId = getFirstExecutorId(nextTaskConfigId, currentForm.plannedDurationHours);
@@ -247,6 +242,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        plannedDurationHours: currentForm.plannedDurationHours,
         publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId,
@@ -281,6 +277,7 @@ export function useTaskCreateFormState({
         annualExceptionRows,
         attendanceRecords,
         peopleRows,
+        plannedDurationHours,
         publishedPerformanceRecords,
         storeTaskRows,
         taskConfigId: currentForm.taskConfigId,
@@ -294,6 +291,7 @@ export function useTaskCreateFormState({
         attendanceRecords,
         executorId,
         peopleRows,
+        plannedDurationHours,
         publishedPerformanceRecords,
         storeTaskRows,
         window: nextWindow,
@@ -372,7 +370,6 @@ export function useTaskCreateFormState({
       generatedPlannedDeliveryAt,
       generatedTaskName,
       selectedBrand,
-      selectedBrandTaskOption,
       selectedCustomer,
       selectedStore,
       selectedTaskConfig,

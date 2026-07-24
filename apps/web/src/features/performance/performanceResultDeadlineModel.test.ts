@@ -123,16 +123,16 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'response deadline uses the company default when the employee calendar is unavailable',
+    name: 'response deadline uses the company default only when the employee follows the default calendar',
     run() {
       const result = buildPerformanceResponseDeadline({
         annualExceptionRows: [],
         deliveredAt: '2026-06-19 10:00:00',
-        member: { ...member, workCalendarId: 'calendar-missing' },
+        member: { ...member, workCalendarId: undefined },
         workCalendarRows: [defaultCalendar]
       });
 
-      assertEqual(result?.calendarSnapshot.id, defaultWorkCalendarId, 'company default calendar should be the only fallback');
+      assertEqual(result?.calendarSnapshot.id, defaultWorkCalendarId, 'default-mode employee should use the company default calendar');
       assertEqual(result?.workingDates.join(','), '2026-06-22,2026-06-29,2026-07-06', 'default calendar workdays should drive the fallback deadline');
     }
   },
@@ -143,10 +143,10 @@ const tests: UnitTest[] = [
         annualExceptionRows: [],
         deliveredAt: '2026-06-19 10:00:00',
         member: { ...member, workCalendarId: 'calendar-missing' },
-        workCalendarRows: [weekdayCalendar]
+        workCalendarRows: [defaultCalendar, weekdayCalendar]
       });
 
-      assertEqual(result, undefined, 'missing employee and default calendars should not fall back to an unrelated calendar');
+      assertEqual(result, undefined, 'missing explicitly assigned calendar should not fall back to the company default');
     }
   }
 ];

@@ -1,4 +1,10 @@
-import type { AnnualExceptionConfigRow, AnnualExceptionItem, WorkCalendarRow, WorkCalendarWeekday } from './WorkCalendarState';
+import type {
+  AnnualExceptionConfigRow,
+  AnnualExceptionItem,
+  WorkCalendarRow,
+  WorkCalendarRuleVersion,
+  WorkCalendarWeekday
+} from './WorkCalendarState';
 
 const weekdayNames: WorkCalendarWeekday[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const dayMilliseconds = 24 * 60 * 60 * 1000;
@@ -39,6 +45,48 @@ export function getAnnualExceptionForDate(rows: AnnualExceptionConfigRow[], date
     .find((item) => item.date === dateKey);
 }
 
+export function resolveWorkCalendarRule(
+  calendar: WorkCalendarRow | undefined,
+  date: Date
+): WorkCalendarRuleVersion | undefined {
+  if (!calendar) {
+    return undefined;
+  }
+
+  const dateKey = formatCalendarDateKey(date);
+  if (!calendar.versions?.length) {
+    return {
+      alternateWorkdays: calendar.alternateWorkdays,
+      anchorDate: calendar.anchorDate,
+      createdAt: calendar.updatedAt,
+      effectiveFrom: calendar.effectiveFrom ?? '0001-01-01',
+      fixedWorkdays: calendar.fixedWorkdays,
+      id: calendar.currentVersionId ?? `${calendar.id}-legacy`,
+      note: calendar.note,
+      startMode: calendar.startMode,
+      type: calendar.type,
+      version: 1
+    };
+  }
+
+  return [...calendar.versions]
+    .filter((version) => version.effectiveFrom <= dateKey && (!version.effectiveTo || version.effectiveTo >= dateKey))
+    .sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))[0];
+}
+
+export function getWorkCalendarSourceSignature(
+  calendar: WorkCalendarRow | undefined,
+  annualExceptionRows: AnnualExceptionConfigRow[],
+  date: Date
+) {
+  const rule = resolveWorkCalendarRule(calendar, date);
+  const annualConfig = annualExceptionRows.find(
+    (row) => row.status === '已启用' && row.year === date.getFullYear()
+  );
+
+  return `${calendar?.id ?? 'none'}:${rule?.id ?? 'none'}:${annualConfig?.currentRevisionId ?? 'none'}`;
+}
+
 function getWeekday(date: Date) {
   return weekdayNames[date.getDay()];
 }
@@ -58,7 +106,7 @@ function getWeeksBetween(anchorDateText: string | undefined, date: Date) {
   return Math.floor((current.getTime() - anchor.getTime()) / (7 * dayMilliseconds));
 }
 
-function isBaseCalendarWorkday(calendar: WorkCalendarRow, date: Date) {
+function isBaseCalendarWorkday(calendar: WorkCalendarRuleVersion, date: Date) {
   const weekday = getWeekday(date);
 
   if (calendar.type === '大小周') {
@@ -82,6 +130,12 @@ export function isWorkCalendarDateWorkday(
     return false;
   }
 
+  const rule = resolveWorkCalendarRule(calendar, date);
+
+  if (!rule) {
+    return false;
+  }
+
   const annualException = getAnnualExceptionForDate(annualExceptionRows, date);
 
   if (annualException?.type === '特殊工作日') {
@@ -92,5 +146,5 @@ export function isWorkCalendarDateWorkday(
     return false;
   }
 
-  return isBaseCalendarWorkday(calendar, date);
+  return isBaseCalendarWorkday(rule, date);
 }

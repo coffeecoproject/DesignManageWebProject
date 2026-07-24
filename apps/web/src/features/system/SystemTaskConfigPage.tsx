@@ -18,6 +18,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { TagChipList } from '../../components/TagChip';
 import { CompactCell } from '../../components/TableCell';
+import { useTaskManagementState } from '../tasks/TaskManagementState';
 import {
   taskConfigCategories,
   type TaskConfigFormValue,
@@ -39,7 +40,7 @@ const taskConfigCategoryTone = {
 
 const defaultTaskConfigForm: TaskConfigFormValue = {
   category: '设计交付',
-  deliveryFileRequirements: ['任务交付文件'],
+  deliveryHints: ['建议提供任务交付文件'],
   name: '',
   note: ''
 };
@@ -52,13 +53,13 @@ function buildTaskConfigForm(record?: TaskConfigRow): TaskConfigFormValue {
   if (!record) {
     return {
       ...defaultTaskConfigForm,
-      deliveryFileRequirements: [...defaultTaskConfigForm.deliveryFileRequirements]
+      deliveryHints: [...defaultTaskConfigForm.deliveryHints]
     };
   }
 
   return {
     category: record.category,
-    deliveryFileRequirements: [...record.deliveryFileRequirements],
+    deliveryHints: [...record.deliveryHints],
     name: record.name,
     note: record.note
   };
@@ -67,7 +68,7 @@ function buildTaskConfigForm(record?: TaskConfigRow): TaskConfigFormValue {
 function normalizeTaskConfigForm(formValue: TaskConfigFormValue): TaskConfigFormValue {
   return {
     ...formValue,
-    deliveryFileRequirements: formValue.deliveryFileRequirements.map((item) => item.trim()).filter(Boolean),
+    deliveryHints: formValue.deliveryHints.map((item) => item.trim()).filter(Boolean),
     name: formValue.name.trim(),
     note: formValue.note.trim()
   };
@@ -97,7 +98,7 @@ function TaskConfigDrawer({
   const status = record?.status ?? '启用';
   const code = record?.code ?? '保存后生成';
   const normalizedName = formValue.name.trim();
-  const saveDisabled = !normalizedName || formValue.deliveryFileRequirements.map((item) => item.trim()).filter(Boolean).length === 0;
+  const saveDisabled = !normalizedName || formValue.deliveryHints.map((item) => item.trim()).filter(Boolean).length === 0;
 
   function updateFormValue<T extends keyof TaskConfigFormValue>(key: T, value: TaskConfigFormValue[T]) {
     drawer.updateForm(key, value);
@@ -111,8 +112,8 @@ function TaskConfigDrawer({
       return;
     }
 
-    if (nextValue.deliveryFileRequirements.length === 0) {
-      void messageApi.warning('请至少维护一项交付文件要求');
+    if (nextValue.deliveryHints.length === 0) {
+      void messageApi.warning('请至少维护一项交付提示');
       return;
     }
 
@@ -225,20 +226,20 @@ function TaskConfigDrawer({
           />
         </DetailSection>
 
-        <DetailSection icon={<FileTextOutlined />} title="交付要求">
+        <DetailSection icon={<FileTextOutlined />} title="交付提示">
           <DetailInfoGrid
             columns={1}
             items={[
               {
-                label: '交付文件要求 *',
+                label: '提示内容 *',
                 value: isDetailMode ? (
-                  <TagChipList items={formValue.deliveryFileRequirements} maxVisible={8} wrap />
+                  <TagChipList items={formValue.deliveryHints} maxVisible={8} wrap />
                 ) : (
                   <Select
                     mode="tags"
                     placeholder="输入后回车添加"
-                    value={formValue.deliveryFileRequirements}
-                    onChange={(value) => updateFormValue('deliveryFileRequirements', value)}
+                    value={formValue.deliveryHints}
+                    onChange={(value) => updateFormValue('deliveryHints', value)}
                   />
                 )
               }
@@ -265,6 +266,7 @@ function TaskConfigDrawer({
 
 export function SystemTaskConfigPage() {
   const { createTaskConfig, taskConfigRows, updateTaskConfig, updateTaskConfigStatus } = useTaskConfigState();
+  const { storeTaskRows } = useTaskManagementState();
   const [messageApi, contextHolder] = message.useMessage();
   const [statusFilter, setStatusFilter] = useState<'全部' | TaskConfigStatus>('全部');
   const [categoryFilter, setCategoryFilter] = useState<'全部' | TaskConfigRow['category']>('全部');
@@ -279,7 +281,7 @@ export function SystemTaskConfigPage() {
 
   const enabledCount = taskConfigRows.filter((row) => row.status === '启用').length;
   const disabledCount = taskConfigRows.length - enabledCount;
-  const deliveryRequirementCount = new Set(taskConfigRows.flatMap((row) => row.deliveryFileRequirements)).size;
+  const deliveryHintCount = new Set(taskConfigRows.flatMap((row) => row.deliveryHints)).size;
 
   const filteredRows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -289,7 +291,7 @@ export function SystemTaskConfigPage() {
       const matchesCategory = categoryFilter === '全部' || row.category === categoryFilter;
       const matchesKeyword =
         !normalizedKeyword ||
-        [row.name, row.code, row.category, row.note, ...row.deliveryFileRequirements]
+        [row.name, row.code, row.category, row.note, ...row.deliveryHints]
           .join(' ')
           .toLowerCase()
           .includes(normalizedKeyword);
@@ -318,7 +320,14 @@ export function SystemTaskConfigPage() {
 
   function toggleTaskConfigStatus(record: TaskConfigRow) {
     const nextStatus: TaskConfigStatus = record.status === '启用' ? '停用' : '启用';
-    updateTaskConfigStatus(record.id, nextStatus);
+    const activeTaskCount = storeTaskRows.filter(
+      (task) => task.taskConfigId === record.id && !['已完成', '已中止'].includes(task.status)
+    ).length;
+    const result = updateTaskConfigStatus(record.id, nextStatus, activeTaskCount);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     void messageApi.success(`${record.name}已${nextStatus}`);
   }
 
@@ -336,8 +345,8 @@ export function SystemTaskConfigPage() {
       render: (category: TaskConfigRow['category']) => <StatusTag toneMap={taskConfigCategoryTone} value={category} />
     },
     {
-      title: '交付要求',
-      dataIndex: 'deliveryFileRequirements',
+      title: '交付提示',
+      dataIndex: 'deliveryHints',
       width: 300,
       render: (items: string[]) => <TagChipList items={items} maxVisible={2} />
     },
@@ -363,7 +372,7 @@ export function SystemTaskConfigPage() {
           <MetricCard label="任务类型" value={taskConfigRows.length} icon={<ProfileOutlined />} />
           <MetricCard label="启用类型" value={enabledCount} icon={<CheckCircleOutlined />} />
           <MetricCard label="停用类型" value={disabledCount} icon={<StopOutlined />} />
-          <MetricCard label="交付要求" value={deliveryRequirementCount} icon={<FileTextOutlined />} />
+          <MetricCard label="交付提示" value={deliveryHintCount} icon={<FileTextOutlined />} />
         </MetricGrid>
       }
       filters={

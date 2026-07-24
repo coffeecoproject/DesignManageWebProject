@@ -43,6 +43,8 @@ import {
   workCalendarWeekdays
 } from './WorkCalendarState';
 import { getAnnualExceptionSummary, type AnnualExceptionSummary } from './workCalendarRules';
+import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
+import { isPeopleRelationshipActive } from '../people/peopleDomain';
 
 const workCalendarStatusTone = {
   启用: 'green',
@@ -63,6 +65,7 @@ const annualExceptionStatusTone = {
 
 const defaultWorkCalendarForm: WorkCalendarFormValue = {
   alternateWorkdays: [],
+  effectiveFrom: '2026-06-16',
   fixedWorkdays: defaultDoubleWeekendWorkdays,
   name: '',
   note: '',
@@ -145,6 +148,7 @@ function buildWorkCalendarForm(record?: WorkCalendarRow): WorkCalendarFormValue 
   return {
     alternateWorkdays: [...record.alternateWorkdays],
     anchorDate: record.anchorDate,
+    effectiveFrom: record.effectiveFrom ?? '2026-01-01',
     fixedWorkdays: [...record.fixedWorkdays],
     name: record.name,
     note: record.note,
@@ -286,6 +290,7 @@ function normalizeWorkCalendarForm(formValue: WorkCalendarFormValue): WorkCalend
   if (formValue.type === '自定义') {
     return {
       alternateWorkdays: [],
+      effectiveFrom: formValue.effectiveFrom,
       fixedWorkdays: Array.from(new Set(formValue.fixedWorkdays)),
       name: formValue.name.trim(),
       note: formValue.note.trim(),
@@ -297,6 +302,7 @@ function normalizeWorkCalendarForm(formValue: WorkCalendarFormValue): WorkCalend
     return {
       alternateWorkdays: defaultBigSmallAlternateWorkdays,
       anchorDate: formValue.anchorDate ?? defaults.anchorDate,
+      effectiveFrom: formValue.effectiveFrom,
       fixedWorkdays: defaultBigSmallFixedWorkdays,
       name: formValue.name.trim(),
       note: formValue.note.trim(),
@@ -307,6 +313,7 @@ function normalizeWorkCalendarForm(formValue: WorkCalendarFormValue): WorkCalend
 
   return {
     alternateWorkdays: defaults.alternateWorkdays,
+    effectiveFrom: formValue.effectiveFrom,
     fixedWorkdays: defaults.fixedWorkdays,
     name: formValue.name.trim(),
     note: formValue.note.trim(),
@@ -386,6 +393,7 @@ function WorkCalendarDrawer({
   const code = record?.code ?? '保存后生成';
   const saveDisabled =
     !normalizedForm.name ||
+    !normalizedForm.effectiveFrom ||
     normalizedForm.fixedWorkdays.length === 0 ||
     (normalizedForm.type === '大小周' && !normalizedForm.anchorDate);
 
@@ -406,6 +414,16 @@ function WorkCalendarDrawer({
 
     if (!nextValue.name) {
       void messageApi.warning('请输入工作日历名称');
+      return;
+    }
+
+    if (!nextValue.effectiveFrom) {
+      void messageApi.warning('请选择生效日期');
+      return;
+    }
+
+    if (isEditMode && record && nextValue.effectiveFrom <= (record.effectiveFrom ?? '0001-01-01')) {
+      void messageApi.warning(`生效日期需晚于当前版本 ${record.effectiveFrom ?? '初始版本'}`);
       return;
     }
 
@@ -548,7 +566,23 @@ function WorkCalendarDrawer({
               },
               { label: '使用范围', value: record ? getCalendarScope(record) : '可分配给人员' },
               { label: '状态', value: <StatusTag toneMap={workCalendarStatusTone} value={status} /> },
-              { label: '最近更新', value: record?.updatedAt ?? '保存后生成' }
+              {
+                label: '生效日期 *',
+                value: isDetailMode ? (
+                  formValue.effectiveFrom
+                ) : (
+                  <DatePicker
+                    className="archive-create-date-picker"
+                    format="YYYY-MM-DD"
+                    inputReadOnly
+                    value={formValue.effectiveFrom ? dayjs(formValue.effectiveFrom) : undefined}
+                    onChange={(_, dateString) =>
+                      updateFormValue('effectiveFrom', Array.isArray(dateString) ? dateString[0] : dateString)
+                    }
+                  />
+                )
+              },
+              { label: '版本', value: record ? `第 ${record.versions?.length ?? 1} 版` : '保存后生成' }
             ]}
           />
         </DetailSection>
@@ -850,7 +884,8 @@ function AnnualExceptionDrawer({
                 )
               },
               { label: '休息日', value: `${restDayCount} 天` },
-              { label: '工作日调整', value: `${workdayCount} 天` }
+              { label: '工作日调整', value: `${workdayCount} 天` },
+              { label: '当前修订', value: record ? `第 ${record.revisions?.length ?? 1} 版` : '保存后生成' }
             ]}
           />
           {!isDetailMode && validationError ? <div className="form-inline-warning">{validationError}</div> : null}
@@ -874,6 +909,7 @@ function AnnualExceptionDrawer({
 }
 
 export function SystemWorkCalendarPage() {
+  const { peopleRows } = usePeopleOrganizationState();
   const {
     annualExceptionRows,
     createAnnualExceptionConfig,
@@ -981,7 +1017,14 @@ export function SystemWorkCalendarPage() {
     }
 
     const nextStatus: WorkCalendarStatus = record.status === '启用' ? '停用' : '启用';
-    updateWorkCalendarStatus(record.id, nextStatus);
+    const activeMemberCount = peopleRows.filter(
+      (member) => member.workCalendarId === record.id && isPeopleRelationshipActive(member)
+    ).length;
+    const result = updateWorkCalendarStatus(record.id, nextStatus, activeMemberCount);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     void messageApi.success(`${record.name}已${nextStatus}`);
   }
 
@@ -1041,9 +1084,16 @@ export function SystemWorkCalendarPage() {
       render: (status: WorkCalendarStatus) => <StatusTag toneMap={workCalendarStatusTone} value={status} />
     },
     {
-      title: '最近更新',
-      dataIndex: 'updatedAt',
-      width: 96
+      title: '生效版本',
+      key: 'effectiveVersion',
+      width: 126,
+      render: (_, record) => (
+        <CompactCell
+          align="center"
+          primary={record.effectiveFrom ?? '-'}
+          secondary={`V${record.versions?.length ?? 1}`}
+        />
+      )
     }
   ];
 
@@ -1075,11 +1125,15 @@ export function SystemWorkCalendarPage() {
       width: 220
     },
     {
-      title: '最近更新',
-      key: 'updatedAt',
+      title: '当前修订',
+      key: 'revision',
       width: 128,
       render: (_, record) => (
-        <CompactCell align="center" primary={record.updatedAt} secondary={record.updatedBy} />
+        <CompactCell
+          align="center"
+          primary={`第 ${record.revisions?.length ?? 1} 版`}
+          secondary={record.updatedAt}
+        />
       )
     }
   ];

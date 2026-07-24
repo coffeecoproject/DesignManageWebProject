@@ -86,14 +86,15 @@ function getWorkdayDatesInRange(
   workCalendarRows: WorkCalendarRow[],
   annualExceptionRows: AnnualExceptionConfigRow[]
 ) {
-  const calendar = getMemberWorkCalendar(member, workCalendarRows);
   const workdayDates: string[] = [];
 
   for (let cursorTime = range.startDate.getTime(); cursorTime <= range.endDate.getTime(); cursorTime += dayMilliseconds) {
     const cursor = new Date(cursorTime);
+    const dateText = formatDateKey(cursor);
+    const calendar = getMemberWorkCalendar(member, workCalendarRows, dateText);
 
     if (isWorkCalendarDateWorkday(calendar, cursor, annualExceptionRows)) {
-      workdayDates.push(formatDateKey(cursor));
+      workdayDates.push(dateText);
     }
   }
 
