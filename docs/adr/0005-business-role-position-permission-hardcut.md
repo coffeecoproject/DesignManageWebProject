@@ -27,7 +27,7 @@ Person -> positions
 Position -> business roles
 Business role -> default permissions
 Position -> extra permissions
-Position effective permissions = union(enabled business role default permissions, position extra permissions)
+Position effective permissions = union(fixed business role default permissions, position extra permissions)
 Account -> system role
 ```
 
@@ -39,7 +39,7 @@ Current frontend implementation scope:
 - `/people/position-permissions` stays under `人员组织 / 岗位管理`.
 - `岗位管理` binds positions to multiple business roles.
 - `岗位管理` owns position-level extra permissions.
-- `岗位管理` displays effective permissions as the union of enabled business-role default permissions and position extra permissions.
+- `岗位管理` displays effective permissions as the union of fixed business-role default permissions and position extra permissions.
 - Position extra-permission selection excludes permissions already inherited from selected business roles.
 - Business-role and position effective-permission displays share the same grouped permission presentation component and reuse the existing role-permission layout styles.
 
@@ -56,6 +56,6 @@ Expected future account system roles remain:
 - `/system/roles` is now a read-only business-role package view, not a permission editing workbench.
 - `/people/position-permissions` is the only current frontend surface for adding position-level extra permissions.
 - The current frontend can preview position effective permissions, but this is not backend authorization evidence.
-- Personnel records currently still hold one primary position in the prototype. Multi-position selection and inheritance are deferred to backend/personnel-structure design.
-- Data scope, resource conditions, approval, audit persistence, and actual route/API enforcement remain future authorization work.
+- Personnel authorization now consumes effective-dated position-assignment records and supports concurrent positions in the frontend contract.
+- Fixed position data scopes, menu filtering, route guards, selected mutation controls, and personnel/task record filtering consume the same frontend authorization result. Backend enforcement and audit persistence remain future authorization work.
 - Any future backend permission implementation must treat frontend-hidden controls as insufficient; backend authorization checks are still required.

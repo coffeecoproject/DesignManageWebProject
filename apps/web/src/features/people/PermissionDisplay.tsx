@@ -2,6 +2,7 @@ import { Select, Tag } from 'antd';
 import { TagChip, TagChipList } from '../../components/TagChip';
 import {
   getPermissionCategory,
+  getPermissionName,
   permissionCatalog,
   permissionCategoryOrder,
   permissionCategoryTone,
@@ -26,7 +27,7 @@ export function PermissionPreviewTags({
   maxVisible?: number;
   permissions: string[];
 }) {
-  return <TagChipList emptyText={emptyText} items={permissions} maxVisible={maxVisible} wrap />;
+  return <TagChipList emptyText={emptyText} items={permissions.map(getPermissionName)} maxVisible={maxVisible} wrap />;
 }
 
 export function PermissionGroupList({
@@ -63,7 +64,7 @@ export function PermissionGroupList({
                   onRemove?.(permission);
                 }}
               >
-                {permission}
+                {getPermissionName(permission)}
               </Tag>
             ))}
           </div>
@@ -86,10 +87,10 @@ export function PermissionAddSelect({
 }) {
   const selectedSet = new Set([...selectedPermissions, ...excludedPermissions]);
   const addPermissionOptions = permissionCatalog
-    .filter((permission) => !selectedSet.has(permission.name))
+    .filter((permission) => !selectedSet.has(permission.id))
     .map((permission) => ({
       label: permission.name,
-      value: permission.name
+      value: permission.id
     }));
 
   return (

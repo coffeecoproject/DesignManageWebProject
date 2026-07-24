@@ -1,33 +1,23 @@
 import {
-  AuditOutlined,
   KeyOutlined,
   SafetyCertificateOutlined,
   TeamOutlined
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
 import { useState } from 'react';
-import { AuditTrailSection } from '../../components/AuditTrailSection';
-import type { AuditTrailRecord } from '../../components/AuditTrailTable';
 import { BindingSummaryGrid } from '../../components/BindingSummaryGrid';
-import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
+import { DetailDrawerTitle, DetailInfoGrid, DetailSection } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
 import { DetailTabs } from '../../components/DetailTabs';
 import { DrawerProfileCard } from '../../components/DrawerProfileCard';
 import { DrawerShell } from '../../components/DrawerShell';
 import { ManagementPageScaffold } from '../../components/ManagementPageScaffold';
 import { ManagementTable } from '../../components/ManagementTable';
-import { MetricCard } from '../../components/MetricCard';
-import { MetricGrid } from '../../components/MetricGrid';
 import { TagChip, TagChipList } from '../../components/TagChip';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { PermissionGroupList, PermissionPreviewTags } from './PermissionDisplay';
-import { type RolePermissionRow, type RoleStatus, usePermissionRoleState } from './PermissionRoleState';
+import { type RolePermissionRow, usePermissionRoleState } from './PermissionRoleState';
 import { getAccessRoleTone } from './rolePermissionModel';
-
-const roleStatusTone = {
-  启用: 'green',
-  停用: 'gray'
-} as const;
 
 function BusinessRoleCell({ record }: { record: RolePermissionRow }) {
   return (
@@ -59,31 +49,6 @@ function RolePositionScope({ positions }: { positions: string[] }) {
   );
 }
 
-function getBusinessRoleAuditTrailRecords(record: RolePermissionRow): AuditTrailRecord[] {
-  return [
-    {
-      time: record.updatedAt,
-      actor: '系统预置',
-      object: record.role,
-      action: '维护默认权限包',
-      summary: `默认权限 ${record.permissions.length} 项`,
-      result: record.status === '启用' ? '成功' : '已作废',
-      source: '业务角色',
-      note: record.permissions.slice(0, 6).join(' / ')
-    },
-    {
-      time: record.updatedAt,
-      actor: '李明',
-      object: record.role,
-      action: '同步岗位绑定',
-      summary: `绑定 ${record.positions.length} 个岗位`,
-      result: '成功',
-      source: '岗位管理',
-      note: record.positions.length > 0 ? record.positions.join(' / ') : '当前未被岗位绑定'
-    }
-  ];
-}
-
 function BusinessRoleDrawer({
   record,
   open,
@@ -105,8 +70,6 @@ function BusinessRoleDrawer({
       open={open}
       title={
         <DetailDrawerTitle
-          status={record.status}
-          statusToneMap={roleStatusTone}
           subtitle="系统管理 / 业务角色"
           title="业务角色详情"
         />
@@ -149,7 +112,7 @@ function BusinessRoleDrawer({
         items={[
           {
             key: 'info',
-            label: '业务角色信息',
+            label: '角色信息',
             children: (
               <>
                 <DetailSection icon={<SafetyCertificateOutlined />} title="业务角色">
@@ -157,9 +120,7 @@ function BusinessRoleDrawer({
                     columns={2}
                     items={[
                       { label: '业务角色', value: <TagChip label={record.role} tone={getAccessRoleTone(record.role)} /> },
-                      { label: '业务角色编码', value: record.code },
-                      { label: '状态', value: <StatusTag toneMap={roleStatusTone} value={record.status} /> },
-                      { label: '最近更新', value: record.updatedAt }
+                      { label: '业务角色编码', value: record.code }
                     ]}
                   />
                 </DetailSection>
@@ -178,11 +139,6 @@ function BusinessRoleDrawer({
                 <PermissionGroupList permissions={record.permissions} />
               </DetailSection>
             )
-          },
-          {
-            key: 'audit',
-            label: '变更记录',
-            children: <AuditTrailSection icon={<AuditOutlined />} records={getBusinessRoleAuditTrailRecords(record)} title="变更记录" />
           }
         ]}
       />
@@ -191,11 +147,8 @@ function BusinessRoleDrawer({
 }
 
 export function PeopleRolesPage() {
-  const { permissionByRole, roleRows } = usePermissionRoleState();
+  const { roleRows } = usePermissionRoleState();
   const [activeRole, setActiveRole] = useState<RolePermissionRow>();
-  const rolePermissionCount = new Set(Object.values(permissionByRole).flat()).size;
-  const boundPositionCount = new Set(roleRows.flatMap((row) => row.positions)).size;
-  const enabledRoleCount = roleRows.filter((row) => row.status === '启用').length;
 
   function closeRoleDrawer() {
     setActiveRole(undefined);
@@ -219,34 +172,11 @@ export function PeopleRolesPage() {
       dataIndex: 'positions',
       width: 260,
       render: (positions: string[]) => <PositionTags positions={positions} />
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      align: 'center',
-      width: 86,
-      render: (status: RoleStatus) => <StatusTag toneMap={roleStatusTone} value={status} />
-    },
-    {
-      title: '最近更新',
-      dataIndex: 'updatedAt',
-      align: 'center',
-      width: 104
     }
   ];
 
   return (
-    <ManagementPageScaffold
-      layout="table-workbench"
-      metrics={
-        <MetricGrid columns={4}>
-          <MetricCard label="业务角色" value={roleRows.length} icon={<SafetyCertificateOutlined />} />
-          <MetricCard label="启用业务角色" value={enabledRoleCount} icon={<AuditOutlined />} />
-          <MetricCard label="默认权限" value={rolePermissionCount} icon={<KeyOutlined />} />
-          <MetricCard label="绑定岗位" value={boundPositionCount} icon={<TeamOutlined />} />
-        </MetricGrid>
-      }
-    >
+    <ManagementPageScaffold layout="table-workbench">
       <ManagementTable<RolePermissionRow>
         columns={columns}
         count={{ value: roleRows.length, unit: '个业务角色' }}

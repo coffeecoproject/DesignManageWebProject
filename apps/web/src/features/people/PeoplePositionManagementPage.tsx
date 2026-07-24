@@ -10,7 +10,7 @@ import {
 import { Input, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { AuditTrailSection } from '../../components/AuditTrailSection';
 import type { AuditTrailRecord } from '../../components/AuditTrailTable';
 import { BindingSummaryGrid } from '../../components/BindingSummaryGrid';
@@ -35,6 +35,15 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { TagChip, TagChipList } from '../../components/TagChip';
 import { CellText } from '../../components/TableCell';
+import {
+  defaultPositionDataScope,
+  type CustomerDataScope,
+  type FinanceDataScope,
+  type PeopleDataScope,
+  type PositionDataScope,
+  type SalaryDataScope,
+  type TaskDataScope
+} from '../auth/authorizationModel';
 import { PermissionAddSelect, PermissionGroupList, PermissionPreviewTags } from './PermissionDisplay';
 import { positionRequiredFileSlots, type PositionRequiredFileSlot } from './peopleFileSlotModel';
 import {
@@ -45,15 +54,14 @@ import {
   type PositionManagementStatus,
   usePeopleOrganizationState
 } from './PeopleOrganizationState';
-import { usePermissionRoleState, type RolePermissionRow, type RoleStatus } from './PermissionRoleState';
+import { usePermissionRoleState, type RolePermissionRow } from './PermissionRoleState';
 import {
   getBusinessRolePermissions,
   getAccessRoleTone,
+  getPermissionName,
   getPositionEffectivePermissions,
   type AccessRole
 } from './rolePermissionModel';
-
-type RoleStatusByRole = Record<AccessRole, RoleStatus>;
 
 type PositionFormValue = {
   code: string;
@@ -63,6 +71,7 @@ type PositionFormValue = {
   positionName: string;
   positionStatus: PositionManagementStatus;
   extraPermissions: string[];
+  dataScopes: PositionDataScope;
   selectedRoles: AccessRole[];
   uploadFiles: UploadFile[];
 };
@@ -108,6 +117,7 @@ function createDraftPositionRow(rows: PositionManagementRow[]): PositionManageme
     memberCount: 0,
     position: '新岗位',
     extraPermissions: [],
+    dataScopes: { ...defaultPositionDataScope },
     roleBindings: [],
     status: '启用',
     updatedAt: prototypeToday
@@ -123,6 +133,7 @@ function buildPositionForm(record: PositionManagementRow): PositionFormValue {
     positionName: record.position,
     positionStatus: record.status,
     extraPermissions: [...record.extraPermissions],
+    dataScopes: { ...record.dataScopes },
     selectedRoles: [...record.roleBindings],
     uploadFiles: []
   };
@@ -154,6 +165,7 @@ function buildPositionRecord(
     memberCount: record?.memberCount ?? form.memberCount,
     position: normalizedPositionName,
     extraPermissions: form.extraPermissions,
+    dataScopes: { ...form.dataScopes },
     roleBindings: form.selectedRoles,
     status: form.positionStatus,
     updatedAt: prototypeToday
@@ -217,7 +229,7 @@ function getPositionAuditTrailRecords(
       summary: `追加权限 ${extraPermissions.length} 项`,
       result: status === '启用' ? '成功' : '已作废',
       source: '岗位管理',
-      note: extraPermissions.length > 0 ? extraPermissions.join(' / ') : '无追加权限'
+      note: extraPermissions.length > 0 ? extraPermissions.map(getPermissionName).join(' / ') : '无追加权限'
     },
     {
       time: record.updatedAt,
@@ -232,16 +244,10 @@ function getPositionAuditTrailRecords(
   ];
 }
 
-function getPositionRoleLabel(role: AccessRole, roleStatusByRole: RoleStatusByRole) {
-  return roleStatusByRole[role] === '停用' ? `${role} / 停用` : role;
-}
-
 function PositionRoleTags({
-  roleStatusByRole = {},
   variant = 'wrap',
   roles
 }: {
-  roleStatusByRole?: RoleStatusByRole;
   variant?: 'summary' | 'wrap';
   roles: AccessRole[];
 }) {
@@ -252,9 +258,9 @@ function PositionRoleTags({
       emptyText="未绑定业务角色"
       items={roles}
       maxVisible={summary ? 2 : roles.length}
-      getLabel={(role) => getPositionRoleLabel(role, roleStatusByRole)}
-      getTooltipLabel={(role) => getPositionRoleLabel(role, roleStatusByRole)}
-      tone={(role) => (roleStatusByRole[role] === '停用' ? 'gray' : getAccessRoleTone(role))}
+      getLabel={(role) => role}
+      getTooltipLabel={(role) => role}
+      tone={(role) => getAccessRoleTone(role)}
       getKey={(role) => role}
       overflowTone="gray"
       overflowVariant={summary ? 'compact-overflow' : 'default'}
@@ -279,14 +285,6 @@ function PositionManagementDrawer({
   const [messageApi, contextHolder] = message.useMessage();
   const [previewFile, setPreviewFile] = useState<PositionManagementFile>();
   const { form, record } = drawer;
-  const roleStatusByRole = useMemo(
-    () =>
-      roleRows.reduce((currentMap, row) => {
-        currentMap[row.role] = row.status;
-        return currentMap;
-      }, {} as RoleStatusByRole),
-    [roleRows]
-  );
 
   if (!drawer.mode) {
     return null;
@@ -515,7 +513,7 @@ function PositionManagementDrawer({
                       <Select
                         mode="multiple"
                         options={roleRows.map((roleRow) => ({
-                          label: roleRow.status === '停用' ? `${roleRow.role}（停用）` : roleRow.role,
+                          label: roleRow.role,
                           value: roleRow.role
                         }))}
                         value={form.selectedRoles}
@@ -528,7 +526,7 @@ function PositionManagementDrawer({
                     items={form.selectedRoles.map((role) => ({
                       extra: `${permissionByRole[role]?.length ?? 0} 项默认权限`,
                       key: role,
-                      label: <TagChip label={role} tone={roleStatusByRole[role] === '停用' ? 'gray' : getAccessRoleTone(role)} />
+                      label: <TagChip label={role} tone={getAccessRoleTone(role)} />
                     }))}
                   />
                 </DetailSection>
@@ -550,6 +548,51 @@ function PositionManagementDrawer({
                     permissions={form.extraPermissions}
                     onRemove={removeExtraPermission}
                   />
+                </DetailSection>
+              )
+            },
+            {
+              key: 'data-scopes',
+              label: '数据范围',
+              children: (
+                <DetailSection icon={<SafetyCertificateOutlined />} title="岗位数据范围">
+                  <DrawerFormGrid>
+                    <DrawerFormField label="人员数据" required>
+                      <Select<PeopleDataScope>
+                        options={['本人', '全部人员'].map((value) => ({ label: value, value }))}
+                        value={form.dataScopes.people}
+                        onChange={(people) => drawer.updateForm('dataScopes', { ...form.dataScopes, people })}
+                      />
+                    </DrawerFormField>
+                    <DrawerFormField label="任务数据" required>
+                      <Select<TaskDataScope>
+                        options={['本人参与', '负责验收', '全部任务'].map((value) => ({ label: value, value }))}
+                        value={form.dataScopes.tasks}
+                        onChange={(tasks) => drawer.updateForm('dataScopes', { ...form.dataScopes, tasks })}
+                      />
+                    </DrawerFormField>
+                    <DrawerFormField label="客户数据" required>
+                      <Select<CustomerDataScope>
+                        options={['关联品牌', '全部客户'].map((value) => ({ label: value, value }))}
+                        value={form.dataScopes.customers}
+                        onChange={(customers) => drawer.updateForm('dataScopes', { ...form.dataScopes, customers })}
+                      />
+                    </DrawerFormField>
+                    <DrawerFormField label="财务数据" required>
+                      <Select<FinanceDataScope>
+                        options={['不可访问', '查看', '管理'].map((value) => ({ label: value, value }))}
+                        value={form.dataScopes.finance}
+                        onChange={(finance) => drawer.updateForm('dataScopes', { ...form.dataScopes, finance })}
+                      />
+                    </DrawerFormField>
+                    <DrawerFormField label="薪酬数据" required>
+                      <Select<SalaryDataScope>
+                        options={['本人', '全部人员'].map((value) => ({ label: value, value }))}
+                        value={form.dataScopes.salary}
+                        onChange={(salary) => drawer.updateForm('dataScopes', { ...form.dataScopes, salary })}
+                      />
+                    </DrawerFormField>
+                  </DrawerFormGrid>
                 </DetailSection>
               )
             },
@@ -640,14 +683,6 @@ export function PeoplePositionManagementPage() {
     const completeness = getPositionRequiredFileCompleteness(row.files);
     return completeness.uploaded < completeness.total;
   }).length;
-  const roleStatusByRole = useMemo(
-    () =>
-      roleRows.reduce((currentMap, row) => {
-        currentMap[row.role] = row.status;
-        return currentMap;
-      }, {} as RoleStatusByRole),
-    [roleRows]
-  );
   const positionDrawer = useDrawerFormState<PositionManagementRow, PositionFormValue>({
     createForm: () => createPositionForm(positionRows),
     editForm: buildPositionForm
@@ -675,7 +710,7 @@ export function PeoplePositionManagementPage() {
       title: '业务角色',
       dataIndex: 'roleBindings',
       width: 280,
-      render: (roles: AccessRole[]) => <PositionRoleTags roleStatusByRole={roleStatusByRole} roles={roles} />
+      render: (roles: AccessRole[]) => <PositionRoleTags roles={roles} />
     },
     {
       title: '追加权限',

@@ -2,12 +2,9 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 import {
   accessRoleOptions,
   getRolesBoundPositions,
-  positionRoleDefaults,
   rolePermissionDefaults,
   type AccessRole
 } from './rolePermissionModel';
-
-export type RoleStatus = '启用' | '停用';
 
 export type RolePermissionRow = {
   id: string;
@@ -15,13 +12,10 @@ export type RolePermissionRow = {
   role: AccessRole;
   permissions: string[];
   positions: string[];
-  status: RoleStatus;
-  updatedAt: string;
 };
 
 type PermissionRoleStateValue = {
   permissionByRole: Record<AccessRole, string[]>;
-  positionRoleBindings: PositionRoleBindingMap;
   roleRows: RolePermissionRow[];
   syncRolePositions: (positionRows: PositionRoleBinding[]) => void;
 };
@@ -31,40 +25,30 @@ type PositionRoleBinding = {
   roleBindings: AccessRole[];
 };
 
-export type PositionRoleBindingMap = Record<string, AccessRole[]>;
-
-const prototypeToday = '2026-06-11';
-
-const roleMeta: Record<AccessRole, Pick<RolePermissionRow, 'id' | 'code' | 'updatedAt'>> = {
+const roleMeta: Record<AccessRole, Pick<RolePermissionRow, 'id' | 'code'>> = {
   经营管理角色: {
     id: 'role-business-management',
-    code: 'ROLE-2026-001',
-    updatedAt: prototypeToday
+    code: 'ROLE-2026-001'
   },
   财务角色: {
     id: 'role-finance',
-    code: 'ROLE-2026-002',
-    updatedAt: prototypeToday
+    code: 'ROLE-2026-002'
   },
   行政人事角色: {
     id: 'role-admin-hr',
-    code: 'ROLE-2026-003',
-    updatedAt: prototypeToday
+    code: 'ROLE-2026-003'
   },
   设计执行角色: {
     id: 'role-design-execution',
-    code: 'ROLE-2026-004',
-    updatedAt: prototypeToday
+    code: 'ROLE-2026-004'
   },
   设计审核角色: {
     id: 'role-design-review',
-    code: 'ROLE-2026-005',
-    updatedAt: prototypeToday
+    code: 'ROLE-2026-005'
   },
   外协执行角色: {
     id: 'role-external-execution',
-    code: 'ROLE-2026-006',
-    updatedAt: prototypeToday
+    code: 'ROLE-2026-006'
   }
 };
 
@@ -73,16 +57,8 @@ function createRoleRows(): RolePermissionRow[] {
     ...roleMeta[role],
     permissions: rolePermissionDefaults[role],
     positions: getRolesBoundPositions(role),
-    role,
-    status: '启用'
+    role
   }));
-}
-
-function createPositionRoleBindings(): PositionRoleBindingMap {
-  return Object.entries(positionRoleDefaults).reduce((currentMap, [position, roleBindings]) => {
-    currentMap[position] = roleBindings;
-    return currentMap;
-  }, {} as PositionRoleBindingMap);
 }
 
 function getPositionsByRole(roleRows: RolePermissionRow[], positionRows: PositionRoleBinding[]) {
@@ -108,12 +84,11 @@ const PermissionRoleStateContext = createContext<PermissionRoleStateValue | unde
 
 export function PermissionRoleProvider({ children }: { children: ReactNode }) {
   const [roleRows, setRoleRows] = useState<RolePermissionRow[]>(() => createRoleRows());
-  const [positionRoleBindings, setPositionRoleBindings] = useState<PositionRoleBindingMap>(() => createPositionRoleBindings());
 
   const permissionByRole = useMemo(
     () =>
       roleRows.reduce((currentMap, row) => {
-        currentMap[row.role] = row.status === '启用' ? row.permissions : [];
+        currentMap[row.role] = row.permissions;
         return currentMap;
       }, {} as Record<AccessRole, string[]>),
     [roleRows]
@@ -122,19 +97,12 @@ export function PermissionRoleProvider({ children }: { children: ReactNode }) {
   const value = useMemo<PermissionRoleStateValue>(
     () => ({
       permissionByRole,
-      positionRoleBindings,
       roleRows,
       syncRolePositions(positionRows) {
-        setPositionRoleBindings(
-          positionRows.reduce((currentMap, row) => {
-            currentMap[row.position] = row.roleBindings;
-            return currentMap;
-          }, {} as PositionRoleBindingMap)
-        );
         setRoleRows((currentRows) => updateRolePositions(currentRows, positionRows));
       }
     }),
-    [permissionByRole, positionRoleBindings, roleRows]
+    [permissionByRole, roleRows]
   );
 
   return <PermissionRoleStateContext.Provider value={value}>{children}</PermissionRoleStateContext.Provider>;
