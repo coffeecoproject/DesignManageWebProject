@@ -629,6 +629,30 @@ const tests: UnitTest[] = [
       assertEqual(isWorkCalendarDateWorkday(versionedCalendar, beforeEffectiveDate), true, 'Monday should be a workday before the change');
       assertEqual(isWorkCalendarDateWorkday(versionedCalendar, afterEffectiveDate), false, 'Monday should be a rest day after the change');
     }
+  },
+  {
+    name: 'preserves historical calendar availability after a later status change',
+    run: () => {
+      const statusVersionedCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        status: '停用',
+        statusPeriods: [
+          { effectiveFrom: '2026-01-01', effectiveTo: '2026-06-15', status: '启用' },
+          { effectiveFrom: '2026-06-16', status: '停用' }
+        ]
+      };
+
+      assertEqual(
+        isWorkCalendarDateWorkday(statusVersionedCalendar, new Date('2026-06-15T00:00:00')),
+        true,
+        'a later stop must not erase historical workdays'
+      );
+      assertEqual(
+        isWorkCalendarDateWorkday(statusVersionedCalendar, new Date('2026-06-16T00:00:00')),
+        false,
+        'the calendar should stop from the status effective date'
+      );
+    }
   }
 ];
 

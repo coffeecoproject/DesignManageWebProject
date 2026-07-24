@@ -5,13 +5,20 @@ import {
   type AnnualExceptionItem,
   type WorkCalendarRow
 } from '../system/WorkCalendarState';
-import { formatCalendarDateKey, getAnnualExceptionForDate, isWorkCalendarDateWorkday } from '../system/workCalendarRules';
+import {
+  formatCalendarDateKey,
+  getAnnualExceptionForDate,
+  isWorkCalendarActiveOnDate,
+  isWorkCalendarDateWorkday,
+  resolveWorkCalendarRule
+} from '../system/workCalendarRules';
 
 export type PerformanceResponseCalendarSnapshot = Pick<
   WorkCalendarRow,
   'alternateWorkdays' | 'anchorDate' | 'code' | 'fixedWorkdays' | 'id' | 'name' | 'startMode' | 'type' | 'updatedAt'
 > & {
   exceptionItems: AnnualExceptionItem[];
+  ruleVersionIds: string[];
 };
 
 export type PerformanceResponseDeadline = {
@@ -50,13 +57,15 @@ export function buildPerformanceResponseDeadline({
   const calendar = deliveredDate
     ? getMemberWorkCalendar(member, workCalendarRows, formatCalendarDateKey(deliveredDate))
     : undefined;
+  const deliveredRule = deliveredDate ? resolveWorkCalendarRule(calendar, deliveredDate) : undefined;
 
-  if (!deliveredDate || !calendar || calendar.status !== '启用' || requiredWorkingDays < 1) {
+  if (!deliveredDate || !calendar || !deliveredRule || !isWorkCalendarActiveOnDate(calendar, deliveredDate) || requiredWorkingDays < 1) {
     return undefined;
   }
 
   const workingDates: string[] = [];
   const exceptionItems: AnnualExceptionItem[] = [];
+  const ruleVersionIds = new Set<string>();
 
   for (let offset = 1; offset <= maxSearchDays && workingDates.length < requiredWorkingDays; offset += 1) {
     const cursor = new Date(deliveredDate);
@@ -68,6 +77,10 @@ export function buildPerformanceResponseDeadline({
     }
 
     if (isWorkCalendarDateWorkday(calendar, cursor, annualExceptionRows)) {
+      const appliedRule = resolveWorkCalendarRule(calendar, cursor);
+      if (appliedRule) {
+        ruleVersionIds.add(appliedRule.id);
+      }
       workingDates.push(formatCalendarDateKey(cursor));
     }
   }
@@ -80,15 +93,16 @@ export function buildPerformanceResponseDeadline({
 
   return {
     calendarSnapshot: {
-      alternateWorkdays: [...calendar.alternateWorkdays],
-      anchorDate: calendar.anchorDate,
+      alternateWorkdays: [...deliveredRule.alternateWorkdays],
+      anchorDate: deliveredRule.anchorDate,
       code: calendar.code,
       exceptionItems,
-      fixedWorkdays: [...calendar.fixedWorkdays],
+      fixedWorkdays: [...deliveredRule.fixedWorkdays],
       id: calendar.id,
       name: calendar.name,
-      startMode: calendar.startMode,
-      type: calendar.type,
+      ruleVersionIds: [...ruleVersionIds],
+      startMode: deliveredRule.startMode,
+      type: deliveredRule.type,
       updatedAt: calendar.updatedAt
     },
     deadlineAt: `${deadlineDate} 23:59:59`,

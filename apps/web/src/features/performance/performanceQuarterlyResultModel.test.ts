@@ -63,6 +63,7 @@ const responseDeadline: PerformanceResponseDeadline = {
     fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
     id: 'calendar-2026',
     name: '公司工作日历',
+    ruleVersionIds: ['calendar-2026-v1'],
     type: '双休',
     updatedAt: '2026-01-01 09:00'
   },

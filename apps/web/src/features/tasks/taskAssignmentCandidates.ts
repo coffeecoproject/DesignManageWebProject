@@ -1,5 +1,5 @@
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
-import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
+import { isWorkCalendarActiveOnDate, isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import type { PeopleAttendanceRecord } from '../people/PeopleOrganizationState';
 import type { PeopleMember } from '../people/peopleTypes';
 import { getMemberWorkCalendar, getPeopleRelationshipRangeBlockers } from '../people/peopleDomain';
@@ -160,7 +160,7 @@ function getUsableWorkSegments(
 
   return getWindowDateRange(window).flatMap((date) => {
     const calendar = getMemberWorkCalendar(member, workCalendarRows, formatTaskDate(date));
-    if (!calendar || calendar.status !== '启用') {
+    if (!calendar || !isWorkCalendarActiveOnDate(calendar, date)) {
       return [];
     }
     const isWorkday = isWorkCalendarDateWorkday(calendar, date, annualExceptionRows);
@@ -245,7 +245,8 @@ function buildCalendarWarnings(
     };
   }
 
-  if (!calendar || calendar.status !== '启用') {
+  const windowStartDate = new Date(`${window.startAt.slice(0, 10)}T00:00:00`);
+  if (!calendar || !isWorkCalendarActiveOnDate(calendar, windowStartDate)) {
     return {
       blockers: [] as string[],
       calendarName: calendar?.name ?? '未配置工作日历',

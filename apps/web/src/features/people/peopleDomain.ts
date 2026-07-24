@@ -1,4 +1,4 @@
-import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendarRow, type WorkCalendarWeekday } from '../system/WorkCalendarState';
+import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendarRow } from '../system/WorkCalendarState';
 import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import type { PeopleArchiveFile, PeopleHousingFundStatus, PeopleMember, PeopleStatus, PersonnelType } from './peopleTypes';
 import { getPositionId, type AccessRole } from './rolePermissionModel';
@@ -149,8 +149,6 @@ export const peopleOverviewAvailabilityTone: Record<PeopleOverviewAvailabilitySt
   '-': 'gray'
 };
 
-const calendarWeekdayNames: WorkCalendarWeekday[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-const dayMilliseconds = 24 * 60 * 60 * 1000;
 const defaultOngoingTaskStatuses = new Set(['进行中']);
 
 export function normalizePeopleText(value?: string) {
@@ -453,48 +451,19 @@ export function getArchiveWorkCalendarId(personnelType: PersonnelType, workCalen
   return personnelType === '全职' ? normalizePeopleText(workCalendarId || defaultWorkCalendarId) : '';
 }
 
-function getWeeksBetween(anchorDateText: string | undefined, date: Date) {
-  if (!anchorDateText) {
-    return 0;
-  }
-
-  const anchor = new Date(`${anchorDateText}T00:00:00`);
-
-  if (Number.isNaN(anchor.getTime())) {
-    return 0;
-  }
-
-  const current = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-  return Math.floor((current.getTime() - anchor.getTime()) / (7 * dayMilliseconds));
-}
-
-export function isWorkCalendarWorkday(calendar: WorkCalendarRow | undefined, date: Date) {
-  if (!calendar || calendar.status !== '启用') {
-    return false;
-  }
-
-  const weekday = calendarWeekdayNames[date.getDay()];
-
-  if (calendar.type === '大小周') {
-    const weekOffset = getWeeksBetween(calendar.anchorDate, date);
-    const anchorIsSingleWeekendWeek = calendar.startMode !== '双休周开始';
-    const useAlternateWorkdays = Math.abs(weekOffset) % 2 === 0 ? anchorIsSingleWeekendWeek : !anchorIsSingleWeekendWeek;
-    const workdays = useAlternateWorkdays ? [...calendar.fixedWorkdays, ...calendar.alternateWorkdays] : calendar.fixedWorkdays;
-
-    return workdays.includes(weekday);
-  }
-
-  return calendar.fixedWorkdays.includes(weekday);
-}
-
 export function getMemberWorkCalendar(
   member: PeopleMember,
   workCalendarRows: WorkCalendarRow[],
   dateText = '9999-12-31'
 ) {
-  const assignment = [...(member.workCalendarAssignments ?? [])]
+  const assignments = member.workCalendarAssignments ?? [];
+  const assignment = [...assignments]
     .filter((item) => item.effectiveFrom <= dateText && (!item.effectiveTo || item.effectiveTo >= dateText))
     .sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))[0];
+
+  if (assignments.length > 0 && !assignment) {
+    return undefined;
+  }
   const mode = assignment?.mode ?? (
     member.workCalendarId && member.workCalendarId !== defaultWorkCalendarId
       ? '指定工作日历'
@@ -541,7 +510,7 @@ export function getPeopleOverviewAvailabilitySummary(
     };
   }
 
-  const calendar = getMemberWorkCalendar(member, workCalendarRows);
+  const calendar = getMemberWorkCalendar(member, workCalendarRows, overviewDateText);
   const overviewDate = new Date(`${overviewDateText}T00:00:00`);
   const isWorkday = isWorkCalendarDateWorkday(calendar, overviewDate, annualExceptionRows);
   const status: PeopleOverviewAvailabilityStatus = isWorkday ? '在岗' : '休息';

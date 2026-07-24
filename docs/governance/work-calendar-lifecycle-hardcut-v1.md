@@ -26,6 +26,7 @@
 ## 3. 前端领域结构
 
 - `WorkCalendarRow.versions`：日历规则生效版本。
+- `WorkCalendarRow.statusPeriods`：日历启停生效期间；停用只影响生效日及以后，不抹除历史日期。
 - `AnnualExceptionConfigRow.revisions`：年度节假日修订记录。
 - `PeopleMember.workCalendarAssignments`：人员适用日历任职记录。
 - `AttendanceMonthlyConfirmationRecord.snapshot`：已确认考勤月报快照。

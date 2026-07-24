@@ -5,6 +5,7 @@ import type { PerformanceMonthlyCategoryRecord } from '../performance/performanc
 import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
 import type { StoreTaskRecord } from './TaskManagementState';
 import { buildTaskExecutorCandidates } from './taskAssignmentCandidates';
+import { addTaskWorkingHours } from './taskScheduling';
 
 type UnitTest = {
   name: string;
@@ -300,6 +301,30 @@ const tests: UnitTest[] = [
         'disputed performance should not create a low-score warning'
       );
       assertEqual(candidate.selectable, true, 'disputed performance should not become an assignment blocker');
+    }
+  },
+  {
+    name: 'work calendar status is resolved at the task schedule start date',
+    run: () => {
+      const calendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        status: '停用',
+        statusPeriods: [
+          { effectiveFrom: '2026-01-01', effectiveTo: '2026-06-30', status: '启用' },
+          { effectiveFrom: '2026-07-01', status: '停用' }
+        ]
+      };
+
+      assertEqual(
+        addTaskWorkingHours('2026-06-19 10:00', 8, [calendar], []),
+        '2026-06-19 18:00',
+        'a later calendar stop must not erase a historical task schedule'
+      );
+      assertEqual(
+        addTaskWorkingHours('2026-07-01 10:00', 8, [calendar], []),
+        '',
+        'a task starting after the stop date must not use the calendar'
+      );
     }
   }
 ];

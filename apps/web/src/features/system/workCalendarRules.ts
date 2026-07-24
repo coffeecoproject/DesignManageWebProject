@@ -74,6 +74,25 @@ export function resolveWorkCalendarRule(
     .sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))[0];
 }
 
+export function resolveWorkCalendarStatus(calendar: WorkCalendarRow | undefined, date: Date) {
+  if (!calendar) {
+    return undefined;
+  }
+
+  if (!calendar.statusPeriods?.length) {
+    return calendar.status;
+  }
+
+  const dateKey = formatCalendarDateKey(date);
+  return [...calendar.statusPeriods]
+    .filter((period) => period.effectiveFrom <= dateKey && (!period.effectiveTo || period.effectiveTo >= dateKey))
+    .sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))[0]?.status;
+}
+
+export function isWorkCalendarActiveOnDate(calendar: WorkCalendarRow | undefined, date: Date) {
+  return resolveWorkCalendarStatus(calendar, date) === '启用';
+}
+
 export function getWorkCalendarSourceSignature(
   calendar: WorkCalendarRow | undefined,
   annualExceptionRows: AnnualExceptionConfigRow[],
@@ -126,7 +145,7 @@ export function isWorkCalendarDateWorkday(
   date: Date,
   annualExceptionRows: AnnualExceptionConfigRow[] = []
 ) {
-  if (!calendar || calendar.status !== '启用') {
+  if (!calendar || !isWorkCalendarActiveOnDate(calendar, date)) {
     return false;
   }
 

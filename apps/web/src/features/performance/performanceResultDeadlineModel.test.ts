@@ -148,6 +148,54 @@ const tests: UnitTest[] = [
 
       assertEqual(result, undefined, 'missing explicitly assigned calendar should not fall back to the company default');
     }
+  },
+  {
+    name: 'response deadline preserves historical availability and applied rule versions',
+    run() {
+      const versionedCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        currentVersionId: 'deadline-rule-v2',
+        fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
+        status: '停用',
+        statusPeriods: [
+          { effectiveFrom: '2026-01-01', effectiveTo: '2026-06-30', status: '启用' },
+          { effectiveFrom: '2026-07-01', status: '停用' }
+        ],
+        versions: [
+          {
+            alternateWorkdays: [],
+            createdAt: '2026-01-01',
+            effectiveFrom: '2026-01-01',
+            effectiveTo: '2026-06-30',
+            fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
+            id: 'deadline-rule-v1',
+            note: '',
+            type: '双休',
+            version: 1
+          },
+          {
+            alternateWorkdays: [],
+            createdAt: '2026-07-01',
+            effectiveFrom: '2026-07-01',
+            fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
+            id: 'deadline-rule-v2',
+            note: '',
+            type: '自定义',
+            version: 2
+          }
+        ]
+      };
+      const result = buildPerformanceResponseDeadline({
+        annualExceptionRows: [],
+        deliveredAt: '2026-06-19 10:00:00',
+        member: { ...member, workCalendarId: versionedCalendar.id },
+        workCalendarRows: [versionedCalendar]
+      });
+
+      assertEqual(result?.workingDates.join(','), '2026-06-22,2026-06-23,2026-06-24', 'historical delivery should use the then-active calendar');
+      assertEqual(result?.calendarSnapshot.fixedWorkdays.includes('周一'), true, 'snapshot should preserve the effective rule instead of current row fields');
+      assertEqual(result?.calendarSnapshot.ruleVersionIds.join(','), 'deadline-rule-v1', 'snapshot should record the applied rule version');
+    }
   }
 ];
 

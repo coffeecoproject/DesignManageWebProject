@@ -433,6 +433,39 @@ const tests: UnitTest[] = [
       );
       assertEqual(getPeopleOverviewAvailabilitySummary(parttimeMember, [], [weekdayCalendar], [], '2026-06-17').status, '-', 'part-time member should not enter attendance summary');
       assertEqual(getPeopleOverviewAvailabilitySummary(endedMember, [], [weekdayCalendar], [], '2026-06-17').status, '-', 'ended relationship should not enter attendance summary');
+
+      const shiftedCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
+        id: 'calendar-shifted',
+        isDefault: false,
+        name: '错峰日历',
+        type: '自定义'
+      };
+      const calendarChangedMember = createMember({
+        workCalendarAssignments: [
+          {
+            effectiveFrom: '2026-06-01',
+            effectiveTo: '2026-06-15',
+            id: 'overview-calendar-before',
+            mode: '跟随公司默认日历',
+            status: '已结束'
+          },
+          {
+            effectiveFrom: '2026-06-16',
+            id: 'overview-calendar-after',
+            mode: '指定工作日历',
+            status: '生效中',
+            workCalendarId: shiftedCalendar.id
+          }
+        ],
+        workCalendarId: shiftedCalendar.id
+      });
+      assertEqual(
+        getPeopleOverviewAvailabilitySummary(calendarChangedMember, [], [weekdayCalendar, shiftedCalendar], [], '2026-06-15').status,
+        '在岗',
+        'overview should resolve the calendar effective on the requested date'
+      );
     }
   },
   {
@@ -704,6 +737,18 @@ const tests: UnitTest[] = [
         }]
       });
       assertEqual(getMemberWorkCalendar(missingCalendarMember, [weekdayCalendar, secondCalendar], '2026-06-16'), undefined, 'missing explicit calendar must not fall back to the first row');
+
+      const assignmentGapMember = createMember({
+        workCalendarAssignments: [{
+          effectiveFrom: '2026-06-16',
+          id: 'calendar-assignment-future',
+          mode: '指定工作日历',
+          status: '生效中',
+          workCalendarId: secondCalendar.id
+        }],
+        workCalendarId: secondCalendar.id
+      });
+      assertEqual(getMemberWorkCalendar(assignmentGapMember, [weekdayCalendar, secondCalendar], '2026-06-15'), undefined, 'an assignment gap must not fall back to the current projection');
     }
   }
 ];

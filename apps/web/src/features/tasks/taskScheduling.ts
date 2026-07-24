@@ -1,5 +1,5 @@
 import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendarRow } from '../system/WorkCalendarState';
-import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
+import { isWorkCalendarActiveOnDate, isWorkCalendarDateWorkday } from '../system/workCalendarRules';
 import { formatTaskHour, normalizeTaskHourText } from './TaskManagementState';
 
 export const taskWorkdayStartHour = 10;
@@ -17,11 +17,10 @@ function parseTaskDateTime(value: string) {
   return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0, 0);
 }
 
-function getDefaultTaskCalendar(workCalendarRows: WorkCalendarRow[]) {
+function getDefaultTaskCalendar(workCalendarRows: WorkCalendarRow[], date: Date) {
   return (
-    workCalendarRows.find((calendar) => calendar.id === defaultWorkCalendarId && calendar.status === '启用') ??
-    workCalendarRows.find((calendar) => calendar.isDefault && calendar.status === '启用') ??
-    workCalendarRows.find((calendar) => calendar.status === '启用')
+    workCalendarRows.find((calendar) => calendar.id === defaultWorkCalendarId && isWorkCalendarActiveOnDate(calendar, date)) ??
+    workCalendarRows.find((calendar) => calendar.isDefault && isWorkCalendarActiveOnDate(calendar, date))
   );
 }
 
@@ -68,8 +67,8 @@ export function addTaskWorkingHours(
     return '';
   }
 
-  const calendar = getDefaultTaskCalendar(workCalendarRows);
   const startDate = parseTaskDateTime(dateText);
+  const calendar = startDate ? getDefaultTaskCalendar(workCalendarRows, startDate) : undefined;
 
   if (!calendar || !startDate) {
     return '';

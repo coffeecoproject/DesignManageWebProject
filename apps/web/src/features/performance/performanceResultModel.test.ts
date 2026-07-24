@@ -124,6 +124,7 @@ const responseDeadline: PerformanceResponseDeadline = {
     fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
     id: 'calendar-default',
     name: '公司默认工作日历',
+    ruleVersionIds: ['calendar-default-v1'],
     type: '双休',
     updatedAt: '2026-01-01 09:00'
   },

@@ -20,6 +20,11 @@ export const statutoryHolidayGroups = [
 
 export type WorkCalendarType = (typeof workCalendarTypes)[number];
 export type WorkCalendarStatus = '启用' | '停用';
+export type WorkCalendarStatusPeriod = {
+  effectiveFrom: string;
+  effectiveTo?: string;
+  status: WorkCalendarStatus;
+};
 export type WorkCalendarWeekday = (typeof workCalendarWeekdays)[number];
 export type BigSmallWeekMode = (typeof bigSmallWeekModes)[number];
 export type AnnualExceptionType = (typeof annualExceptionTypes)[number];
@@ -87,6 +92,7 @@ export type WorkCalendarRow = {
   note: string;
   startMode?: BigSmallWeekMode;
   status: WorkCalendarStatus;
+  statusPeriods?: WorkCalendarStatusPeriod[];
   type: WorkCalendarType;
   updatedAt: string;
   versions?: WorkCalendarRuleVersion[];
@@ -290,6 +296,29 @@ function getNextWorkCalendarSequence(rows: WorkCalendarRow[]) {
   );
 }
 
+function appendWorkCalendarStatusPeriod(
+  row: WorkCalendarRow,
+  status: WorkCalendarStatus,
+  effectiveFrom: string
+) {
+  const initialEffectiveFrom = row.effectiveFrom ?? row.versions?.[0]?.effectiveFrom ?? '0001-01-01';
+  const sourcePeriods = row.statusPeriods?.length
+    ? row.statusPeriods
+    : [{ effectiveFrom: initialEffectiveFrom, status: row.status }];
+  const previousDate = getPreviousDate(effectiveFrom);
+  const closedPeriods = sourcePeriods
+    .filter((period) => period.effectiveFrom !== effectiveFrom)
+    .map((period) => (
+      period.effectiveFrom < effectiveFrom && (!period.effectiveTo || period.effectiveTo >= effectiveFrom)
+        ? { ...period, effectiveTo: previousDate }
+        : period
+    ));
+
+  return [...closedPeriods, { effectiveFrom, status }].sort((left, right) =>
+    left.effectiveFrom.localeCompare(right.effectiveFrom)
+  );
+}
+
 function normalizeWorkCalendarValue(nextValue: WorkCalendarFormValue): WorkCalendarFormValue {
   return {
     alternateWorkdays: Array.from(new Set(nextValue.alternateWorkdays)),
@@ -409,6 +438,7 @@ export function WorkCalendarProvider({ children }: { children: ReactNode }) {
             id,
             isDefault: false,
             status: '启用',
+            statusPeriods: [{ effectiveFrom: normalizedValue.effectiveFrom, status: '启用' }],
             updatedAt: prototypeToday,
             versions: [version]
           };
@@ -507,6 +537,7 @@ export function WorkCalendarProvider({ children }: { children: ReactNode }) {
               ? {
                   ...row,
                   status,
+                  statusPeriods: appendWorkCalendarStatusPeriod(row, status, prototypeToday),
                   updatedAt: prototypeToday
                 }
               : row
