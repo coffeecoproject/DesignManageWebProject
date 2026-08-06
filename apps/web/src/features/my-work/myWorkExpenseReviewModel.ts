@@ -1,6 +1,10 @@
 import type { OperationRecord } from '../../components/OperationRecordTable';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
-import { getFinanceCategorySnapshot } from '../finance/financeData';
+import {
+  type FinanceCategorySnapshot,
+  type FinancePrimaryCategoryConfig,
+  type FinanceSecondaryCategoryConfig
+} from '../finance/financeData';
 import type { FinanceReceivablePayableRecord } from '../finance/financeReceivablesPayablesData';
 import { getDefaultReceivablePayableTaxBasis } from '../finance/financeTaxBasisModel';
 import { buildExpenseReimbursementPaymentSnapshot } from '../finance/financeNaturalPersonPaymentModel';
@@ -34,6 +38,8 @@ export type MyWorkExpenseReviewStatus = '待审核' | '需调整' | '已通过' 
 export type MyWorkExpenseReviewRecord = {
   amount: number;
   category: string;
+  categoryId: string;
+  categorySnapshot: FinanceCategorySnapshot;
   code: string;
   dueAt: string;
   expenseReviewResult?: MyWorkExpenseReviewResult;
@@ -109,6 +115,8 @@ export function toReviewRecord(record: MyWorkExpenseCollectionRecord): MyWorkExp
   return {
     amount: record.amount,
     category: record.category,
+    categoryId: record.categoryId,
+    categorySnapshot: record.categorySnapshot,
     code: record.code,
     dueAt: getDefaultFinanceReviewDueAt(record.occurredAt),
     expenseReviewResult: record.expenseReviewResult,
@@ -160,10 +168,14 @@ export function applyExpenseReviewRecordToCollection(
 
 export const myWorkExpenseReviewSeedRecords = buildMyWorkExpenseReviewRecords(myWorkExpenseCollectionSeedRecords);
 
-export function getExpenseReviewCategoryLabel(record: Pick<MyWorkExpenseReviewRecord, 'category'>) {
-  const primaryCategoryId = getMyWorkExpensePrimaryCategoryId(record.category);
+export function getExpenseReviewCategoryLabel(
+  record: Pick<MyWorkExpenseReviewRecord, 'category'>,
+  primaryRows?: FinancePrimaryCategoryConfig[],
+  secondaryRows?: FinanceSecondaryCategoryConfig[]
+) {
+  const primaryCategoryId = getMyWorkExpensePrimaryCategoryId(record.category, primaryRows, secondaryRows);
 
-  return `${getMyWorkExpensePrimaryCategoryName(primaryCategoryId)} / ${record.category}`;
+  return `${getMyWorkExpensePrimaryCategoryName(primaryCategoryId, primaryRows)} / ${record.category}`;
 }
 
 export function isExpenseReviewOverdue(record: Pick<MyWorkExpenseReviewRecord, 'dueAt' | 'reviewStatus'>, today = myWorkExpenseReviewToday) {
@@ -422,7 +434,7 @@ export function buildReceivablePayableFromExpenseReview(
   }
 
   const accountingPeriod = getAccountingPeriod(record.occurredAt);
-  const categorySnapshot = getFinanceCategorySnapshot(record.category);
+  const categorySnapshot = record.categorySnapshot;
   const documentNo = buildNextExpensePayableDocumentNo(existingRows, accountingPeriod);
   const sourceTitle = `${record.submitterName} ${record.title}`;
   const evidenceNote = `企业所得税凭证状态：${expenseReviewResult.evidenceStatus}${
@@ -577,7 +589,10 @@ export function buildMyWorkExpenseApprovalExecutionPlan({
     throw new Error('该报销来源已生成应付事项，不得重复写入');
   }
 
-  const payableRecord = buildReceivablePayableFromExpenseReview(approvedRecord, existingPayableRows);
+  const payableRecord = buildReceivablePayableFromExpenseReview(
+    approvedRecord,
+    existingPayableRows
+  );
   const salaryTaxResult = buildSalaryTaxResultFromExpenseReview(approvedRecord, salaryMonthState);
   const salaryAdjustmentId = `salary-expense-${salaryTaxResult.sourceCode}`;
 

@@ -123,6 +123,7 @@ function createSalarySettlementSnapshot(
 ): SalarySettlementSnapshot {
   return {
     businessDeductionAmount: 0,
+    employeeAdvanceRecoveryAmount: 0,
     employeeGrossPayableAmount: 12000,
     employeeHousingFundAmount: 0,
     employeeNetPayableAmount: 11000,
@@ -1975,14 +1976,7 @@ const tests: UnitTest[] = [
           })
         ],
         socialInsuranceSourceRecords: [
-          createSocialInsuranceSource({ category: '社保', personalAmount: 800 }),
-          createSocialInsuranceSource({
-            category: '公积金',
-            handlingStatus: '待确认',
-            id: 'housing-source-001',
-            personalAmount: 500,
-            reason: '不应阻塞薪酬'
-          })
+          createSocialInsuranceSource({ category: '社保', personalAmount: 800 })
         ]
       })[0];
       const housingFundSource = report.settlementSourceRecords.find((record) => record.key === 'housing-fund');
@@ -1991,6 +1985,72 @@ const tests: UnitTest[] = [
       assertEqual(report.settlementPendingSourceLabels.includes('公积金'), false, 'not applicable housing fund should not block salary confirmation');
       assertEqual(report.socialInsuranceDeductionAmount, 800, 'not applicable housing fund deduction should be excluded from salary');
       assertEqual(report.status, '待确认', 'salary should be pending confirmation when applicable sources are confirmed');
+    }
+  },
+  {
+    name: 'uses the formal housing-fund monthly record when the personnel archive summary is stale',
+    run: () => {
+      const member = createMember({
+        housingFundEffectiveMonth: undefined,
+        housingFundStatus: '暂不缴存'
+      });
+      const report = buildSalaryMonthlyReports({
+        attendanceReports: [createAttendanceReport({ member })],
+        performanceRecords: [],
+        personalIncomeTaxCumulativeSnapshots: [createPersonalIncomeTaxSnapshot()],
+        salaryAdjustments: [],
+        salaryMonthlyWorkflows: [],
+        socialInsuranceDeductions: [
+          createSocialInsuranceDeduction({ category: '社保', personalAmount: 800 }),
+          createSocialInsuranceDeduction({
+            category: '公积金',
+            id: 'housing-deduction-formal',
+            personalAmount: 500
+          })
+        ],
+        socialInsuranceSourceRecords: [
+          createSocialInsuranceSource({ category: '社保', personalAmount: 800 }),
+          createSocialInsuranceSource({
+            category: '公积金',
+            id: 'housing-source-formal',
+            personalAmount: 500
+          })
+        ]
+      })[0];
+      const housingFundSource = report.settlementSourceRecords.find((record) => record.key === 'housing-fund');
+
+      assertEqual(housingFundSource?.status, '已确认', 'formal monthly record should override a stale archive summary');
+      assertEqual(report.socialInsuranceDeductionAmount, 1300, 'formal housing-fund personal amount should enter payroll');
+      assertEqual(report.status, '待确认', 'confirmed formal sources should allow salary confirmation');
+    }
+  },
+  {
+    name: 'recovers employee contribution advances after tax without reducing payroll cost or taxable income',
+    run: () => {
+      const input = {
+        attendanceReports: [createAttendanceReport()],
+        performanceRecords: [],
+        personalIncomeTaxCumulativeSnapshots: [createPersonalIncomeTaxSnapshot()],
+        salaryMonthlyWorkflows: [],
+        socialInsuranceDeductions: [createSocialInsuranceDeduction({ personalAmount: 800 })],
+        socialInsuranceSourceRecords: [createSocialInsuranceSource({ category: '社保', personalAmount: 800 })]
+      };
+      const baseline = buildSalaryMonthlyReports({ ...input, salaryAdjustments: [] })[0];
+      const recovered = buildSalaryMonthlyReports({
+        ...input,
+        salaryAdjustments: [createAdjustment({
+          amount: 500,
+          reason: '收回 2026-05 社保个人补缴本金',
+          taxTreatment: '税后调整',
+          type: '代垫款收回'
+        })]
+      })[0];
+
+      assertEqual(recovered.settlementSnapshot.employeeAdvanceRecoveryAmount, 500, 'recovery amount should remain explicit in the settlement snapshot');
+      assertEqual(recovered.settlementSnapshot.employeeGrossPayableAmount, baseline.settlementSnapshot.employeeGrossPayableAmount, 'advance recovery must not reduce gross payroll');
+      assertEqual(recovered.settlementSnapshot.taxableIncomeAmount, baseline.settlementSnapshot.taxableIncomeAmount, 'advance recovery must not reduce taxable income');
+      assertEqual(recovered.settlementSnapshot.totalEmploymentCostAmount, baseline.settlementSnapshot.totalEmploymentCostAmount, 'advance recovery must not reduce employment cost');
+      assertEqual(recovered.settlementSnapshot.employeeNetPayableAmount, baseline.settlementSnapshot.employeeNetPayableAmount - 500, 'advance recovery should only reduce employee net pay');
     }
   },
   {

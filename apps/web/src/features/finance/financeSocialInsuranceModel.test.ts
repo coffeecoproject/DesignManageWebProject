@@ -1,6 +1,11 @@
 import type { PeopleMember } from '../people/peopleTypes';
-import type { SocialInsuranceEmployeeRecord, SocialInsuranceEnrollmentProfile } from './financeSocialInsuranceData';
 import {
+  socialInsuranceEmployeeRecords,
+  type SocialInsuranceEmployeeRecord,
+  type SocialInsuranceEnrollmentProfile
+} from './financeSocialInsuranceData';
+import {
+  applyEnrollmentChannelResult,
   buildContributionCorrectionRecord,
   buildContributionCorrectionPaymentTransaction,
   buildDerivedEnrollmentProfiles,
@@ -11,7 +16,9 @@ import {
   getSocialInsurancePayrollSourceState,
   getSocialInsuranceRecordEligibility,
   getVisibleSocialInsuranceRecords,
+  isEnrollmentChannelEffectiveForPeriod,
   isEnrollmentEffectiveForPeriod,
+  isPeopleRelationshipActiveForPeriod,
   isSocialInsuranceRecordApplicable,
   resolveContributionCorrectionPaymentStatus,
   resolveSocialInsuranceRecordPaymentStatus
@@ -67,8 +74,11 @@ function createProfile(overrides: Partial<SocialInsuranceEnrollmentProfile> = {}
   return {
     personId: 'EMP-001', employmentRelationshipType: '全日制劳动关系', obligation: '应参保', insuredRegionCode: '420100',
     socialSecurityStatus: '已增员', medicalInsuranceStatus: '已增员', plannedEnrollmentMonth: '2026-01',
-    socialSecurityEffectiveMonth: '2026-01', medicalInsuranceEffectiveMonth: '2026-01', officialReferenceNo: 'WH-SI-001',
-    evidenceFileIds: ['file-001'], updatedAt: '2026-01-03', ...overrides
+    socialSecurityEffectiveMonth: '2026-01', medicalInsuranceEffectiveMonth: '2026-01', housingFundStatus: '已增员',
+    housingFundEffectiveMonth: '2026-01', socialSecurityOfficialReferenceNo: 'WH-SI-001',
+    socialSecurityEvidenceFileIds: ['file-si-001'], medicalInsuranceOfficialReferenceNo: 'WH-MI-001',
+    medicalInsuranceEvidenceFileIds: ['file-mi-001'], housingFundOfficialReferenceNo: 'WH-HF-001',
+    housingFundEvidenceFileIds: ['file-hf-001'], updatedAt: '2026-01-03', ...overrides
   };
 }
 
@@ -123,7 +133,14 @@ const tests: UnitTest[] = [
     name: 'keeps pending enrollment as an obligation blocker',
     run: () => {
       const member = createMember();
-      const profile = createProfile({ socialSecurityStatus: '待增员', socialSecurityEffectiveMonth: undefined, officialReferenceNo: undefined, evidenceFileIds: [] });
+      const profile = createProfile({
+        socialSecurityStatus: '待增员',
+        medicalInsuranceStatus: '待增员',
+        socialSecurityEffectiveMonth: undefined,
+        medicalInsuranceEffectiveMonth: undefined,
+        socialSecurityOfficialReferenceNo: undefined,
+        socialSecurityEvidenceFileIds: []
+      });
       const record = createRecord();
 
       assertEqual(getSocialInsuranceRecordEligibility(record, member, profile), '尚未增员', 'missing enrollment is not a no-obligation reason');
@@ -190,6 +207,11 @@ const tests: UnitTest[] = [
       });
 
       assertDeepEqual(candidates.map((record) => [record.category, record.handlingStatus]), [['社保', '待申报'], ['公积金', '待申报']], 'eligible employee must receive both monthly candidates');
+      assertDeepEqual(
+        candidates.find((record) => record.category === '社保')?.items.map((item) => item.itemCode),
+        ['基本养老保险', '职工基本医疗保险', '失业保险', '工伤保险'],
+        'social insurance must retain item-level contribution details'
+      );
       assertEqual(candidates[0]?.items.every((item) => item.policyVersionId === 'wuhan-social-insurance-2026-06-v1'), true, 'candidate must freeze the applicable period policy version');
     }
   },
@@ -241,7 +263,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'creates an arrears payment with liability principal and late-fee expense allocations',
+    name: 'creates an arrears payment with employer expense employee receivable and late-fee allocations',
     run: () => {
       const correction = buildContributionCorrectionRecord({
         evidenceFileIds: ['arrears-assessment.pdf'],
@@ -268,8 +290,8 @@ const tests: UnitTest[] = [
       assertEqual(transaction?.amount, 1658.5, 'arrears cash amount must include principal and late fee');
       assertDeepEqual(
         transaction?.accountingAllocations?.map((allocation) => [allocation.subjectCode, allocation.amount]),
-        [['2211.04', 1640], ['5711', 18.5]],
-        'principal must clear housing-fund liability while late fee enters non-operating expense'
+        [['5602.02', 820], ['1221', 820], ['5711', 18.5]],
+        'employer principal must enter employee-benefit expense, employee principal must remain recoverable and late fee must enter non-operating expense'
       );
       assertEqual(transaction?.status, '待复核', 'arrears payment must enter finance review');
       assertEqual(transaction?.sourceNo, correction.id, 'cash flow must retain the correction source');
@@ -373,6 +395,69 @@ const tests: UnitTest[] = [
         paymentFileIds: ['arrears-payment.pdf'],
         publicAccountRef: buildPublicAccountRef(publicAccountSeeds[0])
       }), undefined, 'a correction with a pending-review cash flow must not create a duplicate payment');
+    }
+  },
+  {
+    name: 'saves each enrollment channel without mutating the other handling facts',
+    run: () => {
+      const profile = createProfile();
+      const stoppedSocial = applyEnrollmentChannelResult(profile, '社保', {
+        action: '停办',
+        effectiveMonth: '2026-07',
+        evidenceFileIds: ['social-stop.pdf'],
+        insuredRegionCode: '420100',
+        officialReferenceNo: 'WH-SI-STOP-001',
+        updatedAt: '2026-07-03'
+      });
+      if (!stoppedSocial) throw new Error('expected channel result');
+
+      assertEqual(stoppedSocial.obligation, '应参保', 'stopping one channel must not rewrite the historical obligation');
+      assertEqual(stoppedSocial.socialSecurityStatus, '已停保', 'selected channel must be updated');
+      assertEqual(stoppedSocial.medicalInsuranceStatus, '已增员', 'medical insurance must remain unchanged');
+      assertEqual(stoppedSocial.housingFundStatus, '已增员', 'housing fund must remain unchanged');
+      assertEqual(stoppedSocial.medicalInsuranceOfficialReferenceNo, profile.medicalInsuranceOfficialReferenceNo, 'medical evidence identity must remain unchanged');
+    }
+  },
+  {
+    name: 'keeps historical relationship eligibility after a later departure',
+    run: () => {
+      const departed = createMember({ contractEndAt: '2026-05-20', status: '离职' });
+
+      assertEqual(isPeopleRelationshipActiveForPeriod(departed, '2026-04'), true, 'a later departure must not erase an earlier active month');
+      assertEqual(isPeopleRelationshipActiveForPeriod(departed, '2026-06'), false, 'a month after departure must be excluded');
+    }
+  },
+  {
+    name: 'evaluates social insurance medical insurance and housing fund intervals independently',
+    run: () => {
+      const profile = createProfile({
+        socialSecurityStopEffectiveMonth: '2026-06',
+        medicalInsuranceStopEffectiveMonth: '2026-07',
+        housingFundStopEffectiveMonth: '2026-08'
+      });
+
+      assertEqual(isEnrollmentChannelEffectiveForPeriod(profile, '社保', '2026-06'), false, 'social insurance can stop independently');
+      assertEqual(isEnrollmentChannelEffectiveForPeriod(profile, '医保', '2026-06'), true, 'medical insurance remains effective until its own stop month');
+      assertEqual(isEnrollmentChannelEffectiveForPeriod(profile, '公积金', '2026-07'), true, 'housing fund must use its own stop month');
+      assertEqual(isEnrollmentEffectiveForPeriod(profile, '2026-06'), true, 'combined social contribution remains applicable while medical insurance is active');
+    }
+  },
+  {
+    name: 'freezes category-specific policy versions on seeded contribution details',
+    run: () => {
+      const socialRecord = socialInsuranceEmployeeRecords.find((record) => record.category === '社保');
+      const housingRecord = socialInsuranceEmployeeRecords.find((record) => record.category === '公积金');
+
+      assertEqual(
+        socialRecord?.items.every((item) => item.policyVersionId === 'wuhan-social-insurance-2026-06-v1'),
+        true,
+        'social contribution details must retain the social policy version'
+      );
+      assertEqual(
+        housingRecord?.items.every((item) => item.policyVersionId === 'wuhan-housing-fund-2026-06-v1'),
+        true,
+        'housing-fund details must retain the housing-fund policy version'
+      );
     }
   },
   {

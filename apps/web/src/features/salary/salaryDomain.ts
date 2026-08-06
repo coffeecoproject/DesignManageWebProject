@@ -142,6 +142,7 @@ export type SalaryPersonalIncomeTaxCumulativeSnapshot = {
 
 export type SalarySettlementSnapshot = {
   businessDeductionAmount: number;
+  employeeAdvanceRecoveryAmount: number;
   employeeGrossPayableAmount: number;
   employeeHousingFundAmount: number;
   employeeNetPayableAmount: number;
@@ -1085,7 +1086,8 @@ function buildSettlementSourceRecords({
   const housingFundRecord = socialInsuranceSourceRecords.find(
     (record) => record.employeeNo === member.id && record.period === month && record.category === '公积金'
   );
-  const isHousingFundApplicable = isPeopleHousingFundContributionApplicable(member, month);
+  const isHousingFundApplicable = Boolean(housingFundRecord)
+    || isPeopleHousingFundContributionApplicable(member, month);
 
   return [
     {
@@ -1346,6 +1348,7 @@ export function buildPersonalIncomeTaxRecord({
 
 export function buildSalarySettlementSnapshot({
   businessDeductionAmount,
+  employeeAdvanceRecoveryAmount,
   grossEarningsAmount,
   payrollMonth,
   payrollNo,
@@ -1354,6 +1357,7 @@ export function buildSalarySettlementSnapshot({
   taxableIncomeAmount
 }: {
   businessDeductionAmount: number;
+  employeeAdvanceRecoveryAmount: number;
   grossEarningsAmount: number;
   payrollMonth: string;
   payrollNo: string;
@@ -1394,11 +1398,13 @@ export function buildSalarySettlementSnapshot({
         - employeeSocialInsuranceAmount
         - employeeHousingFundAmount
         - personalIncomeTaxAmount
+        - employeeAdvanceRecoveryAmount
     )
   );
 
   return {
     businessDeductionAmount: roundSalaryMoney(businessDeductionAmount),
+    employeeAdvanceRecoveryAmount: roundSalaryMoney(employeeAdvanceRecoveryAmount),
     employeeGrossPayableAmount,
     employeeHousingFundAmount,
     employeeNetPayableAmount,
@@ -1447,6 +1453,7 @@ export function createSalaryPaymentRecord({
   const payrollNo = report.workflow?.payrollNo || buildSalaryPayrollNo(report.month, report.member.id);
   const settlementSnapshot = buildSalarySettlementSnapshot({
     businessDeductionAmount: report.settlementSnapshot.businessDeductionAmount,
+    employeeAdvanceRecoveryAmount: report.settlementSnapshot.employeeAdvanceRecoveryAmount,
     grossEarningsAmount: report.settlementSnapshot.grossEarningsAmount,
     payrollMonth: report.month,
     payrollNo,
@@ -1974,6 +1981,11 @@ export function buildSalaryMonthlyReports({
         .filter((record) => getSalaryAdjustmentDirection(record.type) === '减少')
         .reduce((total, record) => total + record.amount, 0)
     );
+    const employeeAdvanceRecoveryAmount = roundSalaryMoney(
+      salaryAdjustmentRecords
+        .filter((record) => record.type === '代垫款收回' && record.taxTreatment === '税后调整')
+        .reduce((total, record) => total + record.amount, 0)
+    );
     const salaryAdjustmentAmount = roundSalaryMoney(salaryAdjustmentIncreaseAmount - salaryAdjustmentDeductionAmount);
     const taxableSalaryAdjustmentAmount = roundSalaryMoney(
       salaryAdjustmentRecords
@@ -2011,12 +2023,22 @@ export function buildSalaryMonthlyReports({
     const performanceDeductionAmount = roundSalaryMoney(
       directPerformanceSettlementLines.reduce((total, line) => total + Math.abs(Math.min(0, line.amount)), 0)
     );
+    const deductibleSourceCategories = new Set(
+      socialInsuranceSourceRecords
+        .filter(
+          (record) =>
+            record.employeeNo === member.id &&
+            record.period === month &&
+            isSocialInsurancePayrollDeductible(record)
+        )
+        .map((record) => record.category)
+    );
     const socialInsuranceDeductionRecords = socialInsuranceDeductions
       .filter(
         (record) =>
           record.employeeNo === member.id &&
           record.payrollMonth === month &&
-          (record.category !== '公积金' || isPeopleHousingFundContributionApplicable(member, month))
+          deductibleSourceCategories.has(record.category)
       )
       .sort(
         (left, right) =>
@@ -2102,10 +2124,11 @@ export function buildSalaryMonthlyReports({
     const businessDeductionAmount = roundSalaryMoney(
       Math.abs(Math.min(0, attendanceDeltaAmount))
         + performanceDeductionAmount
-        + salaryAdjustmentDeductionAmount
+        + Math.max(0, salaryAdjustmentDeductionAmount - employeeAdvanceRecoveryAmount)
     );
     const calculatedSettlementSnapshot = buildSalarySettlementSnapshot({
       businessDeductionAmount,
+      employeeAdvanceRecoveryAmount,
       grossEarningsAmount: grossSalary,
       payrollMonth: month,
       payrollNo: workflow?.payrollNo || buildSalaryPayrollNo(month, member.id),
@@ -2121,6 +2144,7 @@ export function buildSalaryMonthlyReports({
         + settlementSnapshot.employeeSocialInsuranceAmount
         + settlementSnapshot.employeeHousingFundAmount
         + settlementSnapshot.withheldPersonalIncomeTaxAmount
+        + settlementSnapshot.employeeAdvanceRecoveryAmount
     );
     const netSalary = settlementSnapshot.employeeNetPayableAmount;
     const currentSalaryCompositionLines = buildSalaryCompositionLines({

@@ -234,6 +234,7 @@ function createSalaryReport(overrides: Partial<SalaryMonthlyReport> = {}): Salar
   const taxableIncomeAmount = overrides.personalIncomeTaxRecords?.[0]?.currentIncomeAmount ?? 12100;
   const settlementSnapshot = overrides.settlementSnapshot ?? {
     businessDeductionAmount: 0,
+    employeeAdvanceRecoveryAmount: 0,
     employeeGrossPayableAmount: taxableIncomeAmount,
     employeeHousingFundAmount: 0,
     employeeNetPayableAmount: taxableIncomeAmount - personalIncomeTaxAmount,

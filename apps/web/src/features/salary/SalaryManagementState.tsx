@@ -121,6 +121,7 @@ const initialPersonalIncomeTaxCumulativeSnapshots: SalaryPersonalIncomeTaxCumula
 
 const initialMaySalarySettlementSnapshot = {
   businessDeductionAmount: 0,
+  employeeAdvanceRecoveryAmount: 0,
   employeeGrossPayableAmount: 12000,
   employeeHousingFundAmount: 0,
   employeeNetPayableAmount: 11059.83,
@@ -147,6 +148,7 @@ const initialSalaryMonthlyWorkflows: SalaryMonthlyWorkflowRecord[] = [
     payrollNo: 'PAY-202606-20250018',
     settlementSnapshot: {
       businessDeductionAmount: 0,
+      employeeAdvanceRecoveryAmount: 0,
       employeeGrossPayableAmount: 12000,
       employeeHousingFundAmount: 0,
       employeeNetPayableAmount: 11059.83,

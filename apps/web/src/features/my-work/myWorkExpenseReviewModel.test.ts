@@ -6,7 +6,7 @@ import {
   buildAccountingVoucherFromTransaction,
   createAccountingVoucherLifecycleRecord
 } from '../finance/financeAccountingVoucherModel';
-import { getFinanceSeedPublicAccountRef } from '../finance/financeData';
+import { getFinanceCategorySnapshot, getFinanceSeedPublicAccountRef } from '../finance/financeData';
 import {
   buildFinanceExpenseApprovalCommit,
   buildFinanceExpenseApprovalReversal,
@@ -83,9 +83,14 @@ function createFile(name = '费用凭证.pdf'): RelatedFileRecord {
 }
 
 function createReviewRecord(overrides: Partial<MyWorkExpenseReviewRecord> = {}): MyWorkExpenseReviewRecord {
+  const category = overrides.category ?? '差旅交通';
+  const categorySnapshot = overrides.categorySnapshot ?? getFinanceCategorySnapshot(category);
+
   return {
     amount: 100,
-    category: '差旅交通',
+    category,
+    categoryId: overrides.categoryId ?? 'finance-secondary-travel',
+    categorySnapshot,
     code: 'EC-TEST-001',
     dueAt: '2026-06-20',
     files: [createFile()],
@@ -202,6 +207,22 @@ const tests: UnitTest[] = [
       assertEqual(payable.operationRecords[0]?.action, '生成应付', 'payable generation should be recorded on payable item');
       assertEqual(salaryTaxResult.salaryTaxableAmount, 0, 'truthful compliant expense should not enter salary IIT');
       assertEqual(salaryTaxResult.sourceCode, record.code, 'salary result should retain expense source code');
+    }
+  },
+  {
+    name: 'FC-09 expense approval preserves the category snapshot captured at submission',
+    run() {
+      const submittedSnapshot = {
+        ...getFinanceCategorySnapshot('差旅交通'),
+        secondaryCode: 'FC2-SUBMITTED-SNAPSHOT'
+      };
+      const record = createReviewRecord({ categorySnapshot: submittedSnapshot });
+      const approved = approveExpenseReviewRecord(record, createApprovalDecision({ businessReimbursementAmount: 100 }));
+      const payable = buildReceivablePayableFromExpenseReview(approved, []);
+
+      assert(payable, 'approved business reimbursement should create a payable');
+      assertEqual(payable.categorySnapshot.secondaryCode, 'FC2-SUBMITTED-SNAPSHOT', 'approval must not recalculate category identity from current config');
+      assertEqual(payable.categorySnapshot, submittedSnapshot, 'approval should carry the immutable submission snapshot downstream');
     }
   },
   {

@@ -4,8 +4,12 @@ import { getDateScopeRange, type DateScopeFilterValue } from '../../components/D
 import {
   financePrimaryCategorySeeds,
   financeSecondaryCategorySeeds,
+  getEnabledFinanceCategorySnapshot,
   getFinanceSeedPublicAccountRef,
   getFinanceCategorySnapshot,
+  getFinanceSecondaryCategory,
+  type FinanceCategorySnapshot,
+  type FinancePrimaryCategoryConfig,
   type FinanceSecondaryCategoryConfig,
   type FinanceTransactionCategory,
   type FinanceTransactionRecord
@@ -51,6 +55,8 @@ export type MyWorkExpenseReviewResult = {
 export type MyWorkExpenseCollectionRecord = {
   amount: number;
   category: FinanceTransactionCategory;
+  categoryId: string;
+  categorySnapshot: FinanceCategorySnapshot;
   code: string;
   collectionMethod?: MyWorkCollectionMethod;
   customerName?: string;
@@ -155,6 +161,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
   {
     amount: 486.5,
     category: '差旅交通',
+    categoryId: 'finance-secondary-travel',
+    categorySnapshot: getFinanceCategorySnapshot('差旅交通'),
     code: 'EC-202606-001',
     files: [
       {
@@ -192,6 +200,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
   {
     amount: 9800,
     category: '客户回款',
+    categoryId: 'finance-secondary-customer-payment',
+    categorySnapshot: getFinanceCategorySnapshot('客户回款'),
     code: 'EC-202606-002',
     collectionMethod: '微信',
     customerName: '湖北星际装饰有限公司',
@@ -238,6 +248,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
   {
     amount: 1200,
     category: '客户回款',
+    categoryId: 'finance-secondary-customer-payment',
+    categorySnapshot: getFinanceCategorySnapshot('客户回款'),
     code: 'EC-202606-004',
     collectionMethod: '银行转账',
     customerName: '湖南新岚餐饮管理有限公司',
@@ -268,6 +280,8 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
   {
     amount: 268,
     category: '办公费用',
+    categoryId: 'finance-secondary-office',
+    categorySnapshot: getFinanceCategorySnapshot('办公费用'),
     code: 'EC-202606-003',
     files: [],
     id: 'expense-collection-003',
@@ -296,8 +310,11 @@ export const myWorkExpenseCollectionSeedRecords: MyWorkExpenseCollectionRecord[]
   }
 ];
 
-export function getMyWorkExpenseCategoryOptions(primaryCategoryId?: string) {
-  return financeSecondaryCategorySeeds
+export function getMyWorkExpenseCategoryOptions(
+  primaryCategoryId?: string,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  return secondaryRows
     .filter((category) => (
       category.status === '启用' &&
       category.direction === '支出' &&
@@ -308,36 +325,59 @@ export function getMyWorkExpenseCategoryOptions(primaryCategoryId?: string) {
     .sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
-export function getMyWorkExpensePrimaryCategoryOptions() {
-  const secondaryRows = getMyWorkExpenseCategoryOptions();
-  const primaryIds = new Set(secondaryRows.map((category) => category.primaryId));
+export function getMyWorkExpensePrimaryCategoryOptions(
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  const categoryRows = getMyWorkExpenseCategoryOptions(undefined, secondaryRows);
+  const primaryIds = new Set(categoryRows.map((category) => category.primaryId));
 
-  return financePrimaryCategorySeeds
+  return primaryRows
     .filter((category) => category.status === '启用' && category.direction === '支出' && primaryIds.has(category.id))
     .sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
-export function getMyWorkExpenseSecondaryCategory(category: FinanceTransactionCategory) {
-  return getMyWorkExpenseCategoryOptions().find((categoryOption) => categoryOption.name === category);
+export function getMyWorkExpenseSecondaryCategory(
+  category: FinanceTransactionCategory,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  return getMyWorkExpenseCategoryOptions(undefined, secondaryRows)
+    .find((categoryOption) => categoryOption.name === category);
 }
 
-export function getMyWorkExpensePrimaryCategoryId(category: FinanceTransactionCategory) {
-  return getMyWorkExpenseSecondaryCategory(category)?.primaryId ?? getDefaultMyWorkExpensePrimaryCategoryId();
+export function getMyWorkExpensePrimaryCategoryId(
+  category: FinanceTransactionCategory,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  return getMyWorkExpenseSecondaryCategory(category, secondaryRows)?.primaryId
+    ?? getDefaultMyWorkExpensePrimaryCategoryId(primaryRows, secondaryRows);
 }
 
-export function getMyWorkExpensePrimaryCategoryName(primaryCategoryId: string) {
-  return financePrimaryCategorySeeds.find((category) => category.id === primaryCategoryId)?.name ?? '-';
+export function getMyWorkExpensePrimaryCategoryName(
+  primaryCategoryId: string,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds
+) {
+  return primaryRows.find((category) => category.id === primaryCategoryId)?.name ?? '-';
 }
 
-export function getDefaultMyWorkExpensePrimaryCategoryId() {
-  return getMyWorkExpenseSecondaryCategory('差旅交通')?.primaryId ?? getMyWorkExpensePrimaryCategoryOptions()[0]?.id ?? '';
+export function getDefaultMyWorkExpensePrimaryCategoryId(
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  return getMyWorkExpenseSecondaryCategory('差旅交通', secondaryRows)?.primaryId
+    ?? getMyWorkExpensePrimaryCategoryOptions(primaryRows, secondaryRows)[0]?.id
+    ?? '';
 }
 
-export function getDefaultMyWorkExpenseCategory(primaryCategoryId = getDefaultMyWorkExpensePrimaryCategoryId()) {
+export function getDefaultMyWorkExpenseCategory(
+  primaryCategoryId = getDefaultMyWorkExpensePrimaryCategoryId(),
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
   return (
-    getMyWorkExpenseCategoryOptions(primaryCategoryId).find((category) => category.name === '差旅交通')?.name ??
-    getMyWorkExpenseCategoryOptions(primaryCategoryId)[0]?.name ??
-    getMyWorkExpenseCategoryOptions()[0]?.name ??
+    getMyWorkExpenseCategoryOptions(primaryCategoryId, secondaryRows).find((category) => category.name === '差旅交通')?.name ??
+    getMyWorkExpenseCategoryOptions(primaryCategoryId, secondaryRows)[0]?.name ??
+    getMyWorkExpenseCategoryOptions(undefined, secondaryRows)[0]?.name ??
     ''
   );
 }
@@ -347,13 +387,17 @@ export function getMyWorkExpenseCategoryOptionByName(category: FinanceTransactio
 }
 
 export function createMyWorkExpenseCollectionForm(
-  record?: MyWorkExpenseCollectionRecord
+  record?: MyWorkExpenseCollectionRecord,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ): MyWorkExpenseCollectionFormValue {
-  const primaryCategoryId = record?.category ? getMyWorkExpensePrimaryCategoryId(record.category) : getDefaultMyWorkExpensePrimaryCategoryId();
+  const primaryCategoryId = record?.category
+    ? getMyWorkExpensePrimaryCategoryId(record.category, primaryRows, secondaryRows)
+    : getDefaultMyWorkExpensePrimaryCategoryId(primaryRows, secondaryRows);
 
   return {
     amount: record?.amount ?? 0,
-    category: record?.category ?? getDefaultMyWorkExpenseCategory(primaryCategoryId),
+    category: record?.category ?? getDefaultMyWorkExpenseCategory(primaryCategoryId, secondaryRows),
     collectionMethod: record?.collectionMethod ?? '银行转账',
     customerName: record?.customerName ?? '',
     files: record?.files ?? [],
@@ -504,6 +548,21 @@ function getSubmittedStatus(kind: MyWorkExpenseCollectionKind): MyWorkExpenseCol
   return kind === '费用报销' ? '待审核' : '待复核';
 }
 
+function resolveMyWorkFinanceCategory(
+  category: FinanceTransactionCategory,
+  primaryRows: FinancePrimaryCategoryConfig[],
+  secondaryRows: FinanceSecondaryCategoryConfig[]
+) {
+  const categoryRecord = getFinanceSecondaryCategory(secondaryRows, category);
+  const categorySnapshot = getEnabledFinanceCategorySnapshot(category, primaryRows, secondaryRows);
+
+  if (!categoryRecord || !categorySnapshot) {
+    throw new Error(`财务类目“${category}”已停用或缺少有效会计科目映射`);
+  }
+
+  return { categoryId: categoryRecord.id, categorySnapshot };
+}
+
 function buildMyWorkExpenseCollectionOperation({
   action,
   amount,
@@ -533,15 +592,20 @@ export function createMyWorkExpenseCollectionRecordFromForm(
   form: MyWorkExpenseCollectionFormValue,
   sequence: number,
   submitter: MyWorkExpenseSubmitter,
-  mode: 'draft' | 'submit' = 'submit'
+  mode: 'draft' | 'submit' = 'submit',
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ): MyWorkExpenseCollectionRecord {
   const code = `EC-${form.occurredAt.slice(0, 7).replace('-', '')}-${String(sequence).padStart(3, '0')}`;
   const paperStatus = normalizeMyWorkPaperStatus(form.originalType);
   const status: MyWorkExpenseCollectionStatus = mode === 'draft' ? '草稿' : getSubmittedStatus(form.kind);
+  const category = form.kind === '费用报销' ? form.category : '客户回款';
+  const categoryIdentity = resolveMyWorkFinanceCategory(category, primaryRows, secondaryRows);
 
   return {
     amount: form.amount,
-    category: form.kind === '费用报销' ? form.category : '客户回款',
+    category,
+    ...categoryIdentity,
     code,
     collectionMethod: form.kind === '代收登记' ? form.collectionMethod : undefined,
     customerName: form.kind === '代收登记' ? form.customerName : undefined,
@@ -638,15 +702,20 @@ export function resubmitMyWorkExpenseCollectionRecordFromForm(
   record: MyWorkExpenseCollectionRecord,
   form: MyWorkExpenseCollectionFormValue,
   submitter: MyWorkExpenseSubmitter,
-  mode: 'draft' | 'submit' = 'submit'
+  mode: 'draft' | 'submit' = 'submit',
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ): MyWorkExpenseCollectionRecord {
   const paperStatus = normalizeMyWorkPaperStatus(form.originalType, record.paperStatus);
   const status: MyWorkExpenseCollectionStatus = mode === 'draft' ? '草稿' : getSubmittedStatus(form.kind);
+  const category = form.kind === '费用报销' ? form.category : '客户回款';
+  const categoryIdentity = resolveMyWorkFinanceCategory(category, primaryRows, secondaryRows);
 
   return {
     ...record,
     amount: form.amount,
-    category: form.kind === '费用报销' ? form.category : '客户回款',
+    category,
+    ...categoryIdentity,
     collectionMethod: form.kind === '代收登记' ? form.collectionMethod : undefined,
     customerName: form.kind === '代收登记' ? form.customerName : undefined,
     expenseReviewResult: undefined,
@@ -731,7 +800,7 @@ export function buildFinanceTransactionFromMyWorkCollection(
   }
 
   const transactionNo = buildNextMyWorkFinanceTransactionNo(financeRows, record.occurredAt);
-  const categorySnapshot = getFinanceCategorySnapshot('客户回款');
+  const categorySnapshot = record.categorySnapshot;
   const paymentMethod = record.collectionMethod === '现金' ? '现金暂收' : '员工代收';
 
   return {

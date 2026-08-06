@@ -1,6 +1,6 @@
 import type { PeopleMember } from '../people/peopleTypes';
 import type { PartTimeLaborSettlementBatch } from '../tasks/partTimeLaborSettlementModel';
-import { getFinanceCategorySnapshot } from './financeData';
+import { getFinanceCategorySnapshot, type FinanceCategorySnapshot } from './financeData';
 import { buildResidentLaborPaymentSnapshot } from './financeNaturalPersonPaymentModel';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import { getDefaultReceivablePayableTaxBasis } from './financeTaxBasisModel';
@@ -21,14 +21,15 @@ function createStableSuffix(value: string) {
 
 export function buildPartTimeLaborReceivablePayableRecord(
   batch: PartTimeLaborSettlementBatch,
-  person: Pick<PeopleMember, 'id' | 'identityNo'>
+  person: Pick<PeopleMember, 'id' | 'identityNo'>,
+  suppliedCategorySnapshot?: FinanceCategorySnapshot
 ): FinanceReceivablePayableRecord {
   const latestAcceptedAt = batch.sources.map((source) => source.acceptedAt).sort().at(-1) ?? `${batch.settlementPeriod}-01 09:00`;
   const confirmDate = latestAcceptedAt.slice(0, 10);
   const compactPeriod = batch.settlementPeriod.replace('-', '');
   const documentNo = `AP-${compactPeriod}-L${createStableSuffix(batch.batchKey)}`;
   const category = '外协付款' as const;
-  const categorySnapshot = getFinanceCategorySnapshot(category);
+  const categorySnapshot = suppliedCategorySnapshot ?? getFinanceCategorySnapshot(category);
   const naturalPersonPayment = buildResidentLaborPaymentSnapshot({
     grossIncomeAmount: batch.grossAmount,
     identityNo: person.identityNo,
@@ -95,13 +96,18 @@ export function mergePartTimeLaborReceivablePayableRecords({
   batches,
   canDirectCorrect = (record) => record.settledAmount <= 0 && record.linkedTransactionNos.length === 0,
   people,
-  records
+  records,
+  categorySnapshot
 }: {
   batches: readonly PartTimeLaborSettlementBatch[];
   canDirectCorrect?: (record: FinanceReceivablePayableRecord) => boolean;
   people: readonly PeopleMember[];
   records: FinanceReceivablePayableRecord[];
+  categorySnapshot?: FinanceCategorySnapshot | null;
 }): FinanceReceivablePayableRecord[] {
+  const newRecordCategorySnapshot = categorySnapshot === undefined
+    ? getFinanceCategorySnapshot('外协付款')
+    : categorySnapshot;
   const batchesByPaymentFactId = new Map(
     batches.map((batch) => [`labor:${batch.batchKey}`, batch])
   );
@@ -144,7 +150,7 @@ export function mergePartTimeLaborReceivablePayableRecords({
       return record;
     }
 
-    const nextRecord = buildPartTimeLaborReceivablePayableRecord(batch, person);
+    const nextRecord = buildPartTimeLaborReceivablePayableRecord(batch, person, record.categorySnapshot);
     const sourceNos = record.naturalPersonPayment?.sourceRecordNos ?? [];
     const nextSourceNos = nextRecord.naturalPersonPayment?.sourceRecordNos ?? [];
     const sourceUnchanged = sourceNos.length === nextSourceNos.length
@@ -168,7 +174,9 @@ export function mergePartTimeLaborReceivablePayableRecords({
     }
 
     const person = people.find((member) => member.id === batch.employeeNo);
-    return person ? [buildPartTimeLaborReceivablePayableRecord(batch, person)] : [];
+    return person && newRecordCategorySnapshot
+      ? [buildPartTimeLaborReceivablePayableRecord(batch, person, newRecordCategorySnapshot)]
+      : [];
   });
 
   return generatedRecords.length > 0 ? [...reconciledRecords, ...generatedRecords] : reconciledRecords;

@@ -87,9 +87,14 @@ function createReceivableRecord(overrides: Partial<FinanceReceivablePayableRecor
 }
 
 function createExpenseCollectionRecord(overrides: Partial<MyWorkExpenseCollectionRecord> = {}): MyWorkExpenseCollectionRecord {
+  const category = overrides.category ?? '差旅交通';
+  const categorySnapshot = overrides.categorySnapshot ?? getFinanceCategorySnapshot(category);
+
   return {
     amount: 100,
-    category: '差旅交通',
+    category,
+    categoryId: overrides.categoryId ?? 'finance-secondary-travel',
+    categorySnapshot,
     code: 'EC-TEST-001',
     files: [
       {

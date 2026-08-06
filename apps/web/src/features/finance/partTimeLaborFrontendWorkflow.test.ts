@@ -196,8 +196,15 @@ const tests: UnitTest[] = [
         people: [partTimePerson],
         records: []
       });
+      const blockedReceivablePayableRows = mergePartTimeLaborReceivablePayableRecords({
+        batches: settlementResult.batches,
+        categorySnapshot: null,
+        people: [partTimePerson],
+        records: []
+      });
       const payable = receivablePayableRows[0];
 
+      assertEqual(blockedReceivablePayableRows.length, 0, 'disabled labor category should block new labor payable generation');
       assert(payable?.naturalPersonPayment, 'labor settlement batch should derive a natural-person payable');
       assertEqual(payable.amount, 3200, 'payable should retain the tax-inclusive agreement amount');
       assertEqual(payable.naturalPersonPayment.grossIncomeAmount, 3200, 'payment snapshot should retain gross labor income');

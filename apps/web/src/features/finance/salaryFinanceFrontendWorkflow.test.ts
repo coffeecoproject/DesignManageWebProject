@@ -236,6 +236,7 @@ function createPaidSalaryReversalFixture() {
 
   const settlementSnapshot = {
     businessDeductionAmount: 0,
+    employeeAdvanceRecoveryAmount: 0,
     employeeGrossPayableAmount: 12000,
     employeeHousingFundAmount: 0,
     employeeNetPayableAmount: 11059.83,
@@ -335,8 +336,16 @@ const tests: UnitTest[] = [
         records: [],
         workflows: stateResult.salaryMonthlyWorkflows
       });
+      const blockedReceivablePayableRows = mergeSalaryReceivablePayableRecords({
+        categorySnapshot: null,
+        payments: [],
+        people: [report.member],
+        records: [],
+        workflows: stateResult.salaryMonthlyWorkflows
+      });
       const salaryPayable = receivablePayableRows[0];
 
+      assertEqual(blockedReceivablePayableRows.length, 0, 'disabled salary category should block new salary payable generation');
       assert(salaryPayable?.salarySettlement, 'confirmed salary state should derive a salary payable record');
       assertEqual(
         salaryPayable.amount,

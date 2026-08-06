@@ -34,7 +34,9 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { buildPublicAccountOptions, resolveActivePublicAccountRef, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
+import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
+import type { FinancePrimaryCategoryConfig, FinanceSecondaryCategoryConfig } from '../finance/financeData';
 import { financeToday, formatMoney, getAccountingPeriod } from '../finance/financeUtils';
 import {
   buildMyWorkCollectionReceivableOptions,
@@ -138,12 +140,19 @@ function getRelatedObject(record: MyWorkExpenseCollectionRecord) {
   return record.customerName || '-';
 }
 
-function getExpenseCategoryLabel(record: MyWorkExpenseCollectionRecord) {
+function getExpenseCategoryLabel(
+  record: MyWorkExpenseCollectionRecord,
+  primaryRows: FinancePrimaryCategoryConfig[],
+  secondaryRows: FinanceSecondaryCategoryConfig[]
+) {
   if (record.kind !== '费用报销') {
     return record.category;
   }
 
-  return `${getMyWorkExpensePrimaryCategoryName(getMyWorkExpensePrimaryCategoryId(record.category))} / ${record.category}`;
+  return `${getMyWorkExpensePrimaryCategoryName(
+    getMyWorkExpensePrimaryCategoryId(record.category, primaryRows, secondaryRows),
+    primaryRows
+  )} / ${record.category}`;
 }
 
 function sortExpenseCollectionRows(rows: MyWorkExpenseCollectionRecord[]) {
@@ -165,6 +174,8 @@ function getPublicAccountLabel(publicAccountId: string | undefined, options: Pub
 
 function MyExpenseCollectionFormDrawer({
   customerOptions,
+  financePrimaryCategories,
+  financeSecondaryCategories,
   form,
   isEditMode,
   open,
@@ -179,6 +190,8 @@ function MyExpenseCollectionFormDrawer({
   onUpdate
 }: {
   customerOptions: string[];
+  financePrimaryCategories: FinancePrimaryCategoryConfig[];
+  financeSecondaryCategories: FinanceSecondaryCategoryConfig[];
   form: MyWorkExpenseCollectionFormValue;
   isEditMode: boolean;
   open: boolean;
@@ -195,9 +208,15 @@ function MyExpenseCollectionFormDrawer({
     value: MyWorkExpenseCollectionFormValue[K]
   ) => void;
 }) {
-  const expensePrimaryCategoryOptions = getMyWorkExpensePrimaryCategoryOptions();
-  const expenseCategoryOptions = getMyWorkExpenseCategoryOptions();
-  const currentExpenseCategoryOptions = getMyWorkExpenseCategoryOptions(form.primaryCategoryId);
+  const expensePrimaryCategoryOptions = getMyWorkExpensePrimaryCategoryOptions(
+    financePrimaryCategories,
+    financeSecondaryCategories
+  );
+  const expenseCategoryOptions = getMyWorkExpenseCategoryOptions(undefined, financeSecondaryCategories);
+  const currentExpenseCategoryOptions = getMyWorkExpenseCategoryOptions(
+    form.primaryCategoryId,
+    financeSecondaryCategories
+  );
   const filteredReceivableOptions = form.customerName
     ? receivableOptions.filter((option) => option.customerName === form.customerName)
     : receivableOptions;
@@ -210,10 +229,14 @@ function MyExpenseCollectionFormDrawer({
     onUpdate('files', []);
 
     if (kind === '费用报销') {
-      const nextPrimaryCategoryId = getMyWorkExpensePrimaryCategoryId('差旅交通') || expensePrimaryCategoryOptions[0]?.id || '';
+      const nextPrimaryCategoryId = getMyWorkExpensePrimaryCategoryId(
+        '差旅交通',
+        financePrimaryCategories,
+        financeSecondaryCategories
+      ) || expensePrimaryCategoryOptions[0]?.id || '';
 
       onUpdate('primaryCategoryId', nextPrimaryCategoryId);
-      onUpdate('category', getMyWorkExpenseCategoryOptions(nextPrimaryCategoryId)[0]?.name ?? expenseCategoryOptions[0]?.name ?? '');
+      onUpdate('category', getMyWorkExpenseCategoryOptions(nextPrimaryCategoryId, financeSecondaryCategories)[0]?.name ?? expenseCategoryOptions[0]?.name ?? '');
       onUpdate('customerName', '');
       onUpdate('relatedReceivableNo', '');
       onUpdate('publicAccountId', '');
@@ -234,7 +257,7 @@ function MyExpenseCollectionFormDrawer({
 
   function handlePrimaryCategoryChange(primaryCategoryId: string) {
     onUpdate('primaryCategoryId', primaryCategoryId);
-    onUpdate('category', getMyWorkExpenseCategoryOptions(primaryCategoryId)[0]?.name ?? '');
+    onUpdate('category', getMyWorkExpenseCategoryOptions(primaryCategoryId, financeSecondaryCategories)[0]?.name ?? '');
   }
 
   function handleFileSelect(file: UploadFile) {
@@ -564,6 +587,7 @@ export function MyExpenseCollectionPage() {
   const { addFinanceTransaction, financeRows, getAccountingPeriodGuard, receivablePayableRows } = useFinanceManagement();
   const { peopleRows } = usePeopleOrganizationState();
   const { publicAccounts } = usePublicAccountConfigState();
+  const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const {
     canSaveExpenseCollectionRecord,
     collectionRecords: records,
@@ -573,8 +597,16 @@ export function MyExpenseCollectionPage() {
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [filters, setFilters] = useState<MyWorkExpenseCollectionFilters>(defaultMyWorkExpenseCollectionFilters);
   const formDrawer = useDrawerFormState<MyWorkExpenseCollectionRecord, MyWorkExpenseCollectionFormValue>({
-    createForm: () => createMyWorkExpenseCollectionForm(),
-    editForm: (record) => createMyWorkExpenseCollectionForm(record)
+    createForm: () => createMyWorkExpenseCollectionForm(
+      undefined,
+      financePrimaryCategories,
+      financeSecondaryCategories
+    ),
+    editForm: (record) => createMyWorkExpenseCollectionForm(
+      record,
+      financePrimaryCategories,
+      financeSecondaryCategories
+    )
   });
   const allRecords = useMemo(() => sortExpenseCollectionRows(records), [records]);
   const filteredRecords = useMemo(
@@ -605,7 +637,12 @@ export function MyExpenseCollectionPage() {
         title: '事项',
         key: 'title',
         width: 240,
-        render: (_, record) => <CompactCell primary={record.title} secondary={getExpenseCategoryLabel(record)} />
+        render: (_, record) => (
+          <CompactCell
+            primary={record.title}
+            secondary={getExpenseCategoryLabel(record, financePrimaryCategories, financeSecondaryCategories)}
+          />
+        )
       },
       {
         title: '金额',
@@ -648,7 +685,7 @@ export function MyExpenseCollectionPage() {
         render: (status: MyWorkExpenseCollectionStatus) => <StatusTag toneMap={expenseCollectionStatusTone} value={status} />
       }
     ],
-    []
+    [financePrimaryCategories, financeSecondaryCategories]
   );
 
   function updateFilters(patch: Partial<MyWorkExpenseCollectionFilters>) {
@@ -713,12 +750,20 @@ export function MyExpenseCollectionPage() {
     }
 
     if (formDrawer.isEditMode && formDrawer.record) {
-      const nextRecord = resubmitMyWorkExpenseCollectionRecordFromForm(
-        formDrawer.record,
-        formDrawer.form,
-        { id: submitter.id, name: submitter.name },
-        mode
-      );
+      let nextRecord: MyWorkExpenseCollectionRecord;
+      try {
+        nextRecord = resubmitMyWorkExpenseCollectionRecordFromForm(
+          formDrawer.record,
+          formDrawer.form,
+          { id: submitter.id, name: submitter.name },
+          mode,
+          financePrimaryCategories,
+          financeSecondaryCategories
+        );
+      } catch (error) {
+        void messageApi.warning(error instanceof Error ? error.message : '财务类目当前不可用');
+        return;
+      }
 
       if (!guardSubmitAccountingPeriod(nextRecord)) {
         return;
@@ -761,12 +806,20 @@ export function MyExpenseCollectionPage() {
       return;
     }
 
-    const nextRecord = createMyWorkExpenseCollectionRecordFromForm(
-      formDrawer.form,
-      allRecords.length + 1,
-      { id: submitter.id, name: submitter.name },
-      mode
-    );
+    let nextRecord: MyWorkExpenseCollectionRecord;
+    try {
+      nextRecord = createMyWorkExpenseCollectionRecordFromForm(
+        formDrawer.form,
+        allRecords.length + 1,
+        { id: submitter.id, name: submitter.name },
+        mode,
+        financePrimaryCategories,
+        financeSecondaryCategories
+      );
+    } catch (error) {
+      void messageApi.warning(error instanceof Error ? error.message : '财务类目当前不可用');
+      return;
+    }
 
     if (!guardSubmitAccountingPeriod(nextRecord)) {
       return;
@@ -891,6 +944,8 @@ export function MyExpenseCollectionPage() {
 
       <MyExpenseCollectionFormDrawer
         customerOptions={customerOptions}
+        financePrimaryCategories={financePrimaryCategories}
+        financeSecondaryCategories={financeSecondaryCategories}
         form={formDrawer.form}
         isEditMode={formDrawer.isEditMode}
         open={formDrawer.open}

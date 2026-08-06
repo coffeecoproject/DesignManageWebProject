@@ -20,6 +20,7 @@ import { OperationRecordSection } from '../../components/OperationRecordSection'
 import { RelatedFileTable, type RelatedFileRecord } from '../../components/RelatedFileTable';
 import { CellText } from '../../components/TableCell';
 import { financeToday, formatMoney } from '../finance/financeUtils';
+import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import type { MyWorkExpenseVoucherComplianceConclusion } from './myWorkExpenseCollectionModel';
 import {
   buildMyWorkExpenseReviewCompletedRows,
@@ -105,6 +106,7 @@ function getProcessedResultItems(record: MyWorkExpenseReviewRecord) {
 }
 
 export function MyExpenseReviewPage() {
+  const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const {
     approveExpenseReview,
     records,
@@ -317,7 +319,14 @@ export function MyExpenseReviewPage() {
                     { label: '提交人', value: activeRecord.submitterName },
                     { label: '金额', value: formatMoney(activeRecord.amount) },
                     { label: '费用日期', value: activeRecord.occurredAt },
-                    { label: '费用类目', value: getExpenseReviewCategoryLabel(activeRecord) },
+                    {
+                      label: '费用类目',
+                      value: getExpenseReviewCategoryLabel(
+                        activeRecord,
+                        financePrimaryCategories,
+                        financeSecondaryCategories
+                      )
+                    },
                     { label: '支付方式', value: activeRecord.paymentMethod },
                     { label: '凭证', value: `${activeRecord.files.length} 份` }
                   ].map((item) => (

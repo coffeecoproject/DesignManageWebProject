@@ -1,12 +1,9 @@
-import {
-  getPeopleHousingFundStatus,
-  isPeopleHousingFundContributionApplicable,
-  isPeopleRelationshipActive
-} from '../people/peopleDomain';
+import { isPeopleRelationshipActive } from '../people/peopleDomain';
 import type { PeopleMember } from '../people/peopleTypes';
 import type {
   ContributionBaseRecord,
   ContributionCorrectionRecord,
+  EnrollmentChannel,
   MonthlyContributionItem,
   SocialInsuranceEnrollmentProfile,
   SocialInsuranceEmployeeRecord,
@@ -14,7 +11,10 @@ import type {
   SocialInsurancePayrollDeductionRecord
 } from './financeSocialInsuranceData';
 import { socialInsuranceEnrollmentProfiles } from './financeSocialInsuranceData';
-import type { SocialInsurancePolicyVersion } from '../system/socialInsurancePolicyData';
+import {
+  getActivePolicyByConfigType,
+  type SocialInsurancePolicyVersion
+} from '../system/socialInsurancePolicyData';
 import type { PublicAccountRef } from '../system/PublicAccountConfigState';
 import {
   getFinanceCategorySnapshot,
@@ -186,11 +186,18 @@ export function buildContributionCorrectionPaymentTransaction(input: {
 
   const transactionNo = getNextSocialInsuranceTransactionNo(input.financeRows, input.paidAt.slice(0, 7));
   const category = correction.category === '社保' ? '社保缴费' : '公积金缴费';
-  const liabilitySubjectCode = correction.category === '社保' ? '2211.03' : '2211.04';
-
   return {
     accountingAllocations: [
-      ...(principalAmount > 0 ? [{ amount: principalAmount, label: `${correction.originalPeriod} ${correction.category}补缴本金`, subjectCode: liabilitySubjectCode }] : []),
+      ...(correction.principalEmployerAmount > 0 ? [{
+        amount: correction.principalEmployerAmount,
+        label: `${correction.originalPeriod} ${correction.category}单位补缴本金`,
+        subjectCode: '5602.02'
+      }] : []),
+      ...(correction.principalEmployeeAmount > 0 ? [{
+        amount: correction.principalEmployeeAmount,
+        label: `${correction.originalPeriod} ${correction.category}个人代垫`,
+        subjectCode: '1221'
+      }] : []),
       ...(correction.lateFeeAmount > 0 ? [{ amount: correction.lateFeeAmount, label: '补缴滞纳金', subjectCode: '5711' }] : [])
     ],
     accountingPeriod: input.paidAt.slice(0, 7),
@@ -269,7 +276,7 @@ export function getSocialInsuranceRecordEligibility(
     return '人员不存在';
   }
 
-  if (!isPeopleRelationshipActive(member) && !enrollmentProfile?.socialSecurityStopEffectiveMonth) {
+  if (!isPeopleRelationshipActiveForPeriod(member, record.period)) {
     return '人员已结束';
   }
 
@@ -282,20 +289,18 @@ export function getSocialInsuranceRecordEligibility(
       return '无需参保';
     }
 
-    if (enrollmentProfile.socialSecurityStatus !== '已增员' && enrollmentProfile.socialSecurityStatus !== '待停保' && enrollmentProfile.socialSecurityStatus !== '停保办理中' && enrollmentProfile.socialSecurityStatus !== '已停保') {
+    if (!isEnrollmentEffectiveForPeriod(enrollmentProfile, record.period)) {
       return '尚未增员';
     }
 
     return '适用';
   }
 
-  const housingFundStatus = getPeopleHousingFundStatus(member);
-
-  if (housingFundStatus !== '缴存') {
+  if (!enrollmentProfile || enrollmentProfile.housingFundStatus === '不适用') {
     return '公积金暂不缴存';
   }
 
-  if (!isPeopleHousingFundContributionApplicable(member, record.period)) {
+  if (!isEnrollmentChannelEffectiveForPeriod(enrollmentProfile, '公积金', record.period)) {
     return '公积金未到生效月份';
   }
 
@@ -330,12 +335,11 @@ export function getVisibleSocialInsuranceRecords(
       return true;
     }
 
-    const effectiveStopMonths = [
-      profile?.socialSecurityStopEffectiveMonth,
-      profile?.medicalInsuranceStopEffectiveMonth
-    ].filter((month): month is string => Boolean(month));
+    const effectiveStopMonths = record.category === '社保'
+      ? [profile?.socialSecurityStopEffectiveMonth, profile?.medicalInsuranceStopEffectiveMonth]
+      : [profile?.housingFundStopEffectiveMonth];
 
-    return effectiveStopMonths.some((month) => month <= record.period);
+    return effectiveStopMonths.some((month) => Boolean(month && month <= record.period));
   });
 }
 
@@ -378,12 +382,108 @@ export function isEnrollmentEffectiveForPeriod(profile: SocialInsuranceEnrollmen
   return socialEffective || medicalEffective;
 }
 
+export function isEnrollmentChannelEffectiveForPeriod(
+  profile: SocialInsuranceEnrollmentProfile,
+  channel: '社保' | '医保' | '公积金',
+  period: string
+) {
+  if (profile.obligation !== '应参保') return false;
+
+  const effectiveMonth = channel === '社保'
+    ? profile.socialSecurityEffectiveMonth
+    : channel === '医保'
+      ? profile.medicalInsuranceEffectiveMonth
+      : profile.housingFundEffectiveMonth;
+  const stopMonth = channel === '社保'
+    ? profile.socialSecurityStopEffectiveMonth
+    : channel === '医保'
+      ? profile.medicalInsuranceStopEffectiveMonth
+      : profile.housingFundStopEffectiveMonth;
+
+  return Boolean(effectiveMonth && effectiveMonth <= period && (!stopMonth || stopMonth > period));
+}
+
+export function applyEnrollmentChannelResult(
+  profile: SocialInsuranceEnrollmentProfile,
+  channel: EnrollmentChannel,
+  input: {
+    action: '增员' | '停办';
+    effectiveMonth: string;
+    evidenceFileIds: string[];
+    insuredRegionCode: string;
+    officialReferenceNo: string;
+    updatedAt: string;
+  }
+) {
+  const officialReferenceNo = input.officialReferenceNo.trim();
+  if (
+    profile.obligation !== '应参保'
+    || !input.effectiveMonth
+    || !input.insuredRegionCode
+    || !officialReferenceNo
+    || input.evidenceFileIds.length === 0
+  ) {
+    return undefined;
+  }
+
+  const status = input.action === '停办' ? '已停保' as const : '已增员' as const;
+  const common = {
+    insuredRegionCode: input.insuredRegionCode,
+    noObligationReason: undefined,
+    obligation: '应参保' as const,
+    updatedAt: input.updatedAt
+  };
+
+  if (channel === '社保') {
+    return {
+      ...profile,
+      ...common,
+      socialSecurityEffectiveMonth: input.action === '增员' ? input.effectiveMonth : profile.socialSecurityEffectiveMonth,
+      socialSecurityEvidenceFileIds: [...input.evidenceFileIds],
+      socialSecurityOfficialReferenceNo: officialReferenceNo,
+      socialSecurityStatus: status,
+      socialSecurityStopEffectiveMonth: input.action === '停办' ? input.effectiveMonth : undefined
+    };
+  }
+
+  if (channel === '医保') {
+    return {
+      ...profile,
+      ...common,
+      medicalInsuranceEffectiveMonth: input.action === '增员' ? input.effectiveMonth : profile.medicalInsuranceEffectiveMonth,
+      medicalInsuranceEvidenceFileIds: [...input.evidenceFileIds],
+      medicalInsuranceOfficialReferenceNo: officialReferenceNo,
+      medicalInsuranceStatus: status,
+      medicalInsuranceStopEffectiveMonth: input.action === '停办' ? input.effectiveMonth : undefined
+    };
+  }
+
+  return {
+    ...profile,
+    ...common,
+    housingFundEffectiveMonth: input.action === '增员' ? input.effectiveMonth : profile.housingFundEffectiveMonth,
+    housingFundEvidenceFileIds: [...input.evidenceFileIds],
+    housingFundOfficialReferenceNo: officialReferenceNo,
+    housingFundStatus: status,
+    housingFundStopEffectiveMonth: input.action === '停办' ? input.effectiveMonth : undefined
+  };
+}
+
 function getMemberRelationshipStartMonth(member: PeopleMember) {
   return (member.personnelType === '兼职' ? member.cooperationStartAt : member.joinedAt)?.slice(0, 7);
 }
 
 function getMemberRelationshipEndMonth(member: PeopleMember) {
   return (member.personnelType === '兼职' ? member.cooperationEndAt ?? member.contractEndAt : member.contractEndAt)?.slice(0, 7);
+}
+
+export function isPeopleRelationshipActiveForPeriod(member: PeopleMember, period: string) {
+  const startMonth = getMemberRelationshipStartMonth(member);
+  const endMonth = getMemberRelationshipEndMonth(member);
+
+  if (startMonth && startMonth > period) return false;
+  if (endMonth && endMonth < period) return false;
+  return true;
 }
 
 export function buildDerivedEnrollmentProfiles(
@@ -399,18 +499,21 @@ export function buildDerivedEnrollmentProfiles(
     const relationshipEndMonth = getMemberRelationshipEndMonth(member) ?? currentMonth;
 
     if (storedProfile) {
-      if (
-        relationshipEnded
-        && storedProfile.obligation === '应参保'
-        && !storedProfile.socialSecurityStopEffectiveMonth
-        && !['待停保', '停保办理中', '已停保'].includes(storedProfile.socialSecurityStatus)
-      ) {
+      if (relationshipEnded && storedProfile.obligation === '应参保') {
+        const needsSocialStop = !storedProfile.socialSecurityStopEffectiveMonth
+          && !['待停保', '停保办理中', '已停保', '不适用'].includes(storedProfile.socialSecurityStatus);
+        const needsMedicalStop = !storedProfile.medicalInsuranceStopEffectiveMonth
+          && !['待停保', '停保办理中', '已停保', '不适用'].includes(storedProfile.medicalInsuranceStatus);
+        const needsHousingStop = !storedProfile.housingFundStopEffectiveMonth
+          && !['待停保', '停保办理中', '已停保', '不适用'].includes(storedProfile.housingFundStatus);
+
         return {
           ...storedProfile,
           employmentRelationshipType: member.employmentRelationshipType,
           plannedStopMonth: relationshipEndMonth,
-          socialSecurityStatus: '待停保' as const,
-          medicalInsuranceStatus: '待停保' as const
+          socialSecurityStatus: needsSocialStop ? '待停保' as const : storedProfile.socialSecurityStatus,
+          medicalInsuranceStatus: needsMedicalStop ? '待停保' as const : storedProfile.medicalInsuranceStatus,
+          housingFundStatus: needsHousingStop ? '待停保' as const : storedProfile.housingFundStatus
         };
       }
 
@@ -428,7 +531,10 @@ export function buildDerivedEnrollmentProfiles(
         noObligationReason: member.employmentRelationshipType,
         socialSecurityStatus: '不适用' as const,
         medicalInsuranceStatus: '不适用' as const,
-        evidenceFileIds: [],
+        housingFundStatus: '不适用' as const,
+        socialSecurityEvidenceFileIds: [],
+        medicalInsuranceEvidenceFileIds: [],
+        housingFundEvidenceFileIds: [],
         updatedAt: currentMonth
       };
     }
@@ -440,8 +546,11 @@ export function buildDerivedEnrollmentProfiles(
         obligation: '待判定' as const,
         socialSecurityStatus: '办理异常' as const,
         medicalInsuranceStatus: '办理异常' as const,
+        housingFundStatus: member.housingFundStatus === '缴存' ? '办理异常' as const : '不适用' as const,
         plannedStopMonth: relationshipEnded ? relationshipEndMonth : undefined,
-        evidenceFileIds: [],
+        socialSecurityEvidenceFileIds: [],
+        medicalInsuranceEvidenceFileIds: [],
+        housingFundEvidenceFileIds: [],
         updatedAt: currentMonth
       };
     }
@@ -452,8 +561,11 @@ export function buildDerivedEnrollmentProfiles(
       obligation: '应参保' as const,
       socialSecurityStatus: '待增员' as const,
       medicalInsuranceStatus: '待增员' as const,
+      housingFundStatus: member.housingFundStatus === '缴存' ? '待增员' as const : '不适用' as const,
       plannedEnrollmentMonth: getMemberRelationshipStartMonth(member) ?? currentMonth,
-      evidenceFileIds: [],
+      socialSecurityEvidenceFileIds: [],
+      medicalInsuranceEvidenceFileIds: [],
+      housingFundEvidenceFileIds: [],
       updatedAt: currentMonth
     };
   });
@@ -466,9 +578,7 @@ export function resolveSocialInsurancePolicyForPeriod(
 ) {
   const configType = category === '社保' ? '社保配置' : '公积金配置';
 
-  return policies
-    .filter((policy) => policy.configType === configType && policy.status !== '草稿' && policy.effectiveMonth <= period)
-    .sort((left, right) => right.effectiveMonth.localeCompare(left.effectiveMonth))[0];
+  return getActivePolicyByConfigType(policies, configType, period);
 }
 
 function resolveContributionItemCode(name: string): MonthlyContributionItem['itemCode'] {
@@ -542,9 +652,8 @@ export function buildMonthlyContributionCandidates(input: {
 
       const categoryApplicable = category === '社保'
         ? isEnrollmentEffectiveForPeriod(profile, input.period)
-        : member.housingFundStatus === '缴存'
-          && (!member.housingFundEffectiveMonth || member.housingFundEffectiveMonth <= input.period)
-          && isPeopleRelationshipActive(member);
+        : isEnrollmentChannelEffectiveForPeriod(profile, '公积金', input.period)
+          && isPeopleRelationshipActiveForPeriod(member, input.period);
 
       if (!categoryApplicable) return;
 

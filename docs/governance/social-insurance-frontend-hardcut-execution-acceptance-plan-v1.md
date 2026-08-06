@@ -16,6 +16,8 @@ Related documents:
 - `docs/testing/test-plan.md`
 - `docs/web/route-page-inventory.md`
 
+Policy lifecycle update: 本文第 5 节记录的是硬切前审查基线。政策版本生命周期现已由 `docs/governance/social-insurance-policy-frontend-hardcut-acceptance-v1.md` 接管，持久状态为`草稿 / 已发布`，展示状态按统一业务月份派生为`草稿 / 待生效 / 当前生效 / 历史`；旧“单一启用版本”口径不再有效。
+
 ## 1. 文档目的
 
 本方案用于将当前“全职人员自动进入静态社保记录、人工确认金额、延期记录滚入下月”的前端模型，硬切为符合真实业务顺序的社保缴费链路：
@@ -862,13 +864,17 @@ corepack pnpm ai-native:check
 8. 期间结账改为直接读取社保领域月度状态，不再读取旧税务社保事项；旧税务社保 Mock 已删除。
 9. 文件使用现有预览/下载组件，人员总览和档案仅展示业务所需摘要。
 10. 税务办理页面已移除旧社保事项、社保凭证抽屉及兼容参数；税务和社保不再共用活动页面状态机。
+11. 社保、医保、公积金分别保存办理编号、回执、生效月份和停办月份；单一渠道停办不再把人员整体改为`无需参保`。
+12. 历史劳动关系资格按查询所属期判断；当前离职状态不再抹去离职前月份的应缴事实。
+13. 薪酬与期间结账按各自目标月份调用社保记录解析器，不再消费固定展示月份。
+14. 社保与公积金明细按险种展开并冻结各自政策版本 ID，避免使用合并配置 ID 作为追溯依据。
 
 当前自动证据：
 
-- `financeSocialInsuranceModel.test.ts`覆盖劳动关系、待增员、生效/停保月份、历史政策、正式核定、薪酬消费、欠缴和补缴付款分配。
+- `financeSocialInsuranceModel.test.ts`覆盖劳动关系、历史月份、三渠道独立办理、生效/停保月份、分类政策版本、正式核定、薪酬消费、欠缴和补缴付款分配。
 - `financePeriodCloseModel.test.ts`覆盖新社保领域状态对期间结账的阻断和放行。
 - `financeAccountingVoucherModel.test.ts`与`salaryFinanceFrontendWorkflow.test.ts`覆盖工资计提中的单位负担、个人代扣和负债拆分。
-- Web unit tests: `557/557`通过。
+- Web unit tests: `640/640`通过（项目当前全量前端测试基线）。
 - Web typecheck、ESLint、生产构建与`ai-native:check`通过。
 - 活动税务页面残留扫描未发现`social-receipt`、`TaxMatterReceiptDrawer`或旧社保详情兼容参数。
 

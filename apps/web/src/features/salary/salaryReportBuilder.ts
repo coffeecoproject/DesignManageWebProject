@@ -22,7 +22,7 @@ export function useSalaryMonthlyReportBuilder() {
   } = usePeopleOrganizationState();
   const { annualExceptionRows, workCalendarRows } = useWorkCalendarState();
   const salaryState = useSalaryManagementState();
-  const { socialInsuranceRecords } = useFinanceSocialInsuranceState();
+  const { getSocialInsuranceRecordsForPeriod } = useFinanceSocialInsuranceState();
   const { formalResults } = usePerformanceResultState();
   const performanceRecords = useMemo(
     () => buildSalaryPerformanceSourceRecords({
@@ -70,6 +70,8 @@ export function useSalaryMonthlyReportBuilder() {
 
   const buildSalaryReportsWithSnapshots = useCallback(
     (month: string, snapshots: typeof salaryState.personalIncomeTaxCumulativeSnapshots) => {
+      const socialInsuranceRecords = getSocialInsuranceRecordsForPeriod(month);
+
       return buildSalaryMonthlyReports({
         attendanceReports: buildAttendanceReportsForMonth(month),
         performanceRecords,
@@ -84,12 +86,12 @@ export function useSalaryMonthlyReportBuilder() {
     },
     [
       buildAttendanceReportsForMonth,
+      getSocialInsuranceRecordsForPeriod,
       performanceRecords,
       salaryState.salaryAdjustments,
       salaryState.personalIncomeTaxProfiles,
       salaryState.salaryMonthlyWorkflows,
-      salaryState.salaryPaymentRecords,
-      socialInsuranceRecords
+      salaryState.salaryPaymentRecords
     ]
   );
 

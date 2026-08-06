@@ -8,6 +8,8 @@ import {
   buildMonthlyContributionCandidates,
   getAppliedContributionBase,
   getVisibleSocialInsuranceRecords,
+  isEnrollmentChannelEffectiveForPeriod,
+  isEnrollmentEffectiveForPeriod,
   resolveContributionCorrectionPaymentStatus,
   resolveSocialInsuranceRecordPaymentStatus,
   resolveSocialInsurancePolicyForPeriod
@@ -264,11 +266,20 @@ export function FinanceSocialInsuranceProvider({ children }: { children: ReactNo
         const profile = derivedEnrollmentProfiles.find((currentProfile) => currentProfile.personId === sourceRecord?.employeeNo);
         const officialReferenceNo = input.officialReferenceNo.trim();
         const reason = input.reason.trim();
-        const stopEffectiveMonth = profile?.socialSecurityStopEffectiveMonth;
+        const hasEndedForCategory = sourceRecord?.category === '社保'
+          ? Boolean(profile && !isEnrollmentEffectiveForPeriod(profile, sourceRecord.period))
+          : Boolean(profile && !isEnrollmentChannelEffectiveForPeriod(profile, '公积金', sourceRecord?.period ?? ''));
+        const stopEffectiveMonth = sourceRecord?.category === '社保'
+          ? [profile?.socialSecurityStopEffectiveMonth, profile?.medicalInsuranceStopEffectiveMonth]
+              .filter((month): month is string => Boolean(month))
+              .sort()
+              .at(-1)
+          : profile?.housingFundStopEffectiveMonth;
 
         if (
           !sourceRecord
           || sourceRecord.handlingStatus === '已缴费'
+          || !hasEndedForCategory
           || !stopEffectiveMonth
           || stopEffectiveMonth > sourceRecord.period
           || !input.confirmedAt
@@ -384,9 +395,27 @@ export function FinanceSocialInsuranceProvider({ children }: { children: ReactNo
           return false;
         }
 
+        const completedChannels = [
+          {
+            evidence: profile.socialSecurityEvidenceFileIds,
+            reference: profile.socialSecurityOfficialReferenceNo,
+            status: profile.socialSecurityStatus
+          },
+          {
+            evidence: profile.medicalInsuranceEvidenceFileIds,
+            reference: profile.medicalInsuranceOfficialReferenceNo,
+            status: profile.medicalInsuranceStatus
+          },
+          {
+            evidence: profile.housingFundEvidenceFileIds,
+            reference: profile.housingFundOfficialReferenceNo,
+            status: profile.housingFundStatus
+          }
+        ].filter((channel) => channel.status === '已增员' || channel.status === '已停保');
+
         if (
-          (profile.socialSecurityStatus === '已增员' || profile.medicalInsuranceStatus === '已增员')
-          && (!profile.insuredRegionCode || !profile.officialReferenceNo)
+          completedChannels.some((channel) => !channel.reference?.trim() || channel.evidence.length === 0)
+          || (completedChannels.length > 0 && !profile.insuredRegionCode)
         ) {
           return false;
         }
@@ -408,9 +437,9 @@ export function FinanceSocialInsuranceProvider({ children }: { children: ReactNo
         if (!periodPolicy) return false;
 
         const policyItems = periodPolicy.socialItems.filter((item) => item.category === sourceRecord.category && item.status === '启用');
+        if (policyItems.length === 0 || policyItems.some((item) => item.baseUpper === undefined)) return false;
         const lowerLimit = Math.max(0, ...policyItems.map((item) => item.baseLower ?? 0));
-        const configuredUpperLimits = policyItems.flatMap((item) => item.baseUpper === undefined ? [] : [item.baseUpper]);
-        const upperLimit = configuredUpperLimits.length > 0 ? Math.min(...configuredUpperLimits) : contributionBase;
+        const upperLimit = Math.min(...policyItems.map((item) => item.baseUpper as number));
         const appliedBase = getAppliedContributionBase(contributionBase, lowerLimit, upperLimit);
         const nextAmounts = getSocialInsuranceContributionAmounts(sourceRecord.category, appliedBase, periodPolicy);
 

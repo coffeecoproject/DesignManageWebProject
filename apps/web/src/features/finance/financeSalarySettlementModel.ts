@@ -5,7 +5,7 @@ import {
   type SalaryPaymentRecord,
   type SalarySettlementSnapshot
 } from '../salary/salaryDomain';
-import { getFinanceCategorySnapshot } from './financeData';
+import { getFinanceCategorySnapshot, type FinanceCategorySnapshot } from './financeData';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
 import { getDefaultReceivablePayableTaxBasis } from './financeTaxBasisModel';
 import { formatMoney } from './financeUtils';
@@ -74,12 +74,13 @@ function collectSalarySettlementSources({
 }
 
 export function buildSalaryReceivablePayableRecord(
-  source: SalarySettlementSource
+  source: SalarySettlementSource,
+  suppliedCategorySnapshot?: FinanceCategorySnapshot
 ): FinanceReceivablePayableRecord {
   const { employeeName, employeeNo, payment, settlementSnapshot, workflow } = source;
   const { payrollMonth, payrollNo } = settlementSnapshot;
   const category = '工资发放' as const;
-  const categorySnapshot = getFinanceCategorySnapshot(category);
+  const categorySnapshot = suppliedCategorySnapshot ?? getFinanceCategorySnapshot(category);
   const confirmDate = workflow?.confirmedAt?.slice(0, 10) ?? getMonthEndDate(payrollMonth);
   const documentNo = `AP-${payrollMonth.replace('-', '')}-S-${employeeNo}`;
   const updatedAt = payment?.paidAt ?? workflow?.updatedAt ?? `${confirmDate} 18:00`;
@@ -145,16 +146,31 @@ export function mergeSalaryReceivablePayableRecords({
   payments,
   people,
   records,
-  workflows
+  workflows,
+  categorySnapshot
 }: {
   payments: readonly SalaryPaymentRecord[];
   people: readonly PeopleMember[];
   records: FinanceReceivablePayableRecord[];
   workflows: readonly SalaryMonthlyWorkflowRecord[];
+  categorySnapshot?: FinanceCategorySnapshot | null;
 }) {
   const nonSalaryRecords = records.filter((record) => record.sourceType !== '薪酬发放');
+  const existingSalaryRecords = records.filter((record) => record.sourceType === '薪酬发放');
+  const newRecordCategorySnapshot = categorySnapshot === undefined
+    ? getFinanceCategorySnapshot('工资发放')
+    : categorySnapshot;
+  if (!newRecordCategorySnapshot) {
+    return records;
+  }
+  const existingSnapshotBySourceNo = new Map(
+    existingSalaryRecords.map((record) => [record.sourceNo, record.categorySnapshot])
+  );
   const salaryRecords = collectSalarySettlementSources({ payments, people, workflows })
-    .map(buildSalaryReceivablePayableRecord);
+    .map((source) => buildSalaryReceivablePayableRecord(
+      source,
+      existingSnapshotBySourceNo.get(source.settlementSnapshot.payrollNo) ?? newRecordCategorySnapshot
+    ));
 
   return [...nonSalaryRecords, ...salaryRecords];
 }

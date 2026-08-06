@@ -7,9 +7,10 @@ import {
   UploadOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Button, DatePicker, Input, InputNumber, Select, Upload, message, type TableColumnsType } from 'antd';
+import { Button, DatePicker, Input, InputNumber, Segmented, Select, Upload, message, type TableColumnsType } from 'antd';
 import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import { MonthFilterField } from '../../components/DateFilterFields';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag, type StatusTagTone } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
@@ -35,6 +36,7 @@ import { useFinanceSocialInsuranceState } from './FinanceSocialInsuranceState';
 import {
   socialInsuranceHandlingStatusTone,
   type ContributionCorrectionRecord,
+  type EnrollmentChannel,
   type EnrollmentHandlingStatus,
   type SocialInsuranceCategory,
   type SocialInsuranceEmployeeRecord,
@@ -43,7 +45,10 @@ import {
 import {
   buildContributionCorrectionPaymentTransaction,
   buildContributionCorrectionRecord,
-  buildSocialInsurancePaymentTransaction
+  buildSocialInsurancePaymentTransaction,
+  applyEnrollmentChannelResult,
+  isEnrollmentChannelEffectiveForPeriod,
+  isEnrollmentEffectiveForPeriod
 } from './financeSocialInsuranceModel';
 import { formatMoney } from './financeUtils';
 
@@ -109,11 +114,13 @@ function buildEnrollmentRows(peopleRows: PeopleMember[], profiles: SocialInsuran
     .sort((left, right) => {
       const leftStatus = Math.min(
         enrollmentStatusOrder[left.profile.socialSecurityStatus],
-        enrollmentStatusOrder[left.profile.medicalInsuranceStatus]
+        enrollmentStatusOrder[left.profile.medicalInsuranceStatus],
+        enrollmentStatusOrder[left.profile.housingFundStatus]
       );
       const rightStatus = Math.min(
         enrollmentStatusOrder[right.profile.socialSecurityStatus],
-        enrollmentStatusOrder[right.profile.medicalInsuranceStatus]
+        enrollmentStatusOrder[right.profile.medicalInsuranceStatus],
+        enrollmentStatusOrder[right.profile.housingFundStatus]
       );
 
       return leftStatus - rightStatus || left.member.id.localeCompare(right.member.id);
@@ -167,6 +174,36 @@ function toRelatedFiles(fileIds: string[], type: string): RelatedFileRecord[] {
   }));
 }
 
+function getEnrollmentChannelSnapshot(profile: SocialInsuranceEnrollmentProfile, channel: EnrollmentChannel) {
+  if (channel === '社保') {
+    return {
+      effectiveMonth: profile.socialSecurityEffectiveMonth,
+      evidenceFileIds: profile.socialSecurityEvidenceFileIds,
+      officialReferenceNo: profile.socialSecurityOfficialReferenceNo,
+      status: profile.socialSecurityStatus,
+      stopEffectiveMonth: profile.socialSecurityStopEffectiveMonth
+    };
+  }
+
+  if (channel === '医保') {
+    return {
+      effectiveMonth: profile.medicalInsuranceEffectiveMonth,
+      evidenceFileIds: profile.medicalInsuranceEvidenceFileIds,
+      officialReferenceNo: profile.medicalInsuranceOfficialReferenceNo,
+      status: profile.medicalInsuranceStatus,
+      stopEffectiveMonth: profile.medicalInsuranceStopEffectiveMonth
+    };
+  }
+
+  return {
+    effectiveMonth: profile.housingFundEffectiveMonth,
+    evidenceFileIds: profile.housingFundEvidenceFileIds,
+    officialReferenceNo: profile.housingFundOfficialReferenceNo,
+    status: profile.housingFundStatus,
+    stopEffectiveMonth: profile.housingFundStopEffectiveMonth
+  };
+}
+
 function EnrollmentDetailDrawer({
   row,
   onClose,
@@ -181,6 +218,7 @@ function EnrollmentDetailDrawer({
   onSave: (profile: SocialInsuranceEnrollmentProfile) => boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [activeChannel, setActiveChannel] = useState<EnrollmentChannel>('社保');
   const [draft, setDraft] = useState({
     effectiveMonth: '',
     evidenceFileIds: [] as string[],
@@ -193,32 +231,34 @@ function EnrollmentDetailDrawer({
   useEffect(() => {
     const profile = row?.profile;
     if (!profile) return;
+    const channel = getEnrollmentChannelSnapshot(profile, activeChannel);
 
     setEditing(false);
     setDraft({
-      effectiveMonth: profile.socialSecurityStatus === '待停保' || profile.socialSecurityStatus === '停保办理中'
-        ? profile.socialSecurityStopEffectiveMonth ?? profile.plannedStopMonth ?? ''
-        : profile.socialSecurityEffectiveMonth ?? profile.plannedEnrollmentMonth ?? '',
-      evidenceFileIds: profile.evidenceFileIds,
+      effectiveMonth: channel.status === '待停保' || channel.status === '停保办理中'
+        ? channel.stopEffectiveMonth ?? profile.plannedStopMonth ?? ''
+        : channel.effectiveMonth ?? profile.plannedEnrollmentMonth ?? '',
+      evidenceFileIds: channel.evidenceFileIds,
       insuredRegionCode: profile.insuredRegionCode ?? '420100',
       noObligationReason: profile.noObligationReason ?? '',
       obligation: profile.obligation,
-      officialReferenceNo: profile.officialReferenceNo ?? ''
+      officialReferenceNo: channel.officialReferenceNo ?? ''
     });
-  }, [row]);
+  }, [activeChannel, row]);
 
   if (!row) {
     return null;
   }
 
   const { member, profile } = row;
-  const latestEffectiveMonth = [profile.socialSecurityEffectiveMonth, profile.medicalInsuranceEffectiveMonth]
+  const latestEffectiveMonth = [profile.socialSecurityEffectiveMonth, profile.medicalInsuranceEffectiveMonth, profile.housingFundEffectiveMonth]
     .filter((month): month is string => Boolean(month))
     .sort()
     .at(-1);
-  const isStopHandling = profile.socialSecurityStatus === '待停保' || profile.socialSecurityStatus === '停保办理中';
+  const channel = getEnrollmentChannelSnapshot(profile, activeChannel);
+  const isStopHandling = channel.status === '待停保' || channel.status === '停保办理中';
   const isDetermination = profile.obligation === '待判定';
-  const canHandle = isDetermination || ['待增员', '增员办理中', '待停保', '停保办理中', '办理异常'].includes(profile.socialSecurityStatus);
+  const canHandle = isDetermination || ['待增员', '增员办理中', '待停保', '停保办理中', '办理异常'].includes(channel.status);
   const actionLabel = isDetermination ? '登记参保结论' : isStopHandling ? '登记停保结果' : '登记增员结果';
 
   const save = () => {
@@ -232,6 +272,7 @@ function EnrollmentDetailDrawer({
         noObligationReason: shouldEnroll ? undefined : draft.noObligationReason || undefined,
         socialSecurityStatus: shouldEnroll ? '待增员' : '不适用',
         medicalInsuranceStatus: shouldEnroll ? '待增员' : '不适用',
+        housingFundStatus: shouldEnroll && member.housingFundStatus === '缴存' ? '待增员' : '不适用',
         plannedEnrollmentMonth: shouldEnroll ? draft.effectiveMonth : undefined,
         updatedAt: dayjs().format('YYYY-MM-DD')
       })) setEditing(false);
@@ -240,21 +281,16 @@ function EnrollmentDetailDrawer({
 
     if (!draft.effectiveMonth || !draft.officialReferenceNo.trim() || draft.evidenceFileIds.length === 0) return;
 
-    if (onSave({
-      ...profile,
-      obligation: isStopHandling ? '无需参保' : '应参保',
-      noObligationReason: isStopHandling ? '劳动关系已于此前结束' : undefined,
-      insuredRegionCode: draft.insuredRegionCode,
-      socialSecurityStatus: isStopHandling ? '已停保' : '已增员',
-      medicalInsuranceStatus: isStopHandling ? '已停保' : '已增员',
-      socialSecurityEffectiveMonth: isStopHandling ? profile.socialSecurityEffectiveMonth : draft.effectiveMonth,
-      medicalInsuranceEffectiveMonth: isStopHandling ? profile.medicalInsuranceEffectiveMonth : draft.effectiveMonth,
-      socialSecurityStopEffectiveMonth: isStopHandling ? draft.effectiveMonth : undefined,
-      medicalInsuranceStopEffectiveMonth: isStopHandling ? draft.effectiveMonth : undefined,
-      officialReferenceNo: draft.officialReferenceNo.trim(),
+    const nextProfile = applyEnrollmentChannelResult(profile, activeChannel, {
+      action: isStopHandling ? '停办' : '增员',
+      effectiveMonth: draft.effectiveMonth,
       evidenceFileIds: draft.evidenceFileIds,
+      insuredRegionCode: draft.insuredRegionCode,
+      officialReferenceNo: draft.officialReferenceNo,
       updatedAt: dayjs().format('YYYY-MM-DD')
-    })) setEditing(false);
+    });
+
+    if (nextProfile && onSave(nextProfile)) setEditing(false);
   };
 
   return (
@@ -288,7 +324,7 @@ function EnrollmentDetailDrawer({
         items={[
           { icon: <SafetyCertificateOutlined />, key: 'social', label: '社保状态', value: profile.socialSecurityStatus },
           { icon: <SafetyCertificateOutlined />, key: 'medical', label: '医保状态', value: profile.medicalInsuranceStatus },
-          { icon: <CalendarOutlined />, key: 'effective', label: '最近生效月份', value: latestEffectiveMonth }
+          { icon: <SafetyCertificateOutlined />, key: 'housing', label: '公积金状态', value: profile.housingFundStatus }
         ]}
       />
       <DetailTabs
@@ -298,6 +334,14 @@ function EnrollmentDetailDrawer({
             label: '办理信息',
             children: (
               <DetailSection icon={<ProfileOutlined />} title="参保办理">
+                {!isDetermination ? (
+                  <Segmented<EnrollmentChannel>
+                    block
+                    options={['社保', '医保', '公积金']}
+                    value={activeChannel}
+                    onChange={(value) => setActiveChannel(value)}
+                  />
+                ) : null}
                 {editing ? (
                   <div className="drawer-form-grid">
                     {isDetermination ? (
@@ -379,14 +423,12 @@ function EnrollmentDetailDrawer({
                     { label: '参保地', value: profile.insuredRegionCode === '420100' ? '湖北省武汉市' : profile.insuredRegionCode },
                     { label: '社保办理状态', value: <StatusTag toneMap={enrollmentStatusTone} value={profile.socialSecurityStatus} /> },
                     { label: '医保办理状态', value: <StatusTag toneMap={enrollmentStatusTone} value={profile.medicalInsuranceStatus} /> },
-                    { label: '计划增员月份', value: profile.plannedEnrollmentMonth },
-                    { label: '社保生效月份', value: profile.socialSecurityEffectiveMonth },
-                    { label: '医保生效月份', value: profile.medicalInsuranceEffectiveMonth },
-                    { label: '计划停保月份', value: profile.plannedStopMonth },
-                    { label: '社保停保生效月份', value: profile.socialSecurityStopEffectiveMonth },
-                    { label: '医保停保生效月份', value: profile.medicalInsuranceStopEffectiveMonth },
-                    { label: '办理编号', value: profile.officialReferenceNo },
-                    { label: '回执文件', value: profile.evidenceFileIds.length > 0 ? `${profile.evidenceFileIds.length} 份` : '-' }
+                    { label: '公积金办理状态', value: <StatusTag toneMap={enrollmentStatusTone} value={profile.housingFundStatus} /> },
+                    { label: `${activeChannel}生效月份`, value: channel.effectiveMonth },
+                    { label: `${activeChannel}停办月份`, value: channel.stopEffectiveMonth },
+                    { label: '办理编号', value: channel.officialReferenceNo },
+                    { label: '回执文件', value: channel.evidenceFileIds.length > 0 ? `${channel.evidenceFileIds.length} 份` : '-' },
+                    { label: '最近生效月份', value: latestEffectiveMonth }
                   ]}
                 />}
                 {draft.evidenceFileIds.length > 0 ? (
@@ -409,8 +451,9 @@ function EnrollmentDetailDrawer({
                   items={[
                     { label: '更新时间', value: profile.updatedAt },
                     { label: '更新人', value: '李明' },
-                    { label: '动作', value: profile.socialSecurityStatus === '已停保' ? '确认停保结果' : '维护参保办理结果' },
-                    { label: '结果', value: profile.socialSecurityStatus }
+                    { label: '办理项目', value: activeChannel },
+                    { label: '动作', value: channel.status === '已停保' ? '登记停办结果' : '登记办理结果' },
+                    { label: '结果', value: channel.status }
                   ]}
                 />
               </DetailSection>
@@ -964,7 +1007,8 @@ export function FinanceSocialInsurancePage() {
   } = useFinanceSocialInsuranceState();
   const [messageApi, messageContextHolder] = message.useMessage();
   const [activeView, setActiveView] = useState<SocialInsuranceViewKey>('enrollment');
-  const [selectedMonth, setSelectedMonth] = useState('2026-06');
+  const currentBusinessMonth = frontendBusinessToday.slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(currentBusinessMonth);
   const [activeEnrollmentPersonId, setActiveEnrollmentPersonId] = useState<string>();
   const [activeMonthlyBatchId, setActiveMonthlyBatchId] = useState<string>();
   const [previewFile, setPreviewFile] = useState<RelatedFileRecord>();
@@ -1006,10 +1050,21 @@ export function FinanceSocialInsurancePage() {
       render: (_, row) => <StatusTag toneMap={enrollmentStatusTone} value={row.profile.medicalInsuranceStatus} />
     },
     {
+      key: 'housing',
+      title: '公积金状态',
+      width: 130,
+      render: (_, row) => <StatusTag toneMap={enrollmentStatusTone} value={row.profile.housingFundStatus} />
+    },
+    {
       key: 'effective',
       title: '生效月份',
-      width: 130,
-      render: (_, row) => <CellText>{row.profile.socialSecurityEffectiveMonth ?? row.profile.plannedEnrollmentMonth ?? '-'}</CellText>
+      width: 190,
+      render: (_, row) => (
+        <CompactCell
+          primary={`社保 ${row.profile.socialSecurityEffectiveMonth ?? '-'}`}
+          secondary={`医保 ${row.profile.medicalInsuranceEffectiveMonth ?? '-'} / 公积金 ${row.profile.housingFundEffectiveMonth ?? '-'}`}
+        />
+      )
     }
   ];
 
@@ -1034,7 +1089,8 @@ export function FinanceSocialInsurancePage() {
   ];
 
   const handlingCount = enrollmentRows.filter((row) =>
-    ['待增员', '增员办理中', '待停保', '停保办理中', '办理异常'].includes(row.profile.socialSecurityStatus)
+    [row.profile.socialSecurityStatus, row.profile.medicalInsuranceStatus, row.profile.housingFundStatus]
+      .some((status) => ['待增员', '增员办理中', '待停保', '停保办理中', '办理异常'].includes(status))
   ).length;
   const monthlyPendingCount = monthlyBatches.filter((batch) => batch.status !== '已缴费' && batch.status !== '无需缴纳').length;
   const assessedAmount = monthlyBatches.reduce((total, batch) => total + batch.employerAmount + batch.employeeAmount, 0);
@@ -1071,7 +1127,7 @@ export function FinanceSocialInsurancePage() {
               label="所属月份"
               value={selectedMonth}
               onChange={(month) => {
-                setSelectedMonth(month || '2026-06');
+                setSelectedMonth(month || currentBusinessMonth);
                 setActiveMonthlyBatchId(undefined);
               }}
             />
@@ -1120,7 +1176,10 @@ export function FinanceSocialInsurancePage() {
         batch={activeMonthlyBatch}
         canRegisterNoContribution={(record) => {
           const profile = enrollmentProfiles.find((currentProfile) => currentProfile.personId === record.employeeNo);
-          return Boolean(profile?.socialSecurityStopEffectiveMonth && profile.socialSecurityStopEffectiveMonth <= record.period);
+          if (!profile) return false;
+          return record.category === '社保'
+            ? !isEnrollmentEffectiveForPeriod(profile, record.period)
+            : !isEnrollmentChannelEffectiveForPeriod(profile, '公积金', record.period);
         }}
         correctionRecords={correctionRecords}
         paymentAccountOptions={paymentAccountOptions}
@@ -1171,6 +1230,27 @@ export function FinanceSocialInsurancePage() {
           const paymentAccount = paymentAccounts.find((account) => account.id === input.publicAccountId);
           if (!paymentAccount) return false;
 
+          const salaryAdjustment: SalaryAdjustmentRecord | undefined = correction.principalEmployeeAmount > 0 ? {
+            amount: correction.principalEmployeeAmount,
+            createdAt: `${dayjs().format('YYYY-MM-DD')} 10:30`,
+            createdBy: '李明',
+            id: `salary-adjust-${correction.id}`,
+            memberId: correction.employeeNo,
+            month: correction.handlingPeriod,
+            reason: `${correction.originalPeriod} ${correction.category}补缴个人承担部分`,
+            salarySettlementReference: correction.id,
+            source: '薪酬调整',
+            status: '已生效',
+            taxTreatment: '税后调整',
+            type: '代垫款收回',
+            updatedAt: `${dayjs().format('YYYY-MM-DD')} 10:30`
+          } : undefined;
+
+          if (salaryAdjustment && !salaryState.isSalaryAdjustmentPeriodOpen(salaryAdjustment)) {
+            void messageApi.warning('补缴办理月份薪酬已发放，请选择后续开放月份');
+            return false;
+          }
+
           const transaction = buildContributionCorrectionPaymentTransaction({
             correction,
             financePrimaryCategories,
@@ -1193,6 +1273,7 @@ export function FinanceSocialInsurancePage() {
             paymentFileIds: input.paymentFileIds,
             transactionNo: transaction.transactionNo
           });
+          if (saved && salaryAdjustment && !salaryState.saveSalaryAdjustment(salaryAdjustment)) return false;
           if (saved) void messageApi.success('补缴结果已登记，流水待复核');
           return saved;
         }}
@@ -1202,30 +1283,8 @@ export function FinanceSocialInsurancePage() {
           return saved;
         }}
         onSaveCorrection={(record) => {
-          const salaryAdjustment: SalaryAdjustmentRecord | undefined = record.principalEmployeeAmount > 0 ? {
-            amount: record.principalEmployeeAmount,
-            createdAt: `${dayjs().format('YYYY-MM-DD')} 10:30`,
-            createdBy: '李明',
-            id: `salary-adjust-${record.id}`,
-            memberId: record.employeeNo,
-            month: record.handlingPeriod,
-            reason: `${record.originalPeriod} ${record.category}补缴个人承担部分`,
-            salarySettlementReference: record.id,
-            source: '薪酬调整',
-            status: '已生效',
-            taxTreatment: '税前计税',
-            type: '代垫款收回',
-            updatedAt: `${dayjs().format('YYYY-MM-DD')} 10:30`
-          } : undefined;
-
-          if (salaryAdjustment && !salaryState.isSalaryAdjustmentPeriodOpen(salaryAdjustment)) {
-            void messageApi.warning('补缴办理月份薪酬已发放，请选择后续开放月份');
-            return false;
-          }
-
           const saved = saveContributionCorrection(record);
           if (!saved) return false;
-          if (salaryAdjustment && !salaryState.saveSalaryAdjustment(salaryAdjustment)) return false;
           void messageApi.success('补缴事项已创建');
           return true;
         }}
