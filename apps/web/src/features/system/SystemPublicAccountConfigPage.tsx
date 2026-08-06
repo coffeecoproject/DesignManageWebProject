@@ -7,7 +7,7 @@ import {
   ProfileOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Input, InputNumber, Select, message } from 'antd';
+import { Input, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
@@ -21,10 +21,14 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { OperationRecordSection } from '../../components/OperationRecordSection';
 import { TagChipList } from '../../components/TagChip';
-import { CellText, CompactCell } from '../../components/TableCell';
-import { formatMoney } from '../finance/financeUtils';
+import { CompactCell } from '../../components/TableCell';
+import { useFinanceBankStatementState } from '../finance/FinanceBankStatementState';
+import { useFinanceLedgerInitialization } from '../finance/FinanceLedgerInitializationState';
 import { useFinanceManagement } from '../finance/FinanceManagementState';
+import { buildPublicAccountOpeningBalances, getPublicAccountOpeningBalance } from '../finance/financePublicAccountBalanceModel';
+import { getPublicAccountSignedAmount } from '../finance/financeUtils';
 import {
+  countPublicAccountVoucherReferences,
   formatPublicAccountTail,
   getDefaultPublicAccount,
   publicAccountStatusTone,
@@ -34,18 +38,17 @@ import {
   type PublicAccountRecord,
   type PublicAccountStatus,
   type PublicAccountUsage,
+  type PublicAccountUsageReferenceSummary,
   usePublicAccountConfigState
 } from './PublicAccountConfigState';
 
 const defaultForm: PublicAccountFormValue = {
   accountHolder: '',
-  accountTailNumber: '',
+  accountNumber: '',
   bankName: '',
   defaultFor: ['收款', '付款', '银行对账'],
   displayName: '',
   note: '',
-  openingBalance: 0,
-  openingBalanceDate: '2026-06-01',
   status: '启用',
   usage: ['收款', '付款', '银行对账']
 };
@@ -61,27 +64,25 @@ function buildForm(record?: PublicAccountRecord): PublicAccountFormValue {
 
   return {
     accountHolder: record.accountHolder,
-    accountTailNumber: record.accountTailNumber,
+    accountNumber: record.accountNumber,
     bankName: record.bankName,
     defaultFor: [...record.defaultFor],
     displayName: record.displayName,
     note: record.note,
-    openingBalance: record.openingBalance,
-    openingBalanceDate: record.openingBalanceDate,
     status: record.status,
     usage: [...record.usage]
   };
 }
 
 function isValidForm(form: PublicAccountFormValue) {
+  const normalizedAccountNumber = form.accountNumber.replace(/\s/g, '');
+
   return (
     Boolean(form.displayName.trim()) &&
     Boolean(form.bankName.trim()) &&
     Boolean(form.accountHolder.trim()) &&
-    Boolean(form.accountTailNumber.trim()) &&
-    Boolean(form.openingBalanceDate.trim()) &&
-    form.usage.length > 0 &&
-    Number.isFinite(form.openingBalance)
+    /^\d{8,32}$/.test(normalizedAccountNumber) &&
+    form.usage.length > 0
   );
 }
 
@@ -89,12 +90,11 @@ function normalizeForm(form: PublicAccountFormValue): PublicAccountFormValue {
   return {
     ...form,
     accountHolder: form.accountHolder.trim(),
-    accountTailNumber: form.accountTailNumber.trim(),
+    accountNumber: form.accountNumber.replace(/\s/g, ''),
     bankName: form.bankName.trim(),
     defaultFor: form.defaultFor.filter((usage) => form.usage.includes(usage)),
     displayName: form.displayName.trim(),
-    note: form.note.trim(),
-    openingBalanceDate: form.openingBalanceDate.trim()
+    note: form.note.trim()
   };
 }
 
@@ -129,12 +129,17 @@ function PublicAccountDrawer({
     const nextValue = normalizeForm(form);
 
     if (!isValidForm(nextValue)) {
-      void messageApi.warning('请补全账户名称、开户行、户名、尾号和账户能力');
+      void messageApi.warning('请补全账户名称、开户行、户名、账号和账户能力');
       return;
     }
 
     if (records.some((row) => row.id !== record?.id && row.displayName === nextValue.displayName)) {
       void messageApi.warning('账户名称已存在');
+      return;
+    }
+
+    if (records.some((row) => row.id !== record?.id && row.accountNumber === nextValue.accountNumber)) {
+      void messageApi.warning('银行账号已存在');
       return;
     }
 
@@ -179,8 +184,6 @@ function PublicAccountDrawer({
       ) : '-',
       wide: true
     },
-    { label: '初始余额', value: record ? formatMoney(record.openingBalance) : undefined },
-    { label: '余额日期', value: record?.openingBalanceDate },
     { label: '状态', value: record ? <StatusTag toneMap={publicAccountStatusTone} value={record.status} /> : undefined },
     { label: '最近更新', value: record?.updatedAt },
     { label: '备注', value: record?.note, wide: true }
@@ -200,8 +203,8 @@ function PublicAccountDrawer({
       value: <Input placeholder="请输入公司账户户名" value={form.accountHolder} onChange={(event) => updateForm('accountHolder', event.target.value)} />
     },
     {
-      label: '账号尾号 *',
-      value: <Input maxLength={4} placeholder="后四位" value={form.accountTailNumber} onChange={(event) => updateForm('accountTailNumber', event.target.value)} />
+      label: '银行账号 *',
+      value: <Input placeholder="请输入完整银行账号" value={form.accountNumber} onChange={(event) => updateForm('accountNumber', event.target.value)} />
     },
     {
       label: '账户能力 *',
@@ -233,28 +236,6 @@ function PublicAccountDrawer({
         />
       ),
       wide: true
-    },
-    {
-      label: '初始余额',
-      value: (
-        <InputNumber
-          min={0}
-          precision={2}
-          style={{ width: '100%' }}
-          value={form.openingBalance}
-          onChange={(value) => updateForm('openingBalance', value ?? 0)}
-        />
-      )
-    },
-    {
-      label: '余额日期 *',
-      value: (
-        <Input
-          placeholder="YYYY-MM-DD"
-          value={form.openingBalanceDate}
-          onChange={(event) => updateForm('openingBalanceDate', event.target.value)}
-        />
-      )
     },
     {
       label: '状态',
@@ -373,7 +354,7 @@ function PublicAccountDrawer({
                 { icon: <BankOutlined />, key: 'name', label: '账户名称', value: record?.displayName },
                 { icon: <ProfileOutlined />, key: 'bank', label: '开户行', value: record?.bankName },
                 { icon: <FileSearchOutlined />, key: 'tail', label: '账号尾号', value: record ? formatPublicAccountTail(record.accountTailNumber) : '-' },
-                { icon: <WalletOutlined />, key: 'balance', label: '初始余额', value: record ? formatMoney(record.openingBalance) : '-' }
+                { icon: <WalletOutlined />, key: 'default', label: '默认承接', value: record?.defaultFor.length ? record.defaultFor.join('、') : '-' }
               ]}
             />
             <DetailTabs items={tabItems} tabTestIdPrefix="system-public-account-detail-tab" testId="system-public-account-detail-tabs" />
@@ -389,7 +370,9 @@ function PublicAccountDrawer({
 }
 
 export function SystemPublicAccountConfigPage() {
-  const { financeRows } = useFinanceManagement();
+  const { accountingVoucherRows, financeRows } = useFinanceManagement();
+  const { bankStatements } = useFinanceBankStatementState();
+  const { enabledOpeningRows, enabledProfile } = useFinanceLedgerInitialization();
   const [messageApi, contextHolder] = message.useMessage();
   const { createPublicAccount, publicAccounts, updatePublicAccount, updatePublicAccountStatus } = usePublicAccountConfigState();
   const [statusFilter, setStatusFilter] = useState<'全部' | PublicAccountStatus>('全部');
@@ -406,6 +389,49 @@ export function SystemPublicAccountConfigPage() {
   const defaultAccount = getDefaultPublicAccount(publicAccounts);
   const enabledCount = publicAccounts.filter((row) => row.status === '启用').length;
   const usageCount = new Set(publicAccounts.flatMap((row) => row.usage)).size;
+  const openingBalances = useMemo(
+    () => buildPublicAccountOpeningBalances(publicAccounts, enabledOpeningRows, enabledProfile?.effectivePeriod),
+    [enabledOpeningRows, enabledProfile?.effectivePeriod, publicAccounts]
+  );
+
+  function getReferenceSummary(id: string): PublicAccountUsageReferenceSummary {
+    const historicalTransactionRows = financeRows.filter(
+      (transaction) => transaction.publicAccountId === id && transaction.status !== '已作废'
+    );
+    const historicalBankRows = bankStatements.filter(
+      (statement) => statement.publicAccountId === id && statement.matchStatus !== '重复导入'
+    );
+    const historicalVoucherReferenceCount = countPublicAccountVoucherReferences(accountingVoucherRows, id);
+    const transactionRows = financeRows.filter(
+      (transaction) =>
+        transaction.publicAccountId === id
+        && transaction.status !== '已作废'
+        && (transaction.status !== '已入账' || transaction.reconciliationStatus !== '已对账')
+    );
+    const pendingBankRows = bankStatements.filter(
+      (statement) => statement.publicAccountId === id && statement.matchStatus !== '已对账' && statement.matchStatus !== '重复导入'
+    );
+    const opening = getPublicAccountOpeningBalance(openingBalances, id);
+    const enteredMovement = financeRows
+      .filter(
+        (transaction) =>
+          transaction.publicAccountId === id
+          && transaction.status === '已入账'
+          && (!opening.openingBalanceDate || transaction.occurredAt >= opening.openingBalanceDate)
+      )
+      .reduce((total, transaction) => total + getPublicAccountSignedAmount(transaction), 0);
+    const referencedUsages = new Set<PublicAccountUsage>();
+    transactionRows.forEach((transaction) => referencedUsages.add(transaction.direction === '收入' ? '收款' : '付款'));
+    if (pendingBankRows.length > 0) referencedUsages.add('银行对账');
+
+    return {
+      bankStatementCount: pendingBankRows.length,
+      financeTransactionCount: transactionRows.length,
+      historicalReferenceCount: historicalTransactionRows.length + historicalBankRows.length + historicalVoucherReferenceCount,
+      nonZeroBalance: Math.abs(opening.openingBalance + enteredMovement) >= 0.01,
+      referencedUsages: [...referencedUsages]
+    };
+  }
 
   const rows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -419,7 +445,7 @@ export function SystemPublicAccountConfigPage() {
           row.displayName,
           row.bankName,
           row.accountHolder,
-          row.accountTailNumber,
+          row.accountNumber,
           row.note,
           ...row.usage
         ]
@@ -445,13 +471,7 @@ export function SystemPublicAccountConfigPage() {
   }
 
   function saveAccount(id: string, nextValue: PublicAccountFormValue) {
-    const activeReferenceCount = financeRows.filter(
-      (transaction) =>
-        transaction.publicAccountId === id &&
-        transaction.status !== '已作废' &&
-        (transaction.status !== '已入账' || transaction.reconciliationStatus !== '已对账')
-    ).length;
-    const result = updatePublicAccount(id, nextValue, activeReferenceCount);
+    const result = updatePublicAccount(id, nextValue, getReferenceSummary(id));
     if (!result.success) {
       void messageApi.warning(result.message);
       return;
@@ -461,13 +481,7 @@ export function SystemPublicAccountConfigPage() {
 
   function toggleAccountStatus(record: PublicAccountRecord) {
     const nextStatus: PublicAccountStatus = record.status === '启用' ? '停用' : '启用';
-    const activeReferenceCount = financeRows.filter(
-      (transaction) =>
-        transaction.publicAccountId === record.id &&
-        transaction.status !== '已作废' &&
-        (transaction.status !== '已入账' || transaction.reconciliationStatus !== '已对账')
-    ).length;
-    const result = updatePublicAccountStatus(record.id, nextStatus, activeReferenceCount);
+    const result = updatePublicAccountStatus(record.id, nextStatus, getReferenceSummary(record.id));
     if (!result.success) {
       void messageApi.warning(result.message);
       return;
@@ -488,7 +502,7 @@ export function SystemPublicAccountConfigPage() {
       width: 190
     },
     {
-      title: '账号尾号',
+      title: '银行账号',
       dataIndex: 'accountTailNumber',
       width: 120,
       render: (tailNumber: string) => formatPublicAccountTail(tailNumber)
@@ -507,12 +521,6 @@ export function SystemPublicAccountConfigPage() {
       width: 190,
       render: (items: PublicAccountUsage[]) =>
         items.length ? <TagChipList items={items} maxVisible={3} tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]} wrap /> : '-'
-    },
-    {
-      title: '初始余额',
-      dataIndex: 'openingBalance',
-      width: 130,
-      render: (amount: number) => <CellText>{formatMoney(amount)}</CellText>
     },
     {
       title: '状态',

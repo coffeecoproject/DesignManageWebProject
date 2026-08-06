@@ -38,6 +38,7 @@ import {
   accountingSubjectTypeOptions,
   accountingSubjectTypeTone,
   type AccountingSubjectBalanceDirection,
+  type AccountingAuxiliaryScope,
   type AccountingSubjectRecord,
   type AccountingSubjectType
 } from './financeAccountingSubjectData';
@@ -48,7 +49,7 @@ import {
   buildLedgerOpeningBalanceWorkspace,
   applyLedgerOpeningBalanceImportPreview,
   defaultLedgerInitializationFilters,
-  ledgerInitializationControlContext,
+  ledgerInitializationAuxiliaryOptions,
   ledgerInitializationDraftProfile,
   ledgerOpeningBalanceDraftImportBatch,
   ledgerOpeningBalanceEntrySourceLabels,
@@ -198,9 +199,13 @@ type LedgerInitializationBasicSettingsForm = Pick<LedgerInitializationProfile, '
 
 type LedgerOpeningBalanceManualForm = {
   amount: number;
+  auxiliaryId: string;
   auxiliaryLabel: string;
+  auxiliaryScope: AccountingAuxiliaryScope;
   balanceSide: AccountingSubjectBalanceDirection;
   subjectCode: string;
+  yearToDateCreditAmount: number;
+  yearToDateDebitAmount: number;
 };
 
 type LedgerEnableWithdrawForm = {
@@ -210,10 +215,17 @@ type LedgerEnableWithdrawForm = {
 
 type LedgerOpeningAdjustmentForm = {
   amount: number;
-  balanceSide: AccountingSubjectBalanceDirection;
+  accountingPeriod: string;
+  creditAuxiliaryId: string;
+  creditAuxiliaryLabel: string;
+  creditAuxiliaryScope: AccountingAuxiliaryScope;
+  creditSubjectCode: string;
+  debitAuxiliaryId: string;
+  debitAuxiliaryLabel: string;
+  debitAuxiliaryScope: AccountingAuxiliaryScope;
+  debitSubjectCode: string;
   evidenceName: string;
   reason: string;
-  subjectCode: string;
 };
 
 const openingBalanceImportImpactTone: Record<LedgerOpeningBalanceImportImpact, 'amber' | 'blue'> = {
@@ -259,7 +271,7 @@ function createBasicSettingsForm(profile: LedgerInitializationProfile): LedgerIn
 }
 
 function isOpeningBalanceSubjectEligible(subject: AccountingSubjectRecord) {
-  return subject.status === '启用' && subject.type !== '损益类';
+  return subject.status === '启用';
 }
 
 function createDefaultOpeningBalanceForm(subjectRows = accountingSubjectSeedRows): LedgerOpeningBalanceManualForm {
@@ -268,9 +280,13 @@ function createDefaultOpeningBalanceForm(subjectRows = accountingSubjectSeedRows
 
   return {
     amount: 0,
+    auxiliaryId: '',
     auxiliaryLabel: '无',
+    auxiliaryScope: '无',
     balanceSide: defaultSubject?.balanceDirection ?? '借方',
-    subjectCode: defaultSubject?.code ?? ''
+    subjectCode: defaultSubject?.code ?? '',
+    yearToDateCreditAmount: 0,
+    yearToDateDebitAmount: 0
   };
 }
 
@@ -281,33 +297,51 @@ function createDefaultWithdrawForm(): LedgerEnableWithdrawForm {
   };
 }
 
-function getOpeningAdjustmentSubjectRows() {
-  return accountingSubjectSeedRows.filter((subject) => subject.status === '启用');
+function getOpeningAdjustmentSubjectRows(subjectRows: AccountingSubjectRecord[] = accountingSubjectSeedRows) {
+  return subjectRows.filter((subject) => subject.status === '启用');
 }
 
-function createDefaultOpeningAdjustmentForm(): LedgerOpeningAdjustmentForm {
-  const defaultSubject = getOpeningAdjustmentSubjectRows()[0] ?? accountingSubjectSeedRows[0];
+function createDefaultOpeningAdjustmentForm(subjectRows: AccountingSubjectRecord[] = accountingSubjectSeedRows): LedgerOpeningAdjustmentForm {
+  const enabledSubjectRows = getOpeningAdjustmentSubjectRows(subjectRows);
+  const debitSubject = enabledSubjectRows.find((subject) => subject.balanceDirection === '借方') ?? enabledSubjectRows[0];
+  const creditSubject = enabledSubjectRows.find((subject) => subject.balanceDirection === '贷方') ?? enabledSubjectRows[1] ?? enabledSubjectRows[0];
+  const now = new Date();
+  const accountingPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   return {
     amount: 0,
-    balanceSide: defaultSubject?.balanceDirection ?? '借方',
+    accountingPeriod,
+    creditAuxiliaryId: '',
+    creditAuxiliaryLabel: '无',
+    creditAuxiliaryScope: '无',
+    creditSubjectCode: creditSubject?.code ?? '',
+    debitAuxiliaryId: '',
+    debitAuxiliaryLabel: '无',
+    debitAuxiliaryScope: '无',
+    debitSubjectCode: debitSubject?.code ?? '',
     evidenceName: '',
-    reason: '',
-    subjectCode: defaultSubject?.code ?? ''
+    reason: ''
   };
 }
 
 function createOpeningBalanceFormFromRow(row: LedgerOpeningBalanceRow): LedgerOpeningBalanceManualForm {
   return {
     amount: row.debitAmount > 0 ? row.debitAmount : row.creditAmount,
+    auxiliaryId: row.auxiliaryId,
     auxiliaryLabel: row.auxiliaryLabel,
+    auxiliaryScope: row.auxiliaryScope,
     balanceSide: row.debitAmount > 0 ? '借方' : '贷方',
-    subjectCode: row.subjectCode
+    subjectCode: row.subjectCode,
+    yearToDateCreditAmount: row.yearToDateCreditAmount,
+    yearToDateDebitAmount: row.yearToDateDebitAmount
   };
 }
 
-function getOpeningBalanceFormIssue(form: LedgerOpeningBalanceManualForm) {
-  const subject = accountingSubjectSeedRows.find((record) => record.code === form.subjectCode);
+function getOpeningBalanceFormIssue(
+  form: LedgerOpeningBalanceManualForm,
+  subjectRows: AccountingSubjectRecord[] = accountingSubjectSeedRows
+) {
+  const subject = subjectRows.find((record) => record.code === form.subjectCode);
 
   if (!subject) {
     return '请选择有效会计科目。';
@@ -317,12 +351,18 @@ function getOpeningBalanceFormIssue(form: LedgerOpeningBalanceManualForm) {
     return '停用科目不能录入期初余额。';
   }
 
-  if (subject.type === '损益类') {
-    return '损益类科目不直接录入期初余额，历史经营结果通过本年利润或未分配利润承接。';
+  const requiresAuxiliary = !subject.auxiliaryScopes.includes('无');
+
+  if (requiresAuxiliary && (!form.auxiliaryId || form.auxiliaryScope === '无')) {
+    return '该科目必须选择具体辅助核算对象。';
   }
 
-  if (form.amount <= 0) {
-    return '期初金额必须大于 0。';
+  if (form.auxiliaryScope !== '无' && !subject.auxiliaryScopes.includes(form.auxiliaryScope)) {
+    return '辅助核算类型不适用于当前会计科目。';
+  }
+
+  if (form.amount <= 0 && form.yearToDateDebitAmount <= 0 && form.yearToDateCreditAmount <= 0) {
+    return '期初余额或本年累计发生额至少填写一项。';
   }
 
   return undefined;
@@ -340,11 +380,38 @@ function getWithdrawFormIssue(form: LedgerEnableWithdrawForm) {
   return undefined;
 }
 
-function getOpeningAdjustmentFormIssue(form: LedgerOpeningAdjustmentForm) {
-  const subject = accountingSubjectSeedRows.find((record) => record.code === form.subjectCode);
+function getOpeningAdjustmentFormIssue(
+  form: LedgerOpeningAdjustmentForm,
+  subjectRows: AccountingSubjectRecord[] = accountingSubjectSeedRows
+) {
+  const debitSubject = subjectRows.find((record) => record.code === form.debitSubjectCode);
+  const creditSubject = subjectRows.find((record) => record.code === form.creditSubjectCode);
 
-  if (!subject || subject.status !== '启用') {
-    return '请选择启用状态的会计科目。';
+  if (!debitSubject || !creditSubject || debitSubject.status !== '启用' || creditSubject.status !== '启用') {
+    return '请选择有效的借方和贷方科目。';
+  }
+
+  if (form.debitSubjectCode === form.creditSubjectCode) {
+    return '借方科目和贷方科目不能相同。';
+  }
+
+  const lineSubjects = [
+    { auxiliaryId: form.debitAuxiliaryId, auxiliaryScope: form.debitAuxiliaryScope, label: '借方', subject: debitSubject },
+    { auxiliaryId: form.creditAuxiliaryId, auxiliaryScope: form.creditAuxiliaryScope, label: '贷方', subject: creditSubject }
+  ];
+
+  for (const line of lineSubjects) {
+    const requiresAuxiliary = !line.subject.auxiliaryScopes.includes('无');
+    if (requiresAuxiliary && (!line.auxiliaryId || line.auxiliaryScope === '无')) {
+      return `${line.label}科目必须选择辅助核算对象。`;
+    }
+    if (line.auxiliaryScope !== '无' && !line.subject.auxiliaryScopes.includes(line.auxiliaryScope)) {
+      return `${line.label}辅助核算类型不适用于所选科目。`;
+    }
+  }
+
+  if (!/^\d{4}-\d{2}$/.test(form.accountingPeriod)) {
+    return '请选择调整会计期间。';
   }
 
   if (form.amount <= 0) {
@@ -395,12 +462,14 @@ function createDraftOperationRecord({
 
 function buildManualOpeningBalanceRow({
   form,
-  period
+  period,
+  subjectRows = accountingSubjectSeedRows
 }: {
   form: LedgerOpeningBalanceManualForm;
   period: string;
+  subjectRows?: AccountingSubjectRecord[];
 }): LedgerOpeningBalanceRow | undefined {
-  const subject = accountingSubjectSeedRows.find((record) => record.code === form.subjectCode);
+  const subject = subjectRows.find((record) => record.code === form.subjectCode);
 
   if (!subject) {
     return undefined;
@@ -408,7 +477,9 @@ function buildManualOpeningBalanceRow({
 
   return {
     accountingPeriod: period,
+    auxiliaryId: form.auxiliaryId,
     auxiliaryLabel: form.auxiliaryLabel.trim() || '无',
+    auxiliaryScope: form.auxiliaryScope,
     balanceDirection: subject.balanceDirection,
     creditAmount: form.balanceSide === '贷方' ? form.amount : 0,
     debitAmount: form.balanceSide === '借方' ? form.amount : 0,
@@ -417,37 +488,63 @@ function buildManualOpeningBalanceRow({
     source: '账套初始化',
     subjectCode: subject.code,
     subjectName: subject.name,
-    subjectType: subject.type
+    subjectType: subject.type,
+    yearToDateCreditAmount: form.yearToDateCreditAmount,
+    yearToDateDebitAmount: form.yearToDateDebitAmount
   };
 }
 
 function buildOpeningAdjustmentVoucherRecord({
   accountingPeriod,
   createdAt,
-  form
+  form,
+  subjectRows = accountingSubjectSeedRows
 }: {
   accountingPeriod: string;
   createdAt: string;
   form: LedgerOpeningAdjustmentForm;
+  subjectRows?: AccountingSubjectRecord[];
 }): LedgerOpeningAdjustmentVoucherRecord | undefined {
-  const subject = accountingSubjectSeedRows.find((record) => record.code === form.subjectCode);
+  const debitSubject = subjectRows.find((record) => record.code === form.debitSubjectCode);
+  const creditSubject = subjectRows.find((record) => record.code === form.creditSubjectCode);
 
-  if (!subject) {
+  if (!debitSubject || !creditSubject) {
     return undefined;
   }
+
+  const recordId = `ledger-opening-adjustment-${Date.now()}`;
 
   return {
     accountingPeriod,
     amount: form.amount,
-    balanceSide: form.balanceSide,
     createdAt,
     createdBy: '李明',
     evidenceName: form.evidenceName.trim(),
-    id: `ledger-opening-adjustment-${Date.now()}`,
+    id: recordId,
+    lines: [
+      {
+        amount: form.amount,
+        auxiliaryId: form.debitAuxiliaryId,
+        auxiliaryLabel: form.debitAuxiliaryLabel,
+        auxiliaryScope: form.debitAuxiliaryScope,
+        id: `${recordId}-debit`,
+        side: '借方',
+        subjectCode: debitSubject.code,
+        subjectName: debitSubject.name
+      },
+      {
+        amount: form.amount,
+        auxiliaryId: form.creditAuxiliaryId,
+        auxiliaryLabel: form.creditAuxiliaryLabel,
+        auxiliaryScope: form.creditAuxiliaryScope,
+        id: `${recordId}-credit`,
+        side: '贷方',
+        subjectCode: creditSubject.code,
+        subjectName: creditSubject.name
+      }
+    ],
     reason: form.reason.trim(),
     status: '待记账',
-    subjectCode: subject.code,
-    subjectName: subject.name,
     voucherNo: `INIT-ADJ-${createdAt.slice(0, 7).replace('-', '')}-${String(Date.now()).slice(-4)}`
   };
 }
@@ -465,17 +562,24 @@ function mapOperationRecord(record: LedgerInitializationOperationRecord, account
 
 function OpeningBalanceFormContent({
   form,
+  subjectRows,
   subjectOptions,
   subjectSelectDisabled,
   onChange
 }: {
   form: LedgerOpeningBalanceManualForm;
+  subjectRows: AccountingSubjectRecord[];
   subjectOptions: Array<{ label: string; value: string }>;
   subjectSelectDisabled?: boolean;
   onChange: <K extends keyof LedgerOpeningBalanceManualForm>(key: K, value: LedgerOpeningBalanceManualForm[K]) => void;
 }) {
-  const selectedSubject = accountingSubjectSeedRows.find((subject) => subject.code === form.subjectCode);
-  const formIssue = getOpeningBalanceFormIssue(form);
+  const selectedSubject = subjectRows.find((subject) => subject.code === form.subjectCode);
+  const auxiliaryScopes = selectedSubject?.auxiliaryScopes.filter((scope) => scope !== '无') ?? [];
+  const requiresAuxiliary = auxiliaryScopes.length > 0 && !selectedSubject?.auxiliaryScopes.includes('无');
+  const auxiliaryOptions = ledgerInitializationAuxiliaryOptions
+    .filter((option) => option.scope === form.auxiliaryScope)
+    .map((option) => ({ label: option.label, value: option.id }));
+  const formIssue = getOpeningBalanceFormIssue(form, subjectRows);
 
   return (
     <div className="ledger-initialization-form-stack">
@@ -489,20 +593,42 @@ function OpeningBalanceFormContent({
             placeholder="选择未录入期初余额的科目"
             value={form.subjectCode || undefined}
             onChange={(subjectCode: string) => {
-              const nextSubject = accountingSubjectSeedRows.find((subject) => subject.code === subjectCode);
+              const nextSubject = subjectRows.find((subject) => subject.code === subjectCode);
 
               onChange('subjectCode', subjectCode);
               if (nextSubject) {
                 onChange('balanceSide', nextSubject.balanceDirection);
+                const nextScope = nextSubject.auxiliaryScopes.find((scope) => scope !== '无') ?? '无';
+                onChange('auxiliaryScope', nextScope);
+                onChange('auxiliaryId', '');
+                onChange('auxiliaryLabel', nextScope === '无' ? '无' : '');
               }
             }}
           />
         </DrawerFormField>
-        <DrawerFormField label="辅助核算">
-          <Input
-            placeholder="无 / 客户 / 供应商 / 员工"
-            value={form.auxiliaryLabel}
-            onChange={(event) => onChange('auxiliaryLabel', event.target.value)}
+        <DrawerFormField label="辅助核算类型" required={requiresAuxiliary}>
+          <Select
+            disabled={auxiliaryScopes.length === 0}
+            options={(selectedSubject?.auxiliaryScopes ?? ['无']).map((scope) => ({ label: scope, value: scope }))}
+            value={form.auxiliaryScope}
+            onChange={(scope: AccountingAuxiliaryScope) => {
+              onChange('auxiliaryScope', scope);
+              onChange('auxiliaryId', '');
+              onChange('auxiliaryLabel', scope === '无' ? '无' : '');
+            }}
+          />
+        </DrawerFormField>
+        <DrawerFormField label="辅助核算对象" required={requiresAuxiliary}>
+          <Select
+            disabled={form.auxiliaryScope === '无'}
+            options={auxiliaryOptions}
+            placeholder="选择具体对象"
+            value={form.auxiliaryId || undefined}
+            onChange={(auxiliaryId: string) => {
+              const option = ledgerInitializationAuxiliaryOptions.find((item) => item.id === auxiliaryId);
+              onChange('auxiliaryId', auxiliaryId);
+              onChange('auxiliaryLabel', option?.label ?? '');
+            }}
           />
         </DrawerFormField>
         <DrawerFormField label="余额方向" required>
@@ -524,6 +650,24 @@ function OpeningBalanceFormContent({
             onChange={(value) => onChange('amount', value ?? 0)}
           />
         </DrawerFormField>
+        <DrawerFormField label="本年累计借方">
+          <InputNumber
+            min={0}
+            precision={2}
+            style={{ width: '100%' }}
+            value={form.yearToDateDebitAmount}
+            onChange={(value) => onChange('yearToDateDebitAmount', value ?? 0)}
+          />
+        </DrawerFormField>
+        <DrawerFormField label="本年累计贷方">
+          <InputNumber
+            min={0}
+            precision={2}
+            style={{ width: '100%' }}
+            value={form.yearToDateCreditAmount}
+            onChange={(value) => onChange('yearToDateCreditAmount', value ?? 0)}
+          />
+        </DrawerFormField>
         <DrawerFormField label="科目默认方向">
           <Input disabled value={selectedSubject?.balanceDirection ?? '-'} />
         </DrawerFormField>
@@ -539,6 +683,7 @@ function OpeningBalanceDrawer({
   mode,
   open,
   record,
+  subjectRows,
   subjectOptions,
   onCancel,
   onDelete,
@@ -552,6 +697,7 @@ function OpeningBalanceDrawer({
   mode?: 'create' | 'detail' | 'edit';
   open: boolean;
   record?: LedgerOpeningBalanceRow;
+  subjectRows: AccountingSubjectRecord[];
   subjectOptions: Array<{ label: string; value: string }>;
   onCancel: () => void;
   onDelete: (record: LedgerOpeningBalanceRow) => void;
@@ -605,7 +751,7 @@ function OpeningBalanceDrawer({
           ? {
               cancelAction: { label: '取消', onClick: onCancel },
               primaryAction: {
-                disabled: Boolean(getOpeningBalanceFormIssue(form)),
+                disabled: Boolean(getOpeningBalanceFormIssue(form, subjectRows)),
                 icon: <EditOutlined />,
                 label: '保存调整',
                 onClick: () => onSave(record, form)
@@ -651,8 +797,10 @@ function OpeningBalanceDrawer({
                 { label: '科目名称', value: record.subjectName },
                 { label: '科目类别', value: <StatusTag toneMap={accountingSubjectTypeTone} value={record.subjectType} /> },
                 { label: '会计期间', value: record.accountingPeriod },
-                { label: '辅助核算', value: record.auxiliaryLabel },
-                { label: '录入方式', value: renderOpeningBalanceEntrySource(record.entrySource) }
+                { label: '辅助核算', value: record.auxiliaryScope === '无' ? '无' : `${record.auxiliaryScope} / ${record.auxiliaryLabel}` },
+                { label: '录入方式', value: renderOpeningBalanceEntrySource(record.entrySource) },
+                { label: '本年累计借方', value: formatOpeningAmount(record.yearToDateDebitAmount) },
+                { label: '本年累计贷方', value: formatOpeningAmount(record.yearToDateCreditAmount) }
               ]}
             />
           </DetailSection>
@@ -663,6 +811,7 @@ function OpeningBalanceDrawer({
             <Alert message="编辑后会把该条期初余额标记为手工录入，并要求重新试算。" showIcon type="info" />
             <OpeningBalanceFormContent
               form={form}
+              subjectRows={subjectRows}
               subjectOptions={currentSubjectOption}
               subjectSelectDisabled
               onChange={onFormChange}
@@ -684,6 +833,7 @@ function LedgerInitializationProcessDrawer({
   openingWorkspace,
   profile,
   summary,
+  subjectRows,
   effectivePeriodLocked,
   workspaceMode,
   onBasicSettingsFormChange,
@@ -701,6 +851,7 @@ function LedgerInitializationProcessDrawer({
   openingWorkspace: ReturnType<typeof buildLedgerOpeningBalanceWorkspace>;
   profile: LedgerInitializationProfile;
   summary: LedgerInitializationSummary;
+  subjectRows: AccountingSubjectRecord[];
   effectivePeriodLocked: boolean;
   workspaceMode: LedgerInitializationWorkspaceMode;
   onBasicSettingsFormChange: <K extends keyof LedgerInitializationBasicSettingsForm>(
@@ -812,7 +963,7 @@ function LedgerInitializationProcessDrawer({
   )
     ? '需处理'
     : '可应用';
-  const openingBalanceFormIssue = getOpeningBalanceFormIssue(openingBalanceForm);
+  const openingBalanceFormIssue = getOpeningBalanceFormIssue(openingBalanceForm, subjectRows);
   const primaryDisabled =
     (effectivePeriodLocked && actionKey !== 'enable-ledger') ||
     (actionKey === 'basic-settings' && (!basicSettingsForm.accountSetName.trim() || !basicSettingsForm.effectivePeriod.trim())) ||
@@ -858,6 +1009,7 @@ function LedgerInitializationProcessDrawer({
           ) : null}
           <OpeningBalanceFormContent
             form={openingBalanceForm}
+            subjectRows={subjectRows}
             subjectOptions={openingBalanceSubjectOptions}
             onChange={onOpeningBalanceFormChange}
           />
@@ -971,6 +1123,7 @@ function LedgerInitializationControlledActionDrawer({
   action,
   adjustmentForm,
   adjustmentSubjectOptions,
+  subjectRows,
   withdrawForm,
   onAdjustmentFormChange,
   onClose,
@@ -980,6 +1133,7 @@ function LedgerInitializationControlledActionDrawer({
   action?: LedgerInitializationControlledAction;
   adjustmentForm: LedgerOpeningAdjustmentForm;
   adjustmentSubjectOptions: Array<{ label: string; value: string }>;
+  subjectRows: AccountingSubjectRecord[];
   withdrawForm: LedgerEnableWithdrawForm;
   onAdjustmentFormChange: <K extends keyof LedgerOpeningAdjustmentForm>(key: K, value: LedgerOpeningAdjustmentForm[K]) => void;
   onClose: () => void;
@@ -991,7 +1145,7 @@ function LedgerInitializationControlledActionDrawer({
   }
 
   const isWithdraw = action.key === 'withdraw-enable';
-  const formIssue = isWithdraw ? getWithdrawFormIssue(withdrawForm) : getOpeningAdjustmentFormIssue(adjustmentForm);
+  const formIssue = isWithdraw ? getWithdrawFormIssue(withdrawForm) : getOpeningAdjustmentFormIssue(adjustmentForm, subjectRows);
   const canSubmit = action.status === '可发起' && !formIssue;
 
   return (
@@ -1047,32 +1201,85 @@ function LedgerInitializationControlledActionDrawer({
           ) : null}
           {action.status === '可发起' && !isWithdraw ? (
             <DrawerFormGrid>
-              <DrawerFormField label="调整科目" required wide>
+              <DrawerFormField label="调整期间" required wide>
+                <Input
+                  type="month"
+                  value={adjustmentForm.accountingPeriod}
+                  onChange={(event) => onAdjustmentFormChange('accountingPeriod', event.target.value)}
+                />
+              </DrawerFormField>
+              <DrawerFormField label="借方科目" required>
                 <Select
                   showSearch
                   optionFilterProp="label"
                   options={adjustmentSubjectOptions}
-                  value={adjustmentForm.subjectCode || undefined}
+                  value={adjustmentForm.debitSubjectCode || undefined}
                   onChange={(subjectCode: string) => {
-                    const nextSubject = accountingSubjectSeedRows.find((subject) => subject.code === subjectCode);
-
-                    onAdjustmentFormChange('subjectCode', subjectCode);
-                    if (nextSubject) {
-                      onAdjustmentFormChange('balanceSide', nextSubject.balanceDirection);
-                    }
+                    const subject = subjectRows.find((record) => record.code === subjectCode);
+                    const scope = subject?.auxiliaryScopes.find((item) => item !== '无') ?? '无';
+                    onAdjustmentFormChange('debitSubjectCode', subjectCode);
+                    onAdjustmentFormChange('debitAuxiliaryScope', scope);
+                    onAdjustmentFormChange('debitAuxiliaryId', '');
+                    onAdjustmentFormChange('debitAuxiliaryLabel', scope === '无' ? '无' : '');
                   }}
                 />
               </DrawerFormField>
-              <DrawerFormField label="调整方向" required>
+              <DrawerFormField label="贷方科目" required>
                 <Select
-                  options={[
-                    { label: '借方', value: '借方' },
-                    { label: '贷方', value: '贷方' }
-                  ]}
-                  value={adjustmentForm.balanceSide}
-                  onChange={(balanceSide: AccountingSubjectBalanceDirection) => onAdjustmentFormChange('balanceSide', balanceSide)}
+                  showSearch
+                  optionFilterProp="label"
+                  options={adjustmentSubjectOptions}
+                  value={adjustmentForm.creditSubjectCode || undefined}
+                  onChange={(subjectCode: string) => {
+                    const subject = subjectRows.find((record) => record.code === subjectCode);
+                    const scope = subject?.auxiliaryScopes.find((item) => item !== '无') ?? '无';
+                    onAdjustmentFormChange('creditSubjectCode', subjectCode);
+                    onAdjustmentFormChange('creditAuxiliaryScope', scope);
+                    onAdjustmentFormChange('creditAuxiliaryId', '');
+                    onAdjustmentFormChange('creditAuxiliaryLabel', scope === '无' ? '无' : '');
+                  }}
                 />
               </DrawerFormField>
+              {(['debit', 'credit'] as const).map((side) => {
+                const subjectCode = side === 'debit' ? adjustmentForm.debitSubjectCode : adjustmentForm.creditSubjectCode;
+                const subject = subjectRows.find((record) => record.code === subjectCode);
+                const scopes = subject?.auxiliaryScopes.filter((scope) => scope !== '无') ?? [];
+                if (scopes.length === 0) {
+                  return null;
+                }
+                const scopeKey = side === 'debit' ? 'debitAuxiliaryScope' : 'creditAuxiliaryScope';
+                const idKey = side === 'debit' ? 'debitAuxiliaryId' : 'creditAuxiliaryId';
+                const labelKey = side === 'debit' ? 'debitAuxiliaryLabel' : 'creditAuxiliaryLabel';
+                const selectedScope = adjustmentForm[scopeKey];
+                return (
+                  <DrawerFormField key={side} label={`${side === 'debit' ? '借方' : '贷方'}辅助核算`} required>
+                    <Space.Compact block>
+                      <Select
+                        options={scopes.map((scope) => ({ label: scope, value: scope }))}
+                        value={selectedScope}
+                        onChange={(scope: AccountingAuxiliaryScope) => {
+                          onAdjustmentFormChange(scopeKey, scope);
+                          onAdjustmentFormChange(idKey, '');
+                          onAdjustmentFormChange(labelKey, '');
+                        }}
+                      />
+                      <Select
+                        style={{ width: '100%' }}
+                        options={ledgerInitializationAuxiliaryOptions
+                          .filter((option) => option.scope === selectedScope)
+                          .map((option) => ({ label: option.label, value: option.id }))}
+                        placeholder="选择辅助对象"
+                        value={adjustmentForm[idKey] || undefined}
+                        onChange={(id: string) => {
+                          const option = ledgerInitializationAuxiliaryOptions.find((item) => item.id === id);
+                          onAdjustmentFormChange(idKey, id);
+                          onAdjustmentFormChange(labelKey, option?.label ?? '');
+                        }}
+                      />
+                    </Space.Compact>
+                  </DrawerFormField>
+                );
+              })}
               <DrawerFormField label="调整金额" required>
                 <InputNumber
                   min={0}
@@ -1119,24 +1326,33 @@ function LedgerInitializationControlledActionDrawer({
 
 export function FinanceLedgerInitializationPage() {
   const { message } = AntApp.useApp();
-  const { addLedgerOpeningAdjustmentVoucher, getAccountingPeriodGuard, ledgerOpeningAdjustmentRows } = useFinanceManagement();
+  const {
+    accountingVoucherLifecycleRows,
+    addLedgerOpeningAdjustmentVoucher,
+    getAccountingPeriodGuard,
+    ledgerOpeningAdjustmentRows
+  } = useFinanceManagement();
   const {
     draftImportBatch,
     draftOpeningRows,
     draftOperationRecords,
     draftProfile,
+    draftSubjectRows,
     enabledImportBatch,
     enabledOpeningRows,
     enabledOperationRecords,
     enabledProfile,
+    enabledSubjectRows,
     setDraftImportBatch,
     setDraftOpeningRows,
     setDraftOperationRecords,
     setDraftProfile,
+    setDraftSubjectRows,
     setEnabledImportBatch,
     setEnabledOpeningRows,
     setEnabledOperationRecords,
-    setEnabledProfile
+    setEnabledProfile,
+    setEnabledSubjectRows
   } = useFinanceLedgerInitialization();
   const [workspaceMode, setWorkspaceMode] = useState<LedgerInitializationWorkspaceMode>('初始化草稿');
   const [activeView, setActiveView] = useState<LedgerInitializationStepKey>('basic');
@@ -1157,31 +1373,29 @@ export function FinanceLedgerInitializationPage() {
 
   const activeProfile = workspaceMode === '初始化草稿' ? draftProfile : enabledProfile ?? draftProfile;
   const activeOpeningRows = workspaceMode === '初始化草稿' ? draftOpeningRows : enabledOpeningRows;
+  const activeSubjectRows = workspaceMode === '初始化草稿' ? draftSubjectRows : enabledSubjectRows;
   const activeImportBatch = workspaceMode === '初始化草稿' ? draftImportBatch : enabledImportBatch;
   const sourceOperationRecords = workspaceMode === '初始化草稿' ? draftOperationRecords : enabledOperationRecords;
   const activeEffectivePeriodGuard = getAccountingPeriodGuard(activeProfile.effectivePeriod, '处理账套初始化');
   const activeEffectivePeriodLocked = !activeEffectivePeriodGuard.allowed;
+  const postedVoucherCount = accountingVoucherLifecycleRows.filter(
+    (record) => record.status === '已记账' && record.accountingPeriod >= activeProfile.effectivePeriod
+  ).length;
   const activeControlContext: LedgerInitializationControlContext =
-    workspaceMode === '初始化草稿'
-      ? {
-          hasGeneralLedgerRead: false,
-          periodLocked: activeEffectivePeriodLocked,
-          postedVoucherCount: ledgerOpeningAdjustmentRows.length
-        }
-      : {
-          ...ledgerInitializationControlContext,
-          periodLocked: activeEffectivePeriodLocked
-        };
+    {
+      periodLocked: activeEffectivePeriodLocked,
+      postedVoucherCount
+    };
   const summary = useMemo(
-    () => buildLedgerInitializationSummary({ openingBalanceRows: activeOpeningRows, profile: activeProfile }),
-    [activeOpeningRows, activeProfile]
+    () => buildLedgerInitializationSummary({ openingBalanceRows: activeOpeningRows, profile: activeProfile, subjects: activeSubjectRows }),
+    [activeOpeningRows, activeProfile, activeSubjectRows]
   );
   const effectivePeriodReadbackNotice = activeEffectivePeriodLocked
     ? `${activeEffectivePeriodGuard.reason} 当前账套初始化仅用于回看。`
     : undefined;
   const openingWorkspace = useMemo(
-    () => buildLedgerOpeningBalanceWorkspace({ importBatch: activeImportBatch, openingBalanceRows: activeOpeningRows, profile: activeProfile }),
-    [activeImportBatch, activeOpeningRows, activeProfile]
+    () => buildLedgerOpeningBalanceWorkspace({ importBatch: activeImportBatch, openingBalanceRows: activeOpeningRows, profile: activeProfile, subjects: activeSubjectRows }),
+    [activeImportBatch, activeOpeningRows, activeProfile, activeSubjectRows]
   );
   const workflowSteps = useMemo(() => buildLedgerInitializationSteps(summary.status), [summary.status]);
   const operationRecords = useMemo(
@@ -1196,13 +1410,18 @@ export function FinanceLedgerInitializationPage() {
     () => activeOpeningRows.filter((record) => matchesLedgerInitializationFilters(record, filters)),
     [activeOpeningRows, filters]
   );
-  const occupiedOpeningSubjectCodes = useMemo(() => new Set(activeOpeningRows.map((record) => record.subjectCode)), [activeOpeningRows]);
+  const occupiedOpeningSubjectCodes = useMemo(
+    () => new Set(activeOpeningRows.filter((record) => record.auxiliaryScope === '无').map((record) => record.subjectCode)),
+    [activeOpeningRows]
+  );
   const availableOpeningSubjectRows = useMemo(
     () =>
-      accountingSubjectSeedRows.filter(
-        (subject) => isOpeningBalanceSubjectEligible(subject) && !occupiedOpeningSubjectCodes.has(subject.code)
+      activeSubjectRows.filter(
+        (subject) =>
+          isOpeningBalanceSubjectEligible(subject)
+          && (!subject.auxiliaryScopes.includes('无') || !occupiedOpeningSubjectCodes.has(subject.code))
       ),
-    [occupiedOpeningSubjectCodes]
+    [activeSubjectRows, occupiedOpeningSubjectCodes]
   );
   const availableOpeningSubjectOptions = useMemo(
     () =>
@@ -1214,11 +1433,11 @@ export function FinanceLedgerInitializationPage() {
   );
   const openingAdjustmentSubjectOptions = useMemo(
     () =>
-      getOpeningAdjustmentSubjectRows().map((subject) => ({
+      activeSubjectRows.filter((subject) => subject.status === '启用').map((subject) => ({
         label: `${subject.code} ${subject.name}`,
         value: subject.code
       })),
-    []
+    [activeSubjectRows]
   );
   const openingBalanceDrawer = useModeDrawerState<LedgerOpeningBalanceRow, LedgerOpeningBalanceManualForm>({
     createForm: () => createDefaultOpeningBalanceForm(availableOpeningSubjectRows),
@@ -1238,7 +1457,7 @@ export function FinanceLedgerInitializationPage() {
     if (actionKey === 'withdraw-enable') {
       setWithdrawForm(createDefaultWithdrawForm());
     } else {
-      setOpeningAdjustmentForm(createDefaultOpeningAdjustmentForm());
+      setOpeningAdjustmentForm(createDefaultOpeningAdjustmentForm(activeSubjectRows));
     }
 
     setActiveControlledActionKey(actionKey);
@@ -1346,7 +1565,12 @@ export function FinanceLedgerInitializationPage() {
       accountSetName: basicSettingsForm.accountSetName.trim(),
       configuredAt: formatOperationTime(),
       configuredBy: '李明',
-      effectivePeriod: basicSettingsForm.effectivePeriod.trim()
+      effectivePeriod: basicSettingsForm.effectivePeriod.trim(),
+      status: '基础设置完成',
+      subjectConfirmedAt: '',
+      subjectConfirmedBy: '',
+      trialBalancedAt: '',
+      trialBalancedBy: ''
     };
 
     setDraftProfile(nextProfile);
@@ -1359,6 +1583,29 @@ export function FinanceLedgerInitializationPage() {
     );
     setActiveProcessAction(undefined);
     message.success('基础设置已保存');
+  }
+
+  function confirmSubjects() {
+    if (!guardLedgerInitializationDraftMutation('确认会计科目')) {
+      return;
+    }
+
+    const confirmedAt = formatOperationTime();
+    setDraftSubjectRows((currentRows) => currentRows.map((row) => ({ ...row, snapshotAt: confirmedAt })));
+    setDraftProfile((currentProfile) => ({
+      ...currentProfile,
+      status: '科目已确认',
+      subjectConfirmedAt: confirmedAt,
+      subjectConfirmedBy: '李明'
+    }));
+    appendDraftOperationRecord(
+      createDraftOperationRecord({
+        action: '确认科目',
+        note: `确认 ${draftSubjectRows.filter((subject) => subject.status === '启用').length} 个会计科目并形成账套科目快照。`,
+        result: '科目已确认'
+      })
+    );
+    message.success('会计科目已确认');
   }
 
   function applyOpeningRowsChange(nextRows: LedgerOpeningBalanceRow[], recordedAt = formatOperationTime()) {
@@ -1386,24 +1633,33 @@ export function FinanceLedgerInitializationPage() {
       return undefined;
     }
 
-    const formIssue = getOpeningBalanceFormIssue(form);
+    const formIssue = getOpeningBalanceFormIssue(form, draftSubjectRows);
 
     if (formIssue) {
       message.warning(formIssue);
       return undefined;
     }
 
-    const nextRow = buildManualOpeningBalanceRow({ form, period: draftProfile.effectivePeriod });
+    const nextRow = buildManualOpeningBalanceRow({
+      form,
+      period: draftProfile.effectivePeriod,
+      subjectRows: draftSubjectRows
+    });
 
     if (!nextRow) {
       message.error('请选择有效会计科目');
       return undefined;
     }
 
-    const duplicateRow = draftOpeningRows.find((row) => row.id !== targetId && row.subjectCode === nextRow.subjectCode);
+    const duplicateKey = `${nextRow.subjectCode}-${nextRow.auxiliaryScope}-${nextRow.auxiliaryId || 'none'}`;
+    const duplicateRow = draftOpeningRows.find(
+      (row) =>
+        row.id !== targetId
+        && `${row.subjectCode}-${row.auxiliaryScope}-${row.auxiliaryId || 'none'}` === duplicateKey
+    );
 
     if (duplicateRow) {
-      message.warning('该科目已有期初余额，请进入原记录详情编辑。');
+      message.warning('该科目与辅助核算对象已有期初余额，请进入原记录详情编辑。');
       return undefined;
     }
 
@@ -1505,11 +1761,16 @@ export function FinanceLedgerInitializationPage() {
       return;
     }
 
-    const nextSummary = buildLedgerInitializationSummary({ openingBalanceRows: draftOpeningRows, profile: draftProfile });
+    const nextSummary = buildLedgerInitializationSummary({
+      openingBalanceRows: draftOpeningRows,
+      profile: draftProfile,
+      subjects: draftSubjectRows
+    });
     const validation = buildLedgerOpeningBalanceWorkspace({
       importBatch: draftImportBatch,
       openingBalanceRows: draftOpeningRows,
-      profile: draftProfile
+      profile: draftProfile,
+      subjects: draftSubjectRows
     }).validation;
     const nextStatus: LedgerInitializationStatus = validation.blockingIssueCount === 0 ? '试算平衡' : '试算不平';
 
@@ -1543,7 +1804,8 @@ export function FinanceLedgerInitializationPage() {
       const nextRows = applyLedgerOpeningBalanceImportPreview({
         currentRows: draftOpeningRows,
         importPreviewRows: openingWorkspace.importPreviewRows,
-        profile: draftProfile
+        profile: draftProfile,
+        subjects: draftSubjectRows
       });
       const appliedAt = formatOperationTime();
 
@@ -1597,6 +1859,12 @@ export function FinanceLedgerInitializationPage() {
 
     setDraftProfile(nextProfile);
     setEnabledProfile(nextProfile);
+    setEnabledSubjectRows(draftSubjectRows.map((subject) => ({
+      ...subject,
+      auxiliaryScopes: [...subject.auxiliaryScopes],
+      operationRecords: subject.operationRecords.map((record) => ({ ...record })),
+      sourceLinks: [...subject.sourceLinks]
+    })));
     setEnabledOpeningRows(draftOpeningRows.map((row) => ({ ...row })));
     setEnabledImportBatch(draftImportBatch ? { ...draftImportBatch } : undefined);
     setDraftOperationRecords((currentRecords) => [...currentRecords, operationRecord]);
@@ -1645,7 +1913,7 @@ export function FinanceLedgerInitializationPage() {
   }
 
   function submitOpeningAdjustment() {
-    const formIssue = getOpeningAdjustmentFormIssue(openingAdjustmentForm);
+    const formIssue = getOpeningAdjustmentFormIssue(openingAdjustmentForm, activeSubjectRows);
     const adjustmentAction = controlledActions.find((action) => action.key === 'opening-adjustment');
 
     if (formIssue) {
@@ -1660,9 +1928,10 @@ export function FinanceLedgerInitializationPage() {
 
     const createdAt = formatOperationTime();
     const nextRecord = buildOpeningAdjustmentVoucherRecord({
-      accountingPeriod: activeProfile.effectivePeriod,
+      accountingPeriod: openingAdjustmentForm.accountingPeriod,
       createdAt,
-      form: openingAdjustmentForm
+      form: openingAdjustmentForm,
+      subjectRows: activeSubjectRows
     });
 
     if (!nextRecord) {
@@ -1685,12 +1954,12 @@ export function FinanceLedgerInitializationPage() {
     appendActiveOperationRecord(
       createDraftOperationRecord({
         action: '期初调整',
-        note: `生成期初调整凭证 ${nextRecord.voucherNo}，${nextRecord.subjectCode} ${nextRecord.subjectName} ${nextRecord.balanceSide} ${formatMoney(nextRecord.amount)}，原因：${nextRecord.reason}。`,
+        note: `生成期初调整凭证 ${nextRecord.voucherNo}，${nextRecord.lines.map((line) => `${line.side} ${line.subjectCode} ${line.subjectName}`).join(' / ')} ${formatMoney(nextRecord.amount)}，原因：${nextRecord.reason}。`,
         result: '已启用'
       })
     );
     setActiveControlledActionKey(undefined);
-    setOpeningAdjustmentForm(createDefaultOpeningAdjustmentForm());
+    setOpeningAdjustmentForm(createDefaultOpeningAdjustmentForm(activeSubjectRows));
     setActiveView('enable');
     message.success('已生成待记账期初调整凭证');
   }
@@ -1780,6 +2049,18 @@ export function FinanceLedgerInitializationPage() {
       render: (amount: number) => <CellText tone={amount > 0 ? 'expense' : 'subtle'}>{formatOpeningAmount(amount)}</CellText>
     },
     {
+      title: '本年累计借方',
+      dataIndex: 'yearToDateDebitAmount',
+      width: 150,
+      render: (amount: number) => <CellText tone={amount > 0 ? 'income' : 'subtle'}>{formatOpeningAmount(amount)}</CellText>
+    },
+    {
+      title: '本年累计贷方',
+      dataIndex: 'yearToDateCreditAmount',
+      width: 150,
+      render: (amount: number) => <CellText tone={amount > 0 ? 'expense' : 'subtle'}>{formatOpeningAmount(amount)}</CellText>
+    },
+    {
       title: '录入方式',
       dataIndex: 'entrySource',
       width: 120,
@@ -1857,6 +2138,18 @@ export function FinanceLedgerInitializationPage() {
       dataIndex: 'creditAmount',
       width: 130,
       render: (amount: number) => <CellText tone={amount > 0 ? 'expense' : 'subtle'}>{formatOpeningAmount(amount)}</CellText>
+    },
+    {
+      title: '本年累计借方',
+      dataIndex: 'yearToDateDebitAmount',
+      width: 150,
+      render: (amount: number) => formatOpeningAmount(amount)
+    },
+    {
+      title: '本年累计贷方',
+      dataIndex: 'yearToDateCreditAmount',
+      width: 150,
+      render: (amount: number) => formatOpeningAmount(amount)
     },
     {
       title: '应用影响',
@@ -1945,16 +2238,15 @@ export function FinanceLedgerInitializationPage() {
       render: (_, record) => <CompactCell primary={record.voucherNo} secondary={record.createdAt} />
     },
     {
-      title: '会计科目',
+      title: '调整分录',
       key: 'subject',
-      width: 230,
-      render: (_, record) => <CompactCell primary={`${record.subjectCode} ${record.subjectName}`} secondary={record.evidenceName} />
-    },
-    {
-      title: '方向',
-      dataIndex: 'balanceSide',
-      width: 96,
-      render: (balanceSide: AccountingSubjectBalanceDirection) => <StatusTag toneMap={balanceDirectionTone} value={balanceSide} />
+      width: 320,
+      render: (_, record) => (
+        <CompactCell
+          primary={record.lines.map((line) => `${line.side} ${line.subjectCode} ${line.subjectName}`).join(' / ')}
+          secondary={record.evidenceName}
+        />
+      )
     },
     {
       title: '金额',
@@ -1994,7 +2286,7 @@ export function FinanceLedgerInitializationPage() {
           <div className="ledger-initialization-action-row">
             <Space wrap>
               <Button
-                disabled={summary.isLocked || activeEffectivePeriodLocked}
+                disabled={summary.isLocked || activeEffectivePeriodLocked || Boolean(activeProfile.subjectConfirmedAt)}
                 icon={<FileDoneOutlined />}
                 type="primary"
                 onClick={() => openProcessAction('basic-settings')}
@@ -2022,11 +2314,21 @@ export function FinanceLedgerInitializationPage() {
                 { label: '确认科目', value: `${summary.confirmedSubjectCount} 个` }
               ]}
             />
+            <div className="ledger-initialization-action-row">
+              <Button
+                disabled={summary.isLocked || activeEffectivePeriodLocked}
+                icon={<CheckCircleOutlined />}
+                type="primary"
+                onClick={confirmSubjects}
+              >
+                确认会计科目
+              </Button>
+            </div>
           </DetailSection>
           <ManagementTable<AccountingSubjectRecord>
             columns={subjectColumns}
-            count={{ value: accountingSubjectSeedRows.length, unit: '个科目' }}
-            dataSource={accountingSubjectSeedRows}
+            count={{ value: activeSubjectRows.length, unit: '个科目' }}
+            dataSource={activeSubjectRows}
             rowKey="id"
             rowTestIdPrefix="finance-ledger-initialization-subject-row"
             tableTestId="finance-ledger-initialization-subject-table"
@@ -2249,8 +2551,7 @@ export function FinanceLedgerInitializationPage() {
           <DetailInfoGrid
             columns={4}
             items={[
-              { label: '账簿使用', value: activeControlContext.hasGeneralLedgerRead ? '已使用' : '未使用' },
-              { label: '调整凭证', value: `${activeControlContext.postedVoucherCount} 张` },
+              { label: '已记账凭证', value: `${activeControlContext.postedVoucherCount} 张` },
               { label: '期间状态', value: activeControlContext.periodLocked ? '已锁定' : '未锁定' },
               { label: '处理原则', value: '已启用后不直接改期初' }
             ]}
@@ -2358,6 +2659,7 @@ export function FinanceLedgerInitializationPage() {
         mode={openingBalanceDrawer.mode}
         open={openingBalanceDrawer.open}
         record={openingBalanceDrawer.record}
+        subjectRows={activeSubjectRows}
         subjectOptions={availableOpeningSubjectOptions}
         onCancel={openingBalanceDrawer.cancel}
         onClose={openingBalanceDrawer.close}
@@ -2379,6 +2681,7 @@ export function FinanceLedgerInitializationPage() {
         openingWorkspace={openingWorkspace}
         profile={activeProfile}
         summary={summary}
+        subjectRows={activeSubjectRows}
         effectivePeriodLocked={activeEffectivePeriodLocked}
         workspaceMode={workspaceMode}
         onBasicSettingsFormChange={updateBasicSettingsForm}
@@ -2394,6 +2697,7 @@ export function FinanceLedgerInitializationPage() {
         action={activeControlledAction}
         adjustmentForm={openingAdjustmentForm}
         adjustmentSubjectOptions={openingAdjustmentSubjectOptions}
+        subjectRows={activeSubjectRows}
         withdrawForm={withdrawForm}
         onAdjustmentFormChange={updateOpeningAdjustmentForm}
         onClose={() => setActiveControlledActionKey(undefined)}

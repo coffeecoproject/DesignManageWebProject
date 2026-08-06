@@ -2,6 +2,7 @@ import {
   accountingSubjectProfile,
   accountingSubjectSeedRows,
   getAccountingSubjectByCode,
+  type AccountingAuxiliaryScope,
   type AccountingSubjectBalanceDirection,
   type AccountingSubjectProfile,
   type AccountingSubjectRecord,
@@ -40,7 +41,9 @@ export const ledgerOpeningBalanceEntrySourceLabels: Record<LedgerOpeningBalanceE
 
 export type LedgerOpeningBalanceRow = {
   accountingPeriod: string;
+  auxiliaryId: string;
   auxiliaryLabel: string;
+  auxiliaryScope: AccountingAuxiliaryScope;
   balanceDirection: AccountingSubjectBalanceDirection;
   creditAmount: number;
   debitAmount: number;
@@ -50,6 +53,18 @@ export type LedgerOpeningBalanceRow = {
   subjectCode: string;
   subjectName: string;
   subjectType: AccountingSubjectType;
+  yearToDateCreditAmount: number;
+  yearToDateDebitAmount: number;
+};
+
+export type LedgerInitializationAuxiliaryOption = {
+  id: string;
+  label: string;
+  scope: Exclude<AccountingAuxiliaryScope, '无'>;
+};
+
+export type LedgerInitializationSubjectSnapshot = AccountingSubjectRecord & {
+  snapshotAt: string;
 };
 
 export type LedgerOpeningBalanceImportBatch = {
@@ -140,6 +155,9 @@ export type LedgerInitializationSummary = {
   requiredStepCount: number;
   status: LedgerInitializationStatus;
   trialBalanceStatus: LedgerInitializationTrialBalanceStatus;
+  yearToDateCreditTotal: number;
+  yearToDateDebitTotal: number;
+  yearToDateDifference: number;
 };
 
 export type LedgerInitializationFilters = {
@@ -150,8 +168,13 @@ export type LedgerInitializationFilters = {
 export type LedgerInitializationGeneralLedgerOpeningBalance = {
   accountingPeriod: string;
   amount: number;
+  auxiliaryId: string;
+  auxiliaryLabel: string;
+  auxiliaryScope: AccountingAuxiliaryScope;
   source: LedgerInitializationSource;
   subjectCode: string;
+  yearToDateCreditAmount: number;
+  yearToDateDebitAmount: number;
 };
 
 export type LedgerInitializationOperationRecord = {
@@ -176,23 +199,31 @@ export type LedgerInitializationControlledAction = {
 };
 
 export type LedgerInitializationControlContext = {
-  hasGeneralLedgerRead: boolean;
   periodLocked: boolean;
   postedVoucherCount: number;
+};
+
+export type LedgerOpeningAdjustmentLine = {
+  amount: number;
+  auxiliaryId: string;
+  auxiliaryLabel: string;
+  auxiliaryScope: AccountingAuxiliaryScope;
+  id: string;
+  side: AccountingSubjectBalanceDirection;
+  subjectCode: string;
+  subjectName: string;
 };
 
 export type LedgerOpeningAdjustmentVoucherRecord = {
   accountingPeriod: string;
   amount: number;
-  balanceSide: AccountingSubjectBalanceDirection;
   createdAt: string;
   createdBy: string;
   evidenceName: string;
   id: string;
+  lines: LedgerOpeningAdjustmentLine[];
   reason: string;
   status: LedgerOpeningAdjustmentVoucherStatus;
-  subjectCode: string;
-  subjectName: string;
   voucherNo: string;
 };
 
@@ -227,10 +258,36 @@ export const ledgerInitializationDraftProfile: LedgerInitializationProfile = {
 };
 
 export const ledgerInitializationControlContext: LedgerInitializationControlContext = {
-  hasGeneralLedgerRead: true,
   periodLocked: false,
   postedVoucherCount: 6
 };
+
+export const ledgerInitializationAuxiliaryOptions: LedgerInitializationAuxiliaryOption[] = [
+  { id: 'public-account-cmb-basic', label: '招商银行基本户', scope: '对公账户' },
+  { id: 'public-account-icbc-payment-reserve', label: '工商银行备用付款户', scope: '对公账户' },
+  { id: 'public-account-ccb-payment-reserve', label: '建设银行备用付款户', scope: '对公账户' },
+  { id: 'customer-starry', label: '星河餐饮集团', scope: '客户' },
+  { id: 'customer-light-valley', label: '光谷商业空间', scope: '客户' },
+  { id: 'supplier-design-b', label: '示例兼职 B', scope: '供应商' },
+  { id: 'employee-20260001', label: '示例全职 A', scope: '员工' },
+  { id: 'employee-20250018', label: '示例全职 B', scope: '员工' },
+  { id: 'project-space-design', label: '空间设计项目', scope: '项目' },
+  { id: 'tax-vat', label: '增值税及附加', scope: '税费' },
+  { id: 'tax-iit', label: '代扣代缴个人所得税', scope: '税费' }
+];
+
+export function buildLedgerInitializationSubjectSnapshot(
+  subjects: AccountingSubjectRecord[] = accountingSubjectSeedRows,
+  snapshotAt = ledgerInitializationProfile.subjectConfirmedAt
+): LedgerInitializationSubjectSnapshot[] {
+  return subjects.map((subject) => ({
+    ...subject,
+    auxiliaryScopes: [...subject.auxiliaryScopes],
+    operationRecords: subject.operationRecords.map((record) => ({ ...record })),
+    snapshotAt,
+    sourceLinks: [...subject.sourceLinks]
+  }));
+}
 
 export const ledgerInitializationStepDefinitions: LedgerInitializationStepDefinition[] = [
   {
@@ -271,44 +328,69 @@ function requireSubject(subjectCode: string): AccountingSubjectRecord {
 }
 
 function createOpeningBalanceRow({
+  auxiliaryId = '',
   auxiliaryLabel = '无',
+  auxiliaryScope = '无',
   creditAmount = 0,
   debitAmount = 0,
   entrySource = '手工录入',
-  subjectCode
+  subjectCode,
+  yearToDateCreditAmount = 0,
+  yearToDateDebitAmount = 0
 }: {
+  auxiliaryId?: string;
   auxiliaryLabel?: string;
+  auxiliaryScope?: AccountingAuxiliaryScope;
   creditAmount?: number;
   debitAmount?: number;
   entrySource?: LedgerOpeningBalanceEntrySource;
   subjectCode: string;
+  yearToDateCreditAmount?: number;
+  yearToDateDebitAmount?: number;
 }): LedgerOpeningBalanceRow {
   const subject = requireSubject(subjectCode);
 
   return {
     accountingPeriod: ledgerInitializationProfile.effectivePeriod,
+    auxiliaryId,
     auxiliaryLabel,
+    auxiliaryScope,
     balanceDirection: subject.balanceDirection,
     creditAmount,
     debitAmount,
     entrySource,
-    id: `ledger-opening-${subjectCode.replace(/\./g, '-')}`,
+    id: `ledger-opening-${subjectCode.replace(/\./g, '-')}-${auxiliaryId || 'none'}`,
     source: '账套初始化',
     subjectCode,
     subjectName: subject.name,
-    subjectType: subject.type
+    subjectType: subject.type,
+    yearToDateCreditAmount,
+    yearToDateDebitAmount
   };
 }
 
 export const ledgerOpeningBalanceRows: LedgerOpeningBalanceRow[] = [
   createOpeningBalanceRow({ debitAmount: 2_000, entrySource: '导入应用', subjectCode: '1001' }),
-  createOpeningBalanceRow({ debitAmount: 252_669.48, entrySource: '导入应用', subjectCode: '1002' }),
-  createOpeningBalanceRow({ auxiliaryLabel: '客户往来', debitAmount: 21_000, entrySource: '导入应用', subjectCode: '1122' }),
-  createOpeningBalanceRow({ auxiliaryLabel: '供应商往来', creditAmount: 5_006.87, entrySource: '导入应用', subjectCode: '2202' }),
-  createOpeningBalanceRow({ auxiliaryLabel: '员工薪酬', creditAmount: 12_000, entrySource: '系统承接', subjectCode: '2211.01' }),
-  createOpeningBalanceRow({ auxiliaryLabel: '员工报销', creditAmount: 3_200, entrySource: '系统承接', subjectCode: '2241' }),
+  createOpeningBalanceRow({
+    auxiliaryId: 'public-account-cmb-basic',
+    auxiliaryLabel: '招商银行基本户',
+    auxiliaryScope: '对公账户',
+    debitAmount: 122_669.48,
+    entrySource: '导入应用',
+    subjectCode: '1002',
+    yearToDateCreditAmount: 40_000,
+    yearToDateDebitAmount: 120_000
+  }),
+  createOpeningBalanceRow({ auxiliaryId: 'public-account-icbc-payment-reserve', auxiliaryLabel: '工商银行备用付款户', auxiliaryScope: '对公账户', debitAmount: 80_000, entrySource: '导入应用', subjectCode: '1002' }),
+  createOpeningBalanceRow({ auxiliaryId: 'public-account-ccb-payment-reserve', auxiliaryLabel: '建设银行备用付款户', auxiliaryScope: '对公账户', debitAmount: 50_000, entrySource: '导入应用', subjectCode: '1002' }),
+  createOpeningBalanceRow({ auxiliaryId: 'customer-light-valley', auxiliaryLabel: '光谷商业空间', auxiliaryScope: '客户', debitAmount: 21_000, entrySource: '导入应用', subjectCode: '1122' }),
+  createOpeningBalanceRow({ auxiliaryId: 'supplier-design-b', auxiliaryLabel: '示例兼职 B', auxiliaryScope: '供应商', creditAmount: 5_006.87, entrySource: '导入应用', subjectCode: '2202' }),
+  createOpeningBalanceRow({ auxiliaryId: 'employee-20250018', auxiliaryLabel: '示例全职 B', auxiliaryScope: '员工', creditAmount: 12_000, entrySource: '系统承接', subjectCode: '2211.01' }),
+  createOpeningBalanceRow({ auxiliaryId: 'employee-20260001', auxiliaryLabel: '示例全职 A', auxiliaryScope: '员工', creditAmount: 3_200, entrySource: '系统承接', subjectCode: '2241' }),
   createOpeningBalanceRow({ creditAmount: 200_000, entrySource: '手工录入', subjectCode: '3001' }),
-  createOpeningBalanceRow({ creditAmount: 55_462.61, entrySource: '手工录入', subjectCode: '3103' })
+  createOpeningBalanceRow({ creditAmount: 55_462.61, entrySource: '手工录入', subjectCode: '3103' }),
+  createOpeningBalanceRow({ auxiliaryId: 'customer-starry', auxiliaryLabel: '星河餐饮集团', auxiliaryScope: '客户', entrySource: '导入应用', subjectCode: '5001', yearToDateCreditAmount: 120_000 }),
+  createOpeningBalanceRow({ auxiliaryId: 'project-space-design', auxiliaryLabel: '空间设计项目', auxiliaryScope: '项目', entrySource: '导入应用', subjectCode: '5602', yearToDateDebitAmount: 40_000 })
 ];
 
 export const ledgerOpeningBalanceImportBatch: LedgerOpeningBalanceImportBatch = {
@@ -318,7 +400,7 @@ export const ledgerOpeningBalanceImportBatch: LedgerOpeningBalanceImportBatch = 
   id: 'ledger-opening-import-202606-001',
   importedAt: '2026-06-30 09:35',
   importedBy: '李明',
-  previewRowCount: 4,
+  previewRowCount: 8,
   status: '已应用'
 };
 
@@ -327,7 +409,7 @@ export const ledgerOpeningBalanceDraftImportBatch: LedgerOpeningBalanceImportBat
   id: 'ledger-opening-import-202606-draft',
   importedAt: '2026-06-30 09:35',
   importedBy: '李明',
-  previewRowCount: 4,
+  previewRowCount: 8,
   status: '待应用'
 };
 
@@ -352,7 +434,7 @@ export const ledgerInitializationOperationRecords: LedgerInitializationOperation
     action: '录入期初余额',
     actor: ledgerInitializationProfile.openingRecordedBy,
     id: 'ledger-init-operation-opening',
-    note: '录入 8 条期初余额，覆盖货币资金、往来、薪酬、权益和本年利润。',
+    note: '录入 12 条期初余额及本年累计发生额，覆盖货币资金、往来、薪酬、权益和损益。',
     operatedAt: ledgerInitializationProfile.openingRecordedAt,
     result: '期初已录入'
   },
@@ -387,8 +469,14 @@ function roundMoney(amount: number) {
   return Number(amount.toFixed(2));
 }
 
-export function buildLedgerOpeningBalanceKey({ auxiliaryLabel, subjectCode }: Pick<LedgerOpeningBalanceRow, 'auxiliaryLabel' | 'subjectCode'>) {
-  return `${subjectCode}-${auxiliaryLabel.trim() || '无'}`;
+export function buildLedgerOpeningBalanceKey({
+  auxiliaryId,
+  auxiliaryLabel,
+  auxiliaryScope,
+  subjectCode
+}: Pick<LedgerOpeningBalanceRow, 'auxiliaryId' | 'auxiliaryLabel' | 'auxiliaryScope' | 'subjectCode'>) {
+  const auxiliaryKey = auxiliaryScope === '无' ? 'none' : auxiliaryId || auxiliaryLabel.trim();
+  return `${subjectCode}-${auxiliaryScope}-${auxiliaryKey}`;
 }
 
 function getInitializationStageIndex(status: LedgerInitializationStatus) {
@@ -453,9 +541,16 @@ export function buildLedgerInitializationSummary({
   const debitTotal = roundMoney(openingBalanceRows.reduce((total, row) => total + row.debitAmount, 0));
   const creditTotal = roundMoney(openingBalanceRows.reduce((total, row) => total + row.creditAmount, 0));
   const difference = roundMoney(debitTotal - creditTotal);
+  const yearToDateDebitTotal = roundMoney(
+    openingBalanceRows.reduce((total, row) => total + row.yearToDateDebitAmount, 0)
+  );
+  const yearToDateCreditTotal = roundMoney(
+    openingBalanceRows.reduce((total, row) => total + row.yearToDateCreditAmount, 0)
+  );
+  const yearToDateDifference = roundMoney(yearToDateDebitTotal - yearToDateCreditTotal);
   const hasTrialBalanceResult = profile.status === '试算平衡' || profile.status === '试算不平' || profile.status === '已启用';
   const hasTrialBalanceEvidence = Boolean(profile.trialBalancedAt && profile.trialBalancedBy);
-  const hasBalanceDifference = Math.abs(difference) >= 0.01;
+  const hasBalanceDifference = Math.abs(difference) >= 0.01 || Math.abs(yearToDateDifference) >= 0.01;
   const trialBalanceStatus: LedgerInitializationTrialBalanceStatus = profile.status === '试算不平' || hasBalanceDifference
     ? '不平衡'
     : hasTrialBalanceResult
@@ -464,12 +559,19 @@ export function buildLedgerInitializationSummary({
   const status = hasBalanceDifference && hasTrialBalanceResult ? '试算不平' : profile.status;
   const steps = buildLedgerInitializationSteps(status);
   const completedStepCount = steps.filter((step) => step.status === 'finish').length;
+  const confirmedSubjectCount = profile.subjectConfirmedAt
+    ? subjects.filter((subject) => subject.status === '启用').length
+    : 0;
 
   return {
     accountingPeriod: profile.effectivePeriod,
-    canEnable: status === '试算平衡' && trialBalanceStatus === '平衡' && hasTrialBalanceEvidence,
+    canEnable:
+      status === '试算平衡'
+      && trialBalanceStatus === '平衡'
+      && hasTrialBalanceEvidence
+      && confirmedSubjectCount > 0,
     completedStepCount,
-    confirmedSubjectCount: subjects.filter((subject) => subject.status === '启用').length,
+    confirmedSubjectCount,
     creditTotal,
     debitTotal,
     difference,
@@ -478,7 +580,10 @@ export function buildLedgerInitializationSummary({
     openingBalanceCount: openingBalanceRows.length,
     requiredStepCount: ledgerInitializationStepDefinitions.length,
     status,
-    trialBalanceStatus
+    trialBalanceStatus,
+    yearToDateCreditTotal,
+    yearToDateDebitTotal,
+    yearToDateDifference
   };
 }
 
@@ -501,8 +606,13 @@ export function buildLedgerInitializationOpeningBalancesForGeneralLedger(
     return {
       accountingPeriod: row.accountingPeriod,
       amount,
+      auxiliaryId: row.auxiliaryId,
+      auxiliaryLabel: row.auxiliaryLabel,
+      auxiliaryScope: row.auxiliaryScope,
       source: '账套初始化',
-      subjectCode: row.subjectCode
+      subjectCode: row.subjectCode,
+      yearToDateCreditAmount: row.yearToDateCreditAmount,
+      yearToDateDebitAmount: row.yearToDateDebitAmount
     };
   });
 }
@@ -515,7 +625,7 @@ export function buildLedgerInitializationControlledActions({
   profile?: LedgerInitializationProfile;
 } = {}): LedgerInitializationControlledAction[] {
   const isEnabled = profile.status === '已启用';
-  const canWithdrawEnablement = isEnabled && !context.hasGeneralLedgerRead && context.postedVoucherCount === 0 && !context.periodLocked;
+  const canWithdrawEnablement = isEnabled && context.postedVoucherCount === 0 && !context.periodLocked;
 
   return [
     {
@@ -537,7 +647,7 @@ export function buildLedgerInitializationControlledActions({
       prechecks: ['账套已启用', '调整期间未被锁定', '涉及科目仍处于启用状态', '原始期初余额不允许直接改写'],
       primaryActionLabel: '生成调整凭证',
       scenario: '账套启用后已经进入总账或凭证流程，发现期初金额、科目或辅助核算需要修正时使用。',
-      status: !isEnabled ? '未启用' : context.periodLocked ? '受限' : '可发起',
+      status: !isEnabled ? '未启用' : '可发起',
       title: '期初调整'
     }
   ];
@@ -592,9 +702,11 @@ export function buildLedgerOpeningBalanceImportPreviewRows({
 
 export function validateLedgerOpeningBalances({
   openingBalanceRows = ledgerOpeningBalanceRows,
+  profile = ledgerInitializationProfile,
   subjects = accountingSubjectSeedRows
 }: {
   openingBalanceRows?: LedgerOpeningBalanceRow[];
+  profile?: LedgerInitializationProfile;
   subjects?: AccountingSubjectRecord[];
 } = {}): LedgerOpeningBalanceValidationSummary {
   const items: LedgerOpeningBalanceValidationItem[] = [];
@@ -603,6 +715,7 @@ export function validateLedgerOpeningBalances({
 
   openingBalanceRows.forEach((row) => {
     const duplicateKey = buildLedgerOpeningBalanceKey(row);
+    const subject = enabledSubjectsByCode.get(row.subjectCode);
     duplicateKeys.set(duplicateKey, (duplicateKeys.get(duplicateKey) ?? 0) + 1);
 
     if (!enabledSubjectsByCode.has(row.subjectCode)) {
@@ -619,7 +732,47 @@ export function validateLedgerOpeningBalances({
       );
     }
 
-    if (row.debitAmount < 0 || row.creditAmount < 0) {
+    if (row.accountingPeriod !== profile.effectivePeriod) {
+      items.push(
+        createValidationItem({
+          blocking: true,
+          id: `period-mismatch-${row.id}`,
+          message: '期初余额归属期间必须与账套启用期间一致。',
+          severity: 'error',
+          status: '需处理',
+          subjectCode: row.subjectCode,
+          title: '启用期间'
+        })
+      );
+    }
+
+    const requiresAuxiliary = Boolean(subject && !subject.auxiliaryScopes.includes('无'));
+    if (
+      subject
+      && (
+        (requiresAuxiliary && (!row.auxiliaryId || row.auxiliaryScope === '无'))
+        || (row.auxiliaryScope !== '无' && !subject.auxiliaryScopes.includes(row.auxiliaryScope))
+      )
+    ) {
+      items.push(
+        createValidationItem({
+          blocking: true,
+          id: `auxiliary-mismatch-${row.id}`,
+          message: '辅助核算类型或对象与会计科目配置不一致。',
+          severity: 'error',
+          status: '需处理',
+          subjectCode: row.subjectCode,
+          title: '辅助核算'
+        })
+      );
+    }
+
+    if (
+      row.debitAmount < 0
+      || row.creditAmount < 0
+      || row.yearToDateDebitAmount < 0
+      || row.yearToDateCreditAmount < 0
+    ) {
       items.push(
         createValidationItem({
           blocking: true,
@@ -647,7 +800,12 @@ export function validateLedgerOpeningBalances({
       );
     }
 
-    if (row.debitAmount === 0 && row.creditAmount === 0) {
+    if (
+      row.debitAmount === 0
+      && row.creditAmount === 0
+      && row.yearToDateDebitAmount === 0
+      && row.yearToDateCreditAmount === 0
+    ) {
       items.push(
         createValidationItem({
           blocking: false,
@@ -681,7 +839,6 @@ export function validateLedgerOpeningBalances({
   });
 
   const summary = buildLedgerInitializationSummary({ openingBalanceRows, subjects });
-
   if (Math.abs(summary.difference) >= 0.01) {
     items.push(
       createValidationItem({
@@ -691,6 +848,19 @@ export function validateLedgerOpeningBalances({
         severity: 'error',
         status: '需处理',
         title: '试算平衡'
+      })
+    );
+  }
+
+  if (Math.abs(summary.yearToDateDifference) >= 0.01) {
+    items.push(
+      createValidationItem({
+        blocking: true,
+        id: 'year-to-date-trial-balance-difference',
+        message: `本年累计借贷差额 ${Math.abs(summary.yearToDateDifference).toFixed(2)} 元，不能启用账套。`,
+        severity: 'error',
+        status: '需处理',
+        title: '本年累计试算'
       })
     );
   }
@@ -733,7 +903,7 @@ export function buildLedgerOpeningBalanceWorkspace({
   subjects?: AccountingSubjectRecord[];
 } = {}): LedgerOpeningBalanceWorkspace {
   const summary = buildLedgerInitializationSummary({ openingBalanceRows, profile, subjects });
-  const validation = validateLedgerOpeningBalances({ openingBalanceRows, subjects });
+  const validation = validateLedgerOpeningBalances({ openingBalanceRows, profile, subjects });
   const isLocked = summary.isLocked;
   const importPreviewRows = buildLedgerOpeningBalanceImportPreviewRows({ importBatch, openingBalanceRows });
   const importPreviewHasBlockingIssue = importPreviewRows.some((row) => row.previewStatus === '需处理');
@@ -781,7 +951,9 @@ export function applyLedgerOpeningBalanceImportPreview({
   const previewRowsToAdd = importPreviewRows.filter((row) => !currentKeys.has(buildLedgerOpeningBalanceKey(row)));
   const toOpeningRow = (row: LedgerOpeningBalanceImportPreviewRow): LedgerOpeningBalanceRow => ({
     accountingPeriod: row.accountingPeriod,
+    auxiliaryId: row.auxiliaryId,
     auxiliaryLabel: row.auxiliaryLabel,
+    auxiliaryScope: row.auxiliaryScope,
     balanceDirection: row.balanceDirection,
     creditAmount: row.creditAmount,
     debitAmount: row.debitAmount,
@@ -790,7 +962,9 @@ export function applyLedgerOpeningBalanceImportPreview({
     source: row.source,
     subjectCode: row.subjectCode,
     subjectName: row.subjectName,
-    subjectType: row.subjectType
+    subjectType: row.subjectType,
+    yearToDateCreditAmount: row.yearToDateCreditAmount,
+    yearToDateDebitAmount: row.yearToDateDebitAmount
   });
   const nextRows = [
     ...currentRows.map((row) => {
@@ -800,8 +974,14 @@ export function applyLedgerOpeningBalanceImportPreview({
     }),
     ...previewRowsToAdd.map(toOpeningRow)
   ];
-  const validation = validateLedgerOpeningBalances({ openingBalanceRows: nextRows, subjects });
-  const blockingDataIssues = validation.items.filter((item) => item.blocking && item.id !== 'trial-balance-difference');
+  const validation = validateLedgerOpeningBalances({ openingBalanceRows: nextRows, profile, subjects });
+  const trialBalanceIssueIds = new Set([
+    'trial-balance-difference',
+    'year-to-date-trial-balance-difference'
+  ]);
+  const blockingDataIssues = validation.items.filter(
+    (item) => item.blocking && !trialBalanceIssueIds.has(item.id)
+  );
 
   if (blockingDataIssues.length > 0) {
     throw new Error('opening balance import preview has blocking validation issues');
@@ -828,6 +1008,7 @@ export function matchesLedgerInitializationFilters(
     record.subjectCode,
     record.subjectName,
     record.subjectType,
+    record.auxiliaryScope,
     record.auxiliaryLabel,
     record.entrySource,
     ledgerOpeningBalanceEntrySourceLabels[record.entrySource],

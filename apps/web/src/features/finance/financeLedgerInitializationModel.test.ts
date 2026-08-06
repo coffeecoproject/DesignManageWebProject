@@ -4,6 +4,7 @@ import {
   buildLedgerInitializationSteps,
   buildLedgerInitializationOpeningBalancesForGeneralLedger,
   buildLedgerInitializationSummary,
+  buildLedgerInitializationSubjectSnapshot,
   buildLedgerOpeningBalanceImportPreviewRows,
   buildLedgerOpeningBalanceWorkspace,
   defaultLedgerInitializationFilters,
@@ -14,6 +15,12 @@ import {
   matchesLedgerInitializationFilters,
   validateLedgerOpeningBalances
 } from './financeLedgerInitializationModel';
+import {
+  accountingSubjectSeedRows,
+  type AccountingSubjectRecord
+} from './financeAccountingSubjectData';
+import { publicAccountSeeds } from '../system/PublicAccountConfigState';
+import { buildPublicAccountOpeningBalances } from './financePublicAccountBalanceModel';
 
 type UnitTest = {
   name: string;
@@ -42,6 +49,26 @@ function assertThrows(run: () => void, message: string) {
 
 const tests: UnitTest[] = [
   {
+    name: 'derives every public account opening balance from account-set auxiliary rows',
+    run: () => {
+      const balances = buildPublicAccountOpeningBalances(
+        publicAccountSeeds,
+        ledgerOpeningBalanceRows,
+        ledgerInitializationProfile.effectivePeriod
+      );
+      const byAccount = new Map(balances.map((balance) => [balance.publicAccountId, balance.openingBalance]));
+
+      assertEqual(byAccount.get('public-account-cmb-basic'), 122_669.48, 'basic account should use its own opening auxiliary row');
+      assertEqual(byAccount.get('public-account-icbc-payment-reserve'), 80_000, 'ICBC account should use its own opening auxiliary row');
+      assertEqual(byAccount.get('public-account-ccb-payment-reserve'), 50_000, 'CCB account should use its own opening auxiliary row');
+      assertEqual(
+        Number(balances.reduce((sum, balance) => sum + balance.openingBalance, 0).toFixed(2)),
+        252_669.48,
+        'public-account opening balances should reconcile to subject 1002'
+      );
+    }
+  },
+  {
     name: 'builds balanced opening trial balance for ledger initialization',
     run: () => {
       const summary = buildLedgerInitializationSummary();
@@ -55,7 +82,7 @@ const tests: UnitTest[] = [
       assertEqual(summary.isLocked, true, 'enabled account set should lock initialization settings');
       assertEqual(summary.completedStepCount, 5, 'enabled account set should complete all initialization steps');
       assertEqual(summary.requiredStepCount, 5, 'initialization workflow should expose five required steps');
-      assertEqual(summary.openingBalanceCount, 8, 'opening balance count should match seeded opening rows');
+      assertEqual(summary.openingBalanceCount, 12, 'opening balance count should match account-auxiliary opening rows');
     }
   },
   {
@@ -123,6 +150,33 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'blocks enablement when year-to-date trial balance is not balanced',
+    run: () => {
+      const unbalancedRows = [
+        {
+          ...ledgerOpeningBalanceRows[0],
+          yearToDateDebitAmount: ledgerOpeningBalanceRows[0].yearToDateDebitAmount + 1
+        },
+        ...ledgerOpeningBalanceRows.slice(1)
+      ];
+      const summary = buildLedgerInitializationSummary({
+        openingBalanceRows: unbalancedRows,
+        profile: ledgerInitializationDraftProfile
+      });
+      const validation = validateLedgerOpeningBalances({ openingBalanceRows: unbalancedRows });
+
+      assertEqual(summary.yearToDateDifference, 1, 'summary should expose year-to-date debit-credit difference');
+      assertEqual(summary.status, '试算不平', 'year-to-date difference should mark initialization as unbalanced');
+      assertEqual(summary.trialBalanceStatus, '不平衡', 'year-to-date difference should fail trial balance');
+      assertEqual(summary.canEnable, false, 'year-to-date difference should block account-set enablement');
+      assertEqual(
+        validation.items.some((item) => item.id === 'year-to-date-trial-balance-difference' && item.blocking),
+        true,
+        'validation should expose a blocking year-to-date trial-balance issue'
+      );
+    }
+  },
+  {
     name: 'exposes general-ledger opening balances using signed normal-balance amounts',
     run: () => {
       const openingBalances = buildLedgerInitializationOpeningBalancesForGeneralLedger();
@@ -133,7 +187,14 @@ const tests: UnitTest[] = [
         throw new Error('expected bank and capital opening balances');
       }
 
-      assertEqual(bankOpening.amount, 252_669.48, 'debit-nature bank opening should keep debit amount positive');
+      assertEqual(
+        openingBalances
+          .filter((row) => row.subjectCode === '1002')
+          .reduce((sum, row) => sum + row.amount, 0)
+          .toFixed(2),
+        '252669.48',
+        'bank opening auxiliaries should reconcile to the subject balance'
+      );
       assertEqual(capitalOpening.amount, 200_000, 'credit-nature capital opening should keep credit amount positive');
       assertEqual(bankOpening.source, '账套初始化', 'general ledger opening balance should expose ledger initialization source');
     }
@@ -167,7 +228,7 @@ const tests: UnitTest[] = [
       assertEqual(workspace.canImportOpeningBalances, false, 'locked account set should not allow import');
       assertEqual(workspace.validation.status, '通过', 'seeded opening balances should pass validation');
       assertEqual(workspace.validation.blockingIssueCount, 0, 'seeded opening balances should have no blocking validation issue');
-      assertEqual(workspace.importPreviewRows.length, 4, 'import preview should include rows originally applied from import');
+      assertEqual(workspace.importPreviewRows.length, 8, 'import preview should include rows originally applied from import');
     }
   },
   {
@@ -198,6 +259,63 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'allows year-to-date imbalance into draft but keeps enablement blocked',
+    run: () => {
+      const unbalancedRows = ledgerOpeningBalanceRows.map((row) =>
+        row.entrySource === '系统承接' && row.subjectCode === '2211.01'
+          ? { ...row, yearToDateDebitAmount: row.yearToDateDebitAmount + 100 }
+          : row
+      );
+      const workspace = buildLedgerOpeningBalanceWorkspace({
+        importBatch: ledgerOpeningBalanceDraftImportBatch,
+        openingBalanceRows: unbalancedRows,
+        profile: ledgerInitializationDraftProfile
+      });
+      const appliedRows = applyLedgerOpeningBalanceImportPreview({
+        currentRows: unbalancedRows,
+        importPreviewRows: workspace.importPreviewRows,
+        profile: ledgerInitializationDraftProfile
+      });
+      const appliedSummary = buildLedgerInitializationSummary({
+        openingBalanceRows: appliedRows,
+        profile: ledgerInitializationDraftProfile
+      });
+
+      assertEqual(workspace.importStatus, '待应用', 'year-to-date difference should not invalidate an import preview');
+      assertEqual(workspace.canApplyImport, true, 'structurally valid year-to-date rows should remain applicable');
+      assertEqual(appliedSummary.canEnable, false, 'applied year-to-date imbalance should still block enablement');
+    }
+  },
+  {
+    name: 'builds an immutable subject snapshot for the enabled account set',
+    run: () => {
+      const source: AccountingSubjectRecord[] = accountingSubjectSeedRows.slice(0, 1).map((subject) => ({
+        ...subject,
+        auxiliaryScopes: [...subject.auxiliaryScopes],
+        operationRecords: subject.operationRecords.map((record) => ({ ...record })),
+        sourceLinks: [...subject.sourceLinks]
+      }));
+      const snapshot = buildLedgerInitializationSubjectSnapshot(source, '2026-06-30 10:00');
+
+      source[0].auxiliaryScopes.push('项目');
+      source[0].operationRecords[0].summary = '来源已修改';
+      source[0].sourceLinks.push('后续来源');
+
+      assertEqual(snapshot[0].snapshotAt, '2026-06-30 10:00', 'subject snapshot should preserve its confirmation time');
+      assertEqual(snapshot[0].auxiliaryScopes.length, 1, 'subject snapshot should isolate auxiliary scopes');
+      assertEqual(
+        snapshot[0].operationRecords[0].summary,
+        accountingSubjectSeedRows[0].operationRecords[0].summary,
+        'subject snapshot should isolate operation records'
+      );
+      assertEqual(
+        snapshot[0].sourceLinks.length,
+        accountingSubjectSeedRows[0].sourceLinks.length,
+        'subject snapshot should isolate source links'
+      );
+    }
+  },
+  {
     name: 'keeps import preview independent from manual opening-balance overrides',
     run: () => {
       const manualBankOverride = {
@@ -223,26 +341,55 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'allows multiple auxiliary balances for one subject and blocks only duplicate auxiliary identities',
+    run: () => {
+      const baseReceivable = ledgerOpeningBalanceRows.find((row) => row.subjectCode === '1122');
+
+      if (!baseReceivable) {
+        throw new Error('expected receivable opening balance');
+      }
+
+      const secondCustomer = {
+        ...baseReceivable,
+        auxiliaryId: 'customer-starry',
+        auxiliaryLabel: '星河餐饮集团',
+        id: 'ledger-opening-1122-customer-starry'
+      };
+      const valid = validateLedgerOpeningBalances({ openingBalanceRows: [...ledgerOpeningBalanceRows, secondCustomer] });
+      const duplicate = validateLedgerOpeningBalances({
+        openingBalanceRows: [...ledgerOpeningBalanceRows, { ...baseReceivable, id: 'ledger-opening-1122-duplicate' }]
+      });
+
+      assertEqual(
+        valid.items.some((item) => item.id.startsWith('duplicate-opening-')),
+        false,
+        'different customer identities should coexist under receivables'
+      );
+      assertEqual(
+        duplicate.items.some((item) => item.id.startsWith('duplicate-opening-')),
+        true,
+        'the same subject and auxiliary identity should be blocked as duplicate'
+      );
+    }
+  },
+  {
     name: 'builds controlled post-enablement action links',
     run: () => {
       const enabledActions = buildLedgerInitializationControlledActions();
       const unusedEnabledActions = buildLedgerInitializationControlledActions({
         context: {
-          hasGeneralLedgerRead: false,
           periodLocked: false,
           postedVoucherCount: 0
         }
       });
       const adjustedEnabledActions = buildLedgerInitializationControlledActions({
         context: {
-          hasGeneralLedgerRead: false,
           periodLocked: false,
           postedVoucherCount: 1
         }
       });
       const lockedEnabledActions = buildLedgerInitializationControlledActions({
         context: {
-          hasGeneralLedgerRead: false,
           periodLocked: true,
           postedVoucherCount: 0
         }
@@ -259,12 +406,12 @@ const tests: UnitTest[] = [
         throw new Error('expected controlled actions for ledger initialization');
       }
 
-      assertEqual(withdrawAction.status, '受限', 'withdraw enablement should be restricted after general-ledger read');
+      assertEqual(withdrawAction.status, '受限', 'withdraw enablement should be restricted after booked vouchers exist');
       assertEqual(unusedWithdrawAction.status, '可发起', 'unused enabled account set should allow enablement withdrawal');
       assertEqual(adjustedWithdrawAction.status, '受限', 'opening adjustment voucher should restrict enablement withdrawal');
       assertEqual(adjustmentAction.status, '可发起', 'opening adjustment should be available after enablement');
       assertEqual(lockedWithdrawAction.status, '受限', 'closed enablement period should restrict enablement withdrawal');
-      assertEqual(lockedAdjustmentAction.status, '受限', 'closed enablement period should restrict opening adjustment');
+      assertEqual(lockedAdjustmentAction.status, '可发起', 'a closed original period should still allow adjustment in a later open period');
       assertEqual(
         draftActions.every((action) => action.status === '未启用'),
         true,

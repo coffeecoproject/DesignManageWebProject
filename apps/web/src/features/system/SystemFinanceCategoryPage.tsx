@@ -26,13 +26,14 @@ import {
   financeReportAggregationOptions,
   financeSourceTypeOptions,
   getDefaultAccountingSubjectCodeForPrimary,
+  getDefaultAccountingSubjectMappingsForPrimary,
   type FinancePrimaryCategoryFormValue,
   type FinanceSecondaryCategoryFormValue,
   useFinanceCategoryState
 } from './FinanceCategoryState';
 import {
   financeAccountingSubjectRoleLabels,
-  financeCategoryAccountingSubjectMappings,
+  getFinanceCategoryRequiredAccountingRoles,
   type FinanceAccountingSubjectRole,
   type FinanceCategoryStatus,
   type FinancePrimaryCategoryConfig,
@@ -86,6 +87,13 @@ const defaultPrimaryForm: FinancePrimaryCategoryFormValue = {
 };
 
 const defaultSecondaryForm: FinanceSecondaryCategoryFormValue = {
+  accountingSubjectMappings: {
+    accrualReceivable: '1122',
+    accrualRevenue: '5001',
+    cashCredit: '1122',
+    cashDebit: '1002',
+    outputVatPayable: '2221.01'
+  },
   counterpartyScope: '客户',
   defaultAccountingSubjectCode: '1122',
   defaultSourceType: '合同应收',
@@ -127,17 +135,20 @@ function buildSecondaryForm(
       return {
         ...defaultSecondaryForm,
         ...getSecondaryDefaultsForPrimary(initialPrimary),
+        accountingSubjectMappings: getDefaultAccountingSubjectMappingsForPrimary(initialPrimary),
         paymentMethods: [...getSecondaryDefaultsForPrimary(initialPrimary).paymentMethods]
       };
     }
 
     return {
       ...defaultSecondaryForm,
+      accountingSubjectMappings: { ...defaultSecondaryForm.accountingSubjectMappings },
       paymentMethods: [...defaultSecondaryForm.paymentMethods]
     };
   }
 
   return {
+    accountingSubjectMappings: { ...(record.accountingSubjectMappings ?? {}) },
     counterpartyScope: record.counterpartyScope,
     defaultAccountingSubjectCode: record.defaultAccountingSubjectCode,
     defaultSourceType: record.defaultSourceType,
@@ -201,11 +212,11 @@ function getSecondaryDefaultsForPrimary(primary?: FinancePrimaryCategoryConfig):
   };
 }
 
-function buildAccountingRoleMappingItems(categoryName: string) {
-  const mappings = financeCategoryAccountingSubjectMappings[categoryName] ?? {};
-  const roles = Object.keys(financeAccountingSubjectRoleLabels) as FinanceAccountingSubjectRole[];
+function buildAccountingRoleMappingItems(
+  mappings: FinanceSecondaryCategoryFormValue['accountingSubjectMappings'],
+  roles: FinanceAccountingSubjectRole[]
+) {
   const mappedItems = roles
-    .filter((role) => mappings[role])
     .map((role) => {
       const subjectCode = mappings[role];
       const subject = subjectCode ? getAccountingSubjectByCode(subjectCode) : undefined;
@@ -262,6 +273,14 @@ function FinanceCategoryDrawer({
   const activeStatus = isPrimaryTarget ? (primaryRecord?.status ?? '启用') : (secondaryRecord?.status ?? '启用');
   const activeCode = isPrimaryTarget ? (primaryRecord?.code ?? '保存后生成') : (secondaryRecord?.code ?? '保存后生成');
   const activeAccountingSubject = getAccountingSubjectByCode(secondaryForm.defaultAccountingSubjectCode);
+  const primaryHasChildren = Boolean(primaryRecord && secondaryRows.some((row) => row.primaryId === primaryRecord.id));
+  const primaryNameLocked = Boolean(primaryRecord && !primaryRecord.id.includes('-custom-'));
+  const secondaryNameLocked = Boolean(secondaryRecord && !secondaryRecord.id.includes('-custom-'));
+  const requiredAccountingRoles = getFinanceCategoryRequiredAccountingRoles({
+    defaultSourceType: secondaryForm.defaultSourceType,
+    direction: activePrimary?.direction ?? '支出',
+    name: secondaryForm.name
+  });
   const accountingSubjectOptions = accountingSubjectSeedRows.map((subject) => ({
     label: `${subject.code} ${subject.name}`,
     value: subject.code
@@ -273,6 +292,11 @@ function FinanceCategoryDrawer({
     : !normalizedSecondaryName ||
       !secondaryForm.primaryId ||
       !secondaryForm.defaultAccountingSubjectCode ||
+      requiredAccountingRoles.some((role) => {
+        const subjectCode = secondaryForm.accountingSubjectMappings[role];
+
+        return !subjectCode || !getAccountingSubjectByCode(subjectCode);
+      }) ||
       secondaryForm.paymentMethods.length === 0 ||
       !secondaryForm.voucherRequirement.trim();
 
@@ -314,7 +338,8 @@ function FinanceCategoryDrawer({
       ...currentValue,
       secondary: {
         ...currentValue.secondary,
-        ...getSecondaryDefaultsForPrimary(nextPrimary)
+        ...getSecondaryDefaultsForPrimary(nextPrimary),
+        accountingSubjectMappings: getDefaultAccountingSubjectMappingsForPrimary(nextPrimary)
       }
     }));
   }
@@ -383,6 +408,18 @@ function FinanceCategoryDrawer({
 
     if (!getAccountingSubjectByCode(nextValue.defaultAccountingSubjectCode)) {
       void messageApi.warning('请选择默认会计科目');
+      return;
+    }
+
+    const missingMappingRole = requiredAccountingRoles.find(
+      (role) => {
+        const subjectCode = nextValue.accountingSubjectMappings[role];
+
+        return !subjectCode || !getAccountingSubjectByCode(subjectCode);
+      }
+    );
+    if (missingMappingRole) {
+      void messageApi.warning(`请选择${financeAccountingSubjectRoleLabels[missingMappingRole]}`);
       return;
     }
 
@@ -489,7 +526,12 @@ function FinanceCategoryDrawer({
                       value: isDetailMode ? (
                         primaryForm.name
                       ) : (
-                        <Input placeholder="例如：客户收入" value={primaryForm.name} onChange={(event) => updatePrimaryForm('name', event.target.value)} />
+                        <Input
+                          disabled={primaryNameLocked}
+                          placeholder="例如：客户收入"
+                          value={primaryForm.name}
+                          onChange={(event) => updatePrimaryForm('name', event.target.value)}
+                        />
                       )
                     },
                     { label: '类目编码', value: activeCode },
@@ -499,6 +541,7 @@ function FinanceCategoryDrawer({
                         <StatusTag toneMap={directionTone} value={primaryForm.direction} />
                       ) : (
                         <Select
+                          disabled={primaryHasChildren}
                           options={financeDirectionOptions.map((direction) => ({ label: direction, value: direction }))}
                           value={primaryForm.direction}
                           onChange={handlePrimaryDirectionChange}
@@ -537,12 +580,6 @@ function FinanceCategoryDrawer({
                 />
               </DetailSection>
 
-              {isDetailMode ? (
-                <DetailSection icon={<BankOutlined />} title="会计映射">
-                  <DetailInfoGrid columns={2} items={buildAccountingRoleMappingItems(secondaryForm.name)} />
-                </DetailSection>
-              ) : null}
-
               <DetailSection icon={<FileProtectOutlined />} title="说明">
                 {isDetailMode ? (
                   <div className="task-config-note-text">{primaryForm.note || '暂无说明'}</div>
@@ -555,6 +592,7 @@ function FinanceCategoryDrawer({
                   />
                 )}
               </DetailSection>
+
             </>
           ) : (
             <>
@@ -567,7 +605,12 @@ function FinanceCategoryDrawer({
                       value: isDetailMode ? (
                         secondaryForm.name
                       ) : (
-                        <Input placeholder="例如：客户回款" value={secondaryForm.name} onChange={(event) => updateSecondaryForm('name', event.target.value)} />
+                        <Input
+                          disabled={secondaryNameLocked}
+                          placeholder="例如：客户回款"
+                          value={secondaryForm.name}
+                          onChange={(event) => updateSecondaryForm('name', event.target.value)}
+                        />
                       )
                     },
                     { label: '类目编码', value: activeCode },
@@ -577,6 +620,7 @@ function FinanceCategoryDrawer({
                         activePrimary?.name ?? '-'
                       ) : (
                         <Select
+                          disabled={secondaryNameLocked}
                           options={primaryRows
                             .filter((row) => row.status === '启用' || row.id === secondaryForm.primaryId)
                             .map((row) => ({ label: `${row.name} / ${row.direction}`, value: row.id }))}
@@ -663,6 +707,35 @@ function FinanceCategoryDrawer({
                 />
               </DetailSection>
 
+              <DetailSection icon={<BankOutlined />} title="入账科目">
+                {isDetailMode ? (
+                  <DetailInfoGrid
+                    columns={2}
+                    items={buildAccountingRoleMappingItems(
+                      secondaryForm.accountingSubjectMappings,
+                      requiredAccountingRoles
+                    )}
+                  />
+                ) : (
+                  <DetailInfoGrid
+                    columns={2}
+                    items={requiredAccountingRoles.map((role) => ({
+                      label: `${financeAccountingSubjectRoleLabels[role]} *`,
+                      value: (
+                        <Select
+                          options={accountingSubjectOptions}
+                          value={secondaryForm.accountingSubjectMappings[role]}
+                          onChange={(value) => updateSecondaryForm('accountingSubjectMappings', {
+                            ...secondaryForm.accountingSubjectMappings,
+                            [role]: value
+                          })}
+                        />
+                      )
+                    }))}
+                  />
+                )}
+              </DetailSection>
+
               <DetailSection icon={<FileProtectOutlined />} title="说明">
                 {isDetailMode ? (
                   <div className="task-config-note-text">{secondaryForm.note || '暂无说明'}</div>
@@ -734,13 +807,17 @@ export function SystemFinanceCategoryPage() {
   const enabledPrimaryCount = financePrimaryCategories.filter((row) => row.status === '启用').length;
   const enabledSecondaryCount = financeSecondaryCategories.filter((row) => row.status === '启用').length;
   const mappedSecondaryCount = financeSecondaryCategories.filter((row) => {
-    const roleMappings = Object.values(financeCategoryAccountingSubjectMappings[row.name] ?? {});
+    const requiredRoles = getFinanceCategoryRequiredAccountingRoles(row);
 
     return (
       row.status === '启用' &&
       Boolean(getAccountingSubjectByCode(row.defaultAccountingSubjectCode)) &&
-      roleMappings.length > 0 &&
-      roleMappings.every((subjectCode) => getAccountingSubjectByCode(subjectCode))
+      requiredRoles.length > 0 &&
+      requiredRoles.every((role) => {
+        const subjectCode = row.accountingSubjectMappings?.[role];
+
+        return Boolean(subjectCode && getAccountingSubjectByCode(subjectCode));
+      })
     );
   }).length;
 

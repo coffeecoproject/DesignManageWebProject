@@ -4,7 +4,7 @@ export type AccountingSubjectType = '资产类' | '负债类' | '所有者权益
 export type AccountingSubjectBalanceDirection = '借方' | '贷方';
 export type AccountingSubjectStatus = '启用' | '停用';
 export type AccountingStatementTarget = '资产负债表' | '利润表' | '现金流量辅助' | '不直接出表';
-export type AccountingAuxiliaryScope = '客户' | '供应商' | '员工' | '项目' | '税费' | '无';
+export type AccountingAuxiliaryScope = '客户' | '供应商' | '员工' | '项目' | '税费' | '对公账户' | '无';
 export type AccountingSubjectSource = '内置规范' | '企业明细';
 export type AccountingCashFlowActivity = '经营活动' | '投资活动' | '筹资活动';
 
@@ -123,7 +123,7 @@ export const accountingSubjectSeedRows: AccountingSubjectRecord[] = [
     type: '资产类'
   }),
   createAccountingSubject({
-    auxiliaryScopes: ['无'],
+    auxiliaryScopes: ['对公账户'],
     balanceDirection: '借方',
     code: '1002',
     name: '银行存款',

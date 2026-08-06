@@ -1,9 +1,11 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import {
   financeCategoryConfigToday,
+  financeCategoryAccountingSubjectMappings,
   financePrimaryCategorySeeds,
   financeSecondaryCategorySeeds,
   type FinanceCategoryStatus,
+  type FinanceAccountingSubjectRoleMappings,
   type FinanceCounterpartyScope,
   type FinancePaymentMethod,
   type FinancePrimaryCategoryConfig,
@@ -34,7 +36,9 @@ export type FinanceSecondaryCategoryFormValue = Pick<
   | 'paymentMethods'
   | 'primaryId'
   | 'voucherRequirement'
->;
+> & {
+  accountingSubjectMappings: FinanceAccountingSubjectRoleMappings;
+};
 
 type FinanceCategoryStateValue = {
   createPrimaryCategory: (nextValue: FinancePrimaryCategoryFormValue) => void;
@@ -72,6 +76,67 @@ export const financeSourceTypeOptions: FinanceSourceType[] = [
 export const financePaymentMethodOptions: FinancePaymentMethod[] = ['对公账户收款', '对公账户付款', '员工代收', '现金暂收'];
 export const financeDirectionOptions: FinanceTransactionDirection[] = ['收入', '支出', '内部转入'];
 
+export function getDefaultAccountingSubjectMappingsForPrimary(
+  primary?: Pick<FinancePrimaryCategoryConfig, 'direction' | 'name' | 'reportAggregation'>
+): FinanceAccountingSubjectRoleMappings {
+  if (!primary) {
+    return {};
+  }
+
+  if (primary.direction === '收入') {
+    return {
+      accrualReceivable: '1122',
+      accrualRevenue: primary.reportAggregation === '其他' ? '5051' : '5001',
+      cashCredit: '1122',
+      cashDebit: '1002',
+      outputVatPayable: '2221.01'
+    };
+  }
+
+  if (primary.direction === '内部转入') {
+    return { cashCredit: '1002', cashDebit: '1002' };
+  }
+
+  if (primary.name.includes('税费')) {
+    return { cashCredit: '1002', cashDebit: '2221.99' };
+  }
+
+  if (primary.reportAggregation === '人员支出') {
+    return {
+      accrualExpense: '5602.01',
+      accrualPayable: '2211.01',
+      cashCredit: '1002',
+      cashDebit: '2211.01'
+    };
+  }
+
+  if (primary.reportAggregation === '项目成本') {
+    return {
+      accrualExpense: '5401',
+      accrualPayable: '2202',
+      cashCredit: '1002',
+      cashDebit: '2202'
+    };
+  }
+
+  return {
+    accrualExpense: '5602',
+    accrualPayable: '2241',
+    cashCredit: '1002',
+    cashDebit: '2241'
+  };
+}
+
+function buildFinanceCategoryStateRows() {
+  return financeSecondaryCategorySeeds.map((row) => ({
+    ...row,
+    accountingSubjectMappings: {
+      ...(financeCategoryAccountingSubjectMappings[row.name] ?? row.accountingSubjectMappings ?? {})
+    },
+    paymentMethods: [...row.paymentMethods]
+  }));
+}
+
 export function getDefaultAccountingSubjectCodeForPrimary(primary?: Pick<FinancePrimaryCategoryConfig, 'direction' | 'name' | 'reportAggregation'>) {
   if (!primary) {
     return '';
@@ -105,11 +170,33 @@ function getNextSequence(rows: Array<{ code: string }>, prefix: string) {
   );
 }
 
+export function protectFinancePrimaryCategoryUpdate(
+  currentRecord: FinancePrimaryCategoryConfig,
+  nextValue: FinancePrimaryCategoryFormValue,
+  hasChildren: boolean
+): FinancePrimaryCategoryFormValue {
+  const isBuiltIn = !currentRecord.id.includes('-custom-');
+
+  if (isBuiltIn) {
+    return { ...nextValue, direction: currentRecord.direction, name: currentRecord.name };
+  }
+  return hasChildren ? { ...nextValue, direction: currentRecord.direction } : nextValue;
+}
+
+export function protectFinanceSecondaryCategoryUpdate(
+  currentRecord: FinanceSecondaryCategoryConfig,
+  nextValue: FinanceSecondaryCategoryFormValue
+): FinanceSecondaryCategoryFormValue {
+  return currentRecord.id.includes('-custom-')
+    ? nextValue
+    : { ...nextValue, name: currentRecord.name, primaryId: currentRecord.primaryId };
+}
+
 const FinanceCategoryStateContext = createContext<FinanceCategoryStateValue | undefined>(undefined);
 
 export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
   const [financePrimaryCategories, setFinancePrimaryCategories] = useState<FinancePrimaryCategoryConfig[]>(() => financePrimaryCategorySeeds);
-  const [financeSecondaryCategories, setFinanceSecondaryCategories] = useState<FinanceSecondaryCategoryConfig[]>(() => financeSecondaryCategorySeeds);
+  const [financeSecondaryCategories, setFinanceSecondaryCategories] = useState<FinanceSecondaryCategoryConfig[]>(buildFinanceCategoryStateRows);
 
   const value = useMemo<FinanceCategoryStateValue>(
     () => ({
@@ -149,12 +236,17 @@ export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
       financePrimaryCategories,
       financeSecondaryCategories,
       updatePrimaryCategory(id, nextValue) {
+        const currentRecord = financePrimaryCategories.find((row) => row.id === id);
+        const hasChildren = financeSecondaryCategories.some((row) => row.primaryId === id);
+        const protectedValue = currentRecord
+          ? protectFinancePrimaryCategoryUpdate(currentRecord, nextValue, hasChildren)
+          : nextValue;
         setFinancePrimaryCategories((currentRows) =>
           currentRows.map((row) =>
             row.id === id
               ? {
                   ...row,
-                  ...nextValue,
+                  ...protectedValue,
                   updatedAt: financeCategoryConfigToday
                 }
               : row
@@ -165,8 +257,8 @@ export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
             row.primaryId === id
               ? {
                   ...row,
-                  direction: nextValue.direction,
-                  reportAggregation: nextValue.reportAggregation,
+                  direction: protectedValue.direction,
+                  reportAggregation: protectedValue.reportAggregation,
                   updatedAt: financeCategoryConfigToday
                 }
               : row
@@ -196,14 +288,18 @@ export function FinanceCategoryProvider({ children }: { children: ReactNode }) {
         return validation;
       },
       updateSecondaryCategory(id, nextValue) {
+        const currentRecord = financeSecondaryCategories.find((row) => row.id === id);
+        const protectedValue = currentRecord
+          ? protectFinanceSecondaryCategoryUpdate(currentRecord, nextValue)
+          : nextValue;
         setFinanceSecondaryCategories((currentRows) =>
           currentRows.map((row) => {
-            const primary = financePrimaryCategories.find((primaryRow) => primaryRow.id === nextValue.primaryId);
+            const primary = financePrimaryCategories.find((primaryRow) => primaryRow.id === protectedValue.primaryId);
 
             return row.id === id
               ? {
                   ...row,
-                  ...nextValue,
+                  ...protectedValue,
                   direction: primary?.direction ?? row.direction,
                   reportAggregation: primary?.reportAggregation ?? row.reportAggregation,
                   updatedAt: financeCategoryConfigToday

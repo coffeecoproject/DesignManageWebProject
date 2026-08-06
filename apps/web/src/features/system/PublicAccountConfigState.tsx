@@ -24,14 +24,13 @@ export type PublicAccountRef = {
 
 export type PublicAccountRecord = {
   accountHolder: string;
+  accountNumber: string;
   accountTailNumber: string;
   bankName: string;
   defaultFor: PublicAccountUsage[];
   displayName: string;
   id: string;
   note: string;
-  openingBalance: number;
-  openingBalanceDate: string;
   operationRecords: OperationRecord[];
   status: PublicAccountStatus;
   updatedAt: string;
@@ -41,16 +40,29 @@ export type PublicAccountRecord = {
 export type PublicAccountFormValue = Pick<
   PublicAccountRecord,
   | 'accountHolder'
-  | 'accountTailNumber'
+  | 'accountNumber'
   | 'bankName'
   | 'defaultFor'
   | 'displayName'
   | 'note'
-  | 'openingBalance'
-  | 'openingBalanceDate'
   | 'status'
   | 'usage'
 >;
+
+export type PublicAccountUsageReferenceSummary = {
+  bankStatementCount: number;
+  financeTransactionCount: number;
+  historicalReferenceCount: number;
+  nonZeroBalance: boolean;
+  referencedUsages: PublicAccountUsage[];
+};
+
+type PublicAccountVoucherReference = {
+  lines: Array<{
+    auxiliaryId?: string;
+    auxiliaryScope?: string;
+  }>;
+};
 
 type PublicAccountConfigStateValue = {
   createPublicAccount: (nextValue: PublicAccountFormValue) => PublicAccountRecord;
@@ -58,9 +70,9 @@ type PublicAccountConfigStateValue = {
   updatePublicAccount: (
     id: string,
     nextValue: PublicAccountFormValue,
-    activeReferenceCount?: number
+    referenceSummary: PublicAccountUsageReferenceSummary
   ) => MasterDataMutationResult;
-  updatePublicAccountStatus: (id: string, status: PublicAccountStatus, activeReferenceCount?: number) => MasterDataMutationResult;
+  updatePublicAccountStatus: (id: string, status: PublicAccountStatus, referenceSummary: PublicAccountUsageReferenceSummary) => MasterDataMutationResult;
 };
 
 export const publicAccountConfigToday = '2026-06-17';
@@ -80,14 +92,13 @@ export const publicAccountUsageTone: Record<PublicAccountUsage, TagChipTone> = {
 export const publicAccountSeeds: PublicAccountRecord[] = [
   {
     accountHolder: '武汉启程空间设计有限公司',
+    accountNumber: '755901538210821',
     accountTailNumber: '0821',
     bankName: '招商银行',
     defaultFor: ['收款', '付款', '银行对账'],
     displayName: '招商银行基本户',
     id: 'public-account-cmb-basic',
     note: '公司正式对公结算账户。',
-    openingBalance: 120000,
-    openingBalanceDate: '2026-06-01',
     operationRecords: [
       {
         action: '初始化',
@@ -103,14 +114,13 @@ export const publicAccountSeeds: PublicAccountRecord[] = [
   },
   {
     accountHolder: '武汉启程空间设计有限公司',
+    accountNumber: '320201100920003912',
     accountTailNumber: '3912',
     bankName: '工商银行',
     defaultFor: [],
     displayName: '工商银行备用付款户',
     id: 'public-account-icbc-payment-reserve',
     note: '用于备用付款和银行对账场景，具体业务由来源单据决定。',
-    openingBalance: 80000,
-    openingBalanceDate: '2026-06-01',
     operationRecords: [
       {
         action: '初始化',
@@ -126,14 +136,13 @@ export const publicAccountSeeds: PublicAccountRecord[] = [
   },
   {
     accountHolder: '武汉启程空间设计有限公司',
+    accountNumber: '4205012345677766',
     accountTailNumber: '7766',
     bankName: '建设银行',
     defaultFor: [],
     displayName: '建设银行备用付款户',
     id: 'public-account-ccb-payment-reserve',
     note: '用于备用付款和银行对账场景，具体业务由来源单据决定。',
-    openingBalance: 50000,
-    openingBalanceDate: '2026-06-01',
     operationRecords: [
       {
         action: '初始化',
@@ -167,6 +176,10 @@ function normalizeTailNumber(value: string) {
   return value.replace(/\D/g, '').slice(-4);
 }
 
+export function normalizePublicAccountNumber(value: string) {
+  return value.replace(/\s/g, '');
+}
+
 function normalizePublicAccountValue(nextValue: PublicAccountFormValue): PublicAccountFormValue {
   const usage = [...new Set(nextValue.usage)];
   const defaultFor = nextValue.status === '启用'
@@ -176,14 +189,88 @@ function normalizePublicAccountValue(nextValue: PublicAccountFormValue): PublicA
   return {
     ...nextValue,
     accountHolder: nextValue.accountHolder.trim(),
-    accountTailNumber: normalizeTailNumber(nextValue.accountTailNumber),
+    accountNumber: normalizePublicAccountNumber(nextValue.accountNumber),
     bankName: nextValue.bankName.trim(),
     defaultFor,
     displayName: nextValue.displayName.trim(),
     note: nextValue.note.trim(),
-    openingBalanceDate: nextValue.openingBalanceDate.trim(),
     usage
   };
+}
+
+function getReferenceBlockMessage(summary: PublicAccountUsageReferenceSummary) {
+  const reasons = [
+    summary.financeTransactionCount > 0 ? `${summary.financeTransactionCount} 条未完成流水` : '',
+    summary.bankStatementCount > 0 ? `${summary.bankStatementCount} 条未完成银行对账` : '',
+    summary.nonZeroBalance ? '账户余额不为 0' : ''
+  ].filter(Boolean);
+
+  return reasons.length > 0 ? reasons.join('、') : undefined;
+}
+
+export function validatePublicAccountIdentityUpdate(
+  target: PublicAccountRecord,
+  nextValue: PublicAccountFormValue,
+  referenceSummary: PublicAccountUsageReferenceSummary
+): MasterDataMutationResult {
+  const normalizedValue = normalizePublicAccountValue(nextValue);
+  const identityChanged =
+    target.accountNumber !== normalizedValue.accountNumber
+    || target.accountHolder !== normalizedValue.accountHolder
+    || target.bankName !== normalizedValue.bankName;
+  const hasAccountingReference =
+    referenceSummary.historicalReferenceCount > 0
+    || referenceSummary.nonZeroBalance;
+
+  return identityChanged && hasAccountingReference
+    ? blockMasterDataMutation('账户已有期初余额、流水或银行记录，银行账号、户名和开户行不能原地修改；请新增账户承接后续业务')
+    : { success: true };
+}
+
+export function countPublicAccountVoucherReferences(
+  vouchers: PublicAccountVoucherReference[],
+  publicAccountId: string
+) {
+  return vouchers.filter((voucher) =>
+    voucher.lines.some(
+      (line) => line.auxiliaryScope === '对公账户' && line.auxiliaryId === publicAccountId
+    )
+  ).length;
+}
+
+export function validatePublicAccountLifecycleUpdate(
+  target: PublicAccountRecord,
+  nextValue: PublicAccountFormValue,
+  referenceSummary: PublicAccountUsageReferenceSummary
+): MasterDataMutationResult {
+  const normalizedValue = normalizePublicAccountValue(nextValue);
+  const defaultValidation = validateDefaultMasterDataStatusChange(
+    normalizedValue.status,
+    target.defaultFor.length > 0,
+    '请先将默认用途转移到其他启用账户'
+  );
+
+  if (!defaultValidation.success) {
+    return defaultValidation;
+  }
+
+  const identityValidation = validatePublicAccountIdentityUpdate(target, normalizedValue, referenceSummary);
+  if (!identityValidation.success) {
+    return identityValidation;
+  }
+
+  const removedUsages = target.usage.filter((usage) => !normalizedValue.usage.includes(usage));
+  const blockedRemovedUsages = removedUsages.filter((usage) => referenceSummary.referencedUsages.includes(usage));
+  if (blockedRemovedUsages.length > 0) {
+    return blockMasterDataMutation(`${blockedRemovedUsages.join('、')}仍有未完成业务，不能移除账户能力`);
+  }
+
+  const referenceBlockMessage = getReferenceBlockMessage(referenceSummary);
+  if (normalizedValue.status === '停用' && referenceBlockMessage) {
+    return blockMasterDataMutation(`${referenceBlockMessage}，不能停用账户`);
+  }
+
+  return { success: true };
 }
 
 export function reconcilePublicAccountDefaults(
@@ -278,6 +365,7 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
         const sequence = String(getNextSequence(publicAccounts)).padStart(3, '0');
         const nextRecord: PublicAccountRecord = {
           ...normalizedValue,
+          accountTailNumber: normalizeTailNumber(normalizedValue.accountNumber),
           id: `public-account-custom-${sequence}`,
           operationRecords: [
             buildOperationRecord('新增账户', normalizedValue.displayName, '新增对公账户配置')
@@ -293,19 +381,15 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
         return nextRecord;
       },
       publicAccounts,
-      updatePublicAccount(id, nextValue, activeReferenceCount = 0) {
+      updatePublicAccount(id, nextValue, referenceSummary) {
         const normalizedValue = normalizePublicAccountValue(nextValue);
         const target = publicAccounts.find((row) => row.id === id);
-        const validation = validateDefaultMasterDataStatusChange(
-          normalizedValue.status,
-          Boolean(target?.defaultFor.length),
-          '请先将默认用途转移到其他启用账户'
-        );
+        if (!target) {
+          return blockMasterDataMutation('对公账户不存在');
+        }
+        const validation = validatePublicAccountLifecycleUpdate(target, normalizedValue, referenceSummary);
         if (!validation.success) {
           return validation;
-        }
-        if (normalizedValue.status === '停用' && activeReferenceCount > 0) {
-          return blockMasterDataMutation(`仍有 ${activeReferenceCount} 条待处理流水使用该账户`);
         }
 
         setPublicAccounts((currentRows) =>
@@ -314,6 +398,7 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
               ? {
                   ...row,
                   ...normalizedValue,
+                  accountTailNumber: normalizeTailNumber(normalizedValue.accountNumber),
                   operationRecords: [
                     buildOperationRecord('编辑账户', normalizedValue.displayName, '更新对公账户配置'),
                     ...row.operationRecords
@@ -325,18 +410,14 @@ export function PublicAccountConfigProvider({ children }: { children: ReactNode 
         );
         return validation;
       },
-      updatePublicAccountStatus(id, status, activeReferenceCount = 0) {
+      updatePublicAccountStatus(id, status, referenceSummary) {
         const target = publicAccounts.find((row) => row.id === id);
-        const validation = validateDefaultMasterDataStatusChange(
-          status,
-          Boolean(target?.defaultFor.length),
-          '请先将默认用途转移到其他启用账户'
-        );
+        if (!target) {
+          return blockMasterDataMutation('对公账户不存在');
+        }
+        const validation = validatePublicAccountLifecycleUpdate(target, { ...target, status }, referenceSummary);
         if (!validation.success) {
           return validation;
-        }
-        if (status === '停用' && activeReferenceCount > 0) {
-          return blockMasterDataMutation(`仍有 ${activeReferenceCount} 条待处理流水使用该账户`);
         }
 
         setPublicAccounts((currentRows) =>
