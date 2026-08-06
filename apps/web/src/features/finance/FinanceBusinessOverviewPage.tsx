@@ -19,6 +19,7 @@ import { ManagementPageScaffold } from '../../components/ManagementPageScaffold'
 import { CellText, type CellTextTone } from '../../components/TableCell';
 import { usePublicAccountConfigState } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from './FinanceManagementState';
+import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationState';
 import {
   buildFinanceBusinessOverview,
   financeBusinessOverviewDefaultMonth,
@@ -29,6 +30,7 @@ import {
   type FinanceBusinessOverviewPublicAccountBaseline,
   type FinanceBusinessOverviewStatusItem
 } from './financeBusinessOverviewModel';
+import { buildPublicAccountOpeningBalances } from './financePublicAccountBalanceModel';
 import { formatMoney } from './financeUtils';
 
 type BusinessOverviewDateScope = DateScopeFilterValue;
@@ -190,20 +192,14 @@ function BusinessOverviewStatusStrip({ items }: { items: FinanceBusinessOverview
 
 export function FinanceBusinessOverviewPage() {
   const { financeRows, receivablePayableRows } = useFinanceManagement();
+  const { enabledOpeningRows, enabledProfile } = useFinanceLedgerInitialization();
   const { publicAccounts } = usePublicAccountConfigState();
   const [basis, setBasis] = useState<FinanceBusinessOverviewBasis>('business-confirmation');
   const [dateScope, setDateScope] = useState<BusinessOverviewDateScope>(defaultBusinessOverviewDateScope);
 
   const publicAccountBaselines = useMemo<FinanceBusinessOverviewPublicAccountBaseline[]>(
-    () =>
-      publicAccounts
-        .filter((account) => account.status === '启用')
-        .map((account) => ({
-          openingBalance: account.openingBalance,
-          openingBalanceDate: account.openingBalanceDate,
-          publicAccountId: account.id
-        })),
-    [publicAccounts]
+    () => buildPublicAccountOpeningBalances(publicAccounts, enabledOpeningRows, enabledProfile?.effectivePeriod),
+    [enabledOpeningRows, enabledProfile?.effectivePeriod, publicAccounts]
   );
   const range = useMemo(() => getDateScopeRange(dateScope, financeBusinessOverviewDefaultMonth), [dateScope]);
   const report = useMemo(

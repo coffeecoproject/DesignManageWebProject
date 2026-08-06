@@ -16,7 +16,12 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CompactCell } from '../../components/TableCell';
 import { useFinanceCategoryState } from '../system/FinanceCategoryState';
-import { getDefaultPublicAccountRef, usePublicAccountConfigState } from '../system/PublicAccountConfigState';
+import {
+  buildPublicAccountOptions,
+  getDefaultPublicAccountRef,
+  resolveActivePublicAccountRef,
+  usePublicAccountConfigState
+} from '../system/PublicAccountConfigState';
 import { useSalaryManagementState } from '../salary/SalaryManagementState';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
 import { useCustomerManagementState } from '../customers/CustomerManagementState';
@@ -253,6 +258,8 @@ export function FinanceTaxFilingsPage() {
     () => getDefaultPublicAccountRef(publicAccounts, '收款'),
     [publicAccounts]
   );
+  const paymentAccountOptions = useMemo(() => buildPublicAccountOptions(publicAccounts, '付款'), [publicAccounts]);
+  const receiptAccountOptions = useMemo(() => buildPublicAccountOptions(publicAccounts, '收款'), [publicAccounts]);
 
   const filteredRecords = useMemo(
     () => displayTaxMatterRows.filter((record) => matchesFilters(record, filters)),
@@ -428,6 +435,14 @@ export function FinanceTaxFilingsPage() {
       return;
     }
 
+    const publicAccountRef = input.publicAccountId
+      ? resolveActivePublicAccountRef(publicAccounts, input.publicAccountId, '付款')
+      : undefined;
+    if (!publicAccountRef) {
+      void messageApi.warning('付款账户不可用');
+      return;
+    }
+
     const nextRecordBeforeTransaction = recordTaxMatterPaymentResult(record, input);
     const paymentTransaction = buildTaxMatterPaymentTransaction({
       financePrimaryCategories,
@@ -436,7 +451,7 @@ export function FinanceTaxFilingsPage() {
       paymentAmount: input.amount,
       paymentDate: input.paymentDate,
       paymentReceiptFile: input.receiptFile,
-      publicAccountRef: defaultPaymentAccountRef,
+      publicAccountRef,
       record: nextRecordBeforeTransaction
     });
 
@@ -473,12 +488,20 @@ export function FinanceTaxFilingsPage() {
       return;
     }
 
+    const publicAccountRef = input.publicAccountId
+      ? resolveActivePublicAccountRef(publicAccounts, input.publicAccountId, '收款')
+      : undefined;
+    if (!publicAccountRef) {
+      void messageApi.warning('到账账户不可用');
+      return;
+    }
+
     const nextRecordBeforeTransaction = recordTaxMatterRefundResult(record, input);
     const refundTransaction = buildTaxMatterRefundTransaction({
       financePrimaryCategories,
       financeRows,
       financeSecondaryCategories,
-      publicAccountRef: defaultReceiptAccountRef,
+      publicAccountRef,
       record: nextRecordBeforeTransaction,
       refundAmount: input.amount,
       refundDate: input.refundDate,
@@ -808,13 +831,15 @@ export function FinanceTaxFilingsPage() {
         onSave={saveDeclarationEvidence}
       />
       <TaxPaymentResultDrawer
-        defaultAccountName={defaultPaymentAccountRef?.publicAccountSnapshot.displayName ?? '未配置默认付款账户'}
+        accountOptions={paymentAccountOptions}
+        defaultAccountId={defaultPaymentAccountRef?.publicAccountId}
         record={editorState?.mode === 'payment-result' ? activeEditorRecord : undefined}
         onClose={closeEditor}
         onSave={savePaymentResult}
       />
       <TaxRefundResultDrawer
-        defaultAccountName={defaultReceiptAccountRef?.publicAccountSnapshot.displayName ?? '未配置默认收款账户'}
+        accountOptions={receiptAccountOptions}
+        defaultAccountId={defaultReceiptAccountRef?.publicAccountId}
         record={editorState?.mode === 'refund-result' ? activeEditorRecord : undefined}
         onClose={closeEditor}
         onSave={saveRefundResult}

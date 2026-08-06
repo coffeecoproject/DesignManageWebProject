@@ -3,6 +3,13 @@ import {
   publicAccountSeeds
 } from '../system/PublicAccountConfigState';
 import {
+  changeBankImportDraftAccount,
+  clearBankImportDraftFile,
+  createBankImportDraft,
+  setBankImportDraftFile
+} from './FinanceBankStatementState';
+import { bankImportBatchSeedRows, bankStatementSeedRows } from './financeBankStatementSeedData';
+import {
   buildBankStatementImportPrecheck,
   buildBankStatementUniqueKey,
   getBankStatementAccountingPeriods,
@@ -10,6 +17,7 @@ import {
   requiredBankStatementImportFieldLabels,
   type BankStatementRecord
 } from './financeBankImportContract';
+import { parseBankStatementCsv } from './financeBankStatementCsvParser';
 
 type UnitTest = {
   name: string;
@@ -34,6 +42,7 @@ function createBankRow(overrides: Partial<BankStatementRecord> = {}): BankStatem
     direction: '入账',
     id: 'bank-row-test',
     importedAccountName: selectedPublicAccount.publicAccountSnapshot.displayName,
+    importedAccountNumber: publicAccountSeeds[0].accountNumber,
     importedAt: '2026-06-25 10:00',
     matchedTransactionIds: [],
     matchReason: '测试行',
@@ -52,11 +61,76 @@ const otherPublicAccount = buildPublicAccountRef(publicAccountSeeds[1]);
 
 const tests: UnitTest[] = [
   {
+    name: 'keeps bank statement seeds in the shared account-aware domain source',
+    run: () => {
+      assertEqual(bankStatementSeedRows.length > 0, true, 'shared bank statement source should contain review fixtures');
+      assertEqual(bankImportBatchSeedRows.length > 0, true, 'shared bank import source should contain batch fixtures');
+      assertEqual(
+        bankStatementSeedRows.every((row) => Boolean(row.publicAccountId) && Boolean(row.publicAccountSnapshot.accountTailNumber)),
+        true,
+        'every shared bank row should retain stable account identity and snapshot'
+      );
+      assertEqual(
+        bankImportBatchSeedRows.every((row) => Boolean(row.publicAccountId) && Boolean(row.publicAccountSnapshot.displayName)),
+        true,
+        'every shared import batch should retain stable account identity and snapshot'
+      );
+    }
+  },
+  {
+    name: 'keeps bank import account file and preview in one atomic draft',
+    run: () => {
+      const initialDraft = createBankImportDraft(publicAccountSeeds[0].id);
+      const loadedDraft = setBankImportDraftFile(initialDraft, 'bank.csv', [createBankRow()]);
+      const changedAccountDraft = changeBankImportDraftAccount(publicAccountSeeds[1].id);
+      const clearedDraft = clearBankImportDraftFile(loadedDraft);
+
+      assertEqual(loadedDraft.fileName, 'bank.csv', 'loaded draft should preserve selected file');
+      assertEqual(loadedDraft.previewRows.length, 1, 'loaded draft should preserve parsed rows');
+      assertEqual(loadedDraft.publicAccountId, publicAccountSeeds[0].id, 'loaded draft should preserve selected account');
+      assertEqual(changedAccountDraft.previewRows.length, 0, 'changing account should clear stale preview rows');
+      assertEqual(changedAccountDraft.fileName, undefined, 'changing account should clear stale file identity');
+      assertEqual(clearedDraft.publicAccountId, publicAccountSeeds[0].id, 'clearing file should keep the selected account');
+    }
+  },
+  {
+    name: 'parses the real CSV account identity instead of overwriting it with the selected account',
+    run: () => {
+      const rows = parseBankStatementCsv({
+        account: publicAccountSeeds[0],
+        content: [
+          '账户名称,银行账号,交易日期,银行流水号,收支方向,交易金额,对方户名,摘要',
+          `武汉启程空间设计有限公司,${publicAccountSeeds[1].accountNumber},2026/06/18,CMB-CSV-001,收入,"1,200.50",测试客户,项目回款`
+        ].join('\n'),
+        publicAccountRef: selectedPublicAccount
+      });
+
+      assertEqual(rows.length, 1, 'valid CSV should create one preview row');
+      assertEqual(rows[0]?.amount, 1_200.5, 'CSV amount should support quoted thousands separators');
+      assertEqual(rows[0]?.statementDate, '2026-06-18', 'CSV date should normalize to ISO date');
+      assertEqual(
+        rows[0]?.importedAccountNumber,
+        publicAccountSeeds[1].accountNumber,
+        'preview must retain the account number declared by the bank file'
+      );
+
+      const result = buildBankStatementImportPrecheck({
+        existingRows: [],
+        previewRows: rows,
+        requiredPeriodCounts: [],
+        selectedAccountNumber: publicAccountSeeds[0].accountNumber,
+        selectedPublicAccount
+      });
+      assertEqual(result.summary.accountMismatchCount, 1, 'a file for another account must be blocked');
+      assertEqual(result.summary.importableCount, 0, 'cross-account rows must not become importable');
+    }
+  },
+  {
     name: 'defines required bank-statement import field contract',
     run: () => {
       assertEqual(
         requiredBankStatementImportFieldLabels.join('|'),
-        '账户名称|交易日期|银行流水号|收支方向|交易金额|对方户名|摘要',
+        '账户名称|银行账号|交易日期|银行流水号|收支方向|交易金额|对方户名|摘要',
         'field labels should match the frontend import contract'
       );
 
@@ -137,7 +211,7 @@ const tests: UnitTest[] = [
       const accountMismatchRow = createBankRow({
         bankSerialNo: 'CMB-TEST-004',
         id: 'account-mismatch',
-        importedAccountName: '未配置账户'
+        importedAccountNumber: publicAccountSeeds[1].accountNumber
       });
       const accountIdMismatchRow = createBankRow({
         bankSerialNo: 'CMB-TEST-005',

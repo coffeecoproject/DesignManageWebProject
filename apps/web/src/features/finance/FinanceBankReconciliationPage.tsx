@@ -26,16 +26,20 @@ import type { OperationRecord } from '../../components/OperationRecordTable';
 import { RelatedFileTable } from '../../components/RelatedFileTable';
 import { CellText, CompactCell, type CellTextTone } from '../../components/TableCell';
 import {
-  getDefaultPublicAccountRef,
   resolveActivePublicAccountRef,
-  type PublicAccountRef,
   usePublicAccountConfigState
 } from '../system/PublicAccountConfigState';
+import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import { useFinanceManagement } from './FinanceManagementState';
-import { type BankImportBatch, useFinanceBankStatementState } from './FinanceBankStatementState';
+import {
+  changeBankImportDraftAccount,
+  clearBankImportDraftFile,
+  setBankImportDraftFile,
+  useFinanceBankStatementState
+} from './FinanceBankStatementState';
 import { FinanceTransactionAdjustmentDrawer } from './FinanceTransactionAdjustmentDrawer';
 import { getClosedAccountingPeriodReadbackNotice } from './financeAccountingVoucherModel';
-import { getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
+import type { FinanceTransactionRecord } from './financeData';
 import {
   buildBankStatementImportPrecheck,
   buildPeriodCounts,
@@ -52,6 +56,7 @@ import {
   type BankStatementDirection,
   type BankStatementRecord
 } from './financeBankImportContract';
+import { parseBankStatementCsv } from './financeBankStatementCsvParser';
 import {
   buildFinanceTransactionFromBankStatement,
   createBankReconciliationFlowForm,
@@ -89,11 +94,6 @@ type ConfirmEligibility = {
 };
 
 type BankQuickActionMode = 'create-system-flow' | 'import-bank-statement' | 'waiting-review';
-
-const seedBankPublicAccountRef = getFinanceSeedPublicAccountRef('public-account-cmb-basic');
-const seedBankPublicAccountName = seedBankPublicAccountRef.publicAccountSnapshot.displayName;
-const seedSecondaryPaymentPublicAccountRef = getFinanceSeedPublicAccountRef('public-account-icbc-payment-reserve');
-const seedSecondaryPaymentPublicAccountName = seedSecondaryPaymentPublicAccountRef.publicAccountSnapshot.displayName;
 
 const amountMismatchStatuses = new Set<BankMatchStatus>(['金额不一致']);
 
@@ -148,246 +148,6 @@ function getDisplayMatchStatus(status: BankMatchStatus): BankDisplayStatus {
   }
 
   return '待处理';
-}
-
-const bankStatementSeeds: BankStatementRecord[] = [
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 4600,
-    balance: 188593.12,
-    bankSerialNo: 'CMB202606160003',
-    batchNo: 'BANK-IMP-202606-03',
-    counterparty: '蓝岛咖啡',
-    direction: '入账',
-    id: 'bank-statement-007',
-    importedAt: '2026-06-19 10:20',
-    matchedTransactionIds: [],
-    matchReason: '银行已有入账，系统尚未形成对公账户流水',
-    matchStatus: '银行未匹配',
-    matchScore: 38,
-    statementDate: '2026-06-16',
-    summary: '蓝岛咖啡门店方案补充回款'
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 3000,
-    balance: 191593.12,
-    bankSerialNo: '待补导入',
-    batchNo: '系统待补导入',
-    counterparty: '湖北星际装饰有限公司',
-    direction: '入账',
-    id: 'bank-statement-008',
-    importedAt: '2026-06-19 10:20',
-    matchedTransactionIds: ['fin-flow-008'],
-    matchReason: '系统流水已入账，尚未导入对应银行明细',
-    matchStatus: '系统未匹配',
-    matchScore: 55,
-    statementDate: '2026-06-18',
-    summary: '湖北星际装饰有限公司门店设计阶段款'
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 68000,
-    balance: 188000,
-    bankSerialNo: 'CMB202606030001',
-    batchNo: 'BANK-IMP-202606-01',
-    counterparty: '湖北星际装饰有限公司',
-    direction: '入账',
-    id: 'bank-statement-001',
-    importedAt: '2026-06-04 09:20',
-    matchedTransactionIds: ['fin-flow-001'],
-    matchReason: '金额、方向、日期、合同号一致',
-    matchStatus: '已对账',
-    matchScore: 98,
-    statementDate: '2026-06-03',
-    summary: '奈雪华南门店设计服务合同 CON-2026-001 回款'
-  },
-  {
-    importedAccountName: seedSecondaryPaymentPublicAccountName,
-    ...seedSecondaryPaymentPublicAccountRef,
-    amount: 12000,
-    balance: 176000,
-    bankSerialNo: 'CMB202605210001',
-    batchNo: 'BANK-IMP-202605-01',
-    counterparty: '武汉城设商业运营有限公司',
-    direction: '入账',
-    id: 'bank-statement-006',
-    importedAt: '2026-06-24 10:40',
-    matchedTransactionIds: ['fin-flow-015'],
-    matchReason: '银行日期在 5 月，系统流水已复核入账且仍未完成银行对账',
-    matchStatus: '待确认',
-    matchScore: 92,
-    statementDate: '2026-05-21',
-    summary: '武汉城设商业运营有限公司 项目阶段款 CON-2026-005'
-  },
-  {
-    importedAccountName: seedSecondaryPaymentPublicAccountName,
-    ...seedSecondaryPaymentPublicAccountRef,
-    amount: 12000,
-    balance: 176000,
-    bankSerialNo: 'CMB202606100001',
-    batchNo: 'BANK-IMP-202606-01',
-    counterparty: '赵倩',
-    direction: '出账',
-    id: 'bank-statement-002',
-    importedAt: '2026-06-11 10:10',
-    matchedTransactionIds: ['fin-flow-003'],
-    matchReason: '金额、方向、员工姓名一致，待人工确认',
-    matchStatus: '待确认',
-    matchScore: 95,
-    statementDate: '2026-06-10',
-    summary: '赵倩 2026-06 工资发放'
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 9800,
-    balance: 183993.12,
-    bankSerialNo: 'CMB202606140001',
-    batchNo: 'BANK-IMP-202606-02',
-    counterparty: '湖南新岚餐饮管理有限公司',
-    direction: '入账',
-    id: 'bank-statement-004',
-    importedAt: '2026-06-14 16:40',
-    matchedTransactionIds: ['fin-flow-005'],
-    matchReason: '系统流水已生成，等待流水复核后确认对账',
-    matchStatus: '暂不可对账',
-    matchScore: 86,
-    statementDate: '2026-06-14',
-    summary: '湖南新岚餐饮管理有限公司门店设计首款'
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 3000,
-    balance: 180993.12,
-    bankSerialNo: 'CMB202606120002',
-    batchNo: 'BANK-IMP-202606-02',
-    counterparty: '林悦',
-    direction: '出账',
-    id: 'bank-statement-005',
-    importedAt: '2026-06-14 16:40',
-    matchedTransactionIds: ['fin-flow-004'],
-    matchReason: '对象和日期接近，但银行金额与系统金额不一致',
-    matchStatus: '金额不一致',
-    matchScore: 61,
-    statementDate: '2026-06-12',
-    summary: '空间设计外协任务结算'
-  }
-];
-
-const importBatchSeeds: BankImportBatch[] = [
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amountMismatchRows: 0,
-    batchNo: 'BANK-IMP-202606-01',
-    duplicateRows: 0,
-    fileName: '招商银行基本户_2026-06-01至2026-06-11.xlsx',
-    id: 'bank-import-001',
-    importedAt: '2026-06-11 10:10',
-    matchedRows: 1,
-    statementRange: '2026-06-03 至 2026-06-10',
-    status: '已导入',
-    totalRows: 2
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amountMismatchRows: 0,
-    batchNo: 'BANK-IMP-202605-01',
-    duplicateRows: 0,
-    fileName: '招商银行基本户_2026-05-21.xlsx',
-    id: 'bank-import-003',
-    importedAt: '2026-06-24 10:40',
-    matchedRows: 0,
-    statementRange: '2026-05-21',
-    status: '已导入',
-    totalRows: 1
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amountMismatchRows: 1,
-    batchNo: 'BANK-IMP-202606-02',
-    duplicateRows: 0,
-    fileName: '招商银行基本户_2026-06-12至2026-06-14.xlsx',
-    id: 'bank-import-002',
-    importedAt: '2026-06-14 16:40',
-    matchedRows: 0,
-    statementRange: '2026-06-12 至 2026-06-14',
-    status: '已导入',
-    totalRows: 3
-  }
-];
-
-const importPreviewSeedRows: BankStatementRecord[] = [
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 9800,
-    balance: 183993.12,
-    bankSerialNo: 'CMB202606140001',
-    batchNo: '导入预览',
-    counterparty: '湖南新岚餐饮管理有限公司',
-    direction: '入账',
-    id: 'bank-preview-001',
-    importedAt: financeToday,
-    matchedTransactionIds: [],
-    matchReason: '银行已有入账，系统尚未形成对公账户流水',
-    matchStatus: '银行未匹配',
-    matchScore: 42,
-    statementDate: '2026-06-14',
-    summary: '湖南新岚餐饮管理有限公司门店设计首款'
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 3000,
-    balance: 180993.12,
-    bankSerialNo: 'CMB202606120002',
-    batchNo: '导入预览',
-    counterparty: '林悦',
-    direction: '出账',
-    id: 'bank-preview-002',
-    importedAt: financeToday,
-    matchedTransactionIds: ['fin-flow-004'],
-    matchReason: '对象和日期接近，但银行金额与系统金额不一致',
-    matchStatus: '金额不一致',
-    matchScore: 61,
-    statementDate: '2026-06-12',
-    summary: '空间设计外协任务结算'
-  },
-  {
-    importedAccountName: seedBankPublicAccountName,
-    ...seedBankPublicAccountRef,
-    amount: 4600,
-    balance: 188593.12,
-    bankSerialNo: 'CMB202606150001',
-    batchNo: '导入预览',
-    counterparty: '湖南新岚餐饮管理有限公司',
-    direction: '入账',
-    id: 'bank-preview-003',
-    importedAt: financeToday,
-    matchedTransactionIds: [],
-    matchReason: '银行已有入账，系统尚未形成对公账户流水',
-    matchStatus: '银行未匹配',
-    matchScore: 40,
-    statementDate: '2026-06-15',
-    summary: '湖南新岚餐饮管理有限公司项目补充回款'
-  }
-];
-
-function buildImportPreviewRowsForAccount(rows: BankStatementRecord[], publicAccountRef: PublicAccountRef) {
-  return rows.map((record) => ({
-    ...record,
-    importedAccountName: publicAccountRef.publicAccountSnapshot.displayName,
-    publicAccountId: publicAccountRef.publicAccountId,
-    publicAccountSnapshot: publicAccountRef.publicAccountSnapshot
-  }));
 }
 
 function isPublicAccountMovement(record: FinanceTransactionRecord) {
@@ -729,34 +489,32 @@ function buildBatchNo(batchCount: number, records: BankStatementRecord[]) {
 export function FinanceBankReconciliationPage() {
   const { addFinanceTransaction, confirmBankReconciliation, financeRows, getAccountingPeriodGuard } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
+  const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const [messageApi, contextHolder] = message.useMessage();
   const {
-    bankStatements: storedBankStatements,
-    importBatches: storedImportBatches,
+    bankStatements,
+    importBatches,
+    importDraft,
     setBankStatements,
-    setImportBatches
+    setImportBatches,
+    setImportDraft
   } = useFinanceBankStatementState();
-  const bankStatements = storedBankStatements ?? bankStatementSeeds;
-  const importBatches = storedImportBatches ?? importBatchSeeds;
+  const { fileName: selectedImportFileName, previewRows: importPreviewRows, publicAccountId: selectedImportPublicAccountId } = importDraft;
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
-  const [selectedImportFileName, setSelectedImportFileName] = useState<string>();
   const [quickActionMode, setQuickActionMode] = useState<BankQuickActionMode>();
   const [quickActionRecordId, setQuickActionRecordId] = useState<string>();
   const [adjustmentRecordId, setAdjustmentRecordId] = useState<string>();
-  const [selectedImportPublicAccountId, setSelectedImportPublicAccountId] = useState(seedBankPublicAccountRef.publicAccountId);
   const [quickFlowForm, setQuickFlowForm] = useState<BankReconciliationFlowFormValue>(() => createBankReconciliationFlowForm());
 
   const selectedImportPublicAccountRef = useMemo(
-    () =>
-      resolveActivePublicAccountRef(publicAccounts, selectedImportPublicAccountId, '银行对账') ??
-      getDefaultPublicAccountRef(publicAccounts, '银行对账'),
+    () => resolveActivePublicAccountRef(publicAccounts, selectedImportPublicAccountId, '银行对账'),
     [publicAccounts, selectedImportPublicAccountId]
   );
   const selectedImportPublicAccountName = selectedImportPublicAccountRef?.publicAccountSnapshot.displayName ?? '';
-  const importPreviewRows = useMemo(
-    () => (selectedImportPublicAccountRef ? buildImportPreviewRowsForAccount(importPreviewSeedRows, selectedImportPublicAccountRef) : []),
-    [selectedImportPublicAccountRef]
+  const selectedImportPublicAccount = useMemo(
+    () => publicAccounts.find((account) => account.id === selectedImportPublicAccountRef?.publicAccountId),
+    [publicAccounts, selectedImportPublicAccountRef?.publicAccountId]
   );
   const bankImportAccountOptions = useMemo(
     () =>
@@ -871,8 +629,20 @@ export function FinanceBankReconciliationPage() {
     [adjustmentRecordId, bankStatements]
   );
   const adjustmentSystemRecord = getPrimaryMatchedSystemRecord(adjustmentRecord, systemRowsById);
-  const quickPrimaryCategoryOptions = quickActionRecord ? getBankReconciliationPrimaryCategoryOptions(quickActionRecord.direction) : [];
-  const quickCategoryOptions = quickActionRecord ? getBankReconciliationCategoryOptions(quickActionRecord.direction, quickFlowForm.primaryCategoryId) : [];
+  const quickPrimaryCategoryOptions = quickActionRecord
+    ? getBankReconciliationPrimaryCategoryOptions(
+        quickActionRecord.direction,
+        financePrimaryCategories,
+        financeSecondaryCategories
+      )
+    : [];
+  const quickCategoryOptions = quickActionRecord
+    ? getBankReconciliationCategoryOptions(
+        quickActionRecord.direction,
+        quickFlowForm.primaryCategoryId,
+        financeSecondaryCategories
+      )
+    : [];
   const activeSystemCandidates = useMemo(
     () => (activeRecord ? buildSystemCandidates(activeRecord, publicAccountRows) : []),
     [activeRecord, publicAccountRows]
@@ -898,9 +668,10 @@ export function FinanceBankReconciliationPage() {
         existingRows: bankStatements,
         previewRows: importPreviewRows,
         requiredPeriodCounts: unreconciledSystemPeriodCounts,
+        selectedAccountNumber: selectedImportPublicAccount?.accountNumber,
         selectedPublicAccount: selectedImportPublicAccountRef
       }),
-    [bankStatements, importPreviewRows, selectedImportPublicAccountRef, unreconciledSystemPeriodCounts]
+    [bankStatements, importPreviewRows, selectedImportPublicAccount?.accountNumber, selectedImportPublicAccountRef, unreconciledSystemPeriodCounts]
   );
   const importablePreviewRows = bankImportPrecheck.importableRows;
   const importPrecheckItems = bankImportPrecheck.items;
@@ -944,7 +715,7 @@ export function FinanceBankReconciliationPage() {
       importedAt: importTime
     }));
 
-    setBankStatements((current) => [...nextRows, ...(current ?? bankStatementSeeds)]);
+    setBankStatements((current) => [...nextRows, ...current]);
     setImportBatches((current) => [
       {
         importedAccountName: selectedImportPublicAccountName,
@@ -961,9 +732,9 @@ export function FinanceBankReconciliationPage() {
         status: '已导入',
         totalRows: importPreviewRows.length
       },
-      ...(current ?? importBatchSeeds)
+      ...current
     ]);
-    setSelectedImportFileName(undefined);
+    setImportDraft(clearBankImportDraftFile);
     setImportDrawerOpen(false);
     void messageApi.success(`已导入 ${nextRows.length} 条，跳过重复 ${bankImportPrecheck.summary.duplicateCount} 条`);
   }
@@ -996,7 +767,7 @@ export function FinanceBankReconciliationPage() {
     }
 
     setBankStatements((current) =>
-      (current ?? bankStatementSeeds).map((record) =>
+      current.map((record) =>
         record.id === activeRecord.id
           ? {
               ...record,
@@ -1025,7 +796,11 @@ export function FinanceBankReconciliationPage() {
 
     setQuickFlowForm((currentForm) => ({
       ...currentForm,
-      category: getDefaultBankReconciliationCategory(quickActionRecord, primaryCategoryId),
+      category: getDefaultBankReconciliationCategory(
+        quickActionRecord,
+        primaryCategoryId,
+        financeSecondaryCategories
+      ),
       primaryCategoryId
     }));
   }
@@ -1035,7 +810,11 @@ export function FinanceBankReconciliationPage() {
     setQuickActionMode(mode);
 
     if (mode === 'create-system-flow') {
-      setQuickFlowForm(createBankReconciliationFlowForm(record));
+      setQuickFlowForm(createBankReconciliationFlowForm(
+        record,
+        financePrimaryCategories,
+        financeSecondaryCategories
+      ));
     }
   }
 
@@ -1061,7 +840,13 @@ export function FinanceBankReconciliationPage() {
       return;
     }
 
-    const transaction = buildFinanceTransactionFromBankStatement(quickActionRecord, quickFlowForm, financeRows);
+    const transaction = buildFinanceTransactionFromBankStatement(
+      quickActionRecord,
+      quickFlowForm,
+      financeRows,
+      financePrimaryCategories,
+      financeSecondaryCategories
+    );
 
     if (!addFinanceTransaction(transaction)) {
       void messageApi.warning(periodGuard.reason ?? '当前会计期间已锁定，不能补登记系统流水');
@@ -1069,7 +854,7 @@ export function FinanceBankReconciliationPage() {
     }
 
     setBankStatements((current) =>
-      (current ?? bankStatementSeeds).map((record) =>
+      current.map((record) =>
         record.id === quickActionRecord.id
           ? {
               ...record,
@@ -1574,7 +1359,9 @@ export function FinanceBankReconciliationPage() {
                     options={bankImportAccountOptions}
                     placeholder="选择启用且支持银行对账的对公账户"
                     value={selectedImportPublicAccountRef?.publicAccountId}
-                    onChange={setSelectedImportPublicAccountId}
+                    onChange={(value) => {
+                      setImportDraft(changeBankImportDraftAccount(value));
+                    }}
                   />
                 )
               },
@@ -1584,15 +1371,33 @@ export function FinanceBankReconciliationPage() {
                   <CellText tone="default">{bankImportPrecheck.statementRange}</CellText>
                 )
               },
-              { label: '文件格式', value: 'Excel / CSV' },
+              { label: '文件格式', value: 'CSV' },
               {
                 label: '上传文件',
                 value: (
                   <div className="bank-upload-line">
                     <Upload
-                      accept=".xlsx,.xls,.csv"
+                      accept=".csv"
                       beforeUpload={(file) => {
-                        setSelectedImportFileName(file.name);
+                        setImportDraft((current) => setBankImportDraftFile(current, file.name, []));
+                        if (!selectedImportPublicAccountRef || !selectedImportPublicAccount) {
+                          void messageApi.warning('请先选择导入账户');
+                          return false;
+                        }
+                        void file.text()
+                          .then((content) => {
+                            const rows = parseBankStatementCsv({
+                              account: selectedImportPublicAccount,
+                              content,
+                              publicAccountRef: selectedImportPublicAccountRef
+                            });
+                            setImportDraft((current) => setBankImportDraftFile(current, file.name, rows));
+                            if (rows.length === 0) void messageApi.warning('文件中没有可读取的流水');
+                          })
+                          .catch((error: unknown) => {
+                            setImportDraft(clearBankImportDraftFile);
+                            void messageApi.warning(error instanceof Error ? error.message : '文件读取失败');
+                          });
                         return false;
                       }}
                       maxCount={1}
@@ -1675,7 +1480,7 @@ export function FinanceBankReconciliationPage() {
           }
 
           setBankStatements((current) =>
-            (current ?? bankStatementSeeds).map((bankRecord) =>
+            current.map((bankRecord) =>
               bankRecord.id === adjustmentRecordId
                 ? {
                     ...bankRecord,

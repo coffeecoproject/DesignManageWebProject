@@ -12,6 +12,7 @@ export type BankStatementRecord = {
   direction: BankStatementDirection;
   id: string;
   importedAccountName: string;
+  importedAccountNumber?: string;
   importedAt: string;
   matchedTransactionIds: string[];
   matchReason: string;
@@ -42,6 +43,7 @@ export type BankStatementImportFieldKey =
   | 'counterparty'
   | 'direction'
   | 'importedAccountName'
+  | 'importedAccountNumber'
   | 'statementDate'
   | 'summary';
 
@@ -84,6 +86,11 @@ export const bankStatementImportFieldContract: BankStatementImportFieldSpec[] = 
     label: '账户名称'
   },
   {
+    aliases: ['银行账号', '账号', '本方账号', '本方银行账号'],
+    key: 'importedAccountNumber',
+    label: '银行账号'
+  },
+  {
     aliases: ['交易日期', '银行日期', '发生日期', '记账日期'],
     key: 'statementDate',
     label: '交易日期'
@@ -119,6 +126,10 @@ export const requiredBankStatementImportFieldLabels = bankStatementImportFieldCo
 
 export function normalizeBankImportIdentity(value: string) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+export function normalizeBankAccountNumber(value: string) {
+  return value.replace(/\s/g, '');
 }
 
 export function buildBankStatementUniqueKey(record: Pick<BankStatementRecord, 'publicAccountId' | 'bankSerialNo'>) {
@@ -201,6 +212,10 @@ export function getBankStatementMissingFieldLabels(record: BankStatementRecord) 
     missingFields.push('账户名称');
   }
 
+  if (!normalizeBankAccountNumber(record.importedAccountNumber ?? '')) {
+    missingFields.push('银行账号');
+  }
+
   if (!/^\d{4}-\d{2}-\d{2}$/.test(record.statementDate)) {
     missingFields.push('交易日期');
   }
@@ -232,11 +247,21 @@ export function hasValidBankStatementImportFields(record: BankStatementRecord) {
   return getBankStatementMissingFieldLabels(record).length === 0;
 }
 
-export function isSelectedBankImportAccount(record: BankStatementRecord, selectedPublicAccount: PublicAccountRef) {
-  const importedName = normalizeBankImportIdentity(record.importedAccountName);
-  const selectedName = normalizeBankImportIdentity(selectedPublicAccount.publicAccountSnapshot.displayName);
+export function isSelectedBankImportAccount(
+  record: BankStatementRecord,
+  selectedPublicAccount: PublicAccountRef,
+  selectedAccountNumber?: string
+) {
+  const importedAccountNumber = normalizeBankAccountNumber(record.importedAccountNumber ?? '');
+  const normalizedSelectedAccountNumber = normalizeBankAccountNumber(
+    selectedAccountNumber ?? selectedPublicAccount.publicAccountSnapshot.accountTailNumber
+  );
 
-  return record.publicAccountId === selectedPublicAccount.publicAccountId && importedName === selectedName;
+  return record.publicAccountId === selectedPublicAccount.publicAccountId
+    && Boolean(normalizedSelectedAccountNumber)
+    && (selectedAccountNumber
+      ? importedAccountNumber === normalizedSelectedAccountNumber
+      : importedAccountNumber.endsWith(normalizedSelectedAccountNumber));
 }
 
 export function buildBankStatementImportPrecheck(input: {
@@ -244,6 +269,7 @@ export function buildBankStatementImportPrecheck(input: {
   previewRows: BankStatementRecord[];
   requiredPeriodCounts: PeriodCount[];
   selectedPublicAccount?: PublicAccountRef;
+  selectedAccountNumber?: string;
 }): BankStatementImportPrecheckResult {
   const hasSelectedPublicAccount = Boolean(input.selectedPublicAccount);
   const existingUniqueKeys = new Set(input.existingRows.map(buildBankStatementUniqueKey).filter(Boolean));
@@ -257,7 +283,8 @@ export function buildBankStatementImportPrecheck(input: {
   input.previewRows.forEach((record) => {
     const uniqueKey = buildBankStatementUniqueKey(record);
     const hasInvalidFields = !hasValidBankStatementImportFields(record);
-    const hasAccountMismatch = !input.selectedPublicAccount || !isSelectedBankImportAccount(record, input.selectedPublicAccount);
+    const hasAccountMismatch = !input.selectedPublicAccount
+      || !isSelectedBankImportAccount(record, input.selectedPublicAccount, input.selectedAccountNumber);
     const hasDuplicateKey = Boolean(uniqueKey && (existingUniqueKeys.has(uniqueKey) || seenPreviewUniqueKeys.has(uniqueKey)));
 
     if (uniqueKey) {

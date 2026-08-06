@@ -33,6 +33,7 @@ import {
   usePublicAccountConfigState
 } from '../system/PublicAccountConfigState';
 import { useFinanceManagement } from './FinanceManagementState';
+import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationState';
 import type { FinanceTransactionRecord, FinanceTransactionStatus } from './financeData';
 import {
   financeToday,
@@ -42,6 +43,11 @@ import {
   reconciliationStatusTone,
   transactionStatusTone
 } from './financeUtils';
+import {
+  buildPublicAccountOpeningBalances,
+  getPublicAccountOpeningBalance,
+  type PublicAccountOpeningBalance
+} from './financePublicAccountBalanceModel';
 
 type AccountLedgerStatusFilter = '全部' | PublicAccountStatus;
 type AccountLedgerUsageFilter = '全部' | PublicAccountUsage;
@@ -60,6 +66,8 @@ type AccountLedgerRow = {
   enteredRows: FinanceTransactionRecord[];
   lastActivity: string;
   movementRows: FinanceTransactionRecord[];
+  openingBalance: number;
+  openingBalanceDate: string;
   pendingNetAmount: number;
   pendingRows: FinanceTransactionRecord[];
   unreconciledAmount: number;
@@ -103,19 +111,24 @@ function sortMovementRows(rows: FinanceTransactionRecord[]) {
   );
 }
 
-function isOnOrAfterOpeningBalanceDate(record: FinanceTransactionRecord, account: PublicAccountRecord) {
-  return record.occurredAt >= account.openingBalanceDate;
+function isOnOrAfterOpeningBalanceDate(record: FinanceTransactionRecord, openingBalanceDate: string) {
+  return !openingBalanceDate || record.occurredAt >= openingBalanceDate;
 }
 
-function buildAccountLedgerRows(accounts: PublicAccountRecord[], financeRows: FinanceTransactionRecord[]): AccountLedgerRow[] {
+function buildAccountLedgerRows(
+  accounts: PublicAccountRecord[],
+  financeRows: FinanceTransactionRecord[],
+  openingBalances: PublicAccountOpeningBalance[]
+): AccountLedgerRow[] {
   return accounts.map((account) => {
+    const opening = getPublicAccountOpeningBalance(openingBalances, account.id);
     const movementRows = sortMovementRows(financeRows.filter((record) => isAccountMovement(record) && record.publicAccountId === account.id));
     const enteredRows = movementRows.filter((record) => record.status === '已入账');
-    const balanceRows = enteredRows.filter((record) => isOnOrAfterOpeningBalanceDate(record, account));
+    const balanceRows = enteredRows.filter((record) => isOnOrAfterOpeningBalanceDate(record, opening.openingBalanceDate));
     const currentRows = enteredRows.filter((record) => record.accountingPeriod === financeToday.slice(0, 7));
     const pendingRows = movementRows.filter((record) => record.status === '待复核');
     const unreconciledRows = movementRows.filter((record) => record.status === '已入账' && record.reconciliationStatus !== '已对账');
-    const balance = account.openingBalance + balanceRows.reduce((total, record) => total + getPublicAccountSignedAmount(record), 0);
+    const balance = opening.openingBalance + balanceRows.reduce((total, record) => total + getPublicAccountSignedAmount(record), 0);
     const currentInflow = currentRows.reduce((total, record) => {
       const amount = getPublicAccountSignedAmount(record);
       return amount > 0 ? total + amount : total;
@@ -135,6 +148,8 @@ function buildAccountLedgerRows(accounts: PublicAccountRecord[], financeRows: Fi
       enteredRows,
       lastActivity: movementRows[0]?.occurredAt ?? account.updatedAt,
       movementRows,
+      openingBalance: opening.openingBalance,
+      openingBalanceDate: opening.openingBalanceDate,
       pendingNetAmount,
       pendingRows,
       unreconciledAmount,
@@ -287,8 +302,8 @@ function AccountLedgerDrawer({
                     { label: '开户行', value: row.account.bankName },
                     { label: '账户户名', value: row.account.accountHolder },
                     { label: '账号尾号', value: formatPublicAccountTail(row.account.accountTailNumber) },
-                    { label: '期初日期', value: row.account.openingBalanceDate },
-                    { label: '期初余额', value: formatMoney(row.account.openingBalance) },
+                    { label: '期初日期', value: row.openingBalanceDate || '-' },
+                    { label: '期初余额', value: formatMoney(row.openingBalance) },
                     {
                       label: '账户能力',
                       value: <TagChipList items={row.account.usage} maxVisible={5} tone={(usage) => publicAccountUsageTone[usage as PublicAccountUsage]} wrap />,
@@ -378,11 +393,19 @@ function AccountLedgerDrawer({
 
 export function FinanceAccountLedgerPage() {
   const { financeRows } = useFinanceManagement();
+  const { enabledOpeningRows, enabledProfile } = useFinanceLedgerInitialization();
   const { publicAccounts } = usePublicAccountConfigState();
   const [filters, setFilters] = useState<AccountLedgerFilters>(defaultFilters);
   const [activeAccountId, setActiveAccountId] = useState<string>();
 
-  const accountRows = useMemo(() => buildAccountLedgerRows(publicAccounts, financeRows), [financeRows, publicAccounts]);
+  const openingBalances = useMemo(
+    () => buildPublicAccountOpeningBalances(publicAccounts, enabledOpeningRows, enabledProfile?.effectivePeriod),
+    [enabledOpeningRows, enabledProfile?.effectivePeriod, publicAccounts]
+  );
+  const accountRows = useMemo(
+    () => buildAccountLedgerRows(publicAccounts, financeRows, openingBalances),
+    [financeRows, openingBalances, publicAccounts]
+  );
   const rows = useMemo(() => accountRows.filter((row) => matchesAccountLedgerFilters(row, filters)), [accountRows, filters]);
   const activeRow = useMemo(() => accountRows.find((row) => row.account.id === activeAccountId), [accountRows, activeAccountId]);
   const enabledRows = accountRows.filter((row) => row.account.status === '启用');

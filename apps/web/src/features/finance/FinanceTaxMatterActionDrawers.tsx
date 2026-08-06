@@ -7,7 +7,7 @@ import {
 import { DatePicker, Input, InputNumber, Select } from 'antd';
 import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
-import { DetailDrawerTitle, DetailInfoGrid, DetailSection, ReadOnlyField } from '../../components/Detail';
+import { DetailDrawerTitle, DetailInfoGrid, DetailSection } from '../../components/Detail';
 import { DrawerFormField, DrawerFormGrid } from '../../components/DrawerForm';
 import { DrawerShell } from '../../components/DrawerShell';
 import type { RelatedFileRecord } from '../../components/RelatedFileTable';
@@ -372,20 +372,23 @@ export function TaxDeclarationEvidenceDrawer({ onClose, onSave, record }: Common
   );
 }
 
-export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, record }: CommonDrawerProps & {
-  defaultAccountName: string;
+export function TaxPaymentResultDrawer({ accountOptions, defaultAccountId, onClose, onSave, record }: CommonDrawerProps & {
+  accountOptions: Array<{ label: string; value: string }>;
+  defaultAccountId?: string;
   onSave: (record: FinanceTaxMatterRecord, input: TaxMatterPaymentResultInput) => void;
 }) {
   const [amount, setAmount] = useState(0);
+  const [publicAccountId, setPublicAccountId] = useState<string>();
   const [paymentDate, setPaymentDate] = useState(financeToday);
   const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
 
   useEffect(() => {
     if (!record) return;
     setAmount(getTaxMatterOutstandingAmount(record));
+    setPublicAccountId(defaultAccountId);
     setPaymentDate(financeToday);
     setReceiptFile(undefined);
-  }, [record]);
+  }, [defaultAccountId, record]);
 
   if (!record) return null;
   const outstandingAmount = getTaxMatterOutstandingAmount(record);
@@ -395,7 +398,7 @@ export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, re
     : amount - outstandingAmount > 0.01
       ? '缴款金额不能超过待缴金额'
       : !paymentDate ? '请选择实际缴款日期' : !receiptFile ? '请上传缴款回单'
-        : defaultAccountName === '未配置默认付款账户' ? '请先配置默认付款账户' : undefined;
+        : !publicAccountId ? '请选择付款账户' : undefined;
 
   return (
     <DrawerShell
@@ -408,7 +411,7 @@ export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, re
         disabled: Boolean(formError),
         label: '登记缴款',
         testId: 'finance-tax-payment-result-save',
-        onClick: () => receiptFile && !formError && onSave(record, { amount, paymentDate, receiptFile })
+        onClick: () => receiptFile && publicAccountId && !formError && onSave(record, { amount, paymentDate, publicAccountId, receiptFile })
       }}
       title={<DetailDrawerTitle status={currentVersionPaidAmount > 0 ? '部分缴纳' : '待缴款'} statusTone={currentVersionPaidAmount > 0 ? 'blue' : 'amber'} subtitle={`${record.matterNo} / ${record.period}`} title="登记缴款" />}
       width={760}
@@ -427,7 +430,9 @@ export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, re
           <DrawerFormField label="本次缴款金额" required>
             <InputNumber max={outstandingAmount} min={0} precision={2} style={{ width: '100%' }} value={amount} onChange={(value) => setAmount(Number(value ?? 0))} />
           </DrawerFormField>
-          <ReadOnlyField label="付款账户" value={defaultAccountName} />
+          <DrawerFormField label="付款账户" required>
+            <Select options={accountOptions} placeholder="选择实际付款账户" value={publicAccountId} onChange={setPublicAccountId} />
+          </DrawerFormField>
         </DrawerFormGrid>
       </DetailSection>
       <ReceiptUploadSection file={receiptFile} title="缴款回单" onChange={setReceiptFile} />
@@ -435,20 +440,23 @@ export function TaxPaymentResultDrawer({ defaultAccountName, onClose, onSave, re
   );
 }
 
-export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, record }: CommonDrawerProps & {
-  defaultAccountName: string;
+export function TaxRefundResultDrawer({ accountOptions, defaultAccountId, onClose, onSave, record }: CommonDrawerProps & {
+  accountOptions: Array<{ label: string; value: string }>;
+  defaultAccountId?: string;
   onSave: (record: FinanceTaxMatterRecord, input: TaxMatterRefundResultInput) => void;
 }) {
   const [amount, setAmount] = useState(0);
+  const [publicAccountId, setPublicAccountId] = useState<string>();
   const [refundDate, setRefundDate] = useState(financeToday);
   const [receiptFile, setReceiptFile] = useState<RelatedFileRecord>();
 
   useEffect(() => {
     if (!record) return;
     setAmount(getTaxMatterRefundOutstandingAmount(record));
+    setPublicAccountId(defaultAccountId);
     setRefundDate(financeToday);
     setReceiptFile(undefined);
-  }, [record]);
+  }, [defaultAccountId, record]);
 
   if (!record) return null;
   const outstandingAmount = getTaxMatterRefundOutstandingAmount(record);
@@ -457,7 +465,7 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
     ? '退税金额必须大于 0'
     : amount - outstandingAmount > 0.01
       ? '退税金额不能超过待退金额'
-      : !refundDate ? '请选择实际到账日期' : !receiptFile ? '请上传退税回单' : undefined;
+      : !refundDate ? '请选择实际到账日期' : !publicAccountId ? '请选择到账账户' : !receiptFile ? '请上传退税回单' : undefined;
 
   return (
     <DrawerShell
@@ -470,7 +478,7 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
         disabled: Boolean(formError),
         label: '登记退税到账',
         testId: 'finance-tax-refund-result-save',
-        onClick: () => receiptFile && !formError && onSave(record, { amount, receiptFile, refundDate })
+        onClick: () => receiptFile && publicAccountId && !formError && onSave(record, { amount, publicAccountId, receiptFile, refundDate })
       }}
       title={<DetailDrawerTitle status={(record.refundedAmount ?? 0) > (record.refundBaselineAmount ?? 0) ? '部分到账' : '处理中'} statusTone="blue" subtitle={`${record.matterNo} / ${record.period}`} title="登记退税到账" />}
       width={760}
@@ -480,8 +488,7 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
         <DetailInfoGrid columns={4} items={[
           { label: '本版应退', value: formatMoney(record.refundableAmount ?? 0) },
           { label: '本版已退', value: formatMoney(currentVersionRefundedAmount) },
-          { label: '待退金额', value: formatMoney(outstandingAmount) },
-          { label: '到账账户', value: defaultAccountName }
+          { label: '待退金额', value: formatMoney(outstandingAmount) }
         ]} />
         <DrawerFormGrid>
           <DrawerFormField label="实际到账日期" required>
@@ -489,6 +496,9 @@ export function TaxRefundResultDrawer({ defaultAccountName, onClose, onSave, rec
           </DrawerFormField>
           <DrawerFormField label="本次退税金额" required>
             <InputNumber max={outstandingAmount} min={0} precision={2} style={{ width: '100%' }} value={amount} onChange={(value) => setAmount(Number(value ?? 0))} />
+          </DrawerFormField>
+          <DrawerFormField label="到账账户" required>
+            <Select options={accountOptions} placeholder="选择实际到账账户" value={publicAccountId} onChange={setPublicAccountId} />
           </DrawerFormField>
         </DrawerFormGrid>
       </DetailSection>

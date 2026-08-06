@@ -95,6 +95,7 @@ export type FinanceAccountingSubjectRole =
   | 'outputVatPayable';
 export type FinanceAccountingSubjectRoleMappings = Partial<Record<FinanceAccountingSubjectRole, string>>;
 export type FinanceSecondaryCategoryConfig = {
+  accountingSubjectMappings?: FinanceAccountingSubjectRoleMappings;
   defaultAccountingSubjectCode: string;
   code: string;
   counterpartyScope: FinanceCounterpartyScope;
@@ -647,6 +648,44 @@ export function getFinanceSecondaryCategory(
   return secondaryRows.find((row) => row.name === category);
 }
 
+export function getFinanceSecondaryCategoryById(
+  secondaryRows: FinanceSecondaryCategoryConfig[],
+  categoryId: string
+) {
+  return secondaryRows.find((row) => row.id === categoryId);
+}
+
+const cashOnlyFinanceSourceTypes = new Set<FinanceSourceType>([
+  '税费事项',
+  '社保公积金缴费',
+  '员工代收流水',
+  '现金暂收流水',
+  '流水冲正',
+  '流水补差'
+]);
+
+export function getFinanceCategoryRequiredAccountingRoles(
+  category: Pick<FinanceSecondaryCategoryConfig, 'defaultSourceType' | 'direction' | 'name'>
+): FinanceAccountingSubjectRole[] {
+  const builtInRoles = Object.keys(
+    financeCategoryAccountingSubjectMappings[category.name] ?? {}
+  ) as FinanceAccountingSubjectRole[];
+
+  if (builtInRoles.length > 0) {
+    return builtInRoles;
+  }
+
+  if (category.direction === '内部转入' || cashOnlyFinanceSourceTypes.has(category.defaultSourceType)) {
+    return ['cashDebit', 'cashCredit'];
+  }
+
+  if (category.direction === '收入') {
+    return ['accrualReceivable', 'accrualRevenue', 'cashDebit', 'cashCredit', 'outputVatPayable'];
+  }
+
+  return ['accrualExpense', 'accrualPayable', 'cashDebit', 'cashCredit'];
+}
+
 function buildFinanceAccountingSubjectSnapshot(code?: string): FinanceAccountingSubjectSnapshot {
   const accountingSubject = code ? getAccountingSubjectByCode(code) : undefined;
 
@@ -664,24 +703,31 @@ function buildFinanceAccountingSubjectSnapshot(code?: string): FinanceAccounting
 
 export function getFinanceCategoryAccountingSubjectCode(
   category: FinanceTransactionCategory,
-  role: FinanceAccountingSubjectRole
+  role: FinanceAccountingSubjectRole,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ) {
-  return financeCategoryAccountingSubjectMappings[category]?.[role];
+  const secondary = getFinanceSecondaryCategory(secondaryRows, category);
+
+  return secondary && 'accountingSubjectMappings' in secondary
+    ? secondary.accountingSubjectMappings?.[role]
+    : financeCategoryAccountingSubjectMappings[category]?.[role];
 }
 
 export function getFinanceCategoryAccountingSubjectSnapshot(
   category: FinanceTransactionCategory,
-  role: FinanceAccountingSubjectRole
+  role: FinanceAccountingSubjectRole,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ) {
-  return buildFinanceAccountingSubjectSnapshot(getFinanceCategoryAccountingSubjectCode(category, role));
+  return buildFinanceAccountingSubjectSnapshot(getFinanceCategoryAccountingSubjectCode(category, role, secondaryRows));
 }
 
 export function getFinanceCategoryMissingAccountingRoles(
   category: FinanceTransactionCategory,
-  roles: FinanceAccountingSubjectRole[]
+  roles: FinanceAccountingSubjectRole[],
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ) {
   return roles.filter((role) => {
-    const subjectCode = getFinanceCategoryAccountingSubjectCode(category, role);
+    const subjectCode = getFinanceCategoryAccountingSubjectCode(category, role, secondaryRows);
 
     return !subjectCode || !getAccountingSubjectByCode(subjectCode);
   });
@@ -695,12 +741,23 @@ export function getFinanceCategorySnapshot(
   const secondary = getFinanceSecondaryCategory(secondaryRows, category);
   const primary = secondary ? getFinancePrimaryCategory(primaryRows, secondary.primaryId) : undefined;
   const accountingSubject = buildFinanceAccountingSubjectSnapshot(secondary?.defaultAccountingSubjectCode);
-  const accountingSubjectMappings = financeCategoryAccountingSubjectMappings[category] ?? {};
-  const mappingStatus = secondary && accountingSubject.code ? '已配置' : '待配置';
+  const accountingSubjectMappings = secondary && 'accountingSubjectMappings' in secondary
+    ? (secondary.accountingSubjectMappings ?? {})
+    : (financeCategoryAccountingSubjectMappings[category] ?? {});
+  const requiredAccountingRoles = secondary ? getFinanceCategoryRequiredAccountingRoles(secondary) : [];
+  const mappingStatus = secondary
+    && accountingSubject.code
+    && requiredAccountingRoles.length > 0
+    && requiredAccountingRoles.every((role) => {
+      const subjectCode = accountingSubjectMappings[role];
+      return Boolean(subjectCode && getAccountingSubjectByCode(subjectCode));
+    })
+    ? '已配置'
+    : '待配置';
 
   return {
     accountingSubject,
-    accountingSubjectMappings,
+    accountingSubjectMappings: { ...accountingSubjectMappings },
     includeInReport: secondary?.includeInReport ?? primary?.includeInReport ?? true,
     mappingIssue: mappingStatus === '已配置' ? undefined : '财务类目缺少有效会计科目映射',
     mappingStatus,
@@ -710,6 +767,22 @@ export function getFinanceCategorySnapshot(
     secondaryCode: secondary?.code ?? 'FC2-UNMAPPED',
     secondaryName: secondary?.name ?? category
   };
+}
+
+export function getEnabledFinanceCategorySnapshot(
+  category: FinanceTransactionCategory,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  const secondary = getFinanceSecondaryCategory(secondaryRows, category);
+  const primary = secondary ? getFinancePrimaryCategory(primaryRows, secondary.primaryId) : undefined;
+
+  if (!secondary || !primary || secondary.status !== '启用' || primary.status !== '启用') {
+    return undefined;
+  }
+
+  const snapshot = getFinanceCategorySnapshot(category, primaryRows, secondaryRows);
+  return snapshot.mappingStatus === '已配置' ? snapshot : undefined;
 }
 
 type FinanceTransactionRecordSeed = Omit<FinanceTransactionRecord, 'categorySnapshot'> & {

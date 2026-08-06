@@ -4,6 +4,7 @@ import {
   getFinanceCategorySnapshot,
   type FinanceCounterpartyScope,
   type FinancePaymentMethod,
+  type FinancePrimaryCategoryConfig,
   type FinanceSecondaryCategoryConfig,
   type FinanceTransactionCategory,
   type FinanceTransactionDirection,
@@ -314,12 +315,13 @@ function buildNextBankGeneratedTransactionNo(records: FinanceTransactionRecord[]
 
 export function getBankReconciliationCategoryOptions(
   direction: BankStatementDirection,
-  primaryCategoryId?: string
+  primaryCategoryId?: string,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ): FinanceSecondaryCategoryConfig[] {
   const targetDirection = getTransactionDirection(direction);
   const paymentMethod = getPaymentMethod(direction);
 
-  return financeSecondaryCategorySeeds
+  return secondaryRows
     .filter((category) => (
       category.status === '启用' &&
       category.direction === targetDirection &&
@@ -329,38 +331,60 @@ export function getBankReconciliationCategoryOptions(
     .sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
-export function getBankReconciliationPrimaryCategoryOptions(direction: BankStatementDirection) {
-  const secondaryRows = getBankReconciliationCategoryOptions(direction);
-  const primaryIds = new Set(secondaryRows.map((category) => category.primaryId));
+export function getBankReconciliationPrimaryCategoryOptions(
+  direction: BankStatementDirection,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
+  const categoryRows = getBankReconciliationCategoryOptions(direction, undefined, secondaryRows);
+  const primaryIds = new Set(categoryRows.map((category) => category.primaryId));
 
-  return financePrimaryCategorySeeds
+  return primaryRows
     .filter((category) => category.status === '启用' && category.direction === getTransactionDirection(direction) && primaryIds.has(category.id))
     .sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
-export function getDefaultBankReconciliationPrimaryCategoryId(record: BankStatementRecord) {
+export function getDefaultBankReconciliationPrimaryCategoryId(
+  record: BankStatementRecord,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
   const preferredCategory = record.direction === '入账' ? '客户回款' : '外协付款';
-  const preferredSecondary = getBankReconciliationCategoryOptions(record.direction).find((category) => category.name === preferredCategory);
+  const preferredSecondary = getBankReconciliationCategoryOptions(record.direction, undefined, secondaryRows)
+    .find((category) => category.name === preferredCategory);
 
-  return preferredSecondary?.primaryId ?? getBankReconciliationPrimaryCategoryOptions(record.direction)[0]?.id ?? '';
+  return preferredSecondary?.primaryId
+    ?? getBankReconciliationPrimaryCategoryOptions(record.direction, primaryRows, secondaryRows)[0]?.id
+    ?? '';
 }
 
-export function getDefaultBankReconciliationCategory(record: BankStatementRecord, primaryCategoryId = getDefaultBankReconciliationPrimaryCategoryId(record)) {
+export function getDefaultBankReconciliationCategory(
+  record: BankStatementRecord,
+  primaryCategoryId = getDefaultBankReconciliationPrimaryCategoryId(record),
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+) {
   const preferredCategory = record.direction === '入账' ? '客户回款' : '外协付款';
-  const scopedOptions = getBankReconciliationCategoryOptions(record.direction, primaryCategoryId);
+  const scopedOptions = getBankReconciliationCategoryOptions(record.direction, primaryCategoryId, secondaryRows);
 
   return scopedOptions.find((category) => category.name === preferredCategory)?.name ?? scopedOptions[0]?.name ?? '';
 }
 
-export function getBankReconciliationPrimaryCategoryName(primaryCategoryId: string) {
-  return financePrimaryCategorySeeds.find((category) => category.id === primaryCategoryId)?.name ?? '-';
+export function getBankReconciliationPrimaryCategoryName(
+  primaryCategoryId: string,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds
+) {
+  return primaryRows.find((category) => category.id === primaryCategoryId)?.name ?? '-';
 }
 
-export function createBankReconciliationFlowForm(record?: BankStatementRecord): BankReconciliationFlowFormValue {
-  const primaryCategoryId = record ? getDefaultBankReconciliationPrimaryCategoryId(record) : '';
+export function createBankReconciliationFlowForm(
+  record?: BankStatementRecord,
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
+): BankReconciliationFlowFormValue {
+  const primaryCategoryId = record ? getDefaultBankReconciliationPrimaryCategoryId(record, primaryRows, secondaryRows) : '';
 
   return {
-    category: record ? getDefaultBankReconciliationCategory(record, primaryCategoryId) : '',
+    category: record ? getDefaultBankReconciliationCategory(record, primaryCategoryId, secondaryRows) : '',
     note: record ? `银行流水补登记：${record.bankSerialNo}` : '',
     primaryCategoryId,
     sourceNo: record?.bankSerialNo ?? '',
@@ -371,11 +395,14 @@ export function createBankReconciliationFlowForm(record?: BankStatementRecord): 
 export function buildFinanceTransactionFromBankStatement(
   record: BankStatementRecord,
   form: BankReconciliationFlowFormValue,
-  financeRows: FinanceTransactionRecord[]
+  financeRows: FinanceTransactionRecord[],
+  primaryRows: FinancePrimaryCategoryConfig[] = financePrimaryCategorySeeds,
+  secondaryRows: FinanceSecondaryCategoryConfig[] = financeSecondaryCategorySeeds
 ): FinanceTransactionRecord {
   const transactionNo = buildNextBankGeneratedTransactionNo(financeRows, record.statementDate);
-  const categoryOption = getBankReconciliationCategoryOptions(record.direction).find((category) => category.name === form.category);
-  const categorySnapshot = getFinanceCategorySnapshot(form.category);
+  const categoryOption = getBankReconciliationCategoryOptions(record.direction, undefined, secondaryRows)
+    .find((category) => category.name === form.category);
+  const categorySnapshot = getFinanceCategorySnapshot(form.category, primaryRows, secondaryRows);
   const sourceTitle = form.sourceTitle.trim() || record.summary;
 
   return {

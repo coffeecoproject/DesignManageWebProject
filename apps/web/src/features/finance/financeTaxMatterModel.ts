@@ -272,11 +272,13 @@ export type TaxMatterDeclarationEvidenceInput = {
 export type TaxMatterPaymentResultInput = {
   amount: number;
   paymentDate: string;
+  publicAccountId?: string;
   receiptFile: RelatedFileRecord;
 };
 
 export type TaxMatterRefundResultInput = {
   amount: number;
+  publicAccountId?: string;
   receiptFile: RelatedFileRecord;
   refundDate: string;
 };
