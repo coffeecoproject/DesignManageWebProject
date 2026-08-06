@@ -800,7 +800,7 @@ function PeriodCloseReopenDrawer({
 }
 
 export function FinancePeriodClosePage() {
-  const { socialInsuranceRecords } = useFinanceSocialInsuranceState();
+  const { getSocialInsuranceRecordsForPeriod, socialInsuranceRecords } = useFinanceSocialInsuranceState();
   const {
     addAccountingVoucherLaterPeriodAdjustment,
     accountingPeriodLocks,
@@ -878,6 +878,7 @@ export function FinancePeriodClosePage() {
         ledgerEntries,
         monthEndMatterRows,
         periodLocks: accountingPeriodLocks,
+        resolveSocialInsuranceRowsForPeriod: getSocialInsuranceRecordsForPeriod,
         socialInsuranceRows: socialInsuranceRecords,
         taxMatterRows,
         voucherRows
@@ -887,6 +888,7 @@ export function FinancePeriodClosePage() {
       accountingVoucherLaterPeriodAdjustmentRows,
       financeRows,
       filters,
+      getSocialInsuranceRecordsForPeriod,
       ledgerEntries,
       monthEndMatterRows,
       socialInsuranceRecords,
@@ -1169,7 +1171,7 @@ export function FinancePeriodClosePage() {
       render: (_, record) => (
         <CompactCell
           primary={`${record.socialInsurancePendingCount} 项待处理`}
-          secondary={record.socialInsurancePendingCount > 0 ? '需完成缴费确认' : '本期已完成'}
+          secondary={record.socialInsurancePendingCount > 0 ? '需完成核定或更正' : '本期核定已完成'}
         />
       )
     },

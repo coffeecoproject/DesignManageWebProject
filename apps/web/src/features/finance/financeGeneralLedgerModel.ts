@@ -18,8 +18,13 @@ import { buildLedgerInitializationOpeningBalancesForGeneralLedger } from './fina
 export type GeneralLedgerOpeningBalance = {
   accountingPeriod: string;
   amount: number;
+  auxiliaryId?: string;
+  auxiliaryLabel?: string;
+  auxiliaryScope?: string;
   source?: GeneralLedgerOpeningBalanceSource;
   subjectCode: string;
+  yearToDateCreditAmount?: number;
+  yearToDateDebitAmount?: number;
 };
 
 export type GeneralLedgerOpeningBalanceSource = '账套初始化' | '期初余额承接' | '期初导入';
@@ -173,6 +178,15 @@ function shouldApplyOpeningBalance(openingBalance: GeneralLedgerOpeningBalance, 
   }
 
   return getAccountingPeriodRange(openingBalance.accountingPeriod).startDate <= range.startDate;
+}
+
+function shouldApplyImportedYearToDateMovement(openingBalance: GeneralLedgerOpeningBalance, range?: LedgerDateRange) {
+  if (!range) {
+    return false;
+  }
+
+  const effectiveDate = getAccountingPeriodRange(openingBalance.accountingPeriod).startDate;
+  return range.startDate < effectiveDate && effectiveDate <= range.endDate;
 }
 
 function resolveSingleAccountingPeriod(value: DateScopeFilterValue, defaultMonth = generalLedgerDefaultMonth) {
@@ -332,21 +346,38 @@ export function buildGeneralLedgerSubjectBalances({
   const entriesBySubject = new Map<string, AccountingLedgerEntry[]>();
   const priorEntriesBySubject = new Map<string, AccountingLedgerEntry[]>();
   const openingBySubject = new Map<string, number>();
+  const importedYearToDateCreditBySubject = new Map<string, number>();
+  const importedYearToDateDebitBySubject = new Map<string, number>();
   const openingSourcesBySubject = new Map<string, Set<string>>();
 
   openingBalances.forEach((openingBalance) => {
-    if (!shouldApplyOpeningBalance(openingBalance, range)) {
-      return;
+    if (shouldApplyImportedYearToDateMovement(openingBalance, range)) {
+      importedYearToDateDebitBySubject.set(
+        openingBalance.subjectCode,
+        roundMoney(
+          (importedYearToDateDebitBySubject.get(openingBalance.subjectCode) ?? 0)
+          + (openingBalance.yearToDateDebitAmount ?? 0)
+        )
+      );
+      importedYearToDateCreditBySubject.set(
+        openingBalance.subjectCode,
+        roundMoney(
+          (importedYearToDateCreditBySubject.get(openingBalance.subjectCode) ?? 0)
+          + (openingBalance.yearToDateCreditAmount ?? 0)
+        )
+      );
     }
 
-    openingBySubject.set(
-      openingBalance.subjectCode,
-      roundMoney((openingBySubject.get(openingBalance.subjectCode) ?? 0) + openingBalance.amount)
-    );
+    if (shouldApplyOpeningBalance(openingBalance, range)) {
+      openingBySubject.set(
+        openingBalance.subjectCode,
+        roundMoney((openingBySubject.get(openingBalance.subjectCode) ?? 0) + openingBalance.amount)
+      );
 
-    const sourceSet = openingSourcesBySubject.get(openingBalance.subjectCode) ?? new Set<string>();
-    sourceSet.add(openingBalance.source ?? '账套初始化');
-    openingSourcesBySubject.set(openingBalance.subjectCode, sourceSet);
+      const sourceSet = openingSourcesBySubject.get(openingBalance.subjectCode) ?? new Set<string>();
+      sourceSet.add(openingBalance.source ?? '账套初始化');
+      openingSourcesBySubject.set(openingBalance.subjectCode, sourceSet);
+    }
   });
 
   entries.forEach((entry) => {
@@ -374,8 +405,17 @@ export function buildGeneralLedgerSubjectBalances({
         openingSourceSet.add('前期已记账分录');
       }
       const openingBalance = roundMoney((openingBySubject.get(subject.code) ?? 0) + openingDelta);
-      const debitAmount = roundMoney(currentEntries.reduce((total, entry) => total + entry.debitAmount, 0));
-      const creditAmount = roundMoney(currentEntries.reduce((total, entry) => total + entry.creditAmount, 0));
+      const importedYearToDateDebit = importedYearToDateDebitBySubject.get(subject.code) ?? 0;
+      const importedYearToDateCredit = importedYearToDateCreditBySubject.get(subject.code) ?? 0;
+      if (importedYearToDateDebit !== 0 || importedYearToDateCredit !== 0) {
+        openingSourceSet.add('期中建账本年累计');
+      }
+      const debitAmount = roundMoney(
+        currentEntries.reduce((total, entry) => total + entry.debitAmount, 0) + importedYearToDateDebit
+      );
+      const creditAmount = roundMoney(
+        currentEntries.reduce((total, entry) => total + entry.creditAmount, 0) + importedYearToDateCredit
+      );
       const endingBalance = roundMoney(
         openingBalance + getBalanceDelta(subject.balanceDirection, debitAmount, creditAmount)
       );

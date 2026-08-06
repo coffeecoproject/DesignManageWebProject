@@ -6,7 +6,7 @@ import {
   type AccountingSubjectType
 } from './financeAccountingSubjectData';
 import {
-  getFinanceCategoryAccountingSubjectCode,
+  type FinanceAccountingSubjectRole,
   type FinanceTransactionDirection,
   type FinanceTransactionRecord
 } from './financeData';
@@ -91,6 +91,8 @@ export type AccountingVoucherSubjectSnapshot = {
 export type AccountingVoucherLine = {
   amount: number;
   auxiliary: string;
+  auxiliaryId?: string;
+  auxiliaryScope?: string;
   id: string;
   side: AccountingVoucherLineSide;
   subject?: AccountingVoucherSubjectSnapshot;
@@ -390,6 +392,8 @@ export type AccountingVoucherLaterPeriodAdjustmentRecord = {
 export type AccountingLedgerEntry = {
   accountingPeriod: string;
   auxiliary: string;
+  auxiliaryId?: string;
+  auxiliaryScope?: string;
   creditAmount: number;
   debitAmount: number;
   voucherNo: string;
@@ -437,7 +441,6 @@ const accountingVoucherFilterBusinessTypes = new Set<string>(['全部', '权责�
 const accountingPeriodPattern = /^\d{4}-\d{2}$/;
 const acceptableEvidenceStatuses = new Set(['已上传', '已归档', '已生成', '已发布']);
 const moneyTolerance = 0.01;
-const openingAdjustmentOffsetSubjectCode = '3104';
 const pendingAccrualGenerationIssues = new Set<AccountingVoucherIssueCode>([
   'missing_source_document',
   'missing_original_evidence',
@@ -675,6 +678,8 @@ function shouldKeepAccrualUpstream(sourceIssues: AccountingVoucherIssueCode[]) {
 function createVoucherLine({
   amount,
   auxiliary,
+  auxiliaryId,
+  auxiliaryScope,
   id,
   side,
   subjectCode,
@@ -682,6 +687,8 @@ function createVoucherLine({
 }: {
   amount: number;
   auxiliary: string;
+  auxiliaryId?: string;
+  auxiliaryScope?: string;
   id: string;
   side: AccountingVoucherLineSide;
   subjectCode: string;
@@ -690,6 +697,8 @@ function createVoucherLine({
   return {
     amount: roundMoney(amount),
     auxiliary,
+    auxiliaryId,
+    auxiliaryScope,
     id,
     side,
     subject: getSubjectSnapshot(subjectCode),
@@ -1031,12 +1040,19 @@ function finalizeReceivablePayableVoucher(
   return finalizeAccountingVoucher(record, sourceIssues);
 }
 
+function getRecordCategoryAccountingSubjectCode(
+  record: Pick<FinanceReceivablePayableRecord | FinanceTransactionRecord, 'categorySnapshot'>,
+  role: FinanceAccountingSubjectRole
+) {
+  return record.categorySnapshot.accountingSubjectMappings[role] ?? '';
+}
+
 function getPayableExpenseSubjectCode(record: FinanceReceivablePayableRecord) {
-  return getFinanceCategoryAccountingSubjectCode(record.category, 'accrualExpense') ?? '';
+  return getRecordCategoryAccountingSubjectCode(record, 'accrualExpense');
 }
 
 function getPayableLiabilitySubjectCode(record: FinanceReceivablePayableRecord) {
-  return getFinanceCategoryAccountingSubjectCode(record.category, 'accrualPayable') ?? '';
+  return getRecordCategoryAccountingSubjectCode(record, 'accrualPayable');
 }
 
 function getCashReceiptCreditSubjectCode(record: FinanceTransactionRecord) {
@@ -1044,7 +1060,7 @@ function getCashReceiptCreditSubjectCode(record: FinanceTransactionRecord) {
     return getTaxPaymentDebitSubjectCode(record);
   }
 
-  return getFinanceCategoryAccountingSubjectCode(record.category, 'cashCredit') ?? '';
+  return getRecordCategoryAccountingSubjectCode(record, 'cashCredit');
 }
 
 function getTaxPaymentDebitSubjectCode(record: FinanceTransactionRecord) {
@@ -1074,7 +1090,7 @@ function getTaxPaymentDebitSubjectCode(record: FinanceTransactionRecord) {
     return '2221.01';
   }
 
-  return getFinanceCategoryAccountingSubjectCode(record.category, 'cashDebit') ?? '';
+  return getRecordCategoryAccountingSubjectCode(record, 'cashDebit');
 }
 
 function getCashPaymentDebitSubjectCode(record: FinanceTransactionRecord) {
@@ -1082,7 +1098,7 @@ function getCashPaymentDebitSubjectCode(record: FinanceTransactionRecord) {
     return getTaxPaymentDebitSubjectCode(record);
   }
 
-  return getFinanceCategoryAccountingSubjectCode(record.category, 'cashDebit') ?? '';
+  return getRecordCategoryAccountingSubjectCode(record, 'cashDebit');
 }
 
 const taxMatterAccountingSubjectMappings: Record<FinanceTaxMatterType, { credit: string; debit: string }> = {
@@ -1244,7 +1260,7 @@ function createReceivableLines(
         auxiliary: record.counterparty,
         id: `${record.id}-debit`,
         side: '借方',
-        subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'accrualReceivable') ?? '',
+        subjectCode: getRecordCategoryAccountingSubjectCode(record, 'accrualReceivable'),
         summary: record.sourceTitle
       }),
       createVoucherLine({
@@ -1252,7 +1268,7 @@ function createReceivableLines(
         auxiliary: record.sourceNo,
         id: `${record.id}-credit-income`,
         side: '贷方',
-        subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'accrualRevenue') ?? '',
+        subjectCode: getRecordCategoryAccountingSubjectCode(record, 'accrualRevenue'),
         summary: record.sourceTitle
       })
   ];
@@ -1264,7 +1280,7 @@ function createReceivableLines(
           auxiliary: record.sourceNo,
           id: `${record.id}-credit-tax`,
           side: '贷方',
-          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'outputVatPayable') ?? '',
+          subjectCode: getRecordCategoryAccountingSubjectCode(record, 'outputVatPayable'),
           summary: `${record.sourceTitle} ${taxBasis.basisSource === '发票台账' ? '发票税额' : '来源税额'}`
         })
     );
@@ -1304,6 +1320,12 @@ function createSalaryPayableLines(record: FinanceReceivablePayableRecord) {
       id: 'employee-housing-fund',
       subjectCode: '2211.04',
       summary: `${record.sourceTitle} 个人公积金`
+    },
+    {
+      amount: settlement.employeeAdvanceRecoveryAmount,
+      id: 'employee-advance-recovery',
+      subjectCode: '1221',
+      summary: `${record.sourceTitle} 员工代垫收回`
     }
   ].filter((line) => line.amount > moneyTolerance);
 
@@ -1513,6 +1535,8 @@ export function buildAccountingVoucherFromTransaction(
           createVoucherLine({
             amount: reversedNaturalPersonPayment.netPaymentAmount,
             auxiliary: record.publicAccountSnapshot.displayName,
+            auxiliaryId: record.publicAccountId,
+            auxiliaryScope: '对公账户',
             id: `${record.id}-debit-bank-reversal`,
             side: '借方',
             subjectCode: bankSubjectCode,
@@ -1576,6 +1600,8 @@ export function buildAccountingVoucherFromTransaction(
     const bankLine = createVoucherLine({
       amount: record.amount,
       auxiliary: record.publicAccountSnapshot.displayName,
+      auxiliaryId: record.publicAccountId,
+      auxiliaryScope: '对公账户',
       id: `${record.id}-bank-reversal`,
       side: originTransaction.direction === '收入' ? '贷方' : '借方',
       subjectCode: bankSubjectCode,
@@ -1618,6 +1644,8 @@ export function buildAccountingVoucherFromTransaction(
           createVoucherLine({
             amount: record.amount,
             auxiliary: record.publicAccountSnapshot.displayName,
+            auxiliaryId: record.publicAccountId,
+            auxiliaryScope: '对公账户',
             id: `${record.id}-debit`,
             side: '借方',
             subjectCode: bankSubjectCode,
@@ -1659,6 +1687,8 @@ export function buildAccountingVoucherFromTransaction(
           createVoucherLine({
             amount: naturalPersonPayment.netPaymentAmount,
             auxiliary: record.publicAccountSnapshot.displayName,
+            auxiliaryId: record.publicAccountId,
+            auxiliaryScope: '对公账户',
             id: `${record.id}-credit-bank`,
             side: '贷方',
             subjectCode: bankSubjectCode,
@@ -1695,6 +1725,8 @@ export function buildAccountingVoucherFromTransaction(
         createVoucherLine({
           amount: record.amount,
           auxiliary: record.publicAccountSnapshot.displayName,
+          auxiliaryId: record.publicAccountId,
+          auxiliaryScope: '对公账户',
           id: `${record.id}-credit`,
           side: '贷方',
           subjectCode: bankSubjectCode,
@@ -1746,7 +1778,7 @@ function buildAccountingVoucherFromRedInvoice(
           auxiliary: record.sourceNo,
           id: `${invoice.id}-${allocation.id}-debit-income`,
           side: '借方',
-          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'accrualRevenue') ?? '',
+          subjectCode: getRecordCategoryAccountingSubjectCode(record, 'accrualRevenue'),
           summary: `红冲 ${record.sourceTitle}`
         }),
         ...(taxAmount > moneyTolerance ? [createVoucherLine({
@@ -1754,7 +1786,7 @@ function buildAccountingVoucherFromRedInvoice(
           auxiliary: record.sourceNo,
           id: `${invoice.id}-${allocation.id}-debit-tax`,
           side: '借方' as const,
-          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'outputVatPayable') ?? '',
+          subjectCode: getRecordCategoryAccountingSubjectCode(record, 'outputVatPayable'),
           summary: `红冲 ${record.sourceTitle} 税额`
         })] : []),
         createVoucherLine({
@@ -1762,7 +1794,7 @@ function buildAccountingVoucherFromRedInvoice(
           auxiliary: record.counterparty,
           id: `${invoice.id}-${allocation.id}-credit-receivable`,
           side: '贷方',
-          subjectCode: getFinanceCategoryAccountingSubjectCode(record.category, 'accrualReceivable') ?? '',
+          subjectCode: getRecordCategoryAccountingSubjectCode(record, 'accrualReceivable'),
           summary: `红冲 ${record.sourceTitle}`
         })
       ];
@@ -2185,7 +2217,10 @@ export function buildAccountingVoucherFromOpeningAdjustment(
   const accountingPeriod = record.accountingPeriod;
   const voucherDate = record.createdAt.slice(0, 10);
   const voucherNo = `VCH-${accountingPeriod.replace('-', '')}-O${String(index + 1).padStart(3, '0')}`;
-  const counterSide = getOppositeVoucherLineSide(record.balanceSide);
+
+  if (record.lines.length < 2) {
+    return undefined;
+  }
 
   return finalizeAccountingVoucher({
     accountingPeriod,
@@ -2195,28 +2230,22 @@ export function buildAccountingVoucherFromOpeningAdjustment(
     id: `voucher-opening-adjustment-${record.id}`,
     invoiceRefs: [],
     kind: '转账凭证',
-    lines: [
+    lines: record.lines.map((line) =>
       createVoucherLine({
-        amount: record.amount,
-        auxiliary: '期初调整',
-        id: `${record.id}-target`,
-        side: record.balanceSide,
-        subjectCode: record.subjectCode,
+        amount: line.amount,
+        auxiliary: line.auxiliaryLabel === '无' ? '期初调整' : line.auxiliaryLabel,
+        auxiliaryId: line.auxiliaryId || undefined,
+        auxiliaryScope: line.auxiliaryScope === '无' ? undefined : line.auxiliaryScope,
+        id: line.id,
+        side: line.side,
+        subjectCode: line.subjectCode,
         summary: record.reason
-      }),
-      createVoucherLine({
-        amount: record.amount,
-        auxiliary: '期初调整',
-        id: `${record.id}-offset`,
-        side: counterSide,
-        subjectCode: openingAdjustmentOffsetSubjectCode,
-        summary: `期初调整差额承接：${record.reason}`
       })
-    ],
+    ),
     sourceModule: '账套初始化',
     sourceNo: record.voucherNo,
     sourceRefs: [createSourceRef('账套初始化', record.id, record.voucherNo, '主来源')],
-    sourceTitle: `${record.subjectCode} ${record.subjectName} 期初调整`,
+    sourceTitle: `${record.lines.map((line) => line.subjectName).join(' / ')} 期初调整`,
     sourceType: '期初调整',
     summary: `期初调整：${record.reason}`,
     voucherDate,
@@ -2986,6 +3015,8 @@ export function buildAccountingLedgerEntries(rows: AccountingVoucherRecord[]): A
       record.lines.map((line, index) => ({
         accountingPeriod: record.accountingPeriod,
         auxiliary: line.auxiliary,
+        auxiliaryId: line.auxiliaryId,
+        auxiliaryScope: line.auxiliaryScope,
         creditAmount: line.side === '贷方' ? line.amount : 0,
         debitAmount: line.side === '借方' ? line.amount : 0,
         voucherNo: record.voucherNo,

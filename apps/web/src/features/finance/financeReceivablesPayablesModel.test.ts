@@ -486,6 +486,11 @@ const tests: UnitTest[] = [
       assertEqual(transaction.reconciliationStatus, '未对账', 'settlement transaction should wait for bank reconciliation');
       assertEqual(transaction.sourceNo, record.documentNo, 'settlement transaction should point to confirmation document');
       assertEqual(transaction.files[0]?.status, '已上传', 'settlement voucher should become uploaded file');
+      assertEqual(
+        transaction.categorySnapshot.accountingSubjectMappings.accrualReceivable,
+        record.categorySnapshot.accountingSubjectMappings.accrualReceivable,
+        'settlement transaction should inherit source category mapping snapshot'
+      );
       assertEqual(linkedRecord.settledAmount, record.settledAmount, 'ledger settled amount should not change before review/reconciliation');
       assertEqual(linkedRecord.settlementStatus, record.settlementStatus, 'ledger status should not change before review/reconciliation');
       assertEqual(linkedRecord.linkedTransactionNos.includes(transaction.transactionNo), true, 'ledger should link pending cash-flow number');

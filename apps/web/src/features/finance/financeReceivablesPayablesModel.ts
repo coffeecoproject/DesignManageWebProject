@@ -14,6 +14,8 @@ import type { RelatedFileRecord } from '../../components/RelatedFileTable';
 import type {
   FinanceAccountingSubjectRole,
   FinancePaymentMethod,
+  FinancePrimaryCategoryConfig,
+  FinanceSecondaryCategoryConfig,
   FinanceSourceType,
   FinanceTransactionCategory,
   FinanceTransactionDirection,
@@ -22,9 +24,9 @@ import type {
 import type { PublicAccountRef } from '../system/PublicAccountConfigState';
 import {
   financeAccountingSubjectRoleLabels,
-  getFinanceCategoryMissingAccountingRoles,
   getFinanceCategorySnapshot
 } from './financeData';
+import { getAccountingSubjectByCode } from './financeAccountingSubjectData';
 import {
   getDefaultReceivablePayableTaxBasis,
   isFinanceTaxBasisResolved,
@@ -215,10 +217,11 @@ export function getFinanceReceivablePayableMissingAccountingRoles(
     return getFinanceReceivablePayableRequiredAccountingRoles(record, taxBasis);
   }
 
-  return getFinanceCategoryMissingAccountingRoles(
-    record.category,
-    getFinanceReceivablePayableRequiredAccountingRoles(record, taxBasis)
-  );
+  return getFinanceReceivablePayableRequiredAccountingRoles(record, taxBasis).filter((role) => {
+    const subjectCode = record.categorySnapshot.accountingSubjectMappings[role];
+
+    return !subjectCode || !getAccountingSubjectByCode(subjectCode);
+  });
 }
 
 export function getFinanceReceivablePayableMissingAccountingRoleLabels(
@@ -675,9 +678,15 @@ export function buildFinanceReceivablePayableMetrics(
 
 export function updateFinanceReceivablePayableRecordFromForm(
   record: FinanceReceivablePayableRecord,
-  form: FinanceReceivablePayableFormValue
+  form: FinanceReceivablePayableFormValue,
+  financePrimaryCategories?: FinancePrimaryCategoryConfig[],
+  financeSecondaryCategories?: FinanceSecondaryCategoryConfig[]
 ): FinanceReceivablePayableRecord {
-  const categorySnapshot = getFinanceCategorySnapshot(form.category);
+  const categorySnapshot = getFinanceCategorySnapshot(
+    form.category,
+    financePrimaryCategories,
+    financeSecondaryCategories
+  );
   const nextRecordSeed = {
     ...record,
     accountingPeriod: form.accountingPeriod,
@@ -785,7 +794,11 @@ export function buildFinanceReceivablePayableSettlementTransaction(
     accountingPeriod,
     amount: bankPaymentAmount,
     category: record.category,
-    categorySnapshot: getFinanceCategorySnapshot(record.category),
+    categorySnapshot: {
+      ...record.categorySnapshot,
+      accountingSubject: { ...record.categorySnapshot.accountingSubject },
+      accountingSubjectMappings: { ...record.categorySnapshot.accountingSubjectMappings }
+    },
     counterparty: record.counterparty,
     counterpartyId: record.counterpartyId,
     counterpartyType: record.counterpartyType,

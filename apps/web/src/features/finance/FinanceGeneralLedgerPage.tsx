@@ -25,7 +25,6 @@ import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationSta
 import { buildLedgerInitializationOpeningBalancesForGeneralLedger } from './financeLedgerInitializationModel';
 import {
   accountingStatementTargetTone,
-  accountingSubjectProfile,
   accountingSubjectTypeOptions,
   accountingSubjectTypeTone,
   type AccountingSubjectType
@@ -245,7 +244,7 @@ function GeneralLedgerDetailDrawer({
 }
 
 export function FinanceGeneralLedgerPage() {
-  const { enabledOpeningRows, enabledProfile } = useFinanceLedgerInitialization();
+  const { enabledOpeningRows, enabledProfile, enabledSubjectRows } = useFinanceLedgerInitialization();
   const {
     accountingPeriodLocks,
     accountingVoucherLaterPeriodAdjustmentRows,
@@ -264,30 +263,32 @@ export function FinanceGeneralLedgerPage() {
   const [activeSubjectCode, setActiveSubjectCode] = useState<string>();
 
   const voucherRows = useMemo(
-    () =>
-      applyAccountingVoucherLifecycle(
-        buildAccountingVouchers(
-          receivablePayableRows,
-          financeRows,
-          invoiceRows,
-          taxMatterRows,
-          bankReconciliationRows,
-          ledgerOpeningAdjustmentRows,
-          accountingVoucherLaterPeriodAdjustmentRows,
-          {
-            accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
-            declarationPreparationRows,
-            invoiceBusinessAllocationRows,
-            monthEndMatterRows
-          }
-        ),
-        accountingVoucherLifecycleRows
-      ),
+    () => enabledProfile
+      ? applyAccountingVoucherLifecycle(
+          buildAccountingVouchers(
+            receivablePayableRows,
+            financeRows,
+            invoiceRows,
+            taxMatterRows,
+            bankReconciliationRows,
+            ledgerOpeningAdjustmentRows,
+            accountingVoucherLaterPeriodAdjustmentRows,
+            {
+              accountingPeriodStart: enabledProfile.effectivePeriod,
+              declarationPreparationRows,
+              invoiceBusinessAllocationRows,
+              monthEndMatterRows
+            }
+          ),
+          accountingVoucherLifecycleRows
+        )
+      : [],
     [
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingVoucherLifecycleRows,
       bankReconciliationRows,
       declarationPreparationRows,
+      enabledProfile,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,
@@ -306,8 +307,8 @@ export function FinanceGeneralLedgerPage() {
     [enabledOpeningRows, enabledProfile]
   );
   const ledgerResponse = useMemo(
-    () => buildGeneralLedgerResponse({ entries: ledgerEntries, filters, openingBalances, periodLocks: accountingPeriodLocks }),
-    [accountingPeriodLocks, filters, ledgerEntries, openingBalances]
+    () => buildGeneralLedgerResponse({ entries: ledgerEntries, filters, openingBalances, periodLocks: accountingPeriodLocks, subjects: enabledSubjectRows }),
+    [accountingPeriodLocks, enabledSubjectRows, filters, ledgerEntries, openingBalances]
   );
   const { metrics, periodSummary, rows } = ledgerResponse;
   const readbackNotice = getGeneralLedgerReadbackNotice(periodSummary);

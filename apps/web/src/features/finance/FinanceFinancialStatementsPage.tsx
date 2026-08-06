@@ -31,6 +31,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell, type CellTextTone } from '../../components/TableCell';
 import { useFinanceManagement } from './FinanceManagementState';
+import { useFinanceLedgerInitialization } from './FinanceLedgerInitializationState';
 import {
   applyAccountingVoucherLifecycle,
   buildAccountingLedgerEntries,
@@ -51,6 +52,7 @@ import {
   type FinanceStatementMode
 } from './financeFinancialStatementsModel';
 import { accountingSubjectProfile } from './financeAccountingSubjectData';
+import { buildLedgerInitializationOpeningBalancesForGeneralLedger } from './financeLedgerInitializationModel';
 import { formatMoney } from './financeUtils';
 
 const accountingMonthPattern = /^\d{4}-\d{2}$/;
@@ -525,9 +527,16 @@ function expandAccountingPeriods(periods: Set<string>) {
 
 function getAvailableAccountingPeriods(
   ledgerEntries: AccountingLedgerEntry[],
-  accountingPeriodLocks: AccountingPeriodLockRecord[]
+  accountingPeriodLocks: AccountingPeriodLockRecord[],
+  additionalPeriods: string[] = []
 ) {
   const periods = new Set<string>([generalLedgerDefaultMonth]);
+
+  additionalPeriods.forEach((period) => {
+    if (isAccountingMonth(period)) {
+      periods.add(period);
+    }
+  });
 
   ledgerEntries.forEach((entry) => {
     if (isAccountingMonth(entry.accountingPeriod)) {
@@ -796,13 +805,23 @@ function getExpenseTotal(report: FinanceFinancialStatementReport) {
 function buildFinancialStatementArchiveRows({
   accountingPeriodLocks,
   cycle,
-  ledgerEntries
+  effectivePeriod,
+  ledgerEntries,
+  openingBalances,
+  subjects
 }: {
   accountingPeriodLocks: AccountingPeriodLockRecord[];
   cycle: FinancialStatementCycle;
+  effectivePeriod?: string;
   ledgerEntries: AccountingLedgerEntry[];
+  openingBalances: ReturnType<typeof buildLedgerInitializationOpeningBalancesForGeneralLedger>;
+  subjects: Parameters<typeof buildGeneralLedgerResponse>[0]['subjects'];
 }): FinancialStatementArchiveRow[] {
-  const availableMonths = getAvailableAccountingPeriods(ledgerEntries, accountingPeriodLocks);
+  const availableMonths = getAvailableAccountingPeriods(
+    ledgerEntries,
+    accountingPeriodLocks,
+    effectivePeriod ? [effectivePeriod] : []
+  );
 
   return getAvailableStatementPeriods(availableMonths, cycle).map((period) => {
     const generalLedgerResponse = buildGeneralLedgerResponse({
@@ -811,7 +830,9 @@ function buildFinancialStatementArchiveRows({
         ...defaultGeneralLedgerFilters,
         accountingPeriodTime: getStatementPeriodScope(period)
       },
-      periodLocks: accountingPeriodLocks
+      periodLocks: accountingPeriodLocks,
+      openingBalances,
+      subjects
     });
     const yearToDateLedgerResponse = buildGeneralLedgerResponse({
       entries: ledgerEntries,
@@ -819,7 +840,9 @@ function buildFinancialStatementArchiveRows({
         ...defaultGeneralLedgerFilters,
         accountingPeriodTime: getYearToDateRange(getPeriodEndMonth(period))
       },
-      periodLocks: accountingPeriodLocks
+      periodLocks: accountingPeriodLocks,
+      openingBalances,
+      subjects
     });
     const report = buildFinanceFinancialStatementReport({
       periodSummary: generalLedgerResponse.periodSummary,
@@ -1256,6 +1279,7 @@ function FinancialStatementDetailDrawer({
 }
 
 export function FinanceFinancialStatementsPage() {
+  const { enabledOpeningRows, enabledProfile, enabledSubjectRows } = useFinanceLedgerInitialization();
   const {
     accountingPeriodLocks,
     accountingVoucherLaterPeriodAdjustmentRows,
@@ -1276,25 +1300,28 @@ export function FinanceFinancialStatementsPage() {
   });
   const [activeAccountingPeriod, setActiveAccountingPeriod] = useState<string>();
   const generatedVoucherRows = useMemo(
-    () => buildAccountingVouchers(
-      receivablePayableRows,
-      financeRows,
-      invoiceRows,
-      taxMatterRows,
-      bankReconciliationRows,
-      ledgerOpeningAdjustmentRows,
-      accountingVoucherLaterPeriodAdjustmentRows,
-      {
-        accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
-        declarationPreparationRows,
-        invoiceBusinessAllocationRows,
-        monthEndMatterRows
-      }
-    ),
+    () => enabledProfile
+      ? buildAccountingVouchers(
+          receivablePayableRows,
+          financeRows,
+          invoiceRows,
+          taxMatterRows,
+          bankReconciliationRows,
+          ledgerOpeningAdjustmentRows,
+          accountingVoucherLaterPeriodAdjustmentRows,
+          {
+            accountingPeriodStart: enabledProfile.effectivePeriod,
+            declarationPreparationRows,
+            invoiceBusinessAllocationRows,
+            monthEndMatterRows
+          }
+        )
+      : [],
     [
       accountingVoucherLaterPeriodAdjustmentRows,
       bankReconciliationRows,
       declarationPreparationRows,
+      enabledProfile,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,
@@ -1309,9 +1336,24 @@ export function FinanceFinancialStatementsPage() {
     [accountingVoucherLifecycleRows, generatedVoucherRows]
   );
   const ledgerEntries = useMemo(() => buildAccountingLedgerEntries(voucherRows), [voucherRows]);
+  const openingBalances = useMemo(
+    () => enabledProfile
+      ? buildLedgerInitializationOpeningBalancesForGeneralLedger(enabledOpeningRows, enabledProfile)
+      : [],
+    [enabledOpeningRows, enabledProfile]
+  );
   const archiveRows = useMemo(
-    () => buildFinancialStatementArchiveRows({ accountingPeriodLocks, cycle: statementCycle, ledgerEntries }),
-    [accountingPeriodLocks, ledgerEntries, statementCycle]
+    () => enabledProfile
+      ? buildFinancialStatementArchiveRows({
+          accountingPeriodLocks,
+          cycle: statementCycle,
+          effectivePeriod: enabledProfile.effectivePeriod,
+          ledgerEntries,
+          openingBalances,
+          subjects: enabledSubjectRows
+        })
+      : [],
+    [accountingPeriodLocks, enabledProfile?.effectivePeriod, enabledSubjectRows, ledgerEntries, openingBalances, statementCycle]
   );
   const displayRows = useMemo(
     () => archiveRows.filter((record) => isStatementPeriodInDateScope(record, accountingPeriodTime)),

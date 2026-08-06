@@ -6,8 +6,6 @@ import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../
 import { DrawerFormField, DrawerFormGrid, DrawerFormShell } from '../../components/DrawerForm';
 import { FileSlot, FileSlotGrid } from '../../components/FileSlot';
 import {
-  financePrimaryCategorySeeds,
-  financeSecondaryCategorySeeds,
   type FinancePrimaryCategoryConfig,
   type FinanceSecondaryCategoryConfig
 } from './financeData';
@@ -23,6 +21,8 @@ import { financeToday } from './financeUtils';
 
 type FinanceReceivablesPayablesFormDrawerProps = {
   form: FinanceReceivablePayableFormValue;
+  primaryCategories: FinancePrimaryCategoryConfig[];
+  secondaryCategories: FinanceSecondaryCategoryConfig[];
   open: boolean;
   record?: FinanceReceivablePayableRecord;
   saveDisabled: boolean;
@@ -38,16 +38,22 @@ function normalizePickerValue(dateString: string | string[]) {
   return Array.isArray(dateString) ? dateString[0] ?? '' : dateString;
 }
 
-function getCategoryOptions(direction: FinanceReceivablePayableFormValue['direction']) {
+function getCategoryOptions(
+  direction: FinanceReceivablePayableFormValue['direction'],
+  secondaryCategories: FinanceSecondaryCategoryConfig[]
+) {
   const targetDirection = direction === '应收' ? '收入' : '支出';
 
-  return financeSecondaryCategorySeeds.filter((category) => category.status === '启用' && category.direction === targetDirection);
+  return secondaryCategories.filter((category) => category.status === '启用' && category.direction === targetDirection);
 }
 
-function getPrimaryCategoryOptions(direction: FinanceReceivablePayableFormValue['direction']) {
+function getPrimaryCategoryOptions(
+  direction: FinanceReceivablePayableFormValue['direction'],
+  primaryCategories: FinancePrimaryCategoryConfig[]
+) {
   const targetDirection = direction === '应收' ? '收入' : '支出';
 
-  return financePrimaryCategorySeeds.filter((category) => category.status === '启用' && category.direction === targetDirection);
+  return primaryCategories.filter((category) => category.status === '启用' && category.direction === targetDirection);
 }
 
 function getPrimaryCategorySelectOptions(categories: FinancePrimaryCategoryConfig[]) {
@@ -64,8 +70,8 @@ function getCategorySelectOptions(categories: FinanceSecondaryCategoryConfig[]) 
   }));
 }
 
-function getSelectedSecondaryCategory(categoryName: string) {
-  return financeSecondaryCategorySeeds.find((category) => category.name === categoryName);
+function getSelectedSecondaryCategory(categoryName: string, secondaryCategories: FinanceSecondaryCategoryConfig[]) {
+  return secondaryCategories.find((category) => category.name === categoryName);
 }
 
 function toBasisFile(file: UploadFile) {
@@ -81,19 +87,23 @@ function toBasisFile(file: UploadFile) {
 export function FinanceReceivablesPayablesFormDrawer({
   form,
   open,
+  primaryCategories,
   record,
   saveDisabled,
+  secondaryCategories,
   onCancel,
   onSave,
   onUpdate
 }: FinanceReceivablesPayablesFormDrawerProps) {
-  const primaryCategoryOptions = getPrimaryCategoryOptions(form.direction);
-  const selectedSecondaryCategory = getSelectedSecondaryCategory(form.category);
+  const primaryCategoryOptions = getPrimaryCategoryOptions(form.direction, primaryCategories);
+  const selectedSecondaryCategory = getSelectedSecondaryCategory(form.category, secondaryCategories);
   const selectedPrimaryCategoryId = selectedSecondaryCategory?.primaryId ?? primaryCategoryOptions[0]?.id;
-  const categoryOptions = getCategoryOptions(form.direction).filter((category) => category.primaryId === selectedPrimaryCategoryId);
+  const categoryOptions = getCategoryOptions(form.direction, secondaryCategories)
+    .filter((category) => category.primaryId === selectedPrimaryCategoryId);
 
   function handlePrimaryCategoryChange(primaryId: string) {
-    const nextCategory = getCategoryOptions(form.direction).find((category) => category.primaryId === primaryId);
+    const nextCategory = getCategoryOptions(form.direction, secondaryCategories)
+      .find((category) => category.primaryId === primaryId);
 
     if (nextCategory) {
       onUpdate('category', nextCategory.name);

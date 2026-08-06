@@ -23,7 +23,7 @@ import {
 } from './financeGeneralLedgerModel';
 import type { FinanceTaxMatterRecord } from './financeTaxFilingData';
 import type { FinanceMonthEndMatterRecord } from './financeMonthEndModel';
-import type { SocialInsuranceEmployeeRecord } from './financeSocialInsuranceData';
+import type { SocialInsuranceEmployeeRecord, SocialInsuranceHandlingStatus } from './financeSocialInsuranceData';
 import { financeToday, getAccountingPeriodFromBusinessPeriod } from './financeUtils';
 
 export type FinancePeriodCloseStatus = '可结账' | '需处理' | '已结账';
@@ -267,6 +267,16 @@ const currentFinancePeriodCloseCheckCodes = new Set<string>([
   'cash_reconciliation',
   'social_insurance_housing_fund'
 ]);
+
+const socialInsurancePeriodCloseReadyStatuses = new Set<SocialInsuranceHandlingStatus>([
+  '待缴费',
+  '已缴费',
+  '无需缴纳'
+]);
+
+export function isSocialInsuranceRecordReadyForPeriodClose(record: SocialInsuranceEmployeeRecord) {
+  return socialInsurancePeriodCloseReadyStatuses.has(record.handlingStatus);
+}
 
 function isFinancePeriodCloseCheckCode(code: string): code is FinancePeriodCloseCheckCode {
   return currentFinancePeriodCloseCheckCodes.has(code);
@@ -795,7 +805,7 @@ function buildPeriodCloseRecord({
   );
   const pendingReviewCashFlowCount = pendingReviewCashFlowRows.length;
   const pendingSocialInsuranceRows = socialInsuranceRows.filter((record) =>
-    record.period === period && record.handlingStatus !== '已缴费' && record.handlingStatus !== '无需缴纳'
+    record.period === period && !isSocialInsuranceRecordReadyForPeriodClose(record)
   );
   const socialInsurancePendingCount = pendingSocialInsuranceRows.length;
   const pendingMonthEndMatterRows = monthEndMatterRows.filter(
@@ -898,8 +908,8 @@ function buildPeriodCloseRecord({
     }),
     createCheckItem({
       code: 'social_insurance_housing_fund',
-      detail: socialInsurancePendingCount === 0 ? '本期社保公积金事项已完成。' : `还有 ${socialInsurancePendingCount} 项社保公积金事项未完成。`,
-      nextStep: '需先在社保公积金完成缴费确认、缴费登记或凭证补充',
+      detail: socialInsurancePendingCount === 0 ? '本期社保公积金已完成核定。' : `还有 ${socialInsurancePendingCount} 项社保公积金未完成核定或更正。`,
+      nextStep: '需先在社保公积金完成核定确认或欠缴更正',
       passed: socialInsurancePendingCount === 0,
       sourceSummary: summarizeCheckSources('社保公积金', pendingSocialInsuranceRows.map((record) => record.id)),
       title: '社保公积金'
@@ -1021,6 +1031,7 @@ export function buildFinancePeriodCloseRecords({
   ledgerEntries,
   monthEndMatterRows = [],
   periodLocks = [],
+  resolveSocialInsuranceRowsForPeriod,
   socialInsuranceRows = [],
   taxMatterRows,
   voucherRows
@@ -1032,6 +1043,7 @@ export function buildFinancePeriodCloseRecords({
   ledgerEntries: AccountingLedgerEntry[];
   monthEndMatterRows?: FinanceMonthEndMatterRecord[];
   periodLocks?: AccountingPeriodLockRecord[];
+  resolveSocialInsuranceRowsForPeriod?: (period: string) => SocialInsuranceEmployeeRecord[];
   socialInsuranceRows?: SocialInsuranceEmployeeRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
@@ -1052,7 +1064,7 @@ export function buildFinancePeriodCloseRecords({
       monthEndMatterRows,
       period,
       periodLocks,
-      socialInsuranceRows,
+      socialInsuranceRows: resolveSocialInsuranceRowsForPeriod?.(period) ?? socialInsuranceRows,
       voucherRows
     }))
   });
@@ -1081,6 +1093,7 @@ export function buildFinancePeriodCloseReadModel({
   ledgerEntries,
   monthEndMatterRows = [],
   periodLocks = [],
+  resolveSocialInsuranceRowsForPeriod,
   socialInsuranceRows = [],
   taxMatterRows,
   voucherRows
@@ -1092,6 +1105,7 @@ export function buildFinancePeriodCloseReadModel({
   ledgerEntries: AccountingLedgerEntry[];
   monthEndMatterRows?: FinanceMonthEndMatterRecord[];
   periodLocks?: AccountingPeriodLockRecord[];
+  resolveSocialInsuranceRowsForPeriod?: (period: string) => SocialInsuranceEmployeeRecord[];
   socialInsuranceRows?: SocialInsuranceEmployeeRecord[];
   taxMatterRows: FinanceTaxMatterRecord[];
   voucherRows: AccountingVoucherRecord[];
@@ -1104,6 +1118,7 @@ export function buildFinancePeriodCloseReadModel({
     ledgerEntries,
     monthEndMatterRows,
     periodLocks,
+    resolveSocialInsuranceRowsForPeriod,
     socialInsuranceRows,
     taxMatterRows,
     voucherRows

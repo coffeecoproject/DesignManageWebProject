@@ -18,6 +18,7 @@ import {
   resolveActivePublicAccountRef,
   usePublicAccountConfigState
 } from '../system/PublicAccountConfigState';
+import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import type { FinanceTransactionRecord } from './financeData';
 import { useFinanceManagement } from './FinanceManagementState';
 import type { CustomerTaskSettlementMergeIssue } from './financeCustomerTaskSettlementModel';
@@ -134,6 +135,7 @@ export function FinanceReceivablesPayablesPage() {
     updateReceivablePayableRecord
   } = useFinanceManagement();
   const { publicAccounts } = usePublicAccountConfigState();
+  const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const [messageApi, messageContextHolder] = message.useMessage();
   const [activeRecordId, setActiveRecordId] = useState<string>();
   const [activeTaskSettlementIssueId, setActiveTaskSettlementIssueId] = useState<string>();
@@ -370,7 +372,12 @@ export function FinanceReceivablesPayablesPage() {
       return;
     }
 
-    const nextRecord = updateFinanceReceivablePayableRecordFromForm(formDrawer.record, formDrawer.form);
+    const nextRecord = updateFinanceReceivablePayableRecordFromForm(
+      formDrawer.record,
+      formDrawer.form,
+      financePrimaryCategories,
+      financeSecondaryCategories
+    );
     const nextPeriodGuard = getAccountingPeriodGuard(nextRecord.accountingPeriod, '调整应收应付事项');
 
     if (!nextPeriodGuard.allowed) {
@@ -646,8 +653,10 @@ export function FinanceReceivablesPayablesPage() {
       <FinanceReceivablesPayablesFormDrawer
         form={formDrawer.form}
         open={formDrawer.open}
+        primaryCategories={financePrimaryCategories}
         record={formDrawer.record}
         saveDisabled={!formValid}
+        secondaryCategories={financeSecondaryCategories}
         onCancel={formDrawer.cancel}
         onSave={handleSaveForm}
         onUpdate={formDrawer.updateForm}

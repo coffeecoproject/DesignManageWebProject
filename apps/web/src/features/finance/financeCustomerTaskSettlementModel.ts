@@ -7,7 +7,7 @@ import type {
   CustomerTaskBillingFact,
   CustomerTaskSettlementBatch
 } from '../tasks/taskCustomerBillingModel';
-import { getFinanceCategorySnapshot } from './financeData';
+import { getFinanceCategorySnapshot, type FinanceCategorySnapshot } from './financeData';
 import type {
   FinanceCustomerTaskSettlementSnapshot,
   FinanceReceivablePayableRecord
@@ -146,7 +146,8 @@ export function buildCustomerTaskReceivablePayableRecord({
   accountingPeriod = batch.settlementPeriod,
   confirmDate,
   lineItems = batch.lineItems,
-  stores
+  stores,
+  categorySnapshot: suppliedCategorySnapshot
 }: {
   batch: CustomerTaskSettlementBatch;
   brand: BrandRecord;
@@ -155,6 +156,7 @@ export function buildCustomerTaskReceivablePayableRecord({
   confirmDate?: string;
   lineItems?: CustomerTaskSettlementBatch['lineItems'];
   stores: readonly StoreRecord[];
+  categorySnapshot?: FinanceCategorySnapshot;
 }): FinanceReceivablePayableRecord {
   const latestCustomerAcceptedOn = lineItems.map((line) => line.customerAcceptedOn).sort().at(-1)
     ?? `${batch.settlementPeriod}-01`;
@@ -166,7 +168,7 @@ export function buildCustomerTaskReceivablePayableRecord({
   const documentNo = `AR-${compactPeriod}-T${createStableSuffix(sourceNo)}`;
   const amount = Number(lineItems.reduce((sum, line) => sum + line.amount, 0).toFixed(2));
   const category = '设计服务收入';
-  const categorySnapshot = getFinanceCategorySnapshot(category);
+  const categorySnapshot = suppliedCategorySnapshot ?? getFinanceCategorySnapshot(category);
   const taskSettlement = buildTaskSettlementSnapshot({ batch, brand, customer, lineItems, stores });
   const taxBasis = getDefaultReceivablePayableTaxBasis({
     amount,
@@ -280,7 +282,13 @@ function rebuildDirectlyCorrectableTaskSettlement({
   previousRecords: FinanceReceivablePayableRecord[];
   stores: readonly StoreRecord[];
 }) {
-  const rebuilt = buildCustomerTaskReceivablePayableRecord({ batch, brand, customer, stores });
+  const rebuilt = buildCustomerTaskReceivablePayableRecord({
+    batch,
+    brand,
+    categorySnapshot: previousRecords[0]?.categorySnapshot,
+    customer,
+    stores
+  });
   const latestCorrectedLine = [...batch.lineItems]
     .sort((left, right) => right.customerAcceptanceUpdatedAt.localeCompare(left.customerAcceptanceUpdatedAt))[0];
   const correctedAt = latestCorrectedLine?.customerAcceptanceUpdatedAt ?? rebuilt.updatedAt;
@@ -314,7 +322,8 @@ export function mergeCustomerTaskReceivablePayableRecords({
   customers,
   canDirectCorrect,
   records,
-  stores
+  stores,
+  categorySnapshot
 }: {
   batches: readonly CustomerTaskSettlementBatch[];
   brands: readonly BrandRecord[];
@@ -322,7 +331,11 @@ export function mergeCustomerTaskReceivablePayableRecords({
   canDirectCorrect: (record: FinanceReceivablePayableRecord) => boolean;
   records: FinanceReceivablePayableRecord[];
   stores: readonly StoreRecord[];
+  categorySnapshot?: FinanceCategorySnapshot | null;
 }): FinanceReceivablePayableRecord[] {
+  const newRecordCategorySnapshot = categorySnapshot === undefined
+    ? getFinanceCategorySnapshot('设计服务收入')
+    : categorySnapshot;
   let nextRecords = [...records];
 
   for (const batch of batches) {
@@ -346,7 +359,15 @@ export function mergeCustomerTaskReceivablePayableRecords({
     );
 
     if (batchRecords.length === 0) {
-      nextRecords.push(buildCustomerTaskReceivablePayableRecord({ batch, brand, customer, stores }));
+      if (newRecordCategorySnapshot) {
+        nextRecords.push(buildCustomerTaskReceivablePayableRecord({
+          batch,
+          brand,
+          categorySnapshot: newRecordCategorySnapshot,
+          customer,
+          stores
+        }));
+      }
       continue;
     }
 

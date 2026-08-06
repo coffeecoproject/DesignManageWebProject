@@ -1,5 +1,6 @@
 import {
   financeTransactionRecords,
+  getFinanceCategorySnapshot,
   getFinanceSeedPublicAccountRef,
   type FinanceTransactionRecord
 } from './financeData';
@@ -142,6 +143,7 @@ function getTaxMatterByNo(matterNo: string) {
 function createSalarySettlementFixture() {
   const settlementSnapshot = {
     businessDeductionAmount: 0,
+    employeeAdvanceRecoveryAmount: 0,
     employeeGrossPayableAmount: 12000,
     employeeHousingFundAmount: 400,
     employeeNetPayableAmount: 10500,
@@ -184,6 +186,7 @@ function createSalarySettlementFixture() {
     accountingPeriod: '2026-07',
     amount: settlementSnapshot.employeeNetPayableAmount,
     category: '工资发放',
+    categorySnapshot: getFinanceCategorySnapshot('工资发放'),
     counterparty: '测试员工',
     counterpartyType: '员工',
     direction: '支出',
@@ -314,15 +317,34 @@ function createOpeningAdjustmentVoucher(
   return {
     accountingPeriod: '2026-06',
     amount: 1_200,
-    balanceSide: '借方',
     createdAt: '2026-06-30 17:30',
     createdBy: '李明',
     evidenceName: '期初银行对账差异说明-202606',
     id: 'ledger-opening-adjustment-test',
+    lines: [
+      {
+        amount: 1_200,
+        auxiliaryId: 'public-account-cmb-basic',
+        auxiliaryLabel: '招商银行基本户',
+        auxiliaryScope: '对公账户',
+        id: 'ledger-opening-adjustment-test-debit',
+        side: '借方',
+        subjectCode: '1002',
+        subjectName: '银行存款'
+      },
+      {
+        amount: 1_200,
+        auxiliaryId: '',
+        auxiliaryLabel: '无',
+        auxiliaryScope: '无',
+        id: 'ledger-opening-adjustment-test-credit',
+        side: '贷方',
+        subjectCode: '3103',
+        subjectName: '本年利润'
+      }
+    ],
     reason: '期初银行余额核对差异',
     status: '待记账',
-    subjectCode: '1002',
-    subjectName: '银行存款',
     voucherNo: 'INIT-ADJ-202606-0001',
     ...overrides
   };
@@ -404,6 +426,40 @@ function createTaxMatter(overrides: Partial<FinanceTaxMatterRecord> = {}): Finan
 }
 
 const tests: UnitTest[] = [
+  {
+    name: 'builds accrual vouchers from the source category snapshot instead of current name mappings',
+    run: () => {
+      const source = financeReceivablePayableRecords.find((record) => record.direction === '应收' && record.confirmationStatus === '已确认');
+
+      if (!source) {
+        throw new Error('expected a confirmed receivable seed');
+      }
+
+      const record: FinanceReceivablePayableRecord = {
+        ...source,
+        categorySnapshot: {
+          ...source.categorySnapshot,
+          accountingSubjectMappings: {
+            ...source.categorySnapshot.accountingSubjectMappings,
+            accrualReceivable: '1122',
+            accrualRevenue: '5051',
+            outputVatPayable: '2221.01'
+          }
+        }
+      };
+      const voucher = buildAccountingVoucherFromReceivablePayable(record, 0);
+
+      if (!voucher) {
+        throw new Error('expected receivable voucher');
+      }
+
+      assertEqual(
+        voucher.lines.some((line) => line.side === '贷方' && line.subject?.code === '5051'),
+        true,
+        'voucher revenue line should use the stored source snapshot mapping'
+      );
+    }
+  },
   {
     name: 'builds a month-end candidate voucher only after its source matter is confirmed',
     run: () => {
@@ -601,6 +657,33 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'recovers a social-insurance employee advance from net pay without reducing salary expense',
+    run: () => {
+      const salaryFixture = createSalarySettlementFixture();
+      const settlementSnapshot = {
+        ...salaryFixture.settlementSnapshot,
+        businessDeductionAmount: 0,
+        employeeAdvanceRecoveryAmount: 500,
+        employeeNetPayableAmount: 10000
+      };
+      const receivablePayable = {
+        ...salaryFixture.receivablePayable,
+        amount: settlementSnapshot.employeeNetPayableAmount,
+        salarySettlement: settlementSnapshot
+      };
+      const vouchers = buildAccountingVouchersForTest(
+        [receivablePayable, ...financeReceivablePayableRecords],
+        financeTransactionRecords,
+        financeInvoiceRecords
+      );
+      const voucher = getVoucherBySourceNo(vouchers, receivablePayable.documentNo);
+
+      assertEqual(getLineBySubjectCode(voucher, '1221').amount, 500, 'salary accrual should credit the employee advance receivable');
+      assertEqual(getAccountingVoucherDebitTotal(voucher), 15000, 'advance recovery must not reduce salary and employer contribution expense');
+      assertEqual(getAccountingVoucherCreditTotal(voucher), 15000, 'net pay statutory liabilities and advance recovery should remain balanced');
+    }
+  },
+  {
     name: 'creates cash settlement entries after transaction review and original-evidence verification',
     run: () => {
       const salaryFixture = createSalarySettlementFixture();
@@ -725,7 +808,10 @@ const tests: UnitTest[] = [
       assertEqual(voucher.status, '待记账', 'complete opening adjustment should be ready to prepare');
       assertEqual(voucher.kind, '转账凭证', 'opening adjustment should be a transfer voucher');
       assertEqual(getLineSubjectCode(voucher, '借方'), '1002', 'debit-side opening adjustment should debit target subject');
-      assertEqual(getLineSubjectCode(voucher, '贷方'), '3104', 'opening adjustment should credit retained-profit carry subject');
+      assertEqual(getLineSubjectCode(voucher, '贷方'), '3103', 'opening adjustment should credit the explicitly selected balancing subject');
+      const bankLine = voucher.lines.find((line) => line.subjectCode === '1002');
+      assertEqual(bankLine?.auxiliaryId, 'public-account-cmb-basic', 'opening adjustment should preserve public-account identity');
+      assertEqual(bankLine?.auxiliaryScope, '对公账户', 'opening adjustment should preserve public-account auxiliary scope');
 
       const bookedRows = applyAccountingVoucherLifecycle(vouchers, [createBookedLifecycleRow(voucher, '记-202606-009')]);
       const ledgerEntries = buildAccountingLedgerEntries(bookedRows);
@@ -735,10 +821,13 @@ const tests: UnitTest[] = [
         true,
         'booked opening adjustment should debit target subject in general-ledger entries'
       );
+      const bankLedgerEntry = ledgerEntries.find((entry) => entry.subjectCode === '1002');
+      assertEqual(bankLedgerEntry?.auxiliaryId, 'public-account-cmb-basic', 'booked opening adjustment should keep account identity in general ledger');
+      assertEqual(bankLedgerEntry?.auxiliaryScope, '对公账户', 'booked opening adjustment should keep account scope in general ledger');
       assertEqual(
-        ledgerEntries.some((entry) => entry.subjectCode === '3104' && entry.creditAmount === 1_200),
+        ledgerEntries.some((entry) => entry.subjectCode === '3103' && entry.creditAmount === 1_200),
         true,
-        'booked opening adjustment should credit carry subject in general-ledger entries'
+        'booked opening adjustment should credit the selected balancing subject in general-ledger entries'
       );
     }
   },
@@ -927,6 +1016,16 @@ const tests: UnitTest[] = [
       assertEqual(voucher.kind, '收款凭证', 'tax refund receipt should use a receipt voucher');
       assertEqual(getLineSubjectCode(voucher, '借方'), '1002', 'tax refund receipt should debit bank deposit');
       assertEqual(getLineSubjectCode(voucher, '贷方'), '2221.02', 'enterprise income tax refund should credit income-tax payable');
+      const bankLine = voucher.lines.find((line) => line.subjectCode === '1002');
+      assertEqual(bankLine?.auxiliaryScope, '对公账户', 'bank voucher line should use public-account auxiliary accounting');
+      assertEqual(
+        bankLine?.auxiliaryId,
+        reviewedTransaction.publicAccountId,
+        'bank voucher line should preserve the selected public-account identity'
+      );
+      const bookedRows = applyAccountingVoucherLifecycle(voucher ? [voucher] : [], [createBookedLifecycleRow(voucher)]);
+      const bankLedgerEntry = buildAccountingLedgerEntries(bookedRows).find((entry) => entry.subjectCode === '1002');
+      assertEqual(bankLedgerEntry?.auxiliaryId, reviewedTransaction.publicAccountId, 'general ledger should preserve bank auxiliary identity');
       assertEqual(
         voucher.lines.some((line) => line.subjectCode === '5051'),
         false,
@@ -2199,7 +2298,7 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'splits social-insurance arrears principal and late fee in the cash voucher',
+    name: 'splits social-insurance arrears into employer expense employee receivable and late fee',
     run: () => {
       const sourceTransaction = financeTransactionRecords.find((record) => record.status === '已入账');
       if (!sourceTransaction) throw new Error('expected posted transaction fixture');
@@ -2207,7 +2306,8 @@ const tests: UnitTest[] = [
       const voucher = buildAccountingVoucherFromTransaction({
         ...sourceTransaction,
         accountingAllocations: [
-          { amount: 1640, label: '2026-06 公积金补缴本金', subjectCode: '2211.04' },
+          { amount: 820, label: '2026-06 公积金单位补缴本金', subjectCode: '5602.02' },
+          { amount: 820, label: '2026-06 公积金个人代垫', subjectCode: '1221' },
           { amount: 18.5, label: '补缴滞纳金', subjectCode: '5711' }
         ],
         amount: 1658.5,
@@ -2232,7 +2332,8 @@ const tests: UnitTest[] = [
 
       if (!voucher) throw new Error('expected social-insurance arrears cash voucher');
       assertEqual(voucher.status, '待记账', 'balanced arrears voucher should be ready to book');
-      assertEqual(voucher.lines.some((line) => line.side === '借方' && line.subjectCode === '2211.04' && line.amount === 1640), true, 'principal should clear housing-fund liability');
+      assertEqual(voucher.lines.some((line) => line.side === '借方' && line.subjectCode === '5602.02' && line.amount === 820), true, 'employer principal should enter employee-benefit expense');
+      assertEqual(voucher.lines.some((line) => line.side === '借方' && line.subjectCode === '1221' && line.amount === 820), true, 'employee principal should create a recoverable advance');
       assertEqual(voucher.lines.some((line) => line.side === '借方' && line.subjectCode === '5711' && line.amount === 18.5), true, 'late fee should enter non-operating expense');
       assertEqual(voucher.lines.some((line) => line.side === '贷方' && line.subjectCode === '1002' && line.amount === 1658.5), true, 'total payment should credit bank deposit');
     }

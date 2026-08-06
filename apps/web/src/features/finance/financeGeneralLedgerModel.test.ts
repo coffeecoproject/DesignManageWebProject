@@ -80,6 +80,48 @@ const tests: UnitTest[] = [
     }
   },
   {
+    name: 'includes imported year-to-date movements when a mid-year account set is viewed from January',
+    run: () => {
+      const rows = buildGeneralLedgerSubjectBalances({
+        entries: [],
+        filters: {
+          ...defaultGeneralLedgerFilters,
+          accountingPeriodTime: {
+            mode: 'range',
+            range: { endDate: '2026-06-30', startDate: '2026-01-01' }
+          }
+        },
+        openingBalances: [
+          {
+            accountingPeriod: '2026-06',
+            amount: 252_669.48,
+            subjectCode: '1002',
+            yearToDateCreditAmount: 40_000,
+            yearToDateDebitAmount: 120_000
+          },
+          {
+            accountingPeriod: '2026-06',
+            amount: 0,
+            subjectCode: '5001',
+            yearToDateCreditAmount: 120_000,
+            yearToDateDebitAmount: 0
+          }
+        ]
+      });
+      const bankRow = rows.find((row) => row.subjectCode === '1002');
+      const revenueRow = rows.find((row) => row.subjectCode === '5001');
+
+      if (!bankRow || !revenueRow) {
+        throw new Error('expected imported year-to-date bank and revenue rows');
+      }
+
+      assertEqual(bankRow.openingBalance, 0, 'mid-year opening balance should not be inserted before its effective date');
+      assertEqual(bankRow.debitAmount, 120_000, 'year-to-date bank debit should be carried into annual movement');
+      assertEqual(bankRow.creditAmount, 40_000, 'year-to-date bank credit should be carried into annual movement');
+      assertEqual(revenueRow.creditAmount, 120_000, 'year-to-date revenue should be carried into the profit statement source');
+    }
+  },
+  {
     name: 'rolls prior-period movement into opening balance for the selected period',
     run: () => {
       const entries: AccountingLedgerEntry[] = [

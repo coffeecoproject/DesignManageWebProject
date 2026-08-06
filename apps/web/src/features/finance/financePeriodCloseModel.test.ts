@@ -208,18 +208,18 @@ const balancedLedgerEntries: AccountingLedgerEntry[] = [
 
 const tests: UnitTest[] = [
   {
-    name: 'blocks close from the social-insurance domain record instead of legacy tax matters',
+    name: 'blocks close from an unassessed social-insurance domain record instead of legacy tax matters',
     run: () => {
       const rows = buildRows({
         financeRows: [createFinanceTransaction({})],
         ledgerEntries: balancedLedgerEntries,
-        socialInsuranceRows: [{ ...socialInsuranceEmployeeRecords[0], handlingStatus: '待缴费', period: '2026-06' }],
+        socialInsuranceRows: [{ ...socialInsuranceEmployeeRecords[0], handlingStatus: '待核定', period: '2026-06' }],
         taxMatterRows: [createTaxMatter({})],
         voucherRows: [createVoucher('已记账', { id: 'voucher-booked' })]
       });
       const period = rows.find((record) => record.accountingPeriod === '2026-06');
 
-      assertEqual(period?.socialInsurancePendingCount, 1, 'unfinished social-insurance record should block period close');
+      assertEqual(period?.socialInsurancePendingCount, 1, 'unassessed social-insurance record should block period close');
       assertEqual(
         period?.checkItems.find((item) => item.code === 'social_insurance_housing_fund')?.status,
         '需处理',
@@ -228,13 +228,43 @@ const tests: UnitTest[] = [
     }
   },
   {
-    name: 'accepts paid and officially exempt social-insurance records for close',
+    name: 'resolves social-insurance close checks by each target accounting period',
+    run: () => {
+      const source = socialInsuranceEmployeeRecords[0];
+      const requestedPeriods: string[] = [];
+      const rows = buildFinancePeriodCloseRecords({
+        financeRows: [
+          createFinanceTransaction({ accountingPeriod: '2026-05', transactionNo: 'FIN-MAY-SOCIAL' }),
+          createFinanceTransaction({ accountingPeriod: '2026-06', transactionNo: 'FIN-JUNE-SOCIAL' })
+        ],
+        ledgerEntries: [],
+        resolveSocialInsuranceRowsForPeriod: (period) => {
+          requestedPeriods.push(period);
+          return period === '2026-06'
+            ? [{ ...source, id: 'social-june-pending', handlingStatus: '待核定', period }]
+            : [{ ...source, id: `social-${period}-paid`, handlingStatus: '已缴费', period }];
+        },
+        taxMatterRows: [],
+        voucherRows: []
+      });
+      const may = rows.find((record) => record.accountingPeriod === '2026-05');
+      const june = rows.find((record) => record.accountingPeriod === '2026-06');
+
+      assertEqual(requestedPeriods.includes('2026-05'), true, 'close workbench must request the may contribution state');
+      assertEqual(requestedPeriods.includes('2026-06'), true, 'close workbench must request the june contribution state');
+      assertEqual(may?.socialInsurancePendingCount, 0, 'a completed historical month must remain complete');
+      assertEqual(june?.socialInsurancePendingCount, 1, 'a pending current month must block only its own period');
+    }
+  },
+  {
+    name: 'accepts assessed unpaid paid and officially exempt social-insurance records for close',
     run: () => {
       const source = socialInsuranceEmployeeRecords[0];
       const rows = buildRows({
         financeRows: [createFinanceTransaction({})],
         ledgerEntries: balancedLedgerEntries,
         socialInsuranceRows: [
+          { ...source, id: 'social-assessed-unpaid', handlingStatus: '待缴费', period: '2026-06' },
           { ...source, id: 'social-paid', handlingStatus: '已缴费', period: '2026-06' },
           { ...source, id: 'housing-exempt', category: '公积金', handlingStatus: '无需缴纳', period: '2026-06' }
         ],
@@ -242,7 +272,30 @@ const tests: UnitTest[] = [
       });
       const period = rows.find((record) => record.accountingPeriod === '2026-06');
 
-      assertEqual(period?.socialInsurancePendingCount, 0, 'completed social-insurance outcomes should not block close');
+      assertEqual(period?.socialInsurancePendingCount, 0, 'assessed or completed social-insurance outcomes should not block close');
+    }
+  },
+  {
+    name: 'keeps next-period contribution payment review out of the original obligation period',
+    run: () => {
+      const source = socialInsuranceEmployeeRecords[0];
+      const rows = buildRows({
+        financeRows: [createFinanceTransaction({
+          accountingPeriod: '2026-07',
+          sourceNo: 'SI-2026-06-社保',
+          status: '待复核',
+          transactionNo: 'FIN-202607-SOCIAL'
+        })],
+        socialInsuranceRows: [
+          { ...source, handlingStatus: '待缴费', id: 'social-assessed-june', period: '2026-06' }
+        ]
+      });
+      const june = rows.find((record) => record.accountingPeriod === '2026-06');
+      const july = rows.find((record) => record.accountingPeriod === '2026-07');
+
+      assertEqual(june?.socialInsurancePendingCount, 0, 'June close should depend on June assessment rather than July cash completion');
+      assertEqual(june?.pendingReviewCashFlowCount, 0, 'July payment review must not be assigned back to June');
+      assertEqual(july?.pendingReviewCashFlowCount, 1, 'July should retain the actual payment review blocker');
     }
   },
   {
@@ -1104,7 +1157,7 @@ const tests: UnitTest[] = [
         financeRows: [createFinanceTransaction({})],
         ledgerEntries: balancedLedgerEntries,
         socialInsuranceRows: [
-          { ...source, id: 'social', category: '社保', handlingStatus: '待缴费', period: '2026-06' },
+          { ...source, id: 'social', category: '社保', handlingStatus: '欠缴待补', period: '2026-06' },
           { ...source, id: 'housing', category: '公积金', handlingStatus: '待确认', period: '2026-06' }
         ],
         taxMatterRows: [createTaxMatter({ id: 'tax-iit', dataStatus: '待复核', processStatus: '数据待确认' })],

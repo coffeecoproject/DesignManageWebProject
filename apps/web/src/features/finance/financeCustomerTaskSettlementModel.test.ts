@@ -520,6 +520,21 @@ const tests: UnitTest[] = [
       assertEqual(merged[0]?.amount, 16800, 'repricing must not rewrite an existing receivable');
       assertEqual(merged[0]?.taskSettlement?.lineItems[0]?.unitPrice, 12000, 'historical price snapshot must remain unchanged');
     }
+  },
+  {
+    name: 'FC-03 disabled task-income category blocks new receivables but preserves existing facts',
+    run() {
+      const blockedNewRows = mergeCustomerTaskReceivablePayableRecords({
+        batches: [taskBatch], brands: brandRecords, canDirectCorrect: () => true, categorySnapshot: null, customers: customerRecords, records: [], stores: storeRecords
+      });
+      const existing = buildCustomerTaskReceivablePayableRecord({ batch: taskBatch, brand, customer, stores: storeRecords });
+      const preservedRows = mergeCustomerTaskReceivablePayableRecords({
+        batches: [taskBatch], brands: brandRecords, canDirectCorrect: () => true, categorySnapshot: null, customers: customerRecords, records: [existing], stores: storeRecords
+      });
+
+      assertEqual(blockedNewRows.length, 0, 'disabled task-income category must block new receivable generation');
+      assertEqual(preservedRows[0], existing, 'disabled current config must not erase an existing receivable fact');
+    }
   }
 ];
 

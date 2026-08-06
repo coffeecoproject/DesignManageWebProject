@@ -29,7 +29,12 @@ import {
   applyAccountingVoucherLifecycle,
   buildAccountingVouchers
 } from './financeAccountingVoucherModel';
-import { financeTransactionRecords, type FinanceTransactionRecord } from './financeData';
+import {
+  financeTransactionRecords,
+  getEnabledFinanceCategorySnapshot,
+  type FinanceTransactionRecord
+} from './financeData';
+import { useFinanceCategoryState } from '../system/FinanceCategoryState';
 import {
   buildFinanceBankReconciliationLinkRecord,
   buildSeedFinanceBankReconciliationLinks,
@@ -291,6 +296,7 @@ function getPreviousAccountingPeriod(accountingPeriod: string) {
 
 export function FinanceManagementProvider({ children }: { children: ReactNode }) {
   const { enabledProfile } = useFinanceLedgerInitialization();
+  const { financePrimaryCategories, financeSecondaryCategories } = useFinanceCategoryState();
   const { brandRows, customerRows, storeRows } = useCustomerManagementState();
   const {
     isSalaryAdjustmentPeriodOpen,
@@ -493,6 +499,11 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
             getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
           ),
         customers: customerRows,
+        categorySnapshot: getEnabledFinanceCategorySnapshot(
+          '设计服务收入',
+          financePrimaryCategories,
+          financeSecondaryCategories
+        ) ?? null,
         records: currentRows,
         stores: storeRows
       });
@@ -536,6 +547,8 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     customerRows,
     customerTaskBillingFacts,
     customerTaskSettlementBatches,
+    financePrimaryCategories,
+    financeSecondaryCategories,
     financeRows,
     invoiceBusinessAllocationRows,
     storeRows
@@ -550,6 +563,11 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
           && !hasFinanceReceivablePayableActiveSettlement(
             getFinanceReceivablePayableLinkedTransactionRows(record, financeRows)
           ),
+        categorySnapshot: getEnabledFinanceCategorySnapshot(
+          '外协付款',
+          financePrimaryCategories,
+          financeSecondaryCategories
+        ) ?? null,
         people: peopleRows,
         records: currentRows
       })
@@ -558,6 +576,8 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     accountingPeriodLocks,
     accountingVoucherLifecycleRows,
     financeRows,
+    financePrimaryCategories,
+    financeSecondaryCategories,
     partTimeLaborSettlementBatches,
     peopleRows
   ]);
@@ -567,10 +587,21 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
         payments: salaryPaymentRecords,
         people: peopleRows,
         records: currentRows,
+        categorySnapshot: getEnabledFinanceCategorySnapshot(
+          '工资发放',
+          financePrimaryCategories,
+          financeSecondaryCategories
+        ) ?? null,
         workflows: salaryMonthlyWorkflows
       })
     );
-  }, [peopleRows, salaryMonthlyWorkflows, salaryPaymentRecords]);
+  }, [
+    financePrimaryCategories,
+    financeSecondaryCategories,
+    peopleRows,
+    salaryMonthlyWorkflows,
+    salaryPaymentRecords
+  ]);
   const effectiveDeclarationPreparationRows = useMemo(
     () => ensurePayrollIitDeclarationPreparationRecords(
       declarationPreparationRows,
@@ -591,24 +622,26 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
     [financeRows, receivablePayableRows]
   );
   const accountingVoucherRows = useMemo(
-    () => applyAccountingVoucherLifecycle(
-      buildAccountingVouchers(
-        derivedReceivablePayableRows,
-        financeRows,
-        invoiceRows,
-        effectiveTaxMatterRows,
-        bankReconciliationRows,
-        ledgerOpeningAdjustmentRows,
-        accountingVoucherLaterPeriodAdjustmentRows,
-        {
-          accountingPeriodStart: accountingSubjectProfile.effectivePeriod,
-          declarationPreparationRows: effectiveDeclarationPreparationRows,
-          invoiceBusinessAllocationRows,
-          monthEndMatterRows
-        }
-      ),
-      accountingVoucherLifecycleRows
-    ),
+    () => enabledProfile
+      ? applyAccountingVoucherLifecycle(
+          buildAccountingVouchers(
+            derivedReceivablePayableRows,
+            financeRows,
+            invoiceRows,
+            effectiveTaxMatterRows,
+            bankReconciliationRows,
+            ledgerOpeningAdjustmentRows,
+            accountingVoucherLaterPeriodAdjustmentRows,
+            {
+              accountingPeriodStart: enabledProfile.effectivePeriod,
+              declarationPreparationRows: effectiveDeclarationPreparationRows,
+              invoiceBusinessAllocationRows,
+              monthEndMatterRows
+            }
+          ),
+          accountingVoucherLifecycleRows
+        )
+      : [],
     [
       accountingVoucherLaterPeriodAdjustmentRows,
       accountingVoucherLifecycleRows,
@@ -616,6 +649,7 @@ export function FinanceManagementProvider({ children }: { children: ReactNode })
       customerTaskSettlementIssues,
       derivedReceivablePayableRows,
       effectiveDeclarationPreparationRows,
+      enabledProfile,
       financeRows,
       invoiceBusinessAllocationRows,
       invoiceRows,
