@@ -11,6 +11,7 @@ import {
 import { Input, InputNumber, Select, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import { CompactDetailTable } from '../../components/CompactDetailTable';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { DetailSummaryCards } from '../../components/DetailSummaryCards';
@@ -37,15 +38,16 @@ import {
   type SocialInsurancePolicyItem,
   type SocialInsurancePolicyItemStatus,
   type SocialInsurancePolicyConfigType,
-  type SocialInsurancePolicyStatus,
   type SocialInsurancePolicyVersion
 } from './socialInsurancePolicyData';
+import { useSocialInsurancePolicyConfigState } from './SocialInsurancePolicyConfigState';
 import {
-  socialInsurancePolicyConfigToday,
-  useSocialInsurancePolicyConfigState
-} from './SocialInsurancePolicyConfigState';
+  getSocialInsurancePolicyLifecycleStatus,
+  getSocialInsurancePolicyPeriod,
+  type SocialInsurancePolicyLifecycleStatus
+} from './socialInsurancePolicyLifecycleModel';
 
-type SocialInsurancePolicyStatusFilter = '全部' | SocialInsurancePolicyStatus;
+type SocialInsurancePolicyStatusFilter = '全部' | SocialInsurancePolicyLifecycleStatus;
 type SocialInsurancePolicyConfigTypeFilter = '全部' | SocialInsurancePolicyConfigType;
 
 type SocialInsurancePolicyFilters = {
@@ -62,6 +64,12 @@ const defaultFilters: SocialInsurancePolicyFilters = {
 
 const previewContributionBase = 10000;
 const payrollBaseSourceOptions = ['人员薪资基数'];
+const socialInsurancePolicyLifecycleTone = {
+  草稿: 'blue',
+  待生效: 'amber',
+  当前生效: 'green',
+  历史: 'gray'
+} as const;
 
 type PolicyFormItem = {
   companyRatePercent: number;
@@ -86,12 +94,13 @@ function getLatestPolicyUpdate(policy: SocialInsurancePolicyVersion) {
   return policy.operationRecords[0]?.time ?? '-';
 }
 
-function getPolicyStatusSortRank(status: SocialInsurancePolicyStatus) {
+function getPolicyStatusSortRank(status: SocialInsurancePolicyLifecycleStatus) {
   const rankMap = {
-    启用: 0,
-    草稿: 1,
-    历史: 2
-  } as const satisfies Record<SocialInsurancePolicyStatus, number>;
+    当前生效: 0,
+    待生效: 1,
+    草稿: 2,
+    历史: 3
+  } as const satisfies Record<SocialInsurancePolicyLifecycleStatus, number>;
 
   return rankMap[status];
 }
@@ -110,11 +119,13 @@ function getPolicyVersionNumber(version: string) {
   return match ? Number(match[1]) : 0;
 }
 
-function sortPolicyRows(rows: SocialInsurancePolicyVersion[]) {
+function sortPolicyRows(rows: SocialInsurancePolicyVersion[], allRows: SocialInsurancePolicyVersion[], period: string) {
   return [...rows].sort(
     (left, right) =>
-      getPolicyStatusSortRank(left.status) - getPolicyStatusSortRank(right.status) ||
+      getPolicyStatusSortRank(getSocialInsurancePolicyLifecycleStatus(left, allRows, period))
+        - getPolicyStatusSortRank(getSocialInsurancePolicyLifecycleStatus(right, allRows, period)) ||
       getPolicyConfigTypeSortRank(left.configType) - getPolicyConfigTypeSortRank(right.configType) ||
+      right.effectiveMonth.localeCompare(left.effectiveMonth) ||
       getPolicyVersionNumber(right.version) - getPolicyVersionNumber(left.version)
   );
 }
@@ -206,9 +217,15 @@ function buildPolicyForm(
 }
 
 function isValidPolicyForm(form: SocialInsurancePolicyFormValue) {
+  const [yearText, monthText] = form.effectiveMonth.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
   const baseValid =
     /^V\d+$/i.test(normalizePolicyVersion(form.version)) &&
     /^\d{4}-\d{2}$/.test(form.effectiveMonth) &&
+    year >= 2000 &&
+    month >= 1 &&
+    month <= 12 &&
     Boolean(form.payrollBaseSource.trim());
 
   if (form.configType === '公积金配置') {
@@ -268,7 +285,7 @@ function buildPolicyFromForm(
         id: `op-${codePrefix.toLowerCase()}-${sequence}`,
         object: name,
         summary: `复制当前${form.configType}后新增草稿`,
-        time: `${socialInsurancePolicyConfigToday} 10:30`
+        time: `${frontendBusinessToday} 10:30`
       }
     ],
     payrollBaseSource: form.payrollBaseSource.trim(),
@@ -297,14 +314,19 @@ function getFormContributionAmounts(form: SocialInsurancePolicyFormValue, catego
   };
 }
 
-function matchesFilters(policy: SocialInsurancePolicyVersion, filters: SocialInsurancePolicyFilters) {
+function matchesFilters(
+  policy: SocialInsurancePolicyVersion,
+  filters: SocialInsurancePolicyFilters,
+  rows: SocialInsurancePolicyVersion[],
+  period: string
+) {
   const keyword = filters.keyword.trim().toLowerCase();
 
   if (filters.configType !== '全部' && policy.configType !== filters.configType) {
     return false;
   }
 
-  if (filters.status !== '全部' && policy.status !== filters.status) {
+  if (filters.status !== '全部' && getSocialInsurancePolicyLifecycleStatus(policy, rows, period) !== filters.status) {
     return false;
   }
 
@@ -333,25 +355,27 @@ function PolicyVersionCell({ record }: { record: SocialInsurancePolicyVersion })
 }
 
 function SystemSocialInsuranceConfigCreateDrawer({
+  currentPeriod,
   drawer,
   onCreate,
   policyRows
 }: {
+  currentPeriod: string;
   drawer: ModeDrawerState<string, SocialInsurancePolicyFormValue>;
-  onCreate: (activate: boolean) => void;
+  onCreate: (publish: boolean) => void;
   policyRows: SocialInsurancePolicyVersion[];
 }) {
   const formSocialPreview = getFormContributionAmounts(drawer.form, '社保');
   const formHousingPreview = getFormContributionAmounts(drawer.form, '公积金');
   const formDisabled = !isValidPolicyForm(drawer.form);
-  const sourcePolicy = getActivePolicyByConfigType(policyRows, drawer.form.configType);
+  const sourcePolicy = getActivePolicyByConfigType(policyRows, drawer.form.configType, currentPeriod);
 
   function updateForm<T extends keyof SocialInsurancePolicyFormValue>(key: T, value: SocialInsurancePolicyFormValue[T]) {
     drawer.updateForm(key, value);
   }
 
   function updateConfigType(configType: SocialInsurancePolicyConfigType) {
-    drawer.setForm(buildPolicyForm(getActivePolicyByConfigType(policyRows, configType), policyRows));
+    drawer.setForm(buildPolicyForm(getActivePolicyByConfigType(policyRows, configType, currentPeriod), policyRows));
   }
 
   function updateSocialItem(id: string, key: 'companyRatePercent' | 'employeeRatePercent', value: number | string | null) {
@@ -421,7 +445,7 @@ function SystemSocialInsuranceConfigCreateDrawer({
         cancelAction: { label: '取消', onClick: drawer.cancel },
         primaryAction: {
           disabled: formDisabled,
-          label: '保存并启用',
+          label: '保存并发布',
           onClick: () => onCreate(true)
         },
         secondaryAction: {
@@ -466,8 +490,8 @@ function SystemSocialInsuranceConfigCreateDrawer({
                         />
                       )
                     },
-                    { label: '生成方式', value: '复制当前启用版本' },
-                    { label: '当前启用', value: sourcePolicy.version },
+                    { label: '生成方式', value: '复制当前生效版本' },
+                    { label: '当前生效', value: sourcePolicy.version },
                     {
                       label: '同类版本',
                       value: `${policyRows.filter((policy) => policy.configType === drawer.form.configType).length} 个`
@@ -594,16 +618,20 @@ function SystemSocialInsuranceConfigCreateDrawer({
 }
 
 function SystemSocialInsuranceConfigDrawer({
+  currentPeriod,
   open,
   onDeleteDraft,
-  onEnable,
+  onPublish,
   policy,
+  policyRows,
   onClose
 }: {
+  currentPeriod: string;
   open: boolean;
   onDeleteDraft: (policy: SocialInsurancePolicyVersion) => void;
-  onEnable: (policy: SocialInsurancePolicyVersion) => void;
+  onPublish: (policy: SocialInsurancePolicyVersion) => void;
   policy?: SocialInsurancePolicyVersion;
+  policyRows: SocialInsurancePolicyVersion[];
   onClose: () => void;
 }) {
   if (!policy) {
@@ -616,6 +644,11 @@ function SystemSocialInsuranceConfigDrawer({
   const socialPreviewAmounts = getPolicyContributionAmounts(policy, '社保', previewContributionBase);
   const housingFundPreviewAmounts = getPolicyContributionAmounts(policy, '公积金', previewContributionBase);
   const isSocialConfig = policy.configType === '社保配置';
+  const lifecycleStatus = getSocialInsurancePolicyLifecycleStatus(
+    policy,
+    policyRows,
+    currentPeriod
+  );
 
   const socialItemColumns: TableColumnsType<SocialInsurancePolicyItem> = [
     {
@@ -676,15 +709,15 @@ function SystemSocialInsuranceConfigDrawer({
         policy.status === '草稿'
           ? {
               icon: <CheckCircleOutlined />,
-              label: '启用此版本',
-              onClick: () => onEnable(policy)
+              label: '发布版本',
+              onClick: () => onPublish(policy)
             }
           : undefined
       }
       title={
         <DetailDrawerTitle
-          status={policy.status}
-          statusToneMap={socialInsurancePolicyStatusTone}
+          status={lifecycleStatus}
+          statusToneMap={socialInsurancePolicyLifecycleTone}
           subtitle="系统管理 / 社保公积金配置"
           title={policy.name}
         />
@@ -727,7 +760,7 @@ function SystemSocialInsuranceConfigDrawer({
                     { label: '生效月份', value: policy.effectiveMonth },
                     { label: '缴纳周期', value: policy.contributionCycle },
                     { label: '基数来源', value: policy.payrollBaseSource },
-                    { label: '状态', value: <StatusTag toneMap={socialInsurancePolicyStatusTone} value={policy.status} /> },
+                    { label: '状态', value: <StatusTag toneMap={socialInsurancePolicyLifecycleTone} value={lifecycleStatus} /> },
                     { label: '最近更新', value: getLatestPolicyUpdate(policy) }
                   ]}
                 />
@@ -828,9 +861,10 @@ export function SystemSocialInsuranceConfigPage() {
     activeSocialInsurancePolicy,
     createPolicyVersion,
     deleteDraftPolicyVersion,
-    enablePolicyVersion,
+    publishPolicyVersion,
     policyVersions
   } = useSocialInsurancePolicyConfigState();
+  const currentPeriod = getSocialInsurancePolicyPeriod(frontendBusinessToday);
   const [activePolicyId, setActivePolicyId] = useState<string>();
   const [filters, setFilters] = useState<SocialInsurancePolicyFilters>(defaultFilters);
   const createDrawer = useModeDrawerState<string, SocialInsurancePolicyFormValue>({
@@ -847,18 +881,22 @@ export function SystemSocialInsuranceConfigPage() {
   });
   const activeRecord = policyVersions.find((policy) => policy.id === activePolicyId);
   const filteredRows = useMemo(
-    () => sortPolicyRows(policyVersions.filter((policy) => matchesFilters(policy, filters))),
-    [filters, policyVersions]
+    () => sortPolicyRows(
+      policyVersions.filter((policy) => matchesFilters(policy, filters, policyVersions, currentPeriod)),
+      policyVersions,
+      currentPeriod
+    ),
+    [currentPeriod, filters, policyVersions]
   );
   const configTypeOptions: SocialInsurancePolicyConfigTypeFilter[] = ['全部', '社保配置', '公积金配置'];
-  const statusOptions: SocialInsurancePolicyStatusFilter[] = ['全部', '启用', '草稿', '历史'];
+  const statusOptions: SocialInsurancePolicyStatusFilter[] = ['全部', '当前生效', '待生效', '草稿', '历史'];
   const activeHousingFundItem = getHousingFundItem(activeHousingFundPolicy);
 
   function openCreateDrawer() {
     createDrawer.openCreate(activeSocialInsurancePolicy.id);
   }
 
-  function createPolicy(activate: boolean) {
+  function createPolicy(publish: boolean) {
     const normalizedVersion = normalizePolicyVersion(createDrawer.form.version);
 
     if (!isValidPolicyForm(createDrawer.form)) {
@@ -873,7 +911,7 @@ export function SystemSocialInsuranceConfigPage() {
 
     const sourcePolicy =
       policyVersions.find((policy) => policy.id === createDrawer.form.sourcePolicyId)
-      ?? getActivePolicyByConfigType(policyVersions, createDrawer.form.configType);
+      ?? getActivePolicyByConfigType(policyVersions, createDrawer.form.configType, currentPeriod);
     const nextPolicy = buildPolicyFromForm(
       {
         ...createDrawer.form,
@@ -883,16 +921,24 @@ export function SystemSocialInsuranceConfigPage() {
       policyVersions
     );
 
-    createPolicyVersion(nextPolicy, activate);
+    const result = createPolicyVersion(nextPolicy, publish);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     createDrawer.close();
     setActivePolicyId(nextPolicy.id);
-    void messageApi.success(activate ? `${nextPolicy.configType}已新增并启用` : `${nextPolicy.configType}草稿已新增`);
+    void messageApi.success(publish ? `${nextPolicy.configType}已发布` : `${nextPolicy.configType}草稿已新增`);
   }
 
-  function enablePolicy(policy: SocialInsurancePolicyVersion) {
-    enablePolicyVersion(policy.id);
+  function publishPolicy(policy: SocialInsurancePolicyVersion) {
+    const result = publishPolicyVersion(policy.id);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     setActivePolicyId(policy.id);
-    void messageApi.success(`${policy.name}已启用`);
+    void messageApi.success(`${policy.name}已发布`);
   }
 
   function deleteDraftPolicy(policy: SocialInsurancePolicyVersion) {
@@ -900,7 +946,11 @@ export function SystemSocialInsuranceConfigPage() {
       return;
     }
 
-    deleteDraftPolicyVersion(policy.id);
+    const result = deleteDraftPolicyVersion(policy.id);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     setActivePolicyId(undefined);
     void messageApi.success(`${policy.name}已删除`);
   }
@@ -951,9 +1001,12 @@ export function SystemSocialInsuranceConfigPage() {
     },
     {
       title: '状态',
-      dataIndex: 'status',
+      key: 'status',
       width: 96,
-      render: (status: SocialInsurancePolicyStatus) => <StatusTag toneMap={socialInsurancePolicyStatusTone} value={status} />
+      render: (_, record) => {
+        const status = getSocialInsurancePolicyLifecycleStatus(record, policyVersions, currentPeriod);
+        return <StatusTag toneMap={socialInsurancePolicyLifecycleTone} value={status} />;
+      }
     },
     {
       title: '最近更新',
@@ -995,8 +1048,8 @@ export function SystemSocialInsuranceConfigPage() {
       metrics={
         <MetricGrid>
           <MetricCard icon={<ProfileOutlined />} label="配置版本" value={policyVersions.length} />
-          <MetricCard icon={<CheckCircleOutlined />} label="社保启用" value={activeSocialInsurancePolicy.version} />
-          <MetricCard icon={<CheckCircleOutlined />} label="公积金启用" value={activeHousingFundPolicy.version} />
+          <MetricCard icon={<CheckCircleOutlined />} label="当前社保" value={activeSocialInsurancePolicy.version} />
+          <MetricCard icon={<CheckCircleOutlined />} label="当前公积金" value={activeHousingFundPolicy.version} />
           <MetricCard
             icon={<CalculatorOutlined />}
             label="公积金个人"
@@ -1022,14 +1075,17 @@ export function SystemSocialInsuranceConfigPage() {
       />
 
       <SystemSocialInsuranceConfigDrawer
+        currentPeriod={currentPeriod}
         open={Boolean(activeRecord)}
         onDeleteDraft={deleteDraftPolicy}
-        onEnable={enablePolicy}
+        onPublish={publishPolicy}
         policy={activeRecord}
+        policyRows={policyVersions}
         onClose={() => setActivePolicyId(undefined)}
       />
 
       <SystemSocialInsuranceConfigCreateDrawer
+        currentPeriod={currentPeriod}
         drawer={createDrawer}
         policyRows={policyVersions}
         onCreate={createPolicy}

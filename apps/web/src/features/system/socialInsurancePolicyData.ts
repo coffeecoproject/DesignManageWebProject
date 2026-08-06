@@ -1,6 +1,6 @@
 import type { StatusTagTone } from '../../components/Detail';
 
-export type SocialInsurancePolicyStatus = '草稿' | '启用' | '历史';
+export type SocialInsurancePolicyStatus = '草稿' | '已发布';
 export type SocialInsurancePolicyItemStatus = '启用' | '停用';
 export type SocialInsurancePolicyCategory = '社保' | '公积金';
 export type SocialInsurancePolicyConfigType = '社保配置' | '公积金配置';
@@ -55,8 +55,7 @@ export type SocialInsurancePolicyVersion = {
 
 export const socialInsurancePolicyStatusTone = {
   草稿: 'blue',
-  启用: 'green',
-  历史: 'gray'
+  已发布: 'green'
 } as const satisfies Record<SocialInsurancePolicyStatus, StatusTagTone>;
 
 export const socialInsurancePolicyItemStatusTone = {
@@ -90,10 +89,15 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
     name: '武汉社保配置V0',
     payrollBaseSource: '人员薪资基数',
     province: '湖北省',
-    references: [],
+    references: [{
+      category: '社保',
+      effectiveAt: '2025-09-19',
+      title: '湖北省2025年度社会保险缴费基数标准'
+    }],
     socialItems: [
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.16,
@@ -103,7 +107,8 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       },
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.08,
@@ -113,7 +118,8 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       },
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.01,
@@ -123,7 +129,8 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       },
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.02,
@@ -133,15 +140,15 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       }
     ],
-    status: '历史',
+    status: '已发布',
     version: 'V0',
     operationRecords: [
       {
-        action: '转为历史',
+        action: '版本被替代',
         actor: '李明',
         id: 'op-wuhan-social-insurance-v0-history',
         object: '武汉社保配置V0',
-        summary: '新社保配置启用后，原版本转为历史',
+        summary: '新社保配置生效后，原版本成为历史版本',
         time: '2026-06-18 15:30'
       },
       {
@@ -164,10 +171,15 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
     name: '武汉社保配置V1',
     payrollBaseSource: '人员薪资基数',
     province: '湖北省',
-    references: [],
+    references: [{
+      category: '社保',
+      effectiveAt: '2025-09-19',
+      title: '湖北省2025年度社会保险缴费基数标准'
+    }],
     socialItems: [
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.16,
@@ -177,7 +189,8 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       },
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.08,
@@ -187,7 +200,8 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       },
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.01,
@@ -197,7 +211,8 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       },
       {
-        baseLower: 4224,
+        baseLower: 4498,
+        baseUpper: 22488,
         baseUpperRule: wuhanSocialInsuranceBaseRule,
         category: '社保',
         companyRate: 0.02,
@@ -207,7 +222,7 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       }
     ],
-    status: '启用',
+    status: '已发布',
     version: 'V1',
     operationRecords: [
       {
@@ -317,15 +332,15 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       }
     ],
-    status: '历史',
+    status: '已发布',
     version: 'V0',
     operationRecords: [
       {
-        action: '转为历史',
+        action: '版本被替代',
         actor: '李明',
         id: 'op-wuhan-housing-fund-v0-history',
         object: '武汉公积金配置V0',
-        summary: '新公积金配置启用后，原版本转为历史',
+        summary: '新公积金配置生效后，原版本成为历史版本',
         time: '2026-06-18 15:32'
       },
       {
@@ -365,6 +380,7 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
     socialItems: [
       {
         baseLower: 2210,
+        baseUpper: 34560.25,
         baseUpperRule: wuhanHousingFundBaseRule,
         category: '公积金',
         companyRate: 0.1,
@@ -374,7 +390,7 @@ export const socialInsurancePolicyVersions: SocialInsurancePolicyVersion[] = [
         status: '启用'
       }
     ],
-    status: '启用',
+    status: '已发布',
     version: 'V1',
     operationRecords: [
       {
@@ -462,8 +478,10 @@ export function formatSocialInsuranceBase(lower?: number, upper?: number, upperR
   return upperRule ?? `上限 ${upper?.toLocaleString('zh-CN')} 元`;
 }
 
+export const socialInsurancePolicySeedPeriod = '2026-06';
+
 export function getActiveSocialInsurancePolicy() {
-  return buildCombinedSocialInsurancePolicy(socialInsurancePolicyVersions);
+  return buildCombinedSocialInsurancePolicy(socialInsurancePolicyVersions, socialInsurancePolicySeedPeriod);
 }
 
 export function getPolicyConfigCategory(configType: SocialInsurancePolicyConfigType): SocialInsurancePolicyCategory {
@@ -472,16 +490,28 @@ export function getPolicyConfigCategory(configType: SocialInsurancePolicyConfigT
 
 export function getActivePolicyByConfigType(
   rows: SocialInsurancePolicyVersion[],
-  configType: SocialInsurancePolicyConfigType
+  configType: SocialInsurancePolicyConfigType,
+  period: string
 ) {
-  return rows.find((policy) => policy.configType === configType && policy.status === '启用')
-    ?? rows.find((policy) => policy.configType === configType)
-    ?? rows[0];
+  return rows
+    .filter((policy) =>
+      policy.configType === configType
+      && policy.status === '已发布'
+      && policy.effectiveMonth <= period
+    )
+    .sort((left, right) => right.effectiveMonth.localeCompare(left.effectiveMonth))[0];
 }
 
-export function buildCombinedSocialInsurancePolicy(rows: SocialInsurancePolicyVersion[]): SocialInsurancePolicyVersion {
-  const activeSocialPolicy = getActivePolicyByConfigType(rows, '社保配置');
-  const activeHousingFundPolicy = getActivePolicyByConfigType(rows, '公积金配置');
+export function buildCombinedSocialInsurancePolicy(
+  rows: SocialInsurancePolicyVersion[],
+  period: string
+): SocialInsurancePolicyVersion {
+  const activeSocialPolicy = getActivePolicyByConfigType(rows, '社保配置', period);
+  const activeHousingFundPolicy = getActivePolicyByConfigType(rows, '公积金配置', period);
+
+  if (!activeSocialPolicy || !activeHousingFundPolicy) {
+    throw new Error(`缺少 ${period} 生效的社保或公积金已发布配置`);
+  }
 
   return {
     ...(activeSocialPolicy ?? activeHousingFundPolicy),
@@ -507,7 +537,7 @@ export function buildCombinedSocialInsurancePolicy(rows: SocialInsurancePolicyVe
       ...((activeSocialPolicy?.socialItems ?? []).filter((item) => item.category === '社保')),
       ...((activeHousingFundPolicy?.socialItems ?? []).filter((item) => item.category === '公积金'))
     ],
-    status: '启用',
+    status: '已发布',
     version: `${activeSocialPolicy?.version ?? '-'} / ${activeHousingFundPolicy?.version ?? '-'}`
   };
 }

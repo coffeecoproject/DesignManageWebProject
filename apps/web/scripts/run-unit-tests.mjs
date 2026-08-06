@@ -22,6 +22,8 @@ const bundledAuthorizationModelTestFile = join(outDir, 'authorizationModel.test.
 const bundledTaskAssignmentCandidateTestFile = join(outDir, 'taskAssignmentCandidates.test.mjs');
 const bundledRegionSearchSelectTestFile = join(outDir, 'RegionSearchSelect.test.mjs');
 const bundledPublicAccountConfigStateTestFile = join(outDir, 'PublicAccountConfigState.test.mjs');
+const bundledSocialInsurancePolicyLifecycleModelTestFile = join(outDir, 'socialInsurancePolicyLifecycleModel.test.mjs');
+const bundledAnnualExceptionModelTestFile = join(outDir, 'annualExceptionModel.test.mjs');
 const bundledTaskDomainModelTestFile = join(outDir, 'taskDomainModel.test.mjs');
 const bundledTaskCustomerBillingModelTestFile = join(outDir, 'taskCustomerBillingModel.test.mjs');
 const bundledBrandTaskPricingModelTestFile = join(outDir, 'brandTaskPricingModel.test.mjs');
@@ -77,6 +79,11 @@ const bundledBusinessScenarioTestFile = join(outDir, 'businessScenario.test.mjs'
 
 const testModules = [
   {
+    bundledFile: bundledAnnualExceptionModelTestFile,
+    entry: 'src/features/system/annualExceptionModel.test.ts',
+    runExport: 'runAnnualExceptionModelTests'
+  },
+  {
     bundledFile: bundledAuthorizationModelTestFile,
     entry: 'src/features/auth/authorizationModel.test.ts',
     runExport: 'runAuthorizationModelTests'
@@ -125,6 +132,11 @@ const testModules = [
     bundledFile: bundledPublicAccountConfigStateTestFile,
     entry: 'src/features/system/PublicAccountConfigState.test.ts',
     runExport: 'runPublicAccountConfigStateTests'
+  },
+  {
+    bundledFile: bundledSocialInsurancePolicyLifecycleModelTestFile,
+    entry: 'src/features/system/socialInsurancePolicyLifecycleModel.test.ts',
+    runExport: 'runSocialInsurancePolicyLifecycleModelTests'
   },
   {
     bundledFile: bundledBrandTaskPricingModelTestFile,
