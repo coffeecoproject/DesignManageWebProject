@@ -72,11 +72,11 @@ function toDateOnly(value: string) {
 }
 
 function previousDate(value: string) {
-  const date = new Date(`${toDateOnly(value)}T00:00:00+08:00`);
-  date.setDate(date.getDate() - 1);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const [yearValue, monthValue, dayValue] = toDateOnly(value).split('-').map(Number);
+  const date = new Date(Date.UTC(yearValue, monthValue - 1, dayValue - 1));
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
