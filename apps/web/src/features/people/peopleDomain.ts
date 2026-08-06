@@ -1,5 +1,11 @@
-import { defaultWorkCalendarId, type AnnualExceptionConfigRow, type WorkCalendarRow } from '../system/WorkCalendarState';
-import { isWorkCalendarDateWorkday } from '../system/workCalendarRules';
+import {
+  companyDefaultWorkCalendarValue,
+  isCompanyDefaultWorkCalendarValue,
+  type AnnualExceptionConfigRow,
+  type WorkCalendarRow
+} from '../system/WorkCalendarState';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
+import { isWorkCalendarDateWorkday, resolveDefaultWorkCalendar } from '../system/workCalendarRules';
 import type { PeopleArchiveFile, PeopleHousingFundStatus, PeopleMember, PeopleStatus, PersonnelType } from './peopleTypes';
 import { getPositionId, type AccessRole } from './rolePermissionModel';
 import type { PositionDataScope } from '../auth/authorizationModel';
@@ -406,8 +412,9 @@ export function getPeopleMemberDisplay(member: Pick<PeopleMember, 'personnelType
 }
 
 export function getWorkCalendarDisplayName(workCalendarId: string | undefined, workCalendarRows: WorkCalendarRow[], options?: { includeStatus?: boolean }) {
-  const resolvedWorkCalendarId = workCalendarId || defaultWorkCalendarId;
-  const calendar = workCalendarRows.find((row) => row.id === resolvedWorkCalendarId);
+  const calendar = isCompanyDefaultWorkCalendarValue(workCalendarId)
+    ? resolveDefaultWorkCalendar(workCalendarRows, new Date(`${frontendBusinessToday}T00:00:00`))
+    : workCalendarRows.find((row) => row.id === workCalendarId);
 
   if (!calendar) {
     return '未匹配工作日历';
@@ -417,21 +424,33 @@ export function getWorkCalendarDisplayName(workCalendarId: string | undefined, w
   return `${calendar.name} / ${calendar.type}${statusText}`;
 }
 
-export function getAttendanceWorkCalendarDisplayName(member: PeopleMember, workCalendarRows: WorkCalendarRow[]) {
+export function getAttendanceWorkCalendarDisplayName(
+  member: PeopleMember,
+  workCalendarRows: WorkCalendarRow[],
+  dateText = frontendBusinessToday
+) {
   if (!isAttendanceEligiblePeopleMember(member)) {
     return '不适用';
   }
 
-  return getWorkCalendarDisplayName(member.workCalendarId, workCalendarRows);
+  const calendar = getMemberWorkCalendar(member, workCalendarRows, dateText);
+  return calendar ? getWorkCalendarDisplayName(calendar.id, workCalendarRows) : '未匹配工作日历';
 }
 
 export function getWorkCalendarOptions(workCalendarRows: WorkCalendarRow[], selectedWorkCalendarId: string) {
   const availableRows = workCalendarRows.filter((row) => row.status === '启用' || row.id === selectedWorkCalendarId);
-  const options = availableRows.map((row) => ({
-    disabled: row.status !== '启用',
-    label: getWorkCalendarDisplayName(row.id, workCalendarRows, { includeStatus: true }),
-    value: row.id
-  }));
+  const options = [
+    {
+      disabled: false,
+      label: '跟随公司默认日历',
+      value: companyDefaultWorkCalendarValue
+    },
+    ...availableRows.map((row) => ({
+      disabled: row.status !== '启用',
+      label: getWorkCalendarDisplayName(row.id, workCalendarRows, { includeStatus: true }),
+      value: row.id
+    }))
+  ];
 
   if (selectedWorkCalendarId && !options.some((option) => option.value === selectedWorkCalendarId)) {
     return [
@@ -448,7 +467,7 @@ export function getWorkCalendarOptions(workCalendarRows: WorkCalendarRow[], sele
 }
 
 export function getArchiveWorkCalendarId(personnelType: PersonnelType, workCalendarId?: string) {
-  return personnelType === '全职' ? normalizePeopleText(workCalendarId || defaultWorkCalendarId) : '';
+  return personnelType === '全职' ? normalizePeopleText(workCalendarId || companyDefaultWorkCalendarValue) : '';
 }
 
 export function getMemberWorkCalendar(
@@ -465,7 +484,7 @@ export function getMemberWorkCalendar(
     return undefined;
   }
   const mode = assignment?.mode ?? (
-    member.workCalendarId && member.workCalendarId !== defaultWorkCalendarId
+    !isCompanyDefaultWorkCalendarValue(member.workCalendarId)
       ? '指定工作日历'
       : '跟随公司默认日历'
   );
@@ -475,7 +494,30 @@ export function getMemberWorkCalendar(
     return workCalendarRows.find((calendar) => calendar.id === assignedCalendarId);
   }
 
-  return workCalendarRows.find((calendar) => calendar.isDefault || calendar.id === defaultWorkCalendarId);
+  return resolveDefaultWorkCalendar(workCalendarRows, new Date(`${dateText}T00:00:00`));
+}
+
+export function getWorkCalendarDependentMembers(
+  members: PeopleMember[],
+  workCalendarId: string,
+  fromDate = frontendBusinessToday
+) {
+  return members.filter((member) => {
+    if (!isPeopleRelationshipActive(member)) {
+      return false;
+    }
+
+    const assignments = member.workCalendarAssignments ?? [];
+    if (assignments.length === 0) {
+      return !isCompanyDefaultWorkCalendarValue(member.workCalendarId) && member.workCalendarId === workCalendarId;
+    }
+
+    return assignments.some((assignment) => (
+      assignment.mode === '指定工作日历'
+      && assignment.workCalendarId === workCalendarId
+      && (!assignment.effectiveTo || assignment.effectiveTo >= fromDate)
+    ));
+  });
 }
 
 export function getCurrentPeopleAttendanceRecord(member: PeopleMember, attendanceRecords: PeopleAttendanceRecord[]) {
@@ -692,7 +734,7 @@ export function applyPeopleMovementEffect(
       {
         effectiveFrom: member.joinedAt,
         id: `${member.id}-calendar-initial`,
-        mode: member.workCalendarId && member.workCalendarId !== defaultWorkCalendarId
+        mode: !isCompanyDefaultWorkCalendarValue(member.workCalendarId)
           ? '指定工作日历' as const
           : '跟随公司默认日历' as const,
         status: '生效中' as const,
@@ -716,7 +758,7 @@ export function applyPeopleMovementEffect(
           workCalendarId
         }
       ],
-      workCalendarId
+      workCalendarId: effect.effectiveAt <= options.today ? workCalendarId : member.workCalendarId
     };
   }
 

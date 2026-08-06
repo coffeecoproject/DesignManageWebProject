@@ -6,10 +6,11 @@ import {
   ProfileOutlined,
   StopOutlined
 } from '@ant-design/icons';
-import { DatePicker, Input, Select, Table, message } from 'antd';
+import { DatePicker, Input, Modal, Select, Table, message } from 'antd';
 import type { TableColumnsType } from 'antd';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
+import { frontendBusinessToday } from '../../app/frontendBusinessClock';
 import { DetailDrawerTitle, DetailInfoGrid, DetailSection, StatusTag } from '../../components/Detail';
 import { DrawerFormShell, type ModeDrawerState, useModeDrawerState } from '../../components/DrawerForm';
 import { DrawerProfileCard } from '../../components/DrawerProfileCard';
@@ -26,6 +27,7 @@ import {
   defaultBigSmallFixedWorkdays,
   defaultDoubleWeekendWorkdays,
   defaultSingleWeekendWorkdays,
+  hasCurrentOrFutureDefaultPeriod,
   statutoryHolidayGroups,
   type AnnualExceptionConfigFormValue,
   type AnnualExceptionConfigRow,
@@ -42,9 +44,11 @@ import {
   workCalendarTypes,
   workCalendarWeekdays
 } from './WorkCalendarState';
-import { getAnnualExceptionSummary, type AnnualExceptionSummary } from './workCalendarRules';
+import { getAnnualExceptionSummary, getLatestWorkCalendarVersion, type AnnualExceptionSummary } from './workCalendarRules';
+import { getLatestAnnualExceptionRevision, resolveAnnualExceptionRevision } from './annualExceptionModel';
+import type { MasterDataMutationResult } from './masterDataLifecycleModel';
 import { usePeopleOrganizationState } from '../people/PeopleOrganizationState';
-import { isPeopleRelationshipActive } from '../people/peopleDomain';
+import { getWorkCalendarDependentMembers } from '../people/peopleDomain';
 
 const workCalendarStatusTone = {
   启用: 'green',
@@ -73,6 +77,7 @@ const defaultWorkCalendarForm: WorkCalendarFormValue = {
 };
 
 const defaultAnnualExceptionForm: AnnualExceptionConfigFormValue = {
+  effectiveFrom: frontendBusinessToday,
   items: [],
   source: '国务院办公厅通知 / 前端全年配置',
   year: 2026
@@ -91,7 +96,8 @@ function CalendarCell({ record }: { record: WorkCalendarRow }) {
 }
 
 function AnnualExceptionCell({ record }: { record: AnnualExceptionConfigRow }) {
-  const groupRows = getStatutoryHolidayGroupRows(record.items);
+  const revision = getAnnualExceptionDisplayRevision(record);
+  const groupRows = getStatutoryHolidayGroupRows(revision?.items ?? []);
   const restDayCount = groupRows.reduce((total, row) => total + row.restDates.length, 0);
   const workdayCount = groupRows.reduce((total, row) => total + row.workdayDates.length, 0);
 
@@ -101,6 +107,11 @@ function AnnualExceptionCell({ record }: { record: AnnualExceptionConfigRow }) {
       secondary={`${restDayCount} 天休息 / ${workdayCount} 天工作日调整`}
     />
   );
+}
+
+function getAnnualExceptionDisplayRevision(record: AnnualExceptionConfigRow) {
+  return resolveAnnualExceptionRevision(record, new Date(`${frontendBusinessToday}T00:00:00Z`))
+    ?? getLatestAnnualExceptionRevision(record);
 }
 
 function getDefaultsForCalendarType(type: WorkCalendarType): Pick<
@@ -165,9 +176,34 @@ function buildAnnualExceptionForm(record?: AnnualExceptionConfigRow): AnnualExce
     };
   }
 
+  const revision = getAnnualExceptionDisplayRevision(record);
+
   return {
-    items: record.items.map((item) => ({ ...item })),
-    source: record.source,
+    effectiveFrom: revision?.effectiveFrom ?? `${record.year}-01-01`,
+    items: revision?.items.map((item) => ({ ...item })) ?? [],
+    source: revision?.source ?? '',
+    year: record.year
+  };
+}
+
+function getNextDate(dateText: string) {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildAnnualExceptionEditForm(record?: AnnualExceptionConfigRow): AnnualExceptionConfigFormValue {
+  if (!record) {
+    return buildAnnualExceptionForm();
+  }
+
+  const latestRevision = getLatestAnnualExceptionRevision(record);
+  const minimumDate = latestRevision ? getNextDate(latestRevision.effectiveFrom) : frontendBusinessToday;
+
+  return {
+    effectiveFrom: minimumDate > frontendBusinessToday ? minimumDate : frontendBusinessToday,
+    items: latestRevision?.items.map((item) => ({ ...item })) ?? [],
+    source: latestRevision?.source ?? '',
     year: record.year
   };
 }
@@ -258,6 +294,10 @@ function getAnnualExceptionValidationError(formValue: AnnualExceptionConfigFormV
     return '请输入年度';
   }
 
+  if (!isValidDateInYear(formValue.effectiveFrom, formValue.year)) {
+    return '请选择配置年度内的生效日期';
+  }
+
   if (!formValue.source.trim()) {
     return '请输入来源';
   }
@@ -342,7 +382,15 @@ function getCycleSummary(record: Pick<WorkCalendarRow, 'anchorDate' | 'startMode
 }
 
 function getCalendarScope(record: WorkCalendarRow) {
-  return record.isDefault ? '公司默认' : '可分配给人员';
+  if (record.isDefault) {
+    return '公司默认';
+  }
+
+  const nextDefaultPeriod = record.defaultPeriods
+    ?.filter((period) => period.effectiveFrom > frontendBusinessToday)
+    .sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom))[0];
+
+  return nextDefaultPeriod ? `${nextDefaultPeriod.effectiveFrom} 起默认` : '指定人员';
 }
 
 function getHolidayRuleSummaryText(summary: AnnualExceptionSummary) {
@@ -370,6 +418,7 @@ function WorkCalendarDrawer({
   existingRows,
   record,
   onCreate,
+  onSetDefault,
   onSave,
   onToggleStatus
 }: {
@@ -379,6 +428,7 @@ function WorkCalendarDrawer({
   existingRows: WorkCalendarRow[];
   record?: WorkCalendarRow;
   onCreate: (nextValue: WorkCalendarFormValue) => void;
+  onSetDefault: (record: WorkCalendarRow) => void;
   onSave: (id: string, nextValue: WorkCalendarFormValue) => void;
   onToggleStatus: (record: WorkCalendarRow) => void;
 }) {
@@ -422,8 +472,9 @@ function WorkCalendarDrawer({
       return;
     }
 
-    if (isEditMode && record && nextValue.effectiveFrom <= (record.effectiveFrom ?? '0001-01-01')) {
-      void messageApi.warning(`生效日期需晚于当前版本 ${record.effectiveFrom ?? '初始版本'}`);
+    const latestVersion = getLatestWorkCalendarVersion(record);
+    if (isEditMode && record && nextValue.effectiveFrom <= (latestVersion?.effectiveFrom ?? record.effectiveFrom ?? '0001-01-01')) {
+      void messageApi.warning(`生效日期需晚于最新版本 ${latestVersion?.effectiveFrom ?? record.effectiveFrom ?? '初始版本'}`);
       return;
     }
 
@@ -497,10 +548,13 @@ function WorkCalendarDrawer({
           isDetailMode && record
             ? {
                 closeAction: { label: '关闭', onClick: drawer.close },
+                additionalActions: record.isDefault || record.status !== '启用'
+                  ? undefined
+                  : [{ icon: <CheckCircleOutlined />, label: '设为公司默认', onClick: () => onSetDefault(record) }],
                 primaryAction: { label: '编辑', onClick: () => drawer.openEdit() },
                 secondaryAction: {
                   danger: record.status === '启用',
-                  disabled: record.isDefault && record.status === '启用',
+                  disabled: hasCurrentOrFutureDefaultPeriod(record) && record.status === '启用',
                   label: record.status === '启用' ? '停用' : '启用',
                   onClick: () => onToggleStatus(record)
                 }
@@ -564,7 +618,7 @@ function WorkCalendarDrawer({
                   />
                 )
               },
-              { label: '使用范围', value: record ? getCalendarScope(record) : '可分配给人员' },
+              { label: '适用方式', value: record ? getCalendarScope(record) : '指定人员' },
               { label: '状态', value: <StatusTag toneMap={workCalendarStatusTone} value={status} /> },
               {
                 label: '生效日期 *',
@@ -684,7 +738,7 @@ function AnnualExceptionDrawer({
   existingRows: AnnualExceptionConfigRow[];
   record?: AnnualExceptionConfigRow;
   onCreate: (nextValue: AnnualExceptionConfigFormValue) => void;
-  onSave: (id: string, nextValue: AnnualExceptionConfigFormValue) => void;
+  onSave: (id: string, nextValue: AnnualExceptionConfigFormValue) => MasterDataMutationResult;
   onToggleStatus: (record: AnnualExceptionConfigRow) => void;
 }) {
   const [messageApi, contextHolder] = message.useMessage();
@@ -734,8 +788,12 @@ function AnnualExceptionDrawer({
       return;
     }
 
-    onSave(record.id, formValue);
-    void messageApi.success('法定节假日已保存');
+    const result = onSave(record.id, formValue);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
+    void messageApi.success(result.message);
   }
 
   function getTitle() {
@@ -861,7 +919,7 @@ function AnnualExceptionDrawer({
             items={[
               {
                 label: '年度 *',
-                value: isDetailMode ? (
+                value: isDetailMode || isEditMode ? (
                   formValue.year
                 ) : (
                   <Input
@@ -883,9 +941,31 @@ function AnnualExceptionDrawer({
                   <Input value={formValue.source} onChange={(event) => updateFormValue('source', event.target.value)} />
                 )
               },
+              {
+                label: isEditMode ? '新修订生效日期 *' : '生效日期 *',
+                value: isDetailMode ? (
+                  formValue.effectiveFrom
+                ) : (
+                  <DatePicker
+                    className="archive-create-date-picker"
+                    disabledDate={(date) => (
+                      date.year() !== formValue.year
+                      || date.isBefore(dayjs(frontendBusinessToday), 'day')
+                      || Boolean(isEditMode && getLatestAnnualExceptionRevision(record)
+                        && !date.isAfter(dayjs(getLatestAnnualExceptionRevision(record)?.effectiveFrom), 'day'))
+                    )}
+                    format="YYYY-MM-DD"
+                    inputReadOnly
+                    value={formValue.effectiveFrom ? dayjs(formValue.effectiveFrom) : undefined}
+                    onChange={(_, dateString) =>
+                      updateFormValue('effectiveFrom', Array.isArray(dateString) ? dateString[0] : dateString)
+                    }
+                  />
+                )
+              },
               { label: '休息日', value: `${restDayCount} 天` },
               { label: '工作日调整', value: `${workdayCount} 天` },
-              { label: '当前修订', value: record ? `第 ${record.revisions?.length ?? 1} 版` : '保存后生成' }
+              { label: '当前修订', value: record ? `第 ${getAnnualExceptionDisplayRevision(record)?.revision ?? 1} 版` : '保存后生成' }
             ]}
           />
           {!isDetailMode && validationError ? <div className="form-inline-warning">{validationError}</div> : null}
@@ -903,6 +983,24 @@ function AnnualExceptionDrawer({
             tableLayout="fixed"
           />
         </DetailSection>
+
+        {isDetailMode && record ? (
+          <DetailSection icon={<ProfileOutlined />} title="修订记录">
+            <Table
+              columns={[
+                { title: '修订', dataIndex: 'revision', width: 90, render: (revision: number) => `第 ${revision} 版` },
+                { title: '生效日期', dataIndex: 'effectiveFrom', width: 130 },
+                { title: '结束日期', dataIndex: 'effectiveTo', width: 130, render: (value?: string) => value ?? '持续生效' },
+                { title: '来源', dataIndex: 'source' },
+                { title: '更新人', dataIndex: 'createdBy', width: 100 }
+              ]}
+              dataSource={[...record.revisions].sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom))}
+              pagination={false}
+              rowKey="id"
+              size="middle"
+            />
+          </DetailSection>
+        ) : null}
       </DrawerFormShell>
     </>
   );
@@ -914,6 +1012,7 @@ export function SystemWorkCalendarPage() {
     annualExceptionRows,
     createAnnualExceptionConfig,
     createWorkCalendar,
+    setDefaultWorkCalendar,
     updateAnnualExceptionConfig,
     updateAnnualExceptionStatus,
     updateWorkCalendar,
@@ -925,13 +1024,16 @@ export function SystemWorkCalendarPage() {
   const [statusFilter, setStatusFilter] = useState<'全部' | WorkCalendarStatus>('全部');
   const [typeFilter, setTypeFilter] = useState<'全部' | WorkCalendarType>('全部');
   const [keyword, setKeyword] = useState('');
+  const [defaultChangeTargetId, setDefaultChangeTargetId] = useState('');
+  const [defaultEffectiveFrom, setDefaultEffectiveFrom] = useState(frontendBusinessToday);
   const calendarDrawer = useModeDrawerState<string, WorkCalendarFormValue>({
     createForm: () => buildWorkCalendarForm(),
     detailForm: (id) => buildWorkCalendarForm(workCalendarRows.find((row) => row.id === id))
   });
   const annualExceptionDrawer = useModeDrawerState<string, AnnualExceptionConfigFormValue>({
     createForm: () => buildAnnualExceptionForm(),
-    detailForm: (id) => buildAnnualExceptionForm(annualExceptionRows.find((row) => row.id === id))
+    detailForm: (id) => buildAnnualExceptionForm(annualExceptionRows.find((row) => row.id === id)),
+    editForm: (id) => buildAnnualExceptionEditForm(annualExceptionRows.find((row) => row.id === id))
   });
   const activeCalendar = calendarDrawer.record
     ? workCalendarRows.find((row) => row.id === calendarDrawer.record)
@@ -939,15 +1041,18 @@ export function SystemWorkCalendarPage() {
   const activeAnnualException = annualExceptionDrawer.record
     ? annualExceptionRows.find((row) => row.id === annualExceptionDrawer.record)
     : undefined;
+  const defaultChangeTarget = workCalendarRows.find((row) => row.id === defaultChangeTargetId);
 
   const enabledCount = workCalendarRows.filter((row) => row.status === '启用').length;
   const disabledCount = workCalendarRows.length - enabledCount;
   const defaultCount = workCalendarRows.filter((row) => row.isDefault).length;
   const typeCount = new Set(workCalendarRows.map((row) => row.type)).size;
-  const annualExceptionSummary = getAnnualExceptionSummary(annualExceptionRows);
+  const annualExceptionDate = new Date(`${frontendBusinessToday}T00:00:00Z`);
+  const annualExceptionSummary = getAnnualExceptionSummary(annualExceptionRows, annualExceptionDate);
   const annualExceptionItems = annualExceptionRows
-    .filter((row) => row.status === '已启用')
-    .flatMap((row) => row.items);
+    .map((row) => resolveAnnualExceptionRevision(row, annualExceptionDate))
+    .filter((revision): revision is NonNullable<typeof revision> => Boolean(revision))
+    .flatMap((revision) => revision.items);
 
   const filteredRows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -1001,31 +1106,59 @@ export function SystemWorkCalendarPage() {
   }
 
   function saveCalendar(id: string, nextValue: WorkCalendarFormValue) {
-    updateWorkCalendar(id, nextValue);
+    const result = updateWorkCalendar(id, nextValue);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
     calendarDrawer.openDetail(id);
   }
 
   function saveAnnualException(id: string, nextValue: AnnualExceptionConfigFormValue) {
-    updateAnnualExceptionConfig(id, nextValue);
-    annualExceptionDrawer.openDetail(id);
+    const result = updateAnnualExceptionConfig(id, nextValue);
+    if (result.success) {
+      annualExceptionDrawer.openDetail(id);
+    }
+    return result;
   }
 
   function toggleCalendarStatus(record: WorkCalendarRow) {
-    if (record.isDefault && record.status === '启用') {
-      void messageApi.warning('默认工作日历不可停用');
+    if (hasCurrentOrFutureDefaultPeriod(record) && record.status === '启用') {
+      void messageApi.warning('当前或已排期的默认工作日历不可停用');
       return;
     }
 
     const nextStatus: WorkCalendarStatus = record.status === '启用' ? '停用' : '启用';
-    const activeMemberCount = peopleRows.filter(
-      (member) => member.workCalendarId === record.id && isPeopleRelationshipActive(member)
-    ).length;
+    const activeMemberCount = getWorkCalendarDependentMembers(peopleRows, record.id).length;
     const result = updateWorkCalendarStatus(record.id, nextStatus, activeMemberCount);
     if (!result.success) {
       void messageApi.warning(result.message);
       return;
     }
     void messageApi.success(`${record.name}已${nextStatus}`);
+  }
+
+  function openDefaultChange(record: WorkCalendarRow) {
+    const scheduledDate = record.defaultPeriods
+      ?.filter((period) => period.effectiveFrom >= frontendBusinessToday)
+      .sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom))[0]?.effectiveFrom;
+    setDefaultChangeTargetId(record.id);
+    setDefaultEffectiveFrom(scheduledDate ?? frontendBusinessToday);
+  }
+
+  function confirmDefaultChange() {
+    if (!defaultChangeTarget || !defaultEffectiveFrom) {
+      return;
+    }
+
+    const result = setDefaultWorkCalendar(defaultChangeTarget.id, defaultEffectiveFrom);
+    if (!result.success) {
+      void messageApi.warning(result.message);
+      return;
+    }
+
+    void messageApi.success(result.message);
+    setDefaultChangeTargetId('');
   }
 
   function toggleAnnualExceptionStatus(record: AnnualExceptionConfigRow) {
@@ -1060,10 +1193,15 @@ export function SystemWorkCalendarPage() {
       render: (_, record) => getCycleSummary(record)
     },
     {
-      title: '使用范围',
+      title: '适用方式',
       key: 'scope',
       width: 100,
-      render: (_, record) => <StatusTag tone={record.isDefault ? 'blue' : 'gray'} value={getCalendarScope(record)} />
+      render: (_, record) => (
+        <StatusTag
+          tone={record.isDefault ? 'blue' : record.defaultPeriods?.some((period) => period.effectiveFrom > frontendBusinessToday) ? 'amber' : 'gray'}
+          value={getCalendarScope(record)}
+        />
+      )
     },
     {
       title: '法定节假日',
@@ -1115,14 +1253,16 @@ export function SystemWorkCalendarPage() {
       key: 'groups',
       width: 230,
       render: (_, record) => {
-        const groupRows = getStatutoryHolidayGroupRows(record.items).filter((row) => row.restDates.length > 0);
+        const revision = getAnnualExceptionDisplayRevision(record);
+        const groupRows = getStatutoryHolidayGroupRows(revision?.items ?? []).filter((row) => row.restDates.length > 0);
         return <TagChipList items={groupRows.map((row) => row.groupName)} maxVisible={4} tone="blue" />;
       }
     },
     {
       title: '配置来源',
-      dataIndex: 'source',
-      width: 220
+      key: 'source',
+      width: 220,
+      render: (_, record) => getAnnualExceptionDisplayRevision(record)?.source ?? '-'
     },
     {
       title: '当前修订',
@@ -1131,8 +1271,8 @@ export function SystemWorkCalendarPage() {
       render: (_, record) => (
         <CompactCell
           align="center"
-          primary={`第 ${record.revisions?.length ?? 1} 版`}
-          secondary={record.updatedAt}
+          primary={`第 ${getAnnualExceptionDisplayRevision(record)?.revision ?? 1} 版`}
+          secondary={getAnnualExceptionDisplayRevision(record)?.effectiveFrom ?? record.updatedAt}
         />
       )
     }
@@ -1220,6 +1360,7 @@ export function SystemWorkCalendarPage() {
         record={activeCalendar}
         onCreate={saveNewCalendar}
         onSave={saveCalendar}
+        onSetDefault={openDefaultChange}
         onToggleStatus={toggleCalendarStatus}
       />
       <AnnualExceptionDrawer
@@ -1230,6 +1371,34 @@ export function SystemWorkCalendarPage() {
         onSave={saveAnnualException}
         onToggleStatus={toggleAnnualExceptionStatus}
       />
+      <Modal
+        cancelText="取消"
+        okButtonProps={{ disabled: !defaultEffectiveFrom }}
+        okText="确认设置"
+        open={Boolean(defaultChangeTarget)}
+        title="设为公司默认日历"
+        onCancel={() => setDefaultChangeTargetId('')}
+        onOk={confirmDefaultChange}
+      >
+        <DetailInfoGrid
+          columns={1}
+          items={[
+            { label: '工作日历', value: defaultChangeTarget?.name ?? '-' },
+            {
+              label: '生效日期 *',
+              value: (
+                <DatePicker
+                  format="YYYY-MM-DD"
+                  inputReadOnly
+                  value={defaultEffectiveFrom ? dayjs(defaultEffectiveFrom) : undefined}
+                  disabledDate={(date) => date.isBefore(dayjs(frontendBusinessToday), 'day')}
+                  onChange={(_, dateString) => setDefaultEffectiveFrom(Array.isArray(dateString) ? dateString[0] : dateString)}
+                />
+              )
+            }
+          ]}
+        />
+      </Modal>
     </ManagementPageScaffold>
   );
 }

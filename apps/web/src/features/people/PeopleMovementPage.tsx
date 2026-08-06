@@ -32,7 +32,7 @@ import { MetricCard } from '../../components/MetricCard';
 import { MetricGrid } from '../../components/MetricGrid';
 import { CellText, CompactCell } from '../../components/TableCell';
 import { FilterBar, FilterField, FilterPanel } from '../../components/FilterControls';
-import { defaultWorkCalendarId, useWorkCalendarState } from '../system/WorkCalendarState';
+import { isCompanyDefaultWorkCalendarValue, useWorkCalendarState } from '../system/WorkCalendarState';
 import {
   getMovementRequiredFileSlots,
   movementRequiredFileMaxSizeMb,
@@ -47,6 +47,7 @@ import {
 import {
   applyPeopleMovementEffect,
   createPeopleMovementSnapshot,
+  getAttendanceWorkCalendarDisplayName,
   getPeopleMemberPositions,
   getWorkCalendarDisplayName,
   isPeopleMovementSnapshotEqual,
@@ -594,7 +595,7 @@ function MovementRecordDrawer({
   const reasonRequired = canUseMovementType ? isMovementReasonRequired(movementType) : false;
   const movementBeforeValue = selectedMember && canUseMovementType
     ? movementType === '工作日历变更'
-      ? getWorkCalendarDisplayName(selectedMember.workCalendarId, workCalendarRows)
+      ? getAttendanceWorkCalendarDisplayName(selectedMember, workCalendarRows)
       : getMovementBeforeValue(selectedMember, movementType)
     : '';
   const movementAfterValue =
@@ -652,7 +653,7 @@ function MovementRecordDrawer({
     setNewPositions(getPeopleMemberPositions(firstMember));
     setNewPrimaryPosition(firstMember.position);
     setNewWorkCalendarMode(
-      firstMember.workCalendarId && firstMember.workCalendarId !== defaultWorkCalendarId
+      !isCompanyDefaultWorkCalendarValue(firstMember.workCalendarId)
         ? '指定工作日历'
         : '跟随公司默认日历'
     );
@@ -684,7 +685,7 @@ function MovementRecordDrawer({
       setNewPositions(getPeopleMemberPositions(nextMember));
       setNewPrimaryPosition(nextMember.position);
       setNewWorkCalendarMode(
-        nextMember.workCalendarId && nextMember.workCalendarId !== defaultWorkCalendarId
+        !isCompanyDefaultWorkCalendarValue(nextMember.workCalendarId)
           ? '指定工作日历'
           : '跟随公司默认日历'
       );
@@ -702,7 +703,7 @@ function MovementRecordDrawer({
     setNewPositions(selectedMember ? getPeopleMemberPositions(selectedMember) : []);
     setNewPrimaryPosition(selectedMember?.position ?? '');
     setNewWorkCalendarMode(
-      selectedMember?.workCalendarId && selectedMember.workCalendarId !== defaultWorkCalendarId
+      selectedMember && !isCompanyDefaultWorkCalendarValue(selectedMember.workCalendarId)
         ? '指定工作日历'
         : '跟随公司默认日历'
     );

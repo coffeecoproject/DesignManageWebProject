@@ -17,6 +17,12 @@ export type PerformanceResponseCalendarSnapshot = Pick<
   WorkCalendarRow,
   'alternateWorkdays' | 'anchorDate' | 'code' | 'fixedWorkdays' | 'id' | 'name' | 'startMode' | 'type' | 'updatedAt'
 > & {
+  appliedCalendars?: Array<{
+    id: string;
+    name: string;
+    ruleVersionIds: string[];
+    workingDates: string[];
+  }>;
   exceptionItems: AnnualExceptionItem[];
   ruleVersionIds: string[];
 };
@@ -66,22 +72,38 @@ export function buildPerformanceResponseDeadline({
   const workingDates: string[] = [];
   const exceptionItems: AnnualExceptionItem[] = [];
   const ruleVersionIds = new Set<string>();
+  const appliedCalendars = new Map<string, { id: string; name: string; ruleVersionIds: Set<string>; workingDates: string[] }>();
 
   for (let offset = 1; offset <= maxSearchDays && workingDates.length < requiredWorkingDays; offset += 1) {
     const cursor = new Date(deliveredDate);
     cursor.setDate(deliveredDate.getDate() + offset);
+    const cursorDateKey = formatCalendarDateKey(cursor);
+    const cursorCalendar = getMemberWorkCalendar(member, workCalendarRows, cursorDateKey);
     const exception = getAnnualExceptionForDate(annualExceptionRows, cursor);
 
     if (exception) {
       exceptionItems.push({ ...exception });
     }
 
-    if (isWorkCalendarDateWorkday(calendar, cursor, annualExceptionRows)) {
-      const appliedRule = resolveWorkCalendarRule(calendar, cursor);
+    if (isWorkCalendarDateWorkday(cursorCalendar, cursor, annualExceptionRows)) {
+      const appliedRule = resolveWorkCalendarRule(cursorCalendar, cursor);
       if (appliedRule) {
         ruleVersionIds.add(appliedRule.id);
       }
-      workingDates.push(formatCalendarDateKey(cursor));
+      if (cursorCalendar) {
+        const appliedCalendar = appliedCalendars.get(cursorCalendar.id) ?? {
+          id: cursorCalendar.id,
+          name: cursorCalendar.name,
+          ruleVersionIds: new Set<string>(),
+          workingDates: []
+        };
+        if (appliedRule) {
+          appliedCalendar.ruleVersionIds.add(appliedRule.id);
+        }
+        appliedCalendar.workingDates.push(cursorDateKey);
+        appliedCalendars.set(cursorCalendar.id, appliedCalendar);
+      }
+      workingDates.push(cursorDateKey);
     }
   }
 
@@ -93,6 +115,12 @@ export function buildPerformanceResponseDeadline({
 
   return {
     calendarSnapshot: {
+      appliedCalendars: [...appliedCalendars.values()].map((item) => ({
+        id: item.id,
+        name: item.name,
+        ruleVersionIds: [...item.ruleVersionIds],
+        workingDates: item.workingDates
+      })),
       alternateWorkdays: [...deliveredRule.alternateWorkdays],
       anchorDate: deliveredRule.anchorDate,
       code: calendar.code,

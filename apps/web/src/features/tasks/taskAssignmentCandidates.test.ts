@@ -326,6 +326,30 @@ const tests: UnitTest[] = [
         'a task starting after the stop date must not use the calendar'
       );
     }
+  },
+  {
+    name: 'task scheduling resolves the effective company default on every workday',
+    run: () => {
+      const oldDefault: WorkCalendarRow = {
+        ...weekdayCalendar,
+        defaultPeriods: [{ effectiveFrom: '2026-01-01', effectiveTo: '2026-06-30' }]
+      };
+      const nextDefault: WorkCalendarRow = {
+        ...weekdayCalendar,
+        code: 'CAL-TASK-NEXT',
+        defaultPeriods: [{ effectiveFrom: '2026-07-01' }],
+        fixedWorkdays: ['周四'],
+        id: 'calendar-task-next',
+        isDefault: false,
+        name: '周四工作制'
+      };
+
+      assertEqual(
+        addTaskWorkingHours('2026-06-30 10:00', 16, [oldDefault, nextDefault], []),
+        '2026-07-02 18:00',
+        'remaining hours should follow the new default after its effective date'
+      );
+    }
   }
 ];
 

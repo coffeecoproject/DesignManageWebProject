@@ -1,4 +1,10 @@
-import type { AnnualExceptionConfigRow, WorkCalendarRow } from '../system/WorkCalendarState';
+import {
+  applyDefaultWorkCalendarChange,
+  applyWorkCalendarRuleChange,
+  hasCurrentOrFutureDefaultPeriod,
+  type AnnualExceptionConfigRow,
+  type WorkCalendarRow
+} from '../system/WorkCalendarState';
 import { performanceRulePresets } from '../performance/performanceMockData';
 import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
 import {
@@ -13,6 +19,7 @@ import {
   getPeopleHousingFundStatus,
   getMovementAffectedSalaryMonths,
   getMemberWorkCalendar,
+  getWorkCalendarDependentMembers,
   getPeopleMemberPositions,
   getNextPeopleWorkNo,
   getPeopleOngoingTaskCount,
@@ -94,28 +101,38 @@ const weekdayCalendar: WorkCalendarRow = {
 const annualExceptions: AnnualExceptionConfigRow[] = [
   {
     code: 'YEAR-2026',
+    currentRevisionId: 'annual-2026-r1',
     id: 'annual-2026',
-    items: [
+    revisions: [
       {
-        date: '2026-06-17',
-        groupId: 'new-year',
-        groupName: '测试节假日',
-        id: 'annual-rest',
-        name: '测试休息日',
-        note: '',
-        type: '休息日'
-      },
-      {
-        date: '2026-06-21',
-        groupId: 'new-year',
-        groupName: '测试节假日',
-        id: 'annual-workday',
-        name: '测试特殊工作日',
-        note: '',
-        type: '特殊工作日'
+        createdAt: '2026-01-01',
+        createdBy: '测试人',
+        effectiveFrom: '2026-01-01',
+        id: 'annual-2026-r1',
+        items: [
+          {
+            date: '2026-06-17',
+            groupId: 'new-year',
+            groupName: '测试节假日',
+            id: 'annual-rest',
+            name: '测试休息日',
+            note: '',
+            type: '休息日'
+          },
+          {
+            date: '2026-06-21',
+            groupId: 'new-year',
+            groupName: '测试节假日',
+            id: 'annual-workday',
+            name: '测试特殊工作日',
+            note: '',
+            type: '特殊工作日'
+          }
+        ],
+        revision: 1,
+        source: '测试'
       }
     ],
-    source: '测试',
     status: '已启用',
     updatedAt: '2026-06-17',
     updatedBy: '测试人',
@@ -749,6 +766,212 @@ const tests: UnitTest[] = [
         workCalendarId: secondCalendar.id
       });
       assertEqual(getMemberWorkCalendar(assignmentGapMember, [weekdayCalendar, secondCalendar], '2026-06-15'), undefined, 'an assignment gap must not fall back to the current projection');
+    }
+  },
+  {
+    name: 'switches the company default calendar by effective date without rewriting history',
+    run: () => {
+      const oldDefault: WorkCalendarRow = {
+        ...weekdayCalendar,
+        defaultPeriods: [{ effectiveFrom: '2026-01-01' }]
+      };
+      const nextDefault: WorkCalendarRow = {
+        ...weekdayCalendar,
+        code: 'CAL-TEST-DEFAULT-NEXT',
+        id: 'calendar-test-default-next',
+        isDefault: false,
+        name: '新公司默认日历'
+      };
+      const change = applyDefaultWorkCalendarChange(
+        [oldDefault, nextDefault],
+        nextDefault.id,
+        '2026-07-01',
+        '2026-06-16'
+      );
+      const member = createMember({
+        workCalendarAssignments: [{
+          effectiveFrom: '2026-01-01',
+          id: 'calendar-follow-default',
+          mode: '跟随公司默认日历',
+          status: '生效中'
+        }]
+      });
+
+      assertEqual(change.result.success, true, 'enabled calendar should accept a future default period');
+      assertEqual(getMemberWorkCalendar(member, change.rows, '2026-06-30')?.id, oldDefault.id, 'historical date should keep the old default');
+      assertEqual(getMemberWorkCalendar(member, change.rows, '2026-07-01')?.id, nextDefault.id, 'effective date should use the new default');
+      assertEqual(change.rows.find((row) => row.id === oldDefault.id)?.isDefault, true, 'future switch must keep the current projection unchanged');
+      assertEqual(
+        hasCurrentOrFutureDefaultPeriod(change.rows.find((row) => row.id === nextDefault.id)!, '2026-06-16'),
+        true,
+        'future default target must be protected from being stopped'
+      );
+
+      const specifiedMember = createMember({
+        workCalendarAssignments: [{
+          effectiveFrom: '2026-01-01',
+          id: 'calendar-explicit',
+          mode: '指定工作日历',
+          status: '生效中',
+          workCalendarId: oldDefault.id
+        }]
+      });
+      assertEqual(getMemberWorkCalendar(specifiedMember, change.rows, '2026-07-01')?.id, oldDefault.id, 'explicit assignment must not follow the company default switch');
+    }
+  },
+  {
+    name: 'rejects invalid company default calendar changes',
+    run: () => {
+      const stoppedCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        id: 'calendar-stopped-default-target',
+        isDefault: false,
+        status: '停用'
+      };
+      const stoppedChange = applyDefaultWorkCalendarChange(
+        [weekdayCalendar, stoppedCalendar],
+        stoppedCalendar.id,
+        '2026-06-16',
+        '2026-06-16'
+      );
+      const historicalChange = applyDefaultWorkCalendarChange(
+        [weekdayCalendar, { ...stoppedCalendar, status: '启用' }],
+        stoppedCalendar.id,
+        '2026-06-15',
+        '2026-06-16'
+      );
+
+      assertEqual(stoppedChange.result.success, false, 'stopped calendar must not become default');
+      assertEqual(historicalChange.result.success, false, 'default change must not rewrite a historical date');
+    }
+  },
+  {
+    name: 'resolves the company default for historical employee dates covered by the baseline',
+    run: () => {
+      const historicalDefault: WorkCalendarRow = {
+        ...weekdayCalendar,
+        defaultPeriods: [{ effectiveFrom: '2025-01-01' }],
+        effectiveFrom: '2025-01-01'
+      };
+      const historicalMember = createMember({
+        workCalendarAssignments: [{
+          effectiveFrom: '2025-11-15',
+          id: 'calendar-historical-default',
+          mode: '跟随公司默认日历',
+          status: '生效中'
+        }]
+      });
+
+      assertEqual(
+        getMemberWorkCalendar(historicalMember, [historicalDefault], '2025-11-15')?.id,
+        historicalDefault.id,
+        'default baseline should cover historical employment dates'
+      );
+    }
+  },
+  {
+    name: 'protects calendars referenced by current or future employee assignments',
+    run: () => {
+      const protectedCalendarId = 'calendar-protected';
+      const members = [
+        createMember({
+          id: 'member-current-calendar',
+          workCalendarAssignments: [{
+            effectiveFrom: '2026-01-01',
+            id: 'assignment-current-calendar',
+            mode: '指定工作日历',
+            status: '生效中',
+            workCalendarId: protectedCalendarId
+          }]
+        }),
+        createMember({
+          id: 'member-future-calendar',
+          workCalendarAssignments: [{
+            effectiveFrom: '2026-07-01',
+            id: 'assignment-future-calendar',
+            mode: '指定工作日历',
+            status: '生效中',
+            workCalendarId: protectedCalendarId
+          }]
+        }),
+        createMember({
+          id: 'member-ended-calendar',
+          status: '离职',
+          workCalendarAssignments: [{
+            effectiveFrom: '2026-01-01',
+            id: 'assignment-ended-calendar',
+            mode: '指定工作日历',
+            status: '生效中',
+            workCalendarId: protectedCalendarId
+          }]
+        })
+      ];
+
+      assertEqual(
+        getWorkCalendarDependentMembers(members, protectedCalendarId, '2026-06-15').map((member) => member.id).sort().join(','),
+        'member-current-calendar,member-future-calendar',
+        'stop protection should include current and future active relationships only'
+      );
+    }
+  },
+  {
+    name: 'keeps current calendar projection unchanged until a future rule becomes effective',
+    run: () => {
+      const currentCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        currentVersionId: 'calendar-current-v1',
+        effectiveFrom: '2026-01-01',
+        versions: [{
+          alternateWorkdays: [],
+          createdAt: '2026-01-01',
+          effectiveFrom: '2026-01-01',
+          fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
+          id: 'calendar-current-v1',
+          note: '当前规则',
+          type: '双休',
+          version: 1
+        }]
+      };
+      const change = applyWorkCalendarRuleChange(
+        [currentCalendar],
+        currentCalendar.id,
+        {
+          alternateWorkdays: [],
+          effectiveFrom: '2026-07-01',
+          fixedWorkdays: ['周一', '周二', '周三', '周四', '周五', '周六'],
+          name: currentCalendar.name,
+          note: '未来规则',
+          type: '单休'
+        },
+        '2026-06-15'
+      );
+      const updatedCalendar = change.rows[0];
+
+      assertEqual(change.result.success, true, 'future rule should be accepted');
+      assertEqual(updatedCalendar.type, '双休', 'current projection should keep the currently effective rule');
+      assertEqual(updatedCalendar.currentVersionId, 'calendar-current-v1', 'current version id should not point to a future version');
+      assertEqual(updatedCalendar.versions?.length, 2, 'future rule should still be retained on the version timeline');
+    }
+  },
+  {
+    name: 'keeps member calendar projection unchanged before a future movement takes effect',
+    run: () => {
+      const sourceMember = createMember({ workCalendarId: weekdayCalendar.id });
+      const futureCalendarId = 'calendar-future-movement';
+      const adjustedMember = applyPeopleMovementEffect(
+        sourceMember,
+        {
+          effectiveAt: '2026-07-01',
+          memberId: sourceMember.id,
+          newWorkCalendarId: futureCalendarId,
+          newWorkCalendarMode: '指定工作日历',
+          type: '工作日历变更'
+        },
+        { today: '2026-06-15' }
+      );
+
+      assertEqual(adjustedMember.workCalendarId, weekdayCalendar.id, 'current member projection should remain on the current calendar');
+      assertEqual(adjustedMember.workCalendarAssignments?.at(-1)?.workCalendarId, futureCalendarId, 'future assignment should remain on the effective timeline');
     }
   }
 ];

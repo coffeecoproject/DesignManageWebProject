@@ -1,4 +1,4 @@
-import { defaultWorkCalendarId } from '../system/WorkCalendarState';
+import { companyDefaultWorkCalendarValue } from '../system/WorkCalendarState';
 import { getPositionId } from './rolePermissionModel';
 import type { PeopleMember, PeoplePositionAssignment } from './peopleTypes';
 
@@ -112,7 +112,7 @@ function createActiveEmployee(input: {
     taskCapabilityIds: input.taskCapabilityIds,
     taskRecords: [],
     wechat: `wx_person_${input.id}`,
-    workCalendarId: defaultWorkCalendarId
+    workCalendarId: companyDefaultWorkCalendarValue
   };
 }
 
@@ -131,7 +131,7 @@ export const peopleMembers: PeopleMember[] = [
       positions: ['CEO'],
       primaryPosition: 'CEO'
     }),
-    workCalendarId: defaultWorkCalendarId,
+    workCalendarId: companyDefaultWorkCalendarValue,
     status: '试用期',
     gender: '女',
     birthDate: '1994-03-18',
@@ -220,7 +220,7 @@ export const peopleMembers: PeopleMember[] = [
       positions: ['主案设计师', '财务专员'],
       primaryPosition: '主案设计师'
     }),
-    workCalendarId: defaultWorkCalendarId,
+    workCalendarId: companyDefaultWorkCalendarValue,
     status: '在职',
     gender: '男',
     birthDate: '1991-08-06',
@@ -308,7 +308,7 @@ export const peopleMembers: PeopleMember[] = [
       positions: ['行政专员'],
       primaryPosition: '行政专员'
     }),
-    workCalendarId: defaultWorkCalendarId,
+    workCalendarId: companyDefaultWorkCalendarValue,
     status: '离职',
     gender: '男',
     birthDate: '1989-12-12',

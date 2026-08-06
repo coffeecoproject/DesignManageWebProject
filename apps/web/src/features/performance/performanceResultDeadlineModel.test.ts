@@ -1,6 +1,7 @@
 import type { PeopleMember } from '../people/peopleTypes';
 import {
   defaultWorkCalendarId,
+  type AnnualExceptionItem,
   type AnnualExceptionConfigRow,
   type WorkCalendarRow
 } from '../system/WorkCalendarState';
@@ -45,13 +46,23 @@ const defaultCalendar: WorkCalendarRow = {
   name: '公司默认工作日历'
 };
 
-function exceptionRows(items: AnnualExceptionConfigRow['items']): AnnualExceptionConfigRow[] {
+function exceptionRows(items: AnnualExceptionItem[]): AnnualExceptionConfigRow[] {
   return [
     {
       code: 'EX-2026',
+      currentRevisionId: 'exception-2026-r1',
       id: 'exception-2026',
-      items,
-      source: '测试年度配置',
+      revisions: [
+        {
+          createdAt: '2026-01-01',
+          createdBy: '测试人员',
+          effectiveFrom: '2026-01-01',
+          id: 'exception-2026-r1',
+          items,
+          revision: 1,
+          source: '测试年度配置'
+        }
+      ],
       status: '已启用',
       updatedAt: '2026-01-01',
       updatedBy: '测试人员',
@@ -195,6 +206,48 @@ const tests: UnitTest[] = [
       assertEqual(result?.workingDates.join(','), '2026-06-22,2026-06-23,2026-06-24', 'historical delivery should use the then-active calendar');
       assertEqual(result?.calendarSnapshot.fixedWorkdays.includes('周一'), true, 'snapshot should preserve the effective rule instead of current row fields');
       assertEqual(result?.calendarSnapshot.ruleVersionIds.join(','), 'deadline-rule-v1', 'snapshot should record the applied rule version');
+    }
+  },
+  {
+    name: 'response deadline resolves employee calendar changes for each response day',
+    run() {
+      const nextCalendar: WorkCalendarRow = {
+        ...weekdayCalendar,
+        code: 'CAL-DEADLINE-NEXT',
+        fixedWorkdays: ['周四'],
+        id: 'calendar-deadline-next',
+        isDefault: false,
+        name: '周四工作制'
+      };
+      const changingMember = {
+        ...member,
+        workCalendarAssignments: [
+          {
+            effectiveFrom: '2026-01-01',
+            effectiveTo: '2026-06-30',
+            id: 'deadline-assignment-old',
+            mode: '指定工作日历',
+            status: '已结束',
+            workCalendarId: weekdayCalendar.id
+          },
+          {
+            effectiveFrom: '2026-07-01',
+            id: 'deadline-assignment-next',
+            mode: '指定工作日历',
+            status: '生效中',
+            workCalendarId: nextCalendar.id
+          }
+        ]
+      } as PeopleMember;
+      const result = buildPerformanceResponseDeadline({
+        annualExceptionRows: [],
+        deliveredAt: '2026-06-29 10:00:00',
+        member: changingMember,
+        workCalendarRows: [weekdayCalendar, nextCalendar]
+      });
+
+      assertEqual(result?.workingDates.join(','), '2026-06-30,2026-07-02,2026-07-09', 'each response day should use the effective employee calendar');
+      assertEqual(result?.calendarSnapshot.appliedCalendars?.length, 2, 'snapshot should identify every calendar used by the deadline');
     }
   }
 ];

@@ -13,6 +13,7 @@ export type DrawerAction = {
 };
 
 export type DrawerFooterActionsProps = {
+  additionalActions?: DrawerAction[];
   cancelAction?: DrawerAction;
   closeAction?: DrawerAction;
   primaryAction?: DrawerAction;
@@ -34,13 +35,14 @@ export type DrawerShellProps = DrawerFooterActionsProps & {
 export type DetailDrawerShellProps = Omit<DrawerShellProps, 'contentLayout' | 'destroyOnHidden'>;
 export type ImportDrawerShellProps = DetailDrawerShellProps;
 
-function renderFooterAction(action: DrawerAction | undefined, fallbackType?: ButtonProps['type']) {
+function renderFooterAction(action: DrawerAction | undefined, fallbackType?: ButtonProps['type'], key?: string) {
   if (!action) {
     return null;
   }
 
   return (
     <Button
+      key={key}
       danger={action.danger}
       data-testid={action.testId}
       disabled={action.disabled}
@@ -53,11 +55,16 @@ function renderFooterAction(action: DrawerAction | undefined, fallbackType?: But
   );
 }
 
-function DrawerFooterActions({ cancelAction, closeAction, primaryAction, secondaryAction }: DrawerFooterActionsProps) {
+function DrawerFooterActions({ additionalActions, cancelAction, closeAction, primaryAction, secondaryAction }: DrawerFooterActionsProps) {
   return (
     <div className="drawer-footer-actions">
       {renderFooterAction(closeAction)}
       {renderFooterAction(cancelAction)}
+      {additionalActions?.map((action, index) => renderFooterAction(
+        action,
+        undefined,
+        action.testId ?? `${String(action.label)}-${index}`
+      ))}
       {renderFooterAction(secondaryAction)}
       {renderFooterAction(primaryAction, 'primary')}
     </div>
@@ -65,6 +72,7 @@ function DrawerFooterActions({ cancelAction, closeAction, primaryAction, seconda
 }
 
 export function DrawerShell({
+  additionalActions,
   bodyTestId,
   cancelAction,
   children,
@@ -80,7 +88,7 @@ export function DrawerShell({
   onClose
 }: DrawerShellProps) {
   const drawerClassName = ['detail-drawer-shell', className].filter(Boolean).join(' ');
-  const hasFooterActions = Boolean(closeAction || cancelAction || secondaryAction || primaryAction);
+  const hasFooterActions = Boolean(additionalActions?.length || closeAction || cancelAction || secondaryAction || primaryAction);
   const shouldRenderContent = open || destroyOnHidden === false;
   const content = contentLayout === 'detail'
     ? <div className="drawer-detail-layout" data-testid={bodyTestId}>{children}</div>
@@ -95,6 +103,7 @@ export function DrawerShell({
       footer={
         hasFooterActions ? (
           <DrawerFooterActions
+            additionalActions={additionalActions}
             cancelAction={cancelAction}
             closeAction={closeAction}
             primaryAction={primaryAction}

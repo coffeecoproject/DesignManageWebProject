@@ -39,11 +39,17 @@ import { CellText, CompactCell } from '../../components/TableCell';
 import { useFinanceSocialInsuranceState } from '../finance/FinanceSocialInsuranceState';
 import type { SocialInsuranceEnrollmentProfile } from '../finance/financeSocialInsuranceData';
 import { useTaskConfigState, type TaskConfigRow } from '../system/TaskConfigState';
-import { defaultWorkCalendarId, useWorkCalendarState, type WorkCalendarRow } from '../system/WorkCalendarState';
+import {
+  companyDefaultWorkCalendarValue,
+  isCompanyDefaultWorkCalendarValue,
+  useWorkCalendarState,
+  type WorkCalendarRow
+} from '../system/WorkCalendarState';
 import { getArchiveRequiredFileSlots, type ArchiveRequiredFileSlot } from './peopleFileSlotModel';
 import { usePeopleOrganizationState } from './PeopleOrganizationState';
 import {
   getArchiveWorkCalendarId,
+  getAttendanceWorkCalendarDisplayName,
   getPeopleArchiveEndDateInfo,
   getPeopleArchiveListStatus,
   getPeopleArchiveStartDateInfo,
@@ -391,7 +397,7 @@ function createDraftArchiveMember(rows: PeopleMember[]): PeopleMember {
     taskAccessStatus: '暂停参与',
     taskRecords: [],
     wechat: '',
-    workCalendarId: defaultWorkCalendarId
+    workCalendarId: companyDefaultWorkCalendarValue
   };
 }
 
@@ -603,7 +609,7 @@ function ArchiveDetailDrawer({
   const [draftEmploymentRelationshipType, setDraftEmploymentRelationshipType] = useState<PeopleMember['employmentRelationshipType']>('全日制劳动关系');
   const [draftPosition, setDraftPosition] = useState('空间设计师');
   const [draftPositions, setDraftPositions] = useState<string[]>(['空间设计师']);
-  const [draftWorkCalendarId, setDraftWorkCalendarId] = useState(defaultWorkCalendarId);
+  const [draftWorkCalendarId, setDraftWorkCalendarId] = useState(companyDefaultWorkCalendarValue);
   const [draftGender, setDraftGender] = useState<PeopleMember['gender']>('女');
   const [draftBirthDate, setDraftBirthDate] = useState('');
   const [draftNationality, setDraftNationality] = useState('中国');
@@ -781,7 +787,9 @@ function ArchiveDetailDrawer({
   const visibleTaskCapabilityRows = getTaskCapabilityRows(isMaintainMode ? draftTaskCapabilityIds : member.taskCapabilityIds, taskConfigRows);
   const showWorkCalendarField = (isMaintainMode ? draftPersonnelType : member.personnelType) === '全职';
   const visibleWorkCalendarName = showWorkCalendarField
-    ? getWorkCalendarDisplayName(isMaintainMode ? draftWorkCalendarId : member.workCalendarId, workCalendarRows, { includeStatus: true })
+    ? isCreateMode
+      ? getWorkCalendarDisplayName(draftWorkCalendarId, workCalendarRows, { includeStatus: true })
+      : getAttendanceWorkCalendarDisplayName(member, workCalendarRows)
     : '';
 
   function handleDrawerClose() {
@@ -804,7 +812,7 @@ function ArchiveDetailDrawer({
     setDraftPersonnelType(personnelType);
 
     if (personnelType === '全职' && !draftWorkCalendarId) {
-      setDraftWorkCalendarId(defaultWorkCalendarId);
+      setDraftWorkCalendarId(companyDefaultWorkCalendarValue);
     }
 
     if (personnelType === '兼职') {
@@ -953,11 +961,11 @@ function ArchiveDetailDrawer({
         ? [{
             effectiveFrom: startAt,
             id: `${sourceMember.id}-calendar-1`,
-            mode: draftSnapshot.workCalendarId === defaultWorkCalendarId
+            mode: isCompanyDefaultWorkCalendarValue(draftSnapshot.workCalendarId)
               ? '跟随公司默认日历'
               : '指定工作日历',
             status: '生效中',
-            workCalendarId: draftSnapshot.workCalendarId === defaultWorkCalendarId
+            workCalendarId: isCompanyDefaultWorkCalendarValue(draftSnapshot.workCalendarId)
               ? undefined
               : draftSnapshot.workCalendarId
           }]
@@ -1273,7 +1281,7 @@ function ArchiveDetailDrawer({
 	                                  {draftPersonnelType === '全职' ? (
 	                                    <DrawerFormField label="适用工作日历">
 	                                      <Select
-	                                        value={draftWorkCalendarId || defaultWorkCalendarId}
+	                                        value={draftWorkCalendarId || companyDefaultWorkCalendarValue}
 	                                        options={workCalendarOptions}
 	                                        onChange={setDraftWorkCalendarId}
 	                                      />
@@ -1745,7 +1753,7 @@ export function PeopleArchivesPage() {
             member.mobile.toLowerCase().includes(keyword) ||
             member.position.toLowerCase().includes(keyword) ||
             (member.personnelType === '全职' &&
-              getWorkCalendarDisplayName(member.workCalendarId, workCalendarRows, { includeStatus: true }).toLowerCase().includes(keyword)) ||
+              getAttendanceWorkCalendarDisplayName(member, workCalendarRows).toLowerCase().includes(keyword)) ||
             member.graduationSchool.toLowerCase().includes(keyword) ||
             member.education.toLowerCase().includes(keyword) ||
             member.educationMajor.toLowerCase().includes(keyword);

@@ -12,6 +12,7 @@ export type ModeDrawerMode = 'create' | 'detail' | 'edit';
 export type DrawerFormAction = DrawerAction;
 
 type ModeDrawerDetailActions = {
+  additionalActions?: DrawerFormAction[];
   closeAction: DrawerFormAction;
   primaryAction?: DrawerFormAction;
   secondaryAction?: DrawerFormAction;
@@ -95,6 +96,7 @@ export type ModeDrawerState<TRecord, TForm> = {
 };
 
 export function DrawerFormShell({
+  additionalActions,
   bodyTestId,
   cancelAction,
   children,
@@ -113,6 +115,9 @@ export function DrawerFormShell({
 }: DrawerFormShellProps) {
   const hasModeFooterActions = Boolean(mode && (detailActions || formActions));
   const resolvedCloseAction = hasModeFooterActions && mode === 'detail' ? detailActions?.closeAction : closeAction;
+  const resolvedAdditionalActions = hasModeFooterActions && mode === 'detail'
+    ? detailActions?.additionalActions
+    : additionalActions;
   const resolvedCancelAction = hasModeFooterActions && mode !== 'detail' ? formActions?.cancelAction : cancelAction;
   const resolvedSecondaryAction = hasModeFooterActions
     ? mode === 'detail'
@@ -127,6 +132,7 @@ export function DrawerFormShell({
 
   return (
     <DrawerShell
+      additionalActions={resolvedAdditionalActions}
       bodyTestId={bodyTestId}
       cancelAction={resolvedCancelAction}
       className={className}

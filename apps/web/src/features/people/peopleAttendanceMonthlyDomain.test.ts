@@ -73,19 +73,29 @@ const disabledCalendar: WorkCalendarRow = {
 const restDayExceptionRows: AnnualExceptionConfigRow[] = [
   {
     code: 'YEAR-2026',
+    currentRevisionId: 'annual-2026-rest-r1',
     id: 'annual-2026-rest',
-    items: [
+    revisions: [
       {
-        date: '2026-06-17',
-        groupId: 'new-year',
-        groupName: '测试节假日',
-        id: 'annual-rest',
-        name: '测试休息日',
-        note: '',
-        type: '休息日'
+        createdAt: '2026-01-01',
+        createdBy: '测试人',
+        effectiveFrom: '2026-01-01',
+        id: 'annual-2026-rest-r1',
+        items: [
+          {
+            date: '2026-06-17',
+            groupId: 'new-year',
+            groupName: '测试节假日',
+            id: 'annual-rest',
+            name: '测试休息日',
+            note: '',
+            type: '休息日'
+          }
+        ],
+        revision: 1,
+        source: '测试'
       }
     ],
-    source: '测试',
     status: '已启用',
     updatedAt: '2026-06-17',
     updatedBy: '测试人',
@@ -96,16 +106,27 @@ const restDayExceptionRows: AnnualExceptionConfigRow[] = [
 const specialWorkdayExceptionRows: AnnualExceptionConfigRow[] = [
   {
     ...restDayExceptionRows[0],
+    currentRevisionId: 'annual-2026-workday-r1',
     id: 'annual-2026-workday',
-    items: [
+    revisions: [
       {
-        date: '2026-06-21',
-        groupId: 'new-year',
-        groupName: '测试节假日',
-        id: 'annual-workday',
-        name: '测试特殊工作日',
-        note: '',
-        type: '特殊工作日'
+        createdAt: '2026-01-01',
+        createdBy: '测试人',
+        effectiveFrom: '2026-01-01',
+        id: 'annual-2026-workday-r1',
+        items: [
+          {
+            date: '2026-06-21',
+            groupId: 'new-year',
+            groupName: '测试节假日',
+            id: 'annual-workday',
+            name: '测试特殊工作日',
+            note: '',
+            type: '特殊工作日'
+          }
+        ],
+        revision: 1,
+        source: '测试'
       }
     ]
   }
