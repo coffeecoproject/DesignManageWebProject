@@ -50,9 +50,9 @@ These entry points mirror `/Users/liushan/Developer/CodingFlow/for-web-industria
 - Web frontend: initialized at `apps/web` with Vite + React + TypeScript + Ant Design Pro-style shell.
 - Backend API: planned gap, not initialized.
 - Backend runtime units: TBD.
-- Local dependency services: Docker Compose Postgres.
-- Docker / compatible container runtime: Docker Desktop verified locally.
-- Database: local Postgres on `127.0.0.1:55432`, database `startupmanage_local`.
+- Local dependency services: Postgres from `compose.yaml`, run by napbox (one isolated environment per git worktree).
+- Container runtime: napbox (`napbox` on PATH); Docker is not used.
+- Database: local Postgres, database `startupmanage_local`; the host port is assigned by napbox, read it with `napbox env`.
 - Storage: TBD.
 - Cache: TBD.
 - Queue: TBD.
@@ -78,12 +78,11 @@ http://127.0.0.1:5173
 | Purpose | Command | Notes |
 | --- | --- | --- |
 | install | `corepack pnpm install` | Uses `pnpm@11.1.3` and `pnpm-lock.yaml`. |
-| local database config | `scripts/local/db-config.sh` | Renders Compose config. |
-| start local database | `scripts/local/db-up.sh` | Starts isolated local Postgres. |
+| start local database | `scripts/local/db-up.sh` | Creates or wakes this worktree's napbox environment. |
 | inspect local database | `scripts/local/db-status.sh` | Checks Postgres health. |
 | open local psql | `scripts/local/db-psql.sh` | Opens psql against the isolated local database. |
 | local database logs | `scripts/local/db-logs.sh` | Shows recent Postgres logs. |
-| stop local database | `scripts/local/db-down.sh` | Stops without removing data volume. |
+| stop local database | `scripts/local/db-down.sh` | Puts the environment to sleep; data is kept and the next connection wakes it. |
 | start frontend | `corepack pnpm dev:web` | Opens `http://127.0.0.1:5173`. |
 | start API | TBD | Backend runtime not initialized. |
 | lint | `corepack pnpm lint` | Frontend ESLint gate. |

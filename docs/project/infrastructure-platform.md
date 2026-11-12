@@ -19,10 +19,9 @@ No remote infrastructure has been selected or configured.
 
 Local-only infrastructure:
 
-- Docker Compose Postgres dependency runtime is configured in `docker-compose.yml`.
-- Dedicated local network: `startupmanage_local_net`.
-- Dedicated local volume: `startupmanage_local_pgdata`.
-- Host port: `55432`.
+- Postgres dependency runtime is configured in `compose.yaml` and run by napbox, one isolated environment per git worktree.
+- Local volume: napbox named volume `pgdata`, per environment.
+- Host port: assigned by napbox and fixed for the environment; read it with `napbox env`.
 
 ## 3. High-Risk Boundary
 

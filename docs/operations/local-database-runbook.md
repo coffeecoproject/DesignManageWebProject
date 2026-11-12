@@ -2,7 +2,9 @@
 
 ## 1. Scope
 
-This runbook covers the local Docker Compose Postgres dependency for StartupManageSystem.
+This runbook covers the local Postgres dependency for StartupManageSystem. It is defined in `compose.yaml` and
+run by napbox: each git worktree gets its own isolated environment with its own data and host port. Docker is
+not used.
 
 It does not cover production, staging, migrations, backups, restores, or schema changes.
 
@@ -10,43 +12,48 @@ It does not cover production, staging, migrations, backups, restores, or schema 
 
 | Item | Value |
 | --- | --- |
-| Compose project | `startupmanage_local` |
+| Runtime | napbox (`napbox` on PATH) |
+| Environment | `<repository folder>/<worktree>`; the main checkout is `startupmanagesystem/main` |
 | Service | `postgres` |
-| Container | `startupmanage_local-postgres-1` |
 | Image | `postgres:16-alpine` |
-| Host port | `55432` |
+| Host port | assigned by napbox, fixed for the environment (`napbox env`, variable `NAPBOX_POSTGRES_5432`) |
 | Container port | `5432` |
 | Database | `startupmanage_local` |
 | User | `startupmanage_app` |
-| Network | `startupmanage_local_net` |
-| Volume | `startupmanage_local_pgdata` |
+| Volume | napbox named volume `pgdata`, per environment |
+
+The host port stays the same across sleep, wake, repeated `up`, and napboxd restarts. Other worktrees get other
+ports, so read it from `napbox env` instead of writing it down.
 
 ## 3. Commands
 
-Run commands from anywhere inside the repository. Scripts resolve the repository root before calling Docker Compose.
+Run commands from anywhere inside the repository. Scripts resolve the repository root before calling napbox.
 
 | Purpose | Command |
 | --- | --- |
-| Render Compose config | `scripts/local/db-config.sh` |
-| Start Postgres | `scripts/local/db-up.sh` |
-| Check health | `scripts/local/db-status.sh` |
-| Open psql | `scripts/local/db-psql.sh` |
+| Start or wake Postgres | `scripts/local/db-up.sh` |
+| Check health and show the host port | `scripts/local/db-status.sh` |
+| Run psql (stdin is forwarded, no interactive terminal) | `scripts/local/db-psql.sh` |
 | Run one SQL command | `scripts/local/db-psql.sh -c 'SELECT current_database(), current_user;'` |
 | Run period-close PostgreSQL migration dry-run | `corepack pnpm db:period-close:dry-run` |
 | Run period-close PostgreSQL isolated apply drill | `corepack pnpm db:period-close:apply-drill` |
-| Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` |
+| Run period-close PostgreSQL persisted replay drill | `corepack pnpm db:period-close:replay-drill` |
+| Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` (needs `rg` on PATH) |
 | Show logs | `scripts/local/db-logs.sh` |
-| Stop Postgres without deleting data | `scripts/local/db-down.sh` |
+| Sleep Postgres without deleting data | `scripts/local/db-down.sh` |
+
+An idle environment also goes to sleep by itself after 30 minutes. A sleeping environment wakes on the next
+connection or `db-psql.sh` call.
 
 ## 4. Connection
 
-Host tools can use:
+Host tools use `127.0.0.1` and the port from `napbox env`:
 
 ```text
-postgres://startupmanage_app:startupmanage_local_dev_only@127.0.0.1:55432/startupmanage_local
+postgres://startupmanage_app:startupmanage_local_dev_only@127.0.0.1:<port>/startupmanage_local
 ```
 
-Docker-networked services should use:
+Services in the same `compose.yaml` should use:
 
 ```text
 postgres://startupmanage_app:startupmanage_local_dev_only@postgres:5432/startupmanage_local
@@ -54,23 +61,26 @@ postgres://startupmanage_app:startupmanage_local_dev_only@postgres:5432/startupm
 
 ## 5. Destructive Boundary
 
-Do not remove the Docker volume without explicit user approval.
+Do not delete local database data without explicit user approval.
 
-The period-close isolated apply and concurrency drills may create and drop only
+The period-close isolated apply, replay, and concurrency drills may create and drop only
 schemas named `period_close_drill_*`. They must not drop tables, truncate rows,
-delete rows, drop the `public` schema, or remove Docker volumes.
+delete rows, drop the `public` schema, or remove the data volume.
 
-Commands such as these are destructive because they can delete local database data:
+Commands such as these are destructive because they delete local database data:
 
 ```bash
-docker compose down -v
-docker volume rm startupmanage_local_pgdata
+napbox reset pgdata
+napbox down
 ```
+
+`napbox reset` and `napbox down` keep the old data for 7 days before deleting it, but they still remove it from
+the running environment.
 
 If local data cleanup is required later, record:
 
 - reason
-- affected volume
+- affected environment and volume
 - owner approval
 - before/after evidence
 
@@ -80,13 +90,12 @@ If Postgres is not healthy:
 
 1. Run `scripts/local/db-status.sh`.
 2. Run `scripts/local/db-logs.sh`.
-3. Confirm port `55432` is not occupied by another process.
-4. Confirm Docker Desktop is running.
+3. Run `napbox status --text` to check that napboxd is running.
 
 If host tools cannot connect:
 
 1. Use host `127.0.0.1`, not `postgres`.
-2. Use port `55432`, not `5432`.
+2. Use the port from `napbox env`; it is not `5432`.
 3. Confirm the database and user are `startupmanage_local` and `startupmanage_app`.
 
 ## 7. Evidence Boundary

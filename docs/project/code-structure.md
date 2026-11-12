@@ -10,9 +10,8 @@ README.md
 package.json
 pnpm-lock.yaml
 pnpm-workspace.yaml
-docker-compose.yml
+compose.yaml
 .editorconfig
-.env.local.example
 .gitignore
 apps/
   api/
@@ -70,7 +69,7 @@ docs/
 | `apps/web/src/features/performance` | implemented_baseline | Static performance management pages for `绩效看板`, `绩效规则`, `绩效签署`, and `绩效明细`; no backend rule engine, payroll execution, or settlement ledger. |
 | `apps/web/src/features/finance` | implemented_baseline | Static finance-management pages for transaction registration/review, fund handling, public account, and bank reconciliation; no real payment, accounting, banking, or audit-grade finance backend. |
 | `apps/web/src/features/system` | implemented_baseline | Static system-configuration pages for read-only business roles, task configuration, work calendars, finance categories, public-account configuration, social-insurance/housing-fund configuration, and tax policy; shared frontend-session providers expose configuration rows to feature pages without backend persistence. |
-| `scripts/local` | implemented_baseline | Local Docker Postgres helper scripts. |
+| `scripts/local` | implemented_baseline | Local Postgres helper scripts (napbox). |
 | `docs` | implemented_baseline | Governance, requirements, route, UI, test, and evidence docs. |
 | `services/api` | not_created | Separate deployed backend/API service pending business and architecture decisions. Current `apps/api` is only a local contract/domain skeleton. |
 | `packages/*` | not_created | Shared packages pending need. |

@@ -30,7 +30,7 @@ It does not prove implementation readiness.
 | Round 1 audit report | `docs/audit-reports/bootstrap-full-audit-round-1.md` | bootstrap_asset_only | Governance asset audit. |
 | Round 2 audit report | `docs/audit-reports/bootstrap-full-audit-round-2.md` | bootstrap_asset_only | Governance asset re-audit. |
 | Governance close-out | `docs/governance/governance-close-out.md` | bootstrap_asset_only | Closes bootstrap governance asset phase. |
-| Local environment evidence | `docs/evidence/local-environment-evidence.md` | ready_with_evidence | Local Docker Postgres dependency isolation evidence; app/schema/release not ready. |
+| Local environment evidence | `docs/evidence/local-environment-evidence.md` | ready_with_evidence | Local Postgres dependency isolation evidence (Docker 2026-06-03, napbox since 2026-11-11); app/schema/release not ready. |
 | Local environment build audit | `docs/audit-reports/local-environment-build-audit.md` | ready_with_evidence | Local Docker Postgres build audit. |
 | Local database runbook | `docs/operations/local-database-runbook.md` | bootstrap_asset_only | Local DB operation and destructive boundary. |
 | Local engineering foundation audit | `docs/audit-reports/local-engineering-foundation-audit.md` | ready_with_evidence | Git, scripts, runbook, and editor baseline audit. |

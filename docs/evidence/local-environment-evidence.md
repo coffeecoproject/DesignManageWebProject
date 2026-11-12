@@ -3,8 +3,8 @@
 ## 1. Metadata
 
 - Project: StartupManageSystem
-- Evidence type: local Docker dependency environment
-- Date: 2026-06-03
+- Evidence type: local container dependency environment
+- Date: 2026-06-03 (Docker Compose, sections 2–5.1); 2026-11-11 (moved to napbox, section 7)
 - Owner: Codex
 - Scope: local Postgres only
 
@@ -69,3 +69,36 @@ lsof -nP -iTCP:55432 -sTCP:LISTEN
 This evidence covers local dependency isolation only.
 
 It does not prove application implementation, database schema, migrations, backup/recovery, CI/CD, staging, production, or release readiness.
+
+## 7. Runtime Change: Docker Compose To napbox (2026-11-11)
+
+The local Postgres dependency moved from Docker Compose to napbox so that Docker can be uninstalled. Sections
+2–5.1 above record the original Docker setup and are superseded for the current runtime.
+
+| Change | Before | After |
+| --- | --- | --- |
+| Compose file | `docker-compose.yml` with project name, named network, and volume names | `compose.yaml`; napbox names the environment per git worktree |
+| Host port | fixed `55432` | assigned by napbox, fixed per environment, read with `napbox env` |
+| Isolation | dedicated network `startupmanage_local_net` and volume `startupmanage_local_pgdata` | one napbox environment (its own VM, volume `pgdata`, and port) per worktree |
+| Overrides | `.env.local.example` (`SMS_POSTGRES_*`, `DATABASE_URL` on `55432`) | removed; local-only settings are fixed in `compose.yaml` |
+| `db-config.sh` | `docker compose config` | removed; napbox validates `compose.yaml` on `up` and reports unsupported fields |
+| `db-down.sh` | `docker compose stop postgres` | `napbox sleep`; data is kept and the next connection wakes it |
+
+Data: the old Docker volume was not migrated. The project has no applied schema; the drills only create
+temporary `period_close_drill_*` schemas and drop them, and the dry-run rolls back.
+
+Verification (napbox 0.1.0, environment `startupmanagesystem/main`):
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Environment starts | pass | `scripts/local/db-up.sh` returned `state: running` with a napbox-assigned port for `postgres:5432` |
+| Postgres readiness | pass | `scripts/local/db-status.sh`: `pg_isready` returned `accepting connections` |
+| Database/user sanity | pass | `db-psql.sh -c 'SELECT current_database(), current_user, version();'` returned `startupmanage_local`, `startupmanage_app`, PostgreSQL 16.15 |
+| psql over stdin | pass | `echo 'SELECT 1;' \| scripts/local/db-psql.sh -v ON_ERROR_STOP=1` returned `1` |
+| Logs | pass | `scripts/local/db-logs.sh` showed the startup log |
+| Migration dry-run | pass | `corepack pnpm db:period-close:dry-run` printed `period_close_postgres_migration_dry_run_passed` then `ROLLBACK` |
+| Isolated apply drill | pass | `corepack pnpm db:period-close:apply-drill` printed `period_close_postgres_apply_drill_passed` |
+| Persisted replay drill | pass | `corepack pnpm db:period-close:replay-drill` printed `period_close_postgres_replay_drill_passed` |
+| Row-lock concurrency drill | pass | `corepack pnpm db:period-close:concurrency-drill` printed `period_close_postgres_concurrency_lock_conflict_observed` (with `rg` on PATH; the script needs ripgrep installed) |
+| Sleep and wake | pass | `scripts/local/db-down.sh` left the environment `sleeping`; the next `db-psql.sh` call woke it |
+| Drill cleanup | pass | no `period_close_drill_*` schema left after the drills |

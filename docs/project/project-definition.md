@@ -43,7 +43,7 @@
 
 ## 5. Environment And Infrastructure
 
-- Local: Docker Compose Postgres configured on `127.0.0.1:55432`; frontend dev server on `http://127.0.0.1:5173`.
+- Local: Postgres from `compose.yaml` run by napbox on a napbox-assigned `127.0.0.1` port; frontend dev server on `http://127.0.0.1:5173`.
 - Dev: TBD.
 - Preview: TBD.
 - Test: TBD.

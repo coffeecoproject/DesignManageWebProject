@@ -51,7 +51,7 @@ Checked or generated bootstrap items do not prove implementation readiness.
 | Format command documented | planned_gap | No code initialized |
 | Typecheck command documented | planned_gap | No code initialized |
 | Test commands documented | planned_gap | No code initialized |
-| Environment example files present or planned | bootstrap_asset_only | `.env.local.example` exists for local database overrides |
+| Environment example files present or planned | bootstrap_asset_only | No override file; local-only database settings are fixed in `compose.yaml` and the host port comes from `napbox env` |
 | Formatting rules documented | bootstrap_asset_only | `.editorconfig` exists; formatter tooling pending |
 | Pre-commit/local guard documented if used | planned_gap | Tooling pending |
 | Dependency update policy documented | bootstrap_asset_only | `docs/governance/dependency-admission.md` |

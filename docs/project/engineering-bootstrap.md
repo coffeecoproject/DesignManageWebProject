@@ -11,9 +11,8 @@ Current repository layout:
   package.json
   pnpm-lock.yaml
   pnpm-workspace.yaml
-  docker-compose.yml
+  compose.yaml
   .editorconfig
-  .env.local.example
   .gitignore
   apps/
     web/
@@ -60,12 +59,11 @@ Backend/API/storage/auth runtime units are not initialized yet.
 | lint | `corepack pnpm lint` | ready_with_evidence | Passed on 2026-06-09. |
 | typecheck | `corepack pnpm typecheck` | ready_with_evidence | Passed on 2026-06-09. |
 | build frontend | `corepack pnpm build:web` | ready_with_evidence | Passed on 2026-06-09. |
-| local database config check | `scripts/local/db-config.sh` | ready_with_evidence | Validates local Compose configuration. |
-| start local database | `scripts/local/db-up.sh` | ready_with_evidence | Starts isolated local Postgres. |
+| start local database | `scripts/local/db-up.sh` | ready_with_evidence | Creates or wakes this worktree's napbox environment. |
 | inspect local database | `scripts/local/db-status.sh` | ready_with_evidence | Checks local Postgres health. |
 | local database psql | `scripts/local/db-psql.sh` | ready_with_evidence | Connects to isolated local Postgres. |
 | local database logs | `scripts/local/db-logs.sh` | ready_with_evidence | Shows local Postgres logs. |
-| stop local database | `scripts/local/db-down.sh` | bootstrap_asset_only | Stops local Postgres without deleting volume. |
+| stop local database | `scripts/local/db-down.sh` | ready_with_evidence | Puts the napbox environment to sleep without deleting data. |
 | dev API | TBD | planned_gap | Backend not initialized. |
 | format | TBD | planned_gap | Formatter command not initialized. |
 | unit test | TBD | planned_gap | Unit test runner not initialized. |
@@ -98,17 +96,17 @@ scripts/local/db-up.sh
 scripts/local/db-status.sh
 ```
 
-Host connection string for local tools:
+Host connection string for local tools (`<port>` is the `NAPBOX_POSTGRES_5432` port from `napbox env`):
 
 ```text
-postgres://startupmanage_app:startupmanage_local_dev_only@127.0.0.1:55432/startupmanage_local
+postgres://startupmanage_app:startupmanage_local_dev_only@127.0.0.1:<port>/startupmanage_local
 ```
 
 ## 5. Storage Path
 
 File/object storage scope is TBD. No storage path has been selected.
 
-Database storage is isolated in Docker volume `startupmanage_local_pgdata`.
+Database storage is the napbox named volume `pgdata` of this worktree's environment.
 
 Frontend build output is `apps/web/dist/` and is ignored by git.
 

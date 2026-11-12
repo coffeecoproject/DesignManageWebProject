@@ -1,7 +1,6 @@
 # Local environment
 .env
 .env.*
-!.env.local.example
 
 # OS/editor noise
 .DS_Store

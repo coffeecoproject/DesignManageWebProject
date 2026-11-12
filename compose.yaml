@@ -1,0 +1,26 @@
+# Local development dependencies, run by napbox (one isolated environment per git worktree).
+# The host port is assigned by napbox and stays fixed for the environment; read it with `napbox env`.
+# Local-only credentials; never reuse them outside local development.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: startupmanage_local
+      POSTGRES_USER: startupmanage_app
+      POSTGRES_PASSWORD: startupmanage_local_dev_only
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  pgdata:

@@ -35,12 +35,12 @@ Performance rule internal field keys are retained for later calculation/API desi
 
 | Item | Value | Status |
 | --- | --- | --- |
-| Engine | Postgres `16-alpine` via Docker Compose | bootstrap_asset_only |
-| Host port | `55432` | bootstrap_asset_only |
+| Engine | Postgres `16-alpine` via napbox (`compose.yaml`) | bootstrap_asset_only |
+| Host port | assigned by napbox, read with `napbox env` | bootstrap_asset_only |
 | Database | `startupmanage_local` | bootstrap_asset_only |
 | User | `startupmanage_app` | bootstrap_asset_only |
-| Network | `startupmanage_local_net` | bootstrap_asset_only |
-| Volume | `startupmanage_local_pgdata` | bootstrap_asset_only |
+| Isolation | one napbox environment per git worktree | bootstrap_asset_only |
+| Volume | napbox named volume `pgdata` | bootstrap_asset_only |
 
 This local database is a dependency runtime only. It does not imply any schema or data contract is ready.
 

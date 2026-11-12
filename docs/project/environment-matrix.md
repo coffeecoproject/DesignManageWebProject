@@ -4,7 +4,7 @@
 
 | Environment | Purpose | Runtime units | Data source | Secrets source | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| local | Local development | Postgres dependency only | Docker Compose Postgres `startupmanage_local` | local only, no production secrets | TBD | ready_with_evidence | `docker-compose.yml`, `docs/evidence/local-environment-evidence.md` |
+| local | Local development | Postgres dependency only | napbox Postgres `startupmanage_local` | local only, no production secrets | TBD | ready_with_evidence | `compose.yaml`, `docs/evidence/local-environment-evidence.md` |
 | dev | Shared development | TBD | TBD | TBD | TBD | planned_gap | Not implemented |
 | preview | Branch/PR preview | TBD | TBD | TBD | TBD | planned_gap | Not implemented |
 | test | Automated test | TBD | TBD | TBD | TBD | planned_gap | Not implemented |
@@ -21,14 +21,14 @@
 
 ## 3. Local Dependency Runtime
 
-- Database: Docker Compose Postgres `postgres:16-alpine`, host `127.0.0.1:55432`, database `startupmanage_local`, user `startupmanage_app`.
+- Database: Postgres `postgres:16-alpine` from `compose.yaml`, run by napbox; host `127.0.0.1` on the port napbox assigns (`napbox env`), database `startupmanage_local`, user `startupmanage_app`.
 - Cache: TBD.
 - Queue: TBD.
 - Object storage: TBD.
 - Search: TBD.
 - Email: TBD.
 - Mock services: TBD.
-- Docker or compatible container runtime: Docker Desktop available; local Compose file configured for Postgres.
+- Container runtime: napbox, one isolated environment per git worktree; Docker is not used.
 
 ## 4. Production Boundary
 

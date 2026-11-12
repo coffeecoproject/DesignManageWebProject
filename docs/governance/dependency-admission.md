@@ -4,7 +4,7 @@
 
 Status: `frontend_and_api_contract_skeleton_admitted`.
 
-Local Docker database dependency, frontend baseline dependencies, and the local
+Local container database dependency (napbox), frontend baseline dependencies, and the local
 API contract-skeleton TypeScript tooling reuse have been admitted for local
 development.
 
@@ -18,7 +18,7 @@ Security boundary:
 
 | Dependency | Version | Purpose | Owner | License | Security review | Alternative considered | Decision | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Docker image `postgres` | `16-alpine` | Local database dependency runtime | Codex/user | PostgreSQL License | Local-only baseline dependency; not a production dependency decision | Native local Postgres rejected due port/data isolation risk | admitted for local baseline | `docker-compose.yml`, `docs/evidence/local-environment-evidence.md` |
+| Container image `postgres` | `16-alpine` | Local database dependency runtime | Codex/user | PostgreSQL License | Local-only baseline dependency; not a production dependency decision | Native local Postgres rejected due port/data isolation risk | admitted for local baseline | `compose.yaml`, `docs/evidence/local-environment-evidence.md` |
 | `react` / `react-dom` | `18.3.1` | Frontend runtime and rendering | Codex/user | MIT | Widely used OSS runtime; no auth/privacy SDK behavior | Vue/Svelte not selected because Ant Design Pro-style baseline aligns with React ecosystem | admitted for frontend baseline | `apps/web/package.json`, `pnpm-lock.yaml` |
 | `react-router-dom` | `7.17.0` | SPA routing | Codex/user | MIT | Client routing only; no security boundary without backend auth | File router deferred to keep baseline simple | admitted for frontend baseline | `apps/web/src/app/router.tsx` |
 | `antd` | `5.29.3` | Admin UI component library | Codex/user | MIT | UI-only dependency; AntD 6 rejected because ProComponents peer range expects AntD 4/5 | Custom UI rejected due baseline speed and consistency | admitted for frontend baseline | `apps/web/package.json`, `corepack pnpm peers check` |
