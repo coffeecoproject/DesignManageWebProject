@@ -843,7 +843,7 @@ Status: `implemented_and_verified_2026-07-17`.
 ### 19.3 验证命令
 
 ```bash
-corepack pnpm test:web
+testpace full
 corepack pnpm typecheck
 corepack pnpm lint
 corepack pnpm build:web
@@ -890,7 +890,7 @@ git diff --check
 
 ### 21.1 绩效领域
 
-- `apps/web/src/features/performance/performanceTypes.ts`
+- `apps/web/src/modules/performance/performanceTypes.ts`
 - `performanceRuleModel.ts`
 - `performanceExecutionContract.ts`
 - `performanceSignatureArchiveData.ts`
@@ -910,11 +910,11 @@ git diff --check
 
 ### 21.2 直接消费者
 
-- `apps/web/src/features/my-work/MyWorkPages.tsx`或拆出的绩效员工页。
-- `apps/web/src/features/people/PeopleOverviewPage.tsx`
-- `apps/web/src/features/people/peoplePerformanceRiskModel.ts`
+- `apps/web/src/modules/my-work/MyWorkPages.tsx`或拆出的绩效员工页。
+- `apps/web/src/modules/people-overview/PeopleOverviewPage.tsx`
+- `apps/web/src/modules/people-overview/peoplePerformanceRiskModel.ts`
 - 任务候选和人员任务中的绩效摘要适配器。
-- `apps/web/src/features/salary/salaryDomain.ts`及测试，仅调整绩效消费条件和引用。
+- `apps/web/src/modules/salary/salaryDomain.ts`及测试，仅调整绩效消费条件和引用。
 
 ### 21.3 路由、导航和证据
 

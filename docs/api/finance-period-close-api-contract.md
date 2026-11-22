@@ -26,29 +26,29 @@ period close is ready.
 
 Current local executable skeleton:
 
-- `apps/api/src/finance/periodCloseContract.ts`
-- `apps/api/src/finance/periodCloseContract.test.ts`
-- `apps/api/src/finance/periodClosePersistenceContract.ts`
-- `apps/api/src/finance/periodClosePersistenceContract.test.ts`
-- `apps/api/src/finance/periodCloseRepositoryContract.ts`
-- `apps/api/src/finance/periodCloseRepositoryContract.test.ts`
-- `apps/api/src/finance/periodCloseDatabaseContract.ts`
-- `apps/api/src/finance/periodCloseDatabaseContract.test.ts`
-- `apps/api/src/finance/periodCloseDatabaseRepositoryContract.ts`
-- `apps/api/src/finance/periodCloseDatabaseRepositoryContract.test.ts`
-- `apps/api/src/finance/periodCloseRoutes.ts`
-- `apps/api/src/finance/periodCloseRoutes.test.ts`
-- `apps/api/src/finance/periodCloseSourceMutationGuard.ts`
-- `apps/api/src/finance/periodCloseSourceMutationGuard.test.ts`
-- `apps/api/src/finance/periodCloseSourceMutationOperationMetadata.ts`
-- `apps/api/src/finance/periodCloseSourceMutationRegistry.ts`
-- `apps/api/src/finance/periodCloseSourceMutationRegistry.test.ts`
-- `apps/api/src/finance/periodCloseSourceMutationRoutes.ts`
-- `apps/api/src/finance/periodCloseSourceMutationRoutes.test.ts`
-- `apps/api/src/finance/periodCloseVoucherSummaryContract.ts`
-- `apps/api/src/finance/periodCloseVoucherSummaryContract.test.ts`
-- `apps/api/src/finance/accountingVoucherLaterPeriodAdjustmentContract.ts`
-- `apps/api/src/finance/accountingVoucherLaterPeriodAdjustmentContract.test.ts`
+- `apps/api/src/modules/finance/periodCloseContract.ts`
+- `apps/api/src/modules/finance/periodCloseContract.test.ts`
+- `apps/api/src/modules/finance/periodClosePersistenceContract.ts`
+- `apps/api/src/modules/finance/periodClosePersistenceContract.test.ts`
+- `apps/api/src/modules/finance/periodCloseRepositoryContract.ts`
+- `apps/api/src/modules/finance/periodCloseRepositoryContract.test.ts`
+- `apps/api/src/modules/finance/periodCloseDatabaseContract.ts`
+- `apps/api/src/modules/finance/periodCloseDatabaseContract.test.ts`
+- `apps/api/src/modules/finance/periodCloseDatabaseRepositoryContract.ts`
+- `apps/api/src/modules/finance/periodCloseDatabaseRepositoryContract.test.ts`
+- `apps/api/src/modules/finance/periodCloseRoutes.ts`
+- `apps/api/src/modules/finance/periodCloseRoutes.test.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationGuard.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationGuard.test.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationOperationMetadata.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationRegistry.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationRegistry.test.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationRoutes.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationRoutes.test.ts`
+- `apps/api/src/modules/finance/periodCloseVoucherSummaryContract.ts`
+- `apps/api/src/modules/finance/periodCloseVoucherSummaryContract.test.ts`
+- `apps/api/src/modules/finance/accountingVoucherLaterPeriodAdjustmentContract.ts`
+- `apps/api/src/modules/finance/accountingVoucherLaterPeriodAdjustmentContract.test.ts`
 
 This skeleton validates core domain semantics for close checks, close/reopen
 idempotency/concurrency, closed-period guard behavior, and a framework-agnostic
@@ -436,16 +436,16 @@ Acceptance requirements:
 
 Current local skeleton status:
 
-- `apps/api/src/finance/periodCloseContract.ts` models successful reopen,
+- `apps/api/src/modules/finance/periodCloseContract.ts` models successful reopen,
   blank-reason rejection, not-closed rejection, version conflict,
   later-closed-period blocking, irreversible-external-submission blocking,
   incomplete risk-confirmation rejection, accepted high-risk reopen snapshots,
   event creation, and idempotent replay.
-- `apps/api/src/finance/periodCloseRoutes.ts` exposes a framework-agnostic
+- `apps/api/src/modules/finance/periodCloseRoutes.ts` exposes a framework-agnostic
   `POST /api/finance/accounting-periods/{period}/reopen` route adapter using
   server-owned actor/time context and returns persisted high-risk snapshots
   when an exceptional reopen is accepted.
-- `apps/api/src/finance/financeHttpApiRepositoryGatewayContract.ts` connects
+- `apps/api/src/modules/finance/financeHttpApiRepositoryGatewayContract.ts` connects
   the HTTP-shaped close request boundary to the row-backed repository harness
   for close, existing-source mutation writes, and create-source mutation writes.
   It proves close rows, idempotency rows, event rows, source rows, and
@@ -467,12 +467,12 @@ assertAccountingPeriodOpen(accountingPeriod, sourceModule, sourceId, operation)
 
 The current local skeleton exposes this as
 `guardFinanceSourceMutation(...)` in
-`apps/api/src/finance/periodCloseSourceMutationGuard.ts`. Source APIs should
+`apps/api/src/modules/finance/periodCloseSourceMutationGuard.ts`. Source APIs should
 pass every period affected by the mutation, including both the original period
 and target period when a mutation changes `accountingPeriod`.
 
 The local route-level skeleton exposes direct API-style guarded mutations in
-`apps/api/src/finance/periodCloseSourceMutationRoutes.ts`. These route adapters
+`apps/api/src/modules/finance/periodCloseSourceMutationRoutes.ts`. These route adapters
 are not the final source API implementation, but they define the required
 integration shape: resolve source row, resolve affected accounting periods, run
 the guard, reject closed/unresolved periods before mutation, and only then write
@@ -601,19 +601,19 @@ Current evidence boundary:
   voucher unchanged, and lets `/finance/general-ledger` consume it only after
   the ordinary frontend `记账` lifecycle.
 - Backend local contract evidence now exists in
-  `apps/api/src/finance/accountingVoucherLaterPeriodAdjustmentContract.ts` and
+  `apps/api/src/modules/finance/accountingVoucherLaterPeriodAdjustmentContract.ts` and
   `.test.ts`: the route skeleton uses server-owned actor/time context, guards
   idempotency and optimistic version, rejects closed or invalid target periods,
   and does not mutate the original voucher on success or failure.
 - Backend local row-backed gateway evidence now exists in
-  `apps/api/src/finance/financeHttpApiRepositoryGatewayContract.ts` and
+  `apps/api/src/modules/finance/financeHttpApiRepositoryGatewayContract.ts` and
   `.test.ts`: the request-shaped endpoint commits the later-period adjustment
   fact/idempotency/event to local candidate state, creates the target-period
   `待记账` voucher row, replays the same idempotency key without duplicate rows,
   and makes both target-period close-check reads and close submission reject
   while the candidate is pending.
 - Backend local authorization contract evidence now exists in
-  `apps/api/src/finance/periodCloseAuthorizationContract.ts` and related route
+  `apps/api/src/modules/finance/periodCloseAuthorizationContract.ts` and related route
   tests: the framework-agnostic adapters reject missing period-close and
   source-mutation permission scopes before business state changes.
 - Database migration, listening HTTP route integration, authorization
@@ -625,13 +625,13 @@ Current evidence boundary:
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Backend `close-checks` API | not implemented | Contract only in this document |
-| Persistent period lock | partial skeleton | Data contract plus local persistence-boundary, repository-transaction harnesses, row-backed repository rows, and HTTP-shaped row-backed gateway contract in `apps/api/src/finance/periodClosePersistenceContract.ts`, `periodCloseRepositoryContract.ts`, `periodCloseDatabaseRepositoryContract.ts`, and `financeHttpApiRepositoryGatewayContract.ts`; no real database table, migration, SQL repository implementation, or transaction manager evidence |
-| Authorization and permission gates | partial skeleton | `apps/api/src/finance/periodCloseAuthorizationContract.ts` plus local route tests enforce permission scopes for period read, close, reopen, and guarded source mutations before state changes. This is not real auth middleware, user-role mapping, or resource-scope enforcement |
-| Database row/schema mapper contract | partial skeleton | `apps/api/src/finance/periodCloseDatabaseContract.ts` and `.test.ts` define six local row sets and map committed in-memory close state into candidate DB rows; this proves row-shape/invariant expectations only, not a migration or DB repository |
-| Row-backed repository contract | partial skeleton | `apps/api/src/finance/periodCloseDatabaseRepositoryContract.ts` and `.test.ts` hydrate transaction state from candidate DB rows and commit results back to rows; `financeHttpApiRepositoryGatewayContract.ts` and `.test.ts` prove the HTTP-shaped close/source-write entry can commit and reread those rows. No real SQL driver, migration, DB transaction manager, lock mode, isolation level, or server integration |
+| Persistent period lock | partial skeleton | Data contract plus local persistence-boundary, repository-transaction harnesses, row-backed repository rows, and HTTP-shaped row-backed gateway contract in `apps/api/src/modules/finance/periodClosePersistenceContract.ts`, `periodCloseRepositoryContract.ts`, `periodCloseDatabaseRepositoryContract.ts`, and `financeHttpApiRepositoryGatewayContract.ts`; no real database table, migration, SQL repository implementation, or transaction manager evidence |
+| Authorization and permission gates | partial skeleton | `apps/api/src/modules/finance/periodCloseAuthorizationContract.ts` plus local route tests enforce permission scopes for period read, close, reopen, and guarded source mutations before state changes. This is not real auth middleware, user-role mapping, or resource-scope enforcement |
+| Database row/schema mapper contract | partial skeleton | `apps/api/src/modules/finance/periodCloseDatabaseContract.ts` and `.test.ts` define six local row sets and map committed in-memory close state into candidate DB rows; this proves row-shape/invariant expectations only, not a migration or DB repository |
+| Row-backed repository contract | partial skeleton | `apps/api/src/modules/finance/periodCloseDatabaseRepositoryContract.ts` and `.test.ts` hydrate transaction state from candidate DB rows and commit results back to rows; `financeHttpApiRepositoryGatewayContract.ts` and `.test.ts` prove the HTTP-shaped close/source-write entry can commit and reread those rows. No real SQL driver, migration, DB transaction manager, lock mode, isolation level, or server integration |
 | Reopen / reverse-close API | partial skeleton | Local domain, authorization contract, and framework-agnostic route adapter cover required `finance.accountingPeriod.reopen`, reason/version/idempotency/later-closed-period blocking; no real auth middleware, HTTP, database, or audit persistence |
-| Source mutation backend guard | partial skeleton | `apps/api/src/finance/periodCloseSourceMutationGuard.ts` validates source-area registration, period resolution, old/new period checks, and canonical closed-period rejection; `apps/api/src/finance/periodCloseSourceMutationRoutes.ts` validates route-level direct API rejection before source mutation; `apps/api/src/finance/periodClosePersistenceContract.ts` proves the local transaction boundary keeps source rows unchanged on rejection; `periodCloseRepositoryContract.ts` and `financeHttpApiRepositoryGatewayContract.ts` prove a committed local row-backed period lock blocks later existing-source and create-source writes through the same request-shaped gateway; no real source API service integration |
-| Accounting-voucher later-period adjustment | partial skeleton | Dedicated contract rules are documented here and in `docs/data/finance-accounting-voucher-ledger-contract.md`; local framework-agnostic implementation/tests exist in `apps/api/src/finance/accountingVoucherLaterPeriodAdjustmentContract.ts` and `.test.ts`; the row-backed HTTP gateway repository contract now commits local adjustment facts/idempotency/events and target-period `待记账` voucher rows, and uses those rows to block target-period close-check reads and close submission. No listening HTTP server, real auth middleware, SQL repository, database migration, production transaction, or formal voucher/ledger integration evidence exists |
+| Source mutation backend guard | partial skeleton | `apps/api/src/modules/finance/periodCloseSourceMutationGuard.ts` validates source-area registration, period resolution, old/new period checks, and canonical closed-period rejection; `apps/api/src/modules/finance/periodCloseSourceMutationRoutes.ts` validates route-level direct API rejection before source mutation; `apps/api/src/modules/finance/periodClosePersistenceContract.ts` proves the local transaction boundary keeps source rows unchanged on rejection; `periodCloseRepositoryContract.ts` and `financeHttpApiRepositoryGatewayContract.ts` prove a committed local row-backed period lock blocks later existing-source and create-source writes through the same request-shaped gateway; no real source API service integration |
+| Accounting-voucher later-period adjustment | partial skeleton | Dedicated contract rules are documented here and in `docs/data/finance-accounting-voucher-ledger-contract.md`; local framework-agnostic implementation/tests exist in `apps/api/src/modules/finance/accountingVoucherLaterPeriodAdjustmentContract.ts` and `.test.ts`; the row-backed HTTP gateway repository contract now commits local adjustment facts/idempotency/events and target-period `待记账` voucher rows, and uses those rows to block target-period close-check reads and close submission. No listening HTTP server, real auth middleware, SQL repository, database migration, production transaction, or formal voucher/ledger integration evidence exists |
 | Frontend session guard | prototype only | Existing frontend evidence; not backend proof |
-| Contract tests | partial skeleton | `corepack pnpm --filter @startupmanage/api test` covers local authorization, domain, persistence-boundary, repository transaction harness, database row/schema mapper, row-backed repository harness, HTTP-shaped gateway, row-backed HTTP gateway repository contract including create-source and existing-source guard paths, later-period adjustment candidate writeback and target close blocking, close/reopen route-adapter, source-guard adapter, source-mutation route-adapter, accounting-voucher reversal guard, and later-period adjustment semantics; no framework/server integration tests |
+| Contract tests | partial skeleton | `apps/api/src/**/*.test.ts` (run by testpace) cover local authorization, domain, persistence-boundary, repository transaction harness, database row/schema mapper, row-backed repository harness, HTTP-shaped gateway, row-backed HTTP gateway repository contract including create-source and existing-source guard paths, later-period adjustment candidate writeback and target close blocking, close/reopen route-adapter, source-guard adapter, source-mutation route-adapter, accounting-voucher reversal guard, and later-period adjustment semantics; no framework/server integration tests |
 | Production readiness | not ready | No release, recovery, migration, or audit evidence |

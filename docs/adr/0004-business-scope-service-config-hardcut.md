@@ -61,13 +61,13 @@ Removed routes should fall through to the normal not-found route unless a later 
 
 - `apps/web/src/app/router.tsx`
 - `apps/web/src/app/shell.tsx`
-- `apps/web/src/features/people/PeopleOrganizationState.tsx`
-- `apps/web/src/features/people/PeoplePositionManagementPage.tsx`
-- `apps/web/src/features/people/rolePermissionModel.ts`
-- `apps/web/src/features/people/PeopleBusinessScopePage.tsx`
-- `apps/web/src/features/people/BusinessScopeControls.tsx`
-- `apps/web/src/features/people/businessScopeModel.ts`
-- `apps/web/src/features/customers/*`
+- `apps/web/src/modules/people/PeopleOrganizationState.tsx`
+- `apps/web/src/modules/people/PeoplePositionManagementPage.tsx`
+- `apps/web/src/modules/people/rolePermissionModel.ts`
+- `apps/web/src/modules/people/PeopleBusinessScopePage.tsx`
+- `apps/web/src/modules/people/BusinessScopeControls.tsx`
+- `apps/web/src/modules/people/businessScopeModel.ts`
+- `apps/web/src/modules/customers/*`
 - `docs/web/route-page-inventory.md`
 - `docs/project/code-structure.md`
 - `docs/testing/test-plan.md`

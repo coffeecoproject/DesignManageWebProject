@@ -2,13 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const currentPerformanceConsumerFiles = [
-  'src/features/my-work/MyWorkPages.tsx',
-  'src/features/my-work/MyWorkShared.tsx',
-  'src/features/people/PeopleOverviewPage.tsx',
-  'src/features/performance/PerformanceDashboardPage.tsx',
-  'src/features/salary/salaryReportBuilder.ts',
-  'src/features/tasks/personTaskViewModel.ts',
-  'src/features/tasks/taskAssignmentCandidates.ts'
+  'src/app/moduleLinks.ts',
+  'src/modules/my-work/MyWorkPages.tsx',
+  'src/modules/my-work/MyWorkShared.tsx',
+  'src/modules/people-overview/PeopleOverviewPage.tsx',
+  'src/modules/performance/PerformanceDashboardPage.tsx',
+  'src/modules/salary/salaryReportBuilder.ts',
+  'src/modules/tasks/personTaskViewModel.ts',
+  'src/modules/tasks/taskAssignmentCandidates.ts'
 ];
 
 const forbiddenCurrentFactTokens = [
@@ -33,20 +34,27 @@ export async function assertPerformancePhase6ConsumerHardcut(webRoot) {
   }
 
   const salaryBuilder = contents.find(
-    ({ relativePath }) => relativePath === 'src/features/salary/salaryReportBuilder.ts'
+    ({ relativePath }) => relativePath === 'src/modules/salary/salaryReportBuilder.ts'
   )?.content;
   const taskCandidates = contents.find(
-    ({ relativePath }) => relativePath === 'src/features/tasks/taskAssignmentCandidates.ts'
+    ({ relativePath }) => relativePath === 'src/modules/tasks/taskAssignmentCandidates.ts'
+  )?.content;
+  const moduleLinks = contents.find(
+    ({ relativePath }) => relativePath === 'src/app/moduleLinks.ts'
   )?.content;
   const myWorkShared = contents.find(
-    ({ relativePath }) => relativePath === 'src/features/my-work/MyWorkShared.tsx'
+    ({ relativePath }) => relativePath === 'src/modules/my-work/MyWorkShared.tsx'
   )?.content;
 
   if (!salaryBuilder?.includes('buildSalaryPerformanceSourceRecords')) {
     throw new Error('salaryReportBuilder.ts does not consume the formal performance salary adapter');
   }
 
-  if (!taskCandidates?.includes('getLatestPublishedPerformanceSummary')) {
+  // Task assignment reads the published summary through the lookup the app wires in from performance results.
+  if (
+    !taskCandidates?.includes('getPerformanceSummary(')
+    || !/function useTaskPerformanceSummaryLookup\(\)[\s\S]*?getLatestPublishedPerformanceSummary\(/.test(moduleLinks ?? '')
+  ) {
     throw new Error('taskAssignmentCandidates.ts does not consume the published performance summary');
   }
 

@@ -46,7 +46,7 @@
 ## 门禁
 
 - 文档门禁：本文件明确账户身份、会计余额、业务选择和历史快照边界。
-- 自动门禁：`corepack pnpm typecheck`、`corepack pnpm test:web`、`corepack pnpm build:web`、`corepack pnpm ai-native:check`。
+- 自动门禁：`corepack pnpm typecheck`、`testpace full`、`corepack pnpm build:web`、`corepack pnpm ai-native:check`。
 - 证据门禁：PA-01 至 PA-14 的身份、金额、导入和辅助核算结果必须有自动测试或现有领域状态门禁，不能仅以页面可见作为通过依据。
 
 ## 后端接入边界

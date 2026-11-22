@@ -65,12 +65,12 @@ Related period-close execution plan:
 
 当前 `会计凭证` 相关代码主要在：
 
-- `apps/web/src/features/finance/financeAccountingVoucherModel.ts`
-- `apps/web/src/features/finance/FinanceAccountingVouchersPage.tsx`
-- `apps/web/src/features/finance/financeReceivablesPayablesData.ts`
-- `apps/web/src/features/finance/financeData.ts`
-- `apps/web/src/features/finance/financeInvoiceData.ts`
-- `apps/web/src/features/finance/financeBankReconciliationModel.ts`
+- `apps/web/src/modules/finance/financeAccountingVoucherModel.ts`
+- `apps/web/src/modules/finance/FinanceAccountingVouchersPage.tsx`
+- `apps/web/src/modules/finance/financeReceivablesPayablesData.ts`
+- `apps/web/src/modules/finance/financeData.ts`
+- `apps/web/src/modules/finance/financeInvoiceData.ts`
+- `apps/web/src/modules/finance/financeBankReconciliationModel.ts`
 
 当前前端生成方式：
 

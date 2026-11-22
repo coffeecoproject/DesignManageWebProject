@@ -578,23 +578,23 @@ type CustomerTaskSettlementBatch = {
 
 预计新增或重构：
 
-- `apps/web/src/features/customers/brandTaskPricingModel.ts`
-- `apps/web/src/features/customers/brandTaskPricingModel.test.ts`
-- `apps/web/src/features/customers/customerData.ts`
-- `apps/web/src/features/customers/brandFormModel.ts`
-- `apps/web/src/features/customers/BrandTaskConfigPanel.tsx`
-- `apps/web/src/features/customers/BrandManagementPage.tsx`
-- `apps/web/src/features/customers/CustomerManagementState.tsx`
+- `apps/web/src/modules/customers/brandTaskPricingModel.ts`
+- `apps/web/src/modules/customers/brandTaskPricingModel.test.ts`
+- `apps/web/src/modules/customers/customerData.ts`
+- `apps/web/src/modules/customers/brandFormModel.ts`
+- `apps/web/src/modules/customers/BrandTaskConfigPanel.tsx`
+- `apps/web/src/modules/customers/BrandManagementPage.tsx`
+- `apps/web/src/modules/customers/CustomerManagementState.tsx`
 
 ### 12.2 任务领域
 
 预计新增或重构：
 
-- `apps/web/src/features/tasks/taskCustomerBillingModel.ts`
-- `apps/web/src/features/tasks/taskCustomerBillingModel.test.ts`
-- `apps/web/src/features/tasks/TaskManagementState.tsx`
-- `apps/web/src/features/tasks/taskListFormModel.ts`
-- `apps/web/src/features/tasks/taskAcceptanceCommitModel.ts`
+- `apps/web/src/modules/tasks/taskCustomerBillingModel.ts`
+- `apps/web/src/modules/tasks/taskCustomerBillingModel.test.ts`
+- `apps/web/src/modules/tasks/TaskManagementState.tsx`
+- `apps/web/src/modules/tasks/taskListFormModel.ts`
+- `apps/web/src/modules/tasks/taskAcceptanceCommitModel.ts`
 - 任务领域跨模块工作流测试。
 
 任务页面组件不增加金额展示代码。
@@ -603,12 +603,12 @@ type CustomerTaskSettlementBatch = {
 
 预计新增或重构：
 
-- `apps/web/src/features/finance/financeCustomerTaskSettlementModel.ts`
-- `apps/web/src/features/finance/financeCustomerTaskSettlementModel.test.ts`
-- `apps/web/src/features/finance/financeReceivablesPayablesData.ts`
-- `apps/web/src/features/finance/FinanceManagementState.tsx`
-- `apps/web/src/features/finance/FinanceReceivablesPayablesPage.tsx`
-- `apps/web/src/features/finance/financeTaxBasisModel.ts`中对新来源的既有口径映射。
+- `apps/web/src/modules/finance/financeCustomerTaskSettlementModel.ts`
+- `apps/web/src/modules/finance/financeCustomerTaskSettlementModel.test.ts`
+- `apps/web/src/modules/finance/financeReceivablesPayablesData.ts`
+- `apps/web/src/modules/finance/FinanceManagementState.tsx`
+- `apps/web/src/modules/finance/FinanceReceivablesPayablesPage.tsx`
+- `apps/web/src/modules/finance/financeTaxBasisModel.ts`中对新来源的既有口径映射。
 
 ### 12.4 禁止依赖方向
 

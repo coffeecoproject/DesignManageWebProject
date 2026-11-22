@@ -90,7 +90,7 @@ accounting service reads `资金凭证 / 调整凭证` candidates. Phase 1 candi
 are not formal accounting-voucher booking.
 
 The current frontend shared profile
-`apps/web/src/features/finance/financeTaxPolicyModel.ts` defines the prototype
+`apps/web/src/modules/finance/financeTaxPolicyModel.ts` defines the prototype
 taxpayer type, VAT calculation method, default output/input tax rate,
 input-tax treatment, VAT declaration threshold/surcharge, and
 corporate-income-tax preparation parameters. It is a mock fallback only. Backend
@@ -1014,7 +1014,7 @@ Rules:
 ### Financial Statement Readiness And Snapshot Contract
 
 This is a backend-targeted contract boundary. It is currently represented by
-`apps/api/src/finance/financialStatementContract.ts` and
+`apps/api/src/modules/finance/financialStatementContract.ts` and
 `financialStatementContract.test.ts`, plus the framework-agnostic
 `financialStatementRoutes.ts` route adapter and `financialStatementRoutes.test.ts`.
 It is not yet a listening HTTP endpoint, database table, persisted report
@@ -1415,7 +1415,7 @@ same simplified candidate -> booked voucher plus ledger workflow above.
 
 Current local API contract skeleton:
 
-- `apps/api/src/finance/accountingVoucherLifecycleContract.ts` defines the
+- `apps/api/src/modules/finance/accountingVoucherLifecycleContract.ts` defines the
   framework-agnostic target behavior for ordinary voucher booking and
   open-period reversal.
 - Booking verifies the displayed source hash, rejects unbalanced entries,

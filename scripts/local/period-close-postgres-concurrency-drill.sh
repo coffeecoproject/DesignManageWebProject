@@ -22,7 +22,7 @@ trap cleanup EXIT
 corepack pnpm --filter @startupmanage/api exec tsc -p tsconfig.test.json
 
 for section in setup hold-lock contend-lock verify cleanup; do
-  node apps/api/node_modules/.cache/startupmanage-api-contract-tests/finance/periodClosePostgresConcurrencyDrillCli.js "$SCHEMA_NAME" "$section" > "$SQL_DIR/$section.sql"
+  node apps/api/node_modules/.cache/startupmanage-api-contract-tests/cli/periodClosePostgresConcurrencyDrillCli.js "$SCHEMA_NAME" "$section" > "$SQL_DIR/$section.sql"
 done
 
 scripts/local/db-psql.sh -v ON_ERROR_STOP=1 < "$SQL_DIR/setup.sql"

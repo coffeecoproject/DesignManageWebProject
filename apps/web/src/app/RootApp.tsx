@@ -1,26 +1,19 @@
 import { App as AntApp, ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { RouterProvider } from 'react-router-dom';
-import { CustomerManagementProvider } from '../features/customers/CustomerManagementState';
-import { FinanceManagementProvider } from '../features/finance/FinanceManagementState';
-import { FinanceLedgerInitializationProvider } from '../features/finance/FinanceLedgerInitializationState';
-import { FinanceBankStatementProvider } from '../features/finance/FinanceBankStatementState';
-import { FinanceSocialInsuranceProvider } from '../features/finance/FinanceSocialInsuranceState';
-import { MyExpenseReviewProvider } from '../features/my-work/MyExpenseReviewState';
-import { PeopleOrganizationProvider } from '../features/people/PeopleOrganizationState';
-import { PermissionRoleProvider } from '../features/people/PermissionRoleState';
-import { PerformanceRuleProvider } from '../features/performance/PerformanceRuleState';
-import { PerformanceResultProvider } from '../features/performance/PerformanceResultState';
-import { PerformanceSignatureProvider } from '../features/performance/PerformanceSignatureState';
-import { SalaryManagementProvider } from '../features/salary/SalaryManagementState';
-import { FinanceCategoryProvider } from '../features/system/FinanceCategoryState';
-import { PublicAccountConfigProvider } from '../features/system/PublicAccountConfigState';
-import { SocialInsurancePolicyConfigProvider } from '../features/system/SocialInsurancePolicyConfigState';
-import { TaskConfigProvider } from '../features/system/TaskConfigState';
-import { WorkCalendarProvider } from '../features/system/WorkCalendarState';
-import { TaskManagementProvider } from '../features/tasks/TaskManagementState';
+import { CustomerManagementProvider } from '../modules/customers';
+import { FinanceBankStatementProvider, FinanceCategoryProvider, FinanceLedgerInitializationProvider, FinanceManagementProvider } from '../modules/finance';
+import { FinanceSocialInsuranceProvider, SocialInsurancePolicyConfigProvider } from '../modules/social-insurance';
+import { MyExpenseReviewProvider } from '../modules/my-work';
+import { AuthorizationProvider, PeopleOrganizationProvider, PermissionRoleProvider, WorkCalendarProvider } from '../modules/people';
+import { PerformanceRuleProvider } from '../modules/performance-rules';
+import { PerformanceResultProvider, PerformanceSignatureProvider } from '../modules/performance';
+import { SalaryManagementProvider } from '../modules/salary';
+import { usePeopleSalaryLink, useSocialInsurancePaymentPostings } from './moduleLinks';
+import { PublicAccountConfigProvider } from '../modules/public-accounts';
+import { TaskConfigProvider } from '../modules/task-types';
+import { TaskManagementProvider } from '../modules/tasks';
 import { router } from './router';
-import { AuthorizationProvider } from '../features/auth/AuthorizationState';
 
 export function RootApp() {
   return (
@@ -51,7 +44,7 @@ export function RootApp() {
         <PermissionRoleProvider>
           <SocialInsurancePolicyConfigProvider>
             <SalaryManagementProvider>
-              <PeopleOrganizationProvider>
+              <PeopleOrganizationProvider useSalaryLink={usePeopleSalaryLink}>
                 <AuthorizationProvider>
                   <PerformanceRuleProvider>
                     <PerformanceSignatureProvider>
@@ -65,7 +58,7 @@ export function RootApp() {
                                     <FinanceLedgerInitializationProvider>
                                       <FinanceBankStatementProvider>
                                         <FinanceManagementProvider>
-                                          <FinanceSocialInsuranceProvider>
+                                          <FinanceSocialInsuranceProvider usePaymentPostings={useSocialInsurancePaymentPostings}>
                                             <MyExpenseReviewProvider>
                                               <RouterProvider router={router} />
                                             </MyExpenseReviewProvider>

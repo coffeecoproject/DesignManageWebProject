@@ -8,14 +8,14 @@ const legacyPerformanceTokens = [
 ];
 
 const removedPerformanceFiles = [
-  'src/features/performance/PerformanceMonthlyState.tsx',
-  'src/features/performance/performanceExecutionContract.ts',
-  'src/features/performance/performanceQuarterlyReviewModel.ts'
+  'src/modules/performance/PerformanceMonthlyState.tsx',
+  'src/modules/performance/performanceExecutionContract.ts',
+  'src/modules/performance/performanceQuarterlyReviewModel.ts'
 ];
 
 const sharedDrawerConsumers = [
-  'src/features/my-work/MyPerformancePage.tsx',
-  'src/features/performance/PerformanceMonthlyPage.tsx'
+  'src/modules/my-work/MyPerformancePage.tsx',
+  'src/modules/performance/PerformanceMonthlyPage.tsx'
 ];
 
 async function listSourceFiles(rootPath) {
@@ -60,7 +60,7 @@ export async function assertPerformancePhase7ResidualHardcut(webRoot) {
     throw new Error(`${restoredLegacyFile} must remain removed after the performance hardcut`);
   }
 
-  const drawerPath = 'src/features/performance/PerformanceResultDrawer.tsx';
+  const drawerPath = 'src/modules/performance/PerformanceResultDrawer.tsx';
   const drawer = sourceContents.find(({ relativePath }) => relativePath === drawerPath)?.content;
 
   if (!drawer) {
@@ -80,8 +80,9 @@ export async function assertPerformancePhase7ResidualHardcut(webRoot) {
   for (const relativePath of sharedDrawerConsumers) {
     const content = sourceContents.find((source) => source.relativePath === relativePath)?.content;
 
-    if (!content?.includes("import { PerformanceResultDrawer } from './PerformanceResultDrawer'")
-      && !content?.includes("import { PerformanceResultDrawer } from '../performance/PerformanceResultDrawer'")) {
+    const importsDrawer = /import \{[^}]*\bPerformanceResultDrawer\b[^}]*\} from '(?:\.\/PerformanceResultDrawer|\.\.\/performance)'/;
+
+    if (!importsDrawer.test(content ?? '')) {
       throw new Error(`${relativePath} does not reuse PerformanceResultDrawer`);
     }
   }

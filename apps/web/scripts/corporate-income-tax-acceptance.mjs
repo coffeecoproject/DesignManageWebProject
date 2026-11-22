@@ -5,8 +5,8 @@ export const corporateIncomeTaxAcceptanceEvidence = Array.from({ length: 20 }, (
   return {
     id,
     source: sequence >= 13 && sequence <= 15
-      ? 'src/features/finance/financeAccountingVoucherModel.test.ts'
-      : 'src/features/finance/financeTaxMatterModel.test.ts'
+      ? 'src/modules/finance/financeAccountingVoucherModel.test.ts'
+      : 'src/modules/finance/financeTaxMatterModel.test.ts'
   };
 });
 

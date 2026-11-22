@@ -1,0 +1,29 @@
+{
+  "apps": {
+    "api": {
+      "roots": ["apps/api/src/modules"],
+      "shared": ["apps/api/src/shared/**"],
+      "app": ["apps/api/src/cli/**"],
+      "entry": ["index.ts"],
+      "map": {}
+    },
+    "web": {
+      "roots": ["apps/web/src/modules"],
+      "shared": ["apps/web/src/shared/**"],
+      "app": ["apps/web/src/main.tsx", "apps/web/src/vite-env.d.ts", "apps/web/src/app/**"],
+      "entry": ["index.ts", "pages.ts"],
+      "map": {}
+    }
+  },
+  "shared": [],
+  "outside": [
+    ".ai-native/**",
+    "scripts/**",
+    "apps/api/vitest.config.mjs",
+    "apps/web/eslint.config.js",
+    "apps/web/vite.config.ts",
+    "apps/web/vitest.config.ts",
+    "apps/web/scripts/**"
+  ],
+  "allow": []
+}

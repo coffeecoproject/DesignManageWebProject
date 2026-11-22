@@ -24,13 +24,13 @@ This document defines the data contract for period-close phases 1-3:
 This is not a database migration, not a production schema record, and not proof
 that backend period close has been implemented.
 
-`apps/api/src/finance/periodCloseContract.ts` and
-`apps/api/src/finance/periodClosePersistenceContract.ts`,
-`apps/api/src/finance/periodCloseRepositoryContract.ts`,
-`apps/api/src/finance/periodCloseDatabaseContract.ts`,
-`apps/api/src/finance/periodCloseDatabaseRepositoryContract.ts`,
-`apps/api/src/finance/periodCloseSourceMutationGuard.ts` plus
-`apps/api/src/finance/periodCloseSourceMutationRoutes.ts` currently model these
+`apps/api/src/modules/finance/periodCloseContract.ts` and
+`apps/api/src/modules/finance/periodClosePersistenceContract.ts`,
+`apps/api/src/modules/finance/periodCloseRepositoryContract.ts`,
+`apps/api/src/modules/finance/periodCloseDatabaseContract.ts`,
+`apps/api/src/modules/finance/periodCloseDatabaseRepositoryContract.ts`,
+`apps/api/src/modules/finance/periodCloseSourceMutationGuard.ts` plus
+`apps/api/src/modules/finance/periodCloseSourceMutationRoutes.ts` currently model these
 data semantics in a local executable contract skeleton. The persistence contract
 models transaction-boundary expectations with in-memory state: close success
 commits the close snapshot, period lock, event, and idempotency record together;

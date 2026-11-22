@@ -1,0 +1,103 @@
+import { useMemo } from 'react';
+import { useCustomerManagementState } from '../customers';
+import { usePeopleOrganizationState } from '../people';
+import { usePerformanceRuleState } from '../performance-rules';
+import { getLatestPublishedPerformanceSummary, usePerformanceResults } from '../performance';
+import { useSalaryMonthlyReportBuilder } from '../salary';
+import { getTaskPerformanceRule, getTaskScoreItem, getTaskTypeName as resolveTaskTypeName, taskManagementNow, useTaskManagementState, type StoreTaskRecord, type TaskDetailTableRow } from '../tasks';
+import {
+  buildMyWorkArchiveSummary,
+  buildMyWorkTaskRows,
+  buildMyWorkTaskSummary,
+  currentMyWorkMemberId,
+  getLatestSalaryReport,
+  getMySalaryReports,
+  getMyWorkMember
+} from './myWorkModel';
+
+export function useMyWorkData() {
+  const { getBrandById, getCustomerById, storeRows } = useCustomerManagementState();
+  const { peopleRows } = usePeopleOrganizationState();
+  const { performanceRuleRows } = usePerformanceRuleState();
+  const { publishedMonthlyRecords } = usePerformanceResults();
+  const { getSalaryMonthlyReports, salaryState } = useSalaryMonthlyReportBuilder();
+  const { storeTaskRows } = useTaskManagementState();
+
+  const member = useMemo(() => getMyWorkMember(peopleRows, currentMyWorkMemberId), [peopleRows]);
+  const month = taskManagementNow.slice(0, 7);
+  const taskRows = useMemo<TaskDetailTableRow[]>(
+    () => (member ? buildMyWorkTaskRows(member.id, storeTaskRows) : []),
+    [member, storeTaskRows]
+  );
+  const taskSummary = useMemo(
+    () =>
+      member
+        ? buildMyWorkTaskSummary(member.id, storeTaskRows, month)
+        : {
+            acceptorCount: 0,
+            completedThisMonthCount: 0,
+            currentTaskCount: 0,
+            executorCount: 0,
+            inProgressCount: 0,
+            overdueCount: 0,
+            pendingAcceptanceCount: 0,
+            pendingMyAcceptanceCount: 0,
+            pendingResubmitCount: 0,
+            pendingSubmitCount: 0,
+            rejectedCount: 0
+          },
+    [member, month, storeTaskRows]
+  );
+  const archiveSummary = useMemo(() => (member ? buildMyWorkArchiveSummary(member) : undefined), [member]);
+  const salaryReports = useMemo(() => {
+    if (!member) {
+      return [];
+    }
+
+    return getMySalaryReports(member.id, salaryState.salaryDetailMonths.flatMap((salaryMonth) => getSalaryMonthlyReports(salaryMonth)));
+  }, [getSalaryMonthlyReports, member, salaryState.salaryDetailMonths]);
+  const latestSalaryReport = useMemo(() => getLatestSalaryReport(salaryReports), [salaryReports]);
+  const performanceSummary = useMemo(
+    () => getLatestPublishedPerformanceSummary(publishedMonthlyRecords, member?.id ?? ''),
+    [member?.id, publishedMonthlyRecords]
+  );
+
+  function getBrandName(task: StoreTaskRecord) {
+    return getBrandById(task.brandId)?.name ?? '-';
+  }
+
+  function getCustomerName(task: StoreTaskRecord) {
+    return getCustomerById(task.customerId)?.name ?? '-';
+  }
+
+  function getStoreLabel(task: StoreTaskRecord) {
+    const store = storeRows.find((row) => row.id === task.storeId);
+    return store ? `${store.name} / ${store.city}` : '-';
+  }
+
+  function getTaskTypeName(task: StoreTaskRecord) {
+    return resolveTaskTypeName(task);
+  }
+
+  function getTaskScoreText(task: StoreTaskRecord) {
+    const rule = getTaskPerformanceRule(task, member, performanceRuleRows);
+    const scoreItem = getTaskScoreItem(task, rule);
+
+    return scoreItem ? `${scoreItem.score} 分` : '-';
+  }
+
+  return {
+    archiveSummary,
+    getBrandName,
+    getCustomerName,
+    getStoreLabel,
+    getTaskScoreText,
+    getTaskTypeName,
+    latestSalaryReport,
+    member,
+    performanceSummary,
+    salaryReports,
+    taskRows,
+    taskSummary
+  };
+}

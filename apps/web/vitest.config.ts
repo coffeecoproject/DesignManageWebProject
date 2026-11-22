@@ -8,7 +8,9 @@ export default mergeConfig(
       allowOnly: false,
       environment: 'node',
       expect: { requireAssertions: true },
-      include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs']
+      include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
+      // Acceptance-ID coverage from executed results; checked when the whole web suite runs.
+      reporters: ['default', './scripts/acceptance-evidence-reporter.mjs']
     }
   })
 );

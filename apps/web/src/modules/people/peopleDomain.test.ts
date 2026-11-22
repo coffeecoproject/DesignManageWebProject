@@ -1,0 +1,902 @@
+import {
+  applyDefaultWorkCalendarChange,
+  applyWorkCalendarRuleChange,
+  hasCurrentOrFutureDefaultPeriod,
+  type AnnualExceptionConfigRow,
+  type WorkCalendarRow
+} from './WorkCalendarState';
+import { performanceRulePresets } from '../performance-rules/performanceMockData';
+import type { PerformanceMonthlyCategoryRecord } from '../performance/performanceTypes';
+import {
+  applyPeopleMovementEffect,
+  createPeopleMovementSnapshot,
+  getPeopleArchiveListStatus,
+  getPeopleAttendanceDurationHours,
+  getPeopleAttendanceEffect,
+  getPeopleAttendanceRecordMonths,
+  getPeopleAttendanceStatus,
+  getPeopleBaseSalaryText,
+  getPeopleHousingFundStatus,
+  getMovementAffectedSalaryMonths,
+  getMemberWorkCalendar,
+  getWorkCalendarDependentMembers,
+  getPeopleMemberPositions,
+  getNextPeopleWorkNo,
+  getPeopleOngoingTaskCount,
+  getPeopleOverviewAvailabilitySummary,
+  getPeopleTaskAccessStatusFromArchive,
+  isPeopleHousingFundContributionApplicable,
+  isPeopleHousingFundContributionEnabled,
+  getPositionRowsWithMemberCount,
+  inferCreatePeopleStatus,
+  inferPeopleSalaryMode,
+  isPeopleMovementSnapshotEqual,
+  normalizePeopleText,
+  normalizeTaskCapabilityIds,
+  restorePeopleMovementSnapshot,
+  toPositionManagementRecord,
+  type PeopleAttendanceRecord,
+  type PositionManagementRecord,
+  type PositionManagementRow
+} from './peopleDomain';
+import { getPeoplePerformanceRuleRiskLabels, peoplePerformanceTerminationRiskLabel } from '../people-overview/peoplePerformanceRiskModel';
+import { peopleMockRepository } from './peopleRepository';
+import type { PeopleMember } from './peopleTypes';
+import { it } from 'vitest';
+import { assert, assertDeepEqual, assertEqual } from '../../__tests__/assertions';
+
+type PeopleMemberOverrides = Omit<Partial<PeopleMember>, 'paymentProfile' | 'salaryProfile'> & {
+  paymentProfile?: Partial<PeopleMember['paymentProfile']>;
+  salaryProfile?: Partial<PeopleMember['salaryProfile']>;
+};
+
+const weekdayCalendar: WorkCalendarRow = {
+  alternateWorkdays: [],
+  anchorDate: '2026-06-15',
+  code: 'CAL-TEST-001',
+  fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
+  id: 'calendar-test-weekday',
+  isDefault: true,
+  name: '测试双休',
+  note: '',
+  status: '启用',
+  type: '双休',
+  updatedAt: '2026-06-17'
+};
+
+const annualExceptions: AnnualExceptionConfigRow[] = [
+  {
+    code: 'YEAR-2026',
+    currentRevisionId: 'annual-2026-r1',
+    id: 'annual-2026',
+    revisions: [
+      {
+        createdAt: '2026-01-01',
+        createdBy: '测试人',
+        effectiveFrom: '2026-01-01',
+        id: 'annual-2026-r1',
+        items: [
+          {
+            date: '2026-06-17',
+            groupId: 'new-year',
+            groupName: '测试节假日',
+            id: 'annual-rest',
+            name: '测试休息日',
+            note: '',
+            type: '休息日'
+          },
+          {
+            date: '2026-06-21',
+            groupId: 'new-year',
+            groupName: '测试节假日',
+            id: 'annual-workday',
+            name: '测试特殊工作日',
+            note: '',
+            type: '特殊工作日'
+          }
+        ],
+        revision: 1,
+        source: '测试'
+      }
+    ],
+    status: '已启用',
+    updatedAt: '2026-06-17',
+    updatedBy: '测试人',
+    year: 2026
+  }
+];
+
+function createMember(overrides: PeopleMemberOverrides = {}): PeopleMember {
+  const baseMember: PeopleMember = {
+    address: '武汉市洪山区',
+    archiveFiles: [
+      {
+        category: '身份资料',
+        id: 'file-id-card',
+        name: '身份证',
+        status: '已上传',
+        updatedAt: '2026-06-01'
+      }
+    ],
+    archiveStatus: '资料完整',
+    archiveUpdatedAt: '2026-06-15',
+    auditRecords: [],
+    birthDate: '1992-01-01',
+    city: '武汉',
+    contractNo: 'HT-TEST-001',
+    contractStartAt: '2026-06-01',
+    contractStatus: '试用合同',
+    contractType: '劳动合同',
+    education: '本科',
+    educationMajor: '设计',
+    email: 'test@example.com',
+    emergencyContact: '测试联系人',
+    emergencyContactPhone: '13800000000',
+    emergencyContactRelation: '家属',
+    employmentRelationshipType: '全日制劳动关系',
+    gender: '女',
+    graduatedAt: '2014-06',
+    graduationSchool: '武汉大学',
+    hukouAddress: '湖北武汉',
+    id: 'member-001',
+    idDocumentType: '身份证',
+    idValidUntil: '2036-01-01',
+    identityNo: '420000199201010000',
+    joinedAt: '2026-06-01',
+    mobile: '13800000001',
+    name: '测试人员',
+    nationality: '中国',
+    housingFundEffectiveMonth: '2026-06',
+    housingFundStatus: '缴存',
+    paymentProfile: {
+      accountName: '测试人员',
+      bankAccount: '6222000000000000000',
+      bankName: '招商银行',
+      mode: '工资发放',
+      payCycle: '每月'
+    },
+    personnelType: '全职',
+    position: '设计师',
+    positionAssignments: [{
+      effectiveFrom: '2026-06-01',
+      id: 'assignment-domain-test',
+      isPrimary: true,
+      positionId: 'position-designer',
+      positionName: '设计师',
+      status: '生效中'
+    }],
+    probationEndAt: '2026-09-01',
+    salaryProfile: {
+      effectiveAt: '2026-06-01',
+      note: '',
+      payCycle: '每月',
+      probationSalary: '8000',
+      regularSalary: '10000',
+      status: '已配置',
+      structure: '固定月薪'
+    },
+    source: '社招',
+    status: '试用期',
+    taskAccessStatus: '可参与任务',
+    taskCapabilityIds: ['design'],
+    taskRecords: [],
+    wechat: 'test-wechat',
+    workCalendarId: weekdayCalendar.id
+  };
+
+  return {
+    ...baseMember,
+    ...overrides,
+    archiveFiles: overrides.archiveFiles ?? baseMember.archiveFiles.map((file) => ({ ...file })),
+    auditRecords: overrides.auditRecords ?? baseMember.auditRecords.map((record) => ({ ...record })),
+    paymentProfile: {
+      ...baseMember.paymentProfile,
+      ...overrides.paymentProfile
+    },
+    salaryProfile: {
+      ...baseMember.salaryProfile,
+      ...overrides.salaryProfile
+    },
+    positionAssignments: overrides.positionAssignments ?? [{
+      effectiveFrom: '2026-06-01',
+      id: 'assignment-domain-test',
+      isPrimary: true,
+      positionId: 'position-designer',
+      positionName: overrides.position ?? baseMember.position,
+      status: '生效中'
+    }],
+    taskCapabilityIds: overrides.taskCapabilityIds ?? [...baseMember.taskCapabilityIds],
+    taskRecords: overrides.taskRecords ?? baseMember.taskRecords.map((record) => ({ ...record }))
+  };
+}
+
+function createAttendanceRecord(overrides: Partial<PeopleAttendanceRecord> = {}): PeopleAttendanceRecord {
+  return {
+    durationHours: 8,
+    effect: '不可用',
+    endAt: '2026-06-17 18:00',
+    id: 'attendance-001',
+    memberId: 'member-001',
+    mode: '日常记录',
+    reason: '测试',
+    recordedAt: '2026-06-16 10:00',
+    recorder: '测试人',
+    startAt: '2026-06-17 09:00',
+    status: '生效中',
+    type: '请假',
+    updatedAt: '2026-06-16 10:00',
+    ...overrides
+  };
+}
+
+function createPublishedPerformanceRecord(
+  member: PeopleMember,
+  score: number,
+  overrides: Partial<PerformanceMonthlyCategoryRecord> = {}
+): PerformanceMonthlyCategoryRecord {
+  return {
+    category: '岗位职责考核',
+    employeeName: member.name,
+    events: [],
+    id: `performance-${member.id}-${score}`,
+    monthlyAmount: 1000,
+    note: '',
+    performanceMonth: '2026-06',
+    position: member.position,
+    prepayAmount: 0,
+    qualityScore: score,
+    ruleName: '测试绩效规则',
+    ruleVersion: 'V1',
+    salarySettlementReference: '2026-07 工资',
+    sourceLabel: '已发布绩效结果',
+    sourceRecordIds: [`source-${member.id}`],
+    sourceTaskCount: 1,
+    updatedAt: '2026-07-01 10:00',
+    workNo: member.id,
+    ...overrides
+  };
+}
+
+it('new personnel work number is derived from the highest valid yearly sequence', () => {
+  assertEqual(
+    getNextPeopleWorkNo([{ id: '20260001' }, { id: '20260009' }, { id: 'legacy-employee' }]),
+    '20260010',
+    'new work number should be unique within the configured year'
+  );
+  assertEqual(inferCreatePeopleStatus('全职'), '试用期', 'full-time create status should start in probation');
+  assertEqual(inferCreatePeopleStatus('兼职'), '合作中', 'part-time create status should start in cooperation');
+});
+
+it('derives every affected salary month from a cross-month attendance record', () => {
+  assertEqual(
+    getPeopleAttendanceRecordMonths(createAttendanceRecord({
+      endAt: '2026-08-02 18:00',
+      startAt: '2026-06-30 09:00'
+    })).join(','),
+    '2026-06,2026-07,2026-08',
+    'attendance source lock should cover every month touched by the record'
+  );
+});
+
+it('normalizes create defaults and task access status', () => {
+  assertEqual(normalizePeopleText('  李明  '), '李明', 'text should be trimmed');
+  assertDeepEqual(normalizeTaskCapabilityIds(['task-b', 'task-a', 'task-b']), ['task-a', 'task-b'], 'task capabilities should be deduplicated and sorted');
+  assertEqual(inferCreatePeopleStatus('全职'), '试用期', 'full-time create status should default to probation');
+  assertEqual(inferCreatePeopleStatus('兼职'), '合作中', 'part-time create status should default to cooperating');
+  assertEqual(inferPeopleSalaryMode('全职'), '月薪制', 'full-time salary mode should default to monthly');
+  assertEqual(inferPeopleSalaryMode('兼职'), '任务制', 'part-time salary mode should default to task based');
+  assertEqual(getPeopleTaskAccessStatusFromArchive('离职', ['design']), '已关闭', 'ended full-time relationship should close task access');
+  assertEqual(getPeopleTaskAccessStatusFromArchive('在职', []), '暂停参与', 'active member without capabilities should pause task access');
+  assertEqual(getPeopleTaskAccessStatusFromArchive('在职', ['design']), '可参与任务', 'active member with capabilities should allow task access');
+  assertEqual(getPeopleHousingFundStatus(createMember({ housingFundStatus: undefined })), '暂不缴存', 'full-time housing fund status should default to not contributing');
+  assertEqual(isPeopleHousingFundContributionEnabled(createMember({ housingFundStatus: '缴存' })), true, 'full-time contributing member should be enabled for housing fund records');
+  assertEqual(
+    isPeopleHousingFundContributionApplicable(createMember({ housingFundEffectiveMonth: '2026-05', housingFundStatus: '缴存' }), '2026-06'),
+    true,
+    'housing fund should apply after its effective month'
+  );
+  assertEqual(
+    isPeopleHousingFundContributionApplicable(createMember({ housingFundEffectiveMonth: '2026-07', housingFundStatus: '缴存' }), '2026-06'),
+    false,
+    'housing fund should not apply before its effective month'
+  );
+  assertEqual(
+    getPeopleHousingFundStatus(createMember({ personnelType: '兼职', housingFundStatus: '缴存' })),
+    '不适用',
+    'part-time member should not enter housing fund records'
+  );
+});
+
+it('derives archive and salary read models', () => {
+  const fulltimeMember = createMember();
+  const parttimeMember = createMember({
+    paymentProfile: {
+      accountName: '测试人员',
+      bankAccount: '6222000000000000000',
+      bankName: '招商银行',
+      mode: '按任务付款',
+      payCycle: '按任务'
+    },
+    personnelType: '兼职',
+    salaryProfile: {
+      effectiveAt: '2026-06-01',
+      note: '',
+      payCycle: '按任务',
+      probationSalary: undefined,
+      regularSalary: undefined,
+      status: '已配置',
+      structure: '任务计价',
+      taskRateRule: '按任务报价'
+    },
+    status: '合作中'
+  });
+
+  assertEqual(getPeopleArchiveListStatus(fulltimeMember), '已齐全', 'complete archive should render as complete');
+  assertEqual(getPeopleArchiveListStatus(createMember({ archiveStatus: '待补充' })), '待补充', 'pending archive should render as pending');
+  assertEqual(getPeopleBaseSalaryText(fulltimeMember), '8000', 'probation full-time member should use probation salary');
+  assertEqual(getPeopleBaseSalaryText(createMember({ probationEndAt: undefined, status: '在职' })), '10000', 'regular full-time member should use regular salary');
+  assertEqual(getPeopleBaseSalaryText(parttimeMember), '按任务规则', 'part-time member with task-rate rule should hide fixed salary');
+});
+
+it('derives attendance effect status and duration', () => {
+  assertEqual(getPeopleAttendanceEffect('补班'), '可用', 'make-up work should be available');
+  assertEqual(getPeopleAttendanceEffect('请假'), '不可用', 'leave should be unavailable');
+  assertEqual(
+    getPeopleAttendanceStatus('2026-06-17 09:00', '2026-06-17 18:00', '日常记录', '2026-06-17 12:00'),
+    '生效中',
+    'current daily record should be active'
+  );
+  assertEqual(
+    getPeopleAttendanceStatus('2026-06-18 09:00', '2026-06-18 18:00', '日常记录', '2026-06-17 12:00'),
+    '待生效',
+    'future daily record should be pending'
+  );
+  assertEqual(
+    getPeopleAttendanceStatus('2026-06-16 09:00', '2026-06-16 18:00', '日常记录', '2026-06-17 12:00'),
+    '已结束',
+    'past daily record should be ended'
+  );
+  assertEqual(
+    getPeopleAttendanceStatus('2026-06-16 09:00', '2026-06-16 18:00', '历史补录', '2026-06-17 12:00'),
+    '已结束',
+    'historical record should be ended'
+  );
+  assertEqual(getPeopleAttendanceDurationHours('2026-06-17 09:00', '2026-06-17 10:30'), 2, 'duration should round up to hours');
+  assertEqual(getPeopleAttendanceDurationHours('bad', '2026-06-17 10:30'), 0, 'invalid start time should produce zero duration');
+});
+
+it('summarizes overview availability from attendance and work calendar facts', () => {
+  const fulltimeMember = createMember();
+  const parttimeMember = createMember({ personnelType: '兼职', status: '合作中' });
+  const endedMember = createMember({ status: '离职' });
+
+  assertEqual(
+    getPeopleOverviewAvailabilitySummary(fulltimeMember, [], [weekdayCalendar], [], '2026-06-17').status,
+    '在岗',
+    'weekday without attendance record should be available'
+  );
+  assertEqual(
+    getPeopleOverviewAvailabilitySummary(fulltimeMember, [], [weekdayCalendar], annualExceptions, '2026-06-17').status,
+    '休息',
+    'enabled rest-day exception should override base work calendar'
+  );
+  assertEqual(
+    getPeopleOverviewAvailabilitySummary(fulltimeMember, [], [weekdayCalendar], annualExceptions, '2026-06-21').status,
+    '在岗',
+    'enabled special-workday exception should override weekend'
+  );
+  assertEqual(
+    getPeopleOverviewAvailabilitySummary(fulltimeMember, [createAttendanceRecord()], [weekdayCalendar], [], '2026-06-17').status,
+    '休息',
+    'active unavailable attendance record should render rest'
+  );
+  assertEqual(
+    getPeopleOverviewAvailabilitySummary(
+      fulltimeMember,
+      [createAttendanceRecord({ effect: '可用', type: '补班' })],
+      [weekdayCalendar],
+      [],
+      '2026-06-21'
+    ).status,
+    '在岗',
+    'active make-up work record should render available'
+  );
+  assertEqual(getPeopleOverviewAvailabilitySummary(parttimeMember, [], [weekdayCalendar], [], '2026-06-17').status, '-', 'part-time member should not enter attendance summary');
+  assertEqual(getPeopleOverviewAvailabilitySummary(endedMember, [], [weekdayCalendar], [], '2026-06-17').status, '-', 'ended relationship should not enter attendance summary');
+
+  const shiftedCalendar: WorkCalendarRow = {
+    ...weekdayCalendar,
+    fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
+    id: 'calendar-shifted',
+    isDefault: false,
+    name: '错峰日历',
+    type: '自定义'
+  };
+  const calendarChangedMember = createMember({
+    workCalendarAssignments: [
+      {
+        effectiveFrom: '2026-06-01',
+        effectiveTo: '2026-06-15',
+        id: 'overview-calendar-before',
+        mode: '跟随公司默认日历',
+        status: '已结束'
+      },
+      {
+        effectiveFrom: '2026-06-16',
+        id: 'overview-calendar-after',
+        mode: '指定工作日历',
+        status: '生效中',
+        workCalendarId: shiftedCalendar.id
+      }
+    ],
+    workCalendarId: shiftedCalendar.id
+  });
+  assertEqual(
+    getPeopleOverviewAvailabilitySummary(calendarChangedMember, [], [weekdayCalendar, shiftedCalendar], [], '2026-06-15').status,
+    '在岗',
+    'overview should resolve the calendar effective on the requested date'
+  );
+});
+
+it('counts ongoing tasks and position members through stable selectors', () => {
+  const positionRecords: PositionManagementRecord[] = [
+    {
+      code: 'CEO',
+      dataScopes: { people: '全部人员', tasks: '全部任务', customers: '全部客户', finance: '管理', salary: '全部人员' },
+      extraPermissions: ['people.archive.read'],
+      files: [],
+      id: 'position-ceo',
+      position: 'CEO',
+      roleBindings: [],
+      status: '启用',
+      updatedAt: '2026-06-17'
+    },
+    {
+      code: 'DESIGNER',
+      dataScopes: { people: '本人', tasks: '本人参与', customers: '关联品牌', finance: '不可访问', salary: '本人' },
+      extraPermissions: [],
+      files: [],
+      id: 'position-designer',
+      position: '设计师',
+      roleBindings: [],
+      status: '启用',
+      updatedAt: '2026-06-17'
+    }
+  ];
+  const positionRows = getPositionRowsWithMemberCount(positionRecords, [
+    createMember({ id: 'member-001', position: 'CEO' }),
+    createMember({ id: 'member-002', position: '设计师' }),
+    createMember({ id: 'member-003', position: '设计师' })
+  ]);
+  const positionRow: PositionManagementRow = { ...positionRows[0], memberCount: 99 };
+
+  assertEqual(getPeopleOngoingTaskCount('member-001', [{ executorId: 'member-001', status: '进行中' }, { executorId: 'member-001', status: '已完成' }]), 1, 'ongoing task count should only count active statuses');
+  assertDeepEqual(
+    positionRows.map((row) => [row.position, row.memberCount]),
+    [
+      ['CEO', 1],
+      ['设计师', 2]
+    ],
+    'position rows should derive member counts by position'
+  );
+  assert(!('memberCount' in toPositionManagementRecord(positionRow)), 'position record should strip derived member count');
+  assertDeepEqual(toPositionManagementRecord(positionRow).extraPermissions, ['people.archive.read'], 'position record should keep position-level extra permissions');
+});
+
+it('applies movement effects without leaking page-local mutation rules', () => {
+  const member = createMember();
+  const regularized = applyPeopleMovementEffect(member, { effectiveAt: '2026-06-20', memberId: member.id, type: '转正' }, { actor: '测试人', today: '2026-06-21' });
+  const departed = applyPeopleMovementEffect(member, { effectiveAt: '2026-06-30', memberId: member.id, type: '离职' }, { today: '2026-07-01' });
+  const renewed = applyPeopleMovementEffect(
+    member,
+    { effectiveAt: '2026-07-02', memberId: member.id, newContractEndAt: '2027-06-30', type: '续签' },
+    { today: '2026-07-02' }
+  );
+  const salaryAdjusted = applyPeopleMovementEffect(
+    member,
+    { effectiveAt: '2026-07-03', memberId: member.id, newSalaryText: '12000', type: '薪资标准调整' },
+    { today: '2026-07-03' }
+  );
+  const positionAdjusted = applyPeopleMovementEffect(
+    member,
+    {
+      effectiveAt: '2026-07-03',
+      memberId: member.id,
+      newPositions: ['财务专员', '设计师'],
+      newPrimaryPosition: '财务专员',
+      type: '岗位调整'
+    },
+    { today: '2026-07-03' }
+  );
+  const paused = applyPeopleMovementEffect(member, { effectiveAt: '2026-07-04', memberId: member.id, type: '暂停任务参与' }, { today: '2026-07-04' });
+  const endedParttime = createMember({ personnelType: '兼职', status: '结束合作', taskAccessStatus: '已关闭' });
+  const activeParttime = createMember({ personnelType: '兼职', status: '合作中', taskAccessStatus: '暂停参与' });
+  const cooperationEnded = applyPeopleMovementEffect(
+    activeParttime,
+    { effectiveAt: '2026-07-05', memberId: activeParttime.id, type: '结束合作' },
+    { today: '2026-07-05' }
+  );
+  const restoredParttime = applyPeopleMovementEffect(endedParttime, { effectiveAt: '2026-07-01', memberId: endedParttime.id, type: '恢复任务参与' }, { today: '2026-07-01' });
+  const restoredActiveParttime = applyPeopleMovementEffect(
+    activeParttime,
+    { effectiveAt: '2026-07-06', memberId: activeParttime.id, type: '恢复任务参与' },
+    { today: '2026-07-06' }
+  );
+  const unchanged = applyPeopleMovementEffect(member, { effectiveAt: '2026-07-01', memberId: 'other-member', type: '离职' }, { today: '2026-07-01' });
+
+  assertEqual(regularized.status, '在职', 'regularization should switch full-time status to active');
+  assertEqual(regularized.contractStatus, '正式合同', 'regularization should switch contract status');
+  assertEqual(regularized.auditRecords[0]?.actor, '测试人', 'movement should prepend audit record with actor');
+  assertEqual(departed.status, '离职', 'departure should switch status');
+  assertEqual(departed.taskAccessStatus, '已关闭', 'departure should close task access');
+  assertEqual(departed.salaryProfile.status, '已停用', 'departure should disable salary profile');
+  assertEqual(renewed.contractEndAt, '2027-06-30', 'renewal should update contract end date');
+  assertEqual(renewed.contractStatus, '劳动合同有效', 'renewal should keep full-time contract active');
+  assertEqual(salaryAdjusted.salaryProfile.regularSalary, '12000', 'salary adjustment should update regular salary');
+  assertEqual(salaryAdjusted.salaryProfile.effectiveAt, '2026-07-03', 'salary adjustment should update salary effective date');
+  assertEqual(positionAdjusted.position, '财务专员', 'position adjustment should update the primary position');
+  assertDeepEqual(getPeopleMemberPositions(positionAdjusted), ['财务专员', '设计师'], 'position adjustment should retain all assigned positions');
+  assertEqual(paused.taskAccessStatus, '暂停参与', 'pause movement should pause task access');
+  assertEqual(cooperationEnded.status, '结束合作', 'cooperation end should switch part-time status');
+  assertEqual(cooperationEnded.cooperationEndAt, '2026-07-05', 'cooperation end should update cooperation end date');
+  assertEqual(restoredParttime.taskAccessStatus, '已关闭', 'ended relationship should stay closed when restoring task access');
+  assertEqual(restoredActiveParttime.taskAccessStatus, '可参与任务', 'active relationship should restore task access');
+  assert(unchanged === member, 'movement for another member should return the original reference');
+});
+
+it('maps salary-affecting movements to open salary months', () => {
+  assertDeepEqual(
+    getMovementAffectedSalaryMonths(
+      { effectiveAt: '2026-05-20', memberId: 'member-001', type: '薪资标准调整' },
+      ['2026-06', '2026-05', '2026-04']
+    ),
+    ['2026-06', '2026-05'],
+    'salary adjustment should invalidate the effective month and later open salary months'
+  );
+  assertDeepEqual(
+    getMovementAffectedSalaryMonths(
+      { effectiveAt: '2026-05-20', memberId: 'member-001', type: '续签' },
+      ['2026-06', '2026-05']
+    ),
+    [],
+    'contract renewal should not invalidate salary months'
+  );
+});
+
+it('restores people movement snapshots for reversal records', () => {
+  const member = createMember({
+    contractStatus: '劳动合同有效',
+    probationEndAt: '2026-06-01',
+    status: '在职'
+  });
+  const beforeSnapshot = createPeopleMovementSnapshot(member);
+  const departed = applyPeopleMovementEffect(member, { effectiveAt: '2026-07-01', memberId: member.id, type: '离职' }, { today: '2026-07-01' });
+  const restored = restorePeopleMovementSnapshot(departed, beforeSnapshot, {
+    actor: '测试人',
+    effectiveAt: '2026-07-02',
+    reason: '离职日期录入错误',
+    sourceRecordId: 'MOV-TEST-001',
+    today: '2026-07-02'
+  });
+
+  assert(!isPeopleMovementSnapshotEqual(departed, beforeSnapshot), 'departed member should no longer match original snapshot');
+  assert(isPeopleMovementSnapshotEqual(restored, beforeSnapshot), 'restored member should match original snapshot');
+  assertEqual(restored.archiveUpdatedAt, '2026-07-02', 'reversal should mark archive update date');
+  assertEqual(restored.auditRecords[0]?.action, '冲正', 'reversal should prepend reversal audit record');
+  assertEqual(restored.auditRecords[0]?.actor, '测试人', 'reversal audit should keep actor');
+  assert(restored.auditRecords[0]?.note.includes('MOV-TEST-001'), 'reversal audit should reference source record');
+  assertDeepEqual(restored.salaryProfile, beforeSnapshot.salaryProfile, 'reversal should restore salary profile from snapshot');
+});
+
+it('derives performance low-score risk from applicable rules and published results', () => {
+  const riskyMember = createMember({
+    position: '空间设计师'
+  });
+  const lowScoreUnmatchedMember = createMember({
+    position: '财务专员'
+  });
+  const attentionOnlyMember = createMember({
+    position: '空间设计师'
+  });
+  const riskyPublishedRecord = createPublishedPerformanceRecord(riskyMember, 58);
+  const unmatchedPublishedRecord = createPublishedPerformanceRecord(lowScoreUnmatchedMember, 58);
+  const attentionPublishedRecord = createPublishedPerformanceRecord(attentionOnlyMember, 65);
+
+  assertDeepEqual(
+    getPeoplePerformanceRuleRiskLabels(riskyMember, performanceRulePresets),
+    [],
+    'performance risk should not be inferred without a published performance result'
+  );
+
+  assertDeepEqual(
+    getPeoplePerformanceRuleRiskLabels(riskyMember, performanceRulePresets, [riskyPublishedRecord]),
+    [peoplePerformanceTerminationRiskLabel],
+    'latest published score in the rule low-score band should trigger performance risk'
+  );
+  assertDeepEqual(
+    getPeoplePerformanceRuleRiskLabels(lowScoreUnmatchedMember, performanceRulePresets, [unmatchedPublishedRecord]),
+    [],
+    'low score without an applicable published rule should not trigger rule-derived risk'
+  );
+  assertDeepEqual(
+    getPeoplePerformanceRuleRiskLabels(attentionOnlyMember, performanceRulePresets, [attentionPublishedRecord]),
+    [],
+    'score above the rule low-score band should not trigger rule-derived risk'
+  );
+  assertDeepEqual(
+    getPeoplePerformanceRuleRiskLabels(
+      riskyMember,
+      performanceRulePresets,
+      [createPublishedPerformanceRecord(riskyMember, 58, { resultResponseStatus: '有异议' })]
+    ),
+    [],
+    'a disputed score should not trigger a personnel performance risk conclusion'
+  );
+});
+
+it('keeps repository snapshots isolated from raw mock mutation', () => {
+  const firstSnapshot = peopleMockRepository.getInitialSnapshot();
+  const secondSnapshot = peopleMockRepository.getInitialSnapshot();
+
+  assert(firstSnapshot.peopleRows.length > 0, 'mock repository should expose people rows');
+  assert(secondSnapshot.peopleRows.length > 0, 'mock repository should expose independent people rows');
+
+  const originalSecondName = secondSnapshot.peopleRows[0].name;
+  const originalSecondFileName = secondSnapshot.peopleRows[0].archiveFiles[0]?.name;
+  firstSnapshot.peopleRows[0].name = '已被测试修改';
+
+  if (firstSnapshot.peopleRows[0].archiveFiles[0]) {
+    firstSnapshot.peopleRows[0].archiveFiles[0].name = '已被测试修改文件';
+  }
+
+  assertEqual(secondSnapshot.peopleRows[0].name, originalSecondName, 'repository snapshots should not share member objects');
+  assertEqual(secondSnapshot.peopleRows[0].archiveFiles[0]?.name, originalSecondFileName, 'repository snapshots should not share nested archive-file objects');
+});
+
+it('resolves employee calendar assignments by effective date without arbitrary fallback', () => {
+  const secondCalendar: WorkCalendarRow = {
+    ...weekdayCalendar,
+    code: 'CAL-TEST-002',
+    id: 'calendar-test-second',
+    isDefault: false,
+    name: '第二套日历'
+  };
+  const member = createMember({
+    workCalendarAssignments: [
+      {
+        effectiveFrom: '2026-06-01',
+        effectiveTo: '2026-06-15',
+        id: 'calendar-assignment-1',
+        mode: '跟随公司默认日历',
+        status: '已结束'
+      },
+      {
+        effectiveFrom: '2026-06-16',
+        id: 'calendar-assignment-2',
+        mode: '指定工作日历',
+        status: '生效中',
+        workCalendarId: secondCalendar.id
+      }
+    ]
+  });
+
+  assertEqual(getMemberWorkCalendar(member, [weekdayCalendar, secondCalendar], '2026-06-15')?.id, weekdayCalendar.id, 'earlier date should follow the then-default calendar');
+  assertEqual(getMemberWorkCalendar(member, [weekdayCalendar, secondCalendar], '2026-06-16')?.id, secondCalendar.id, 'effective date should switch to the specified calendar');
+
+  const missingCalendarMember = createMember({
+    workCalendarAssignments: [{
+      effectiveFrom: '2026-06-01',
+      id: 'calendar-assignment-missing',
+      mode: '指定工作日历',
+      status: '生效中',
+      workCalendarId: 'calendar-does-not-exist'
+    }]
+  });
+  assertEqual(getMemberWorkCalendar(missingCalendarMember, [weekdayCalendar, secondCalendar], '2026-06-16'), undefined, 'missing explicit calendar must not fall back to the first row');
+
+  const assignmentGapMember = createMember({
+    workCalendarAssignments: [{
+      effectiveFrom: '2026-06-16',
+      id: 'calendar-assignment-future',
+      mode: '指定工作日历',
+      status: '生效中',
+      workCalendarId: secondCalendar.id
+    }],
+    workCalendarId: secondCalendar.id
+  });
+  assertEqual(getMemberWorkCalendar(assignmentGapMember, [weekdayCalendar, secondCalendar], '2026-06-15'), undefined, 'an assignment gap must not fall back to the current projection');
+});
+
+it('switches the company default calendar by effective date without rewriting history', () => {
+  const oldDefault: WorkCalendarRow = {
+    ...weekdayCalendar,
+    defaultPeriods: [{ effectiveFrom: '2026-01-01' }]
+  };
+  const nextDefault: WorkCalendarRow = {
+    ...weekdayCalendar,
+    code: 'CAL-TEST-DEFAULT-NEXT',
+    id: 'calendar-test-default-next',
+    isDefault: false,
+    name: '新公司默认日历'
+  };
+  const change = applyDefaultWorkCalendarChange(
+    [oldDefault, nextDefault],
+    nextDefault.id,
+    '2026-07-01',
+    '2026-06-16'
+  );
+  const member = createMember({
+    workCalendarAssignments: [{
+      effectiveFrom: '2026-01-01',
+      id: 'calendar-follow-default',
+      mode: '跟随公司默认日历',
+      status: '生效中'
+    }]
+  });
+
+  assertEqual(change.result.success, true, 'enabled calendar should accept a future default period');
+  assertEqual(getMemberWorkCalendar(member, change.rows, '2026-06-30')?.id, oldDefault.id, 'historical date should keep the old default');
+  assertEqual(getMemberWorkCalendar(member, change.rows, '2026-07-01')?.id, nextDefault.id, 'effective date should use the new default');
+  assertEqual(change.rows.find((row) => row.id === oldDefault.id)?.isDefault, true, 'future switch must keep the current projection unchanged');
+  assertEqual(
+    hasCurrentOrFutureDefaultPeriod(change.rows.find((row) => row.id === nextDefault.id)!, '2026-06-16'),
+    true,
+    'future default target must be protected from being stopped'
+  );
+
+  const specifiedMember = createMember({
+    workCalendarAssignments: [{
+      effectiveFrom: '2026-01-01',
+      id: 'calendar-explicit',
+      mode: '指定工作日历',
+      status: '生效中',
+      workCalendarId: oldDefault.id
+    }]
+  });
+  assertEqual(getMemberWorkCalendar(specifiedMember, change.rows, '2026-07-01')?.id, oldDefault.id, 'explicit assignment must not follow the company default switch');
+});
+
+it('rejects invalid company default calendar changes', () => {
+  const stoppedCalendar: WorkCalendarRow = {
+    ...weekdayCalendar,
+    id: 'calendar-stopped-default-target',
+    isDefault: false,
+    status: '停用'
+  };
+  const stoppedChange = applyDefaultWorkCalendarChange(
+    [weekdayCalendar, stoppedCalendar],
+    stoppedCalendar.id,
+    '2026-06-16',
+    '2026-06-16'
+  );
+  const historicalChange = applyDefaultWorkCalendarChange(
+    [weekdayCalendar, { ...stoppedCalendar, status: '启用' }],
+    stoppedCalendar.id,
+    '2026-06-15',
+    '2026-06-16'
+  );
+
+  assertEqual(stoppedChange.result.success, false, 'stopped calendar must not become default');
+  assertEqual(historicalChange.result.success, false, 'default change must not rewrite a historical date');
+});
+
+it('resolves the company default for historical employee dates covered by the baseline', () => {
+  const historicalDefault: WorkCalendarRow = {
+    ...weekdayCalendar,
+    defaultPeriods: [{ effectiveFrom: '2025-01-01' }],
+    effectiveFrom: '2025-01-01'
+  };
+  const historicalMember = createMember({
+    workCalendarAssignments: [{
+      effectiveFrom: '2025-11-15',
+      id: 'calendar-historical-default',
+      mode: '跟随公司默认日历',
+      status: '生效中'
+    }]
+  });
+
+  assertEqual(
+    getMemberWorkCalendar(historicalMember, [historicalDefault], '2025-11-15')?.id,
+    historicalDefault.id,
+    'default baseline should cover historical employment dates'
+  );
+});
+
+it('protects calendars referenced by current or future employee assignments', () => {
+  const protectedCalendarId = 'calendar-protected';
+  const members = [
+    createMember({
+      id: 'member-current-calendar',
+      workCalendarAssignments: [{
+        effectiveFrom: '2026-01-01',
+        id: 'assignment-current-calendar',
+        mode: '指定工作日历',
+        status: '生效中',
+        workCalendarId: protectedCalendarId
+      }]
+    }),
+    createMember({
+      id: 'member-future-calendar',
+      workCalendarAssignments: [{
+        effectiveFrom: '2026-07-01',
+        id: 'assignment-future-calendar',
+        mode: '指定工作日历',
+        status: '生效中',
+        workCalendarId: protectedCalendarId
+      }]
+    }),
+    createMember({
+      id: 'member-ended-calendar',
+      status: '离职',
+      workCalendarAssignments: [{
+        effectiveFrom: '2026-01-01',
+        id: 'assignment-ended-calendar',
+        mode: '指定工作日历',
+        status: '生效中',
+        workCalendarId: protectedCalendarId
+      }]
+    })
+  ];
+
+  assertEqual(
+    getWorkCalendarDependentMembers(members, protectedCalendarId, '2026-06-15').map((member) => member.id).sort().join(','),
+    'member-current-calendar,member-future-calendar',
+    'stop protection should include current and future active relationships only'
+  );
+});
+
+it('keeps current calendar projection unchanged until a future rule becomes effective', () => {
+  const currentCalendar: WorkCalendarRow = {
+    ...weekdayCalendar,
+    currentVersionId: 'calendar-current-v1',
+    effectiveFrom: '2026-01-01',
+    versions: [{
+      alternateWorkdays: [],
+      createdAt: '2026-01-01',
+      effectiveFrom: '2026-01-01',
+      fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
+      id: 'calendar-current-v1',
+      note: '当前规则',
+      type: '双休',
+      version: 1
+    }]
+  };
+  const change = applyWorkCalendarRuleChange(
+    [currentCalendar],
+    currentCalendar.id,
+    {
+      alternateWorkdays: [],
+      effectiveFrom: '2026-07-01',
+      fixedWorkdays: ['周一', '周二', '周三', '周四', '周五', '周六'],
+      name: currentCalendar.name,
+      note: '未来规则',
+      type: '单休'
+    },
+    '2026-06-15'
+  );
+  const updatedCalendar = change.rows[0];
+
+  assertEqual(change.result.success, true, 'future rule should be accepted');
+  assertEqual(updatedCalendar.type, '双休', 'current projection should keep the currently effective rule');
+  assertEqual(updatedCalendar.currentVersionId, 'calendar-current-v1', 'current version id should not point to a future version');
+  assertEqual(updatedCalendar.versions?.length, 2, 'future rule should still be retained on the version timeline');
+});
+
+it('keeps member calendar projection unchanged before a future movement takes effect', () => {
+  const sourceMember = createMember({ workCalendarId: weekdayCalendar.id });
+  const futureCalendarId = 'calendar-future-movement';
+  const adjustedMember = applyPeopleMovementEffect(
+    sourceMember,
+    {
+      effectiveAt: '2026-07-01',
+      memberId: sourceMember.id,
+      newWorkCalendarId: futureCalendarId,
+      newWorkCalendarMode: '指定工作日历',
+      type: '工作日历变更'
+    },
+    { today: '2026-06-15' }
+  );
+
+  assertEqual(adjustedMember.workCalendarId, weekdayCalendar.id, 'current member projection should remain on the current calendar');
+  assertEqual(adjustedMember.workCalendarAssignments?.at(-1)?.workCalendarId, futureCalendarId, 'future assignment should remain on the effective timeline');
+});

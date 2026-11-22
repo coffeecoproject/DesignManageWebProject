@@ -1,20 +1,20 @@
 export const taxHandlingSettlementAcceptanceEvidence = [
-  { id: 'VAT-14', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'VAT-15', source: 'src/features/finance/financeAccountingVoucherModel.test.ts' },
-  { id: 'CIT-16', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'CIT-19', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'ST-11', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'ST-12', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'CROSS-TAX-01', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'CROSS-TAX-02', source: 'src/features/finance/financeTaxMatterModel.test.ts' },
-  { id: 'TAX-GL-01', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-02', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-03', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-04', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-05', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-06', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-07', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' },
-  { id: 'TAX-GL-08', source: 'src/features/finance/taxAccountingFrontendWorkflow.test.ts' }
+  { id: 'VAT-14', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'VAT-15', source: 'src/modules/finance/financeAccountingVoucherModel.test.ts' },
+  { id: 'CIT-16', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'CIT-19', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'ST-11', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'ST-12', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'CROSS-TAX-01', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'CROSS-TAX-02', source: 'src/modules/finance/financeTaxMatterModel.test.ts' },
+  { id: 'TAX-GL-01', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-02', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-03', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-04', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-05', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-06', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-07', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' },
+  { id: 'TAX-GL-08', source: 'src/modules/finance/taxAccountingFrontendWorkflow.test.ts' }
 ];
 
 function containsAcceptanceId(testName, acceptanceId) {

@@ -64,7 +64,7 @@
 
 ```text
 corepack pnpm typecheck
-corepack pnpm test:web
+testpace full
 corepack pnpm lint
 corepack pnpm build:web
 corepack pnpm ai-native:check

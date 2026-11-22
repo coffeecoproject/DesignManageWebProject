@@ -1,0 +1,598 @@
+import type { StatusTagTone } from '../../shared/components/Detail';
+import { frontendBusinessToday } from '../../shared/frontendBusinessClock';
+import type { EmploymentRelationshipType } from '../people';
+import {
+  getActivePolicyByConfigType,
+  getActiveSocialInsurancePolicy,
+  getPolicyContributionAmounts
+} from './socialInsurancePolicyData';
+import {
+  socialInsurancePolicySeedPeriod,
+  socialInsurancePolicyVersions,
+  type SocialInsurancePolicyVersion
+} from './socialInsurancePolicyData';
+
+export type SocialInsuranceCategory = '社保' | '公积金';
+export type SocialInsuranceObligation = '应参保' | '无需参保' | '待判定';
+export type SocialInsuranceNoObligationReason =
+  | '劳动关系尚未开始'
+  | '劳动关系已于此前结束'
+  | '独立劳务合作'
+  | '企业供应商'
+  | '官方确认无需参保';
+export type EnrollmentHandlingStatus =
+  | '待增员'
+  | '增员办理中'
+  | '已增员'
+  | '待停保'
+  | '停保办理中'
+  | '已停保'
+  | '办理异常'
+  | '不适用';
+export type EnrollmentChannel = '社保' | '医保' | '公积金';
+export type MonthlyContributionStatus =
+  | '待测算'
+  | '待申报'
+  | '待核定'
+  | '核定有差异'
+  | '待确认'
+  | '待缴费'
+  | '已缴费'
+  | '欠缴待补'
+  | '无需缴纳';
+export type SocialInsuranceHandlingStatus = MonthlyContributionStatus;
+export type ContributionBaseSource = '上年度月平均工资' | '新入职首月工资' | '新入职当年平均工资' | '官方核定' | '更正';
+export type ContributionItemCode =
+  | '基本养老保险'
+  | '职工基本医疗保险'
+  | '生育保险'
+  | '失业保险'
+  | '工伤保险'
+  | '住房公积金';
+export type SocialInsuranceBatchStatus = '待确认' | '处理中' | '已确认';
+
+export type SocialInsuranceEnrollmentProfile = {
+  personId: string;
+  employmentRelationshipType: EmploymentRelationshipType;
+  obligation: SocialInsuranceObligation;
+  noObligationReason?: SocialInsuranceNoObligationReason;
+  insuredRegionCode?: string;
+  socialSecurityStatus: EnrollmentHandlingStatus;
+  medicalInsuranceStatus: EnrollmentHandlingStatus;
+  plannedEnrollmentMonth?: string;
+  socialSecurityEffectiveMonth?: string;
+  medicalInsuranceEffectiveMonth?: string;
+  plannedStopMonth?: string;
+  socialSecurityStopEffectiveMonth?: string;
+  medicalInsuranceStopEffectiveMonth?: string;
+  housingFundStatus: EnrollmentHandlingStatus;
+  housingFundEffectiveMonth?: string;
+  housingFundStopEffectiveMonth?: string;
+  socialSecurityOfficialReferenceNo?: string;
+  socialSecurityEvidenceFileIds: string[];
+  medicalInsuranceOfficialReferenceNo?: string;
+  medicalInsuranceEvidenceFileIds: string[];
+  housingFundOfficialReferenceNo?: string;
+  housingFundEvidenceFileIds: string[];
+  updatedAt: string;
+};
+
+export type ContributionBaseRecord = {
+  category: SocialInsuranceCategory;
+  personId: string;
+  policyYear: string;
+  regionCode: string;
+  source: ContributionBaseSource;
+  sourceAmount: number;
+  lowerLimit: number;
+  upperLimit: number;
+  appliedBase: number;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  policyVersionId: string;
+  evidenceFileIds: string[];
+};
+
+export type MonthlyContributionItem = {
+  itemCode: ContributionItemCode;
+  contributionBase: number;
+  employerRate: number;
+  employeeRate: number;
+  estimatedEmployerAmount: number;
+  estimatedEmployeeAmount: number;
+  assessedEmployerAmount?: number;
+  assessedEmployeeAmount?: number;
+  policyVersionId: string;
+};
+
+export type SocialInsuranceOperationRecord = {
+  action: string;
+  actor: string;
+  id: string;
+  object: string;
+  summary: string;
+  time: string;
+};
+
+export type SocialInsuranceEmployeeRecord = {
+  category: SocialInsuranceCategory;
+  companyAmount: number;
+  contributionBase: number;
+  department: string;
+  employeeName: string;
+  employeeNo: string;
+  handlingStatus: SocialInsuranceHandlingStatus;
+  id: string;
+  makeupPeriod?: string;
+  originalPeriod: string;
+  handlingPeriod: string;
+  eligibilitySnapshot: SocialInsuranceObligation;
+  items: MonthlyContributionItem[];
+  estimatedEmployerAmount: number;
+  estimatedEmployeeAmount: number;
+  assessedEmployerAmount?: number;
+  assessedEmployeeAmount?: number;
+  assessmentNo?: string;
+  assessedAt?: string;
+  assessmentFileIds: string[];
+  differenceReason?: string;
+  confirmedAt?: string;
+  paidAt?: string;
+  transactionNo?: string;
+  paymentFileIds: string[];
+  correctionOfRecordId?: string;
+  noContributionConfirmedAt?: string;
+  noContributionEvidenceFileIds?: string[];
+  noContributionOfficialReferenceNo?: string;
+  operationRecords: SocialInsuranceOperationRecord[];
+  period: string;
+  personalAmount: number;
+  position: string;
+  reason?: string;
+  salaryBase: number;
+  updatedAt: string;
+};
+
+export type SocialInsurancePayrollDeductionRecord = {
+  accrualPeriod: string;
+  category: SocialInsuranceCategory;
+  companyAmount: number;
+  contributionBase: number;
+  employeeName: string;
+  employeeNo: string;
+  handlingStatus: Extract<SocialInsuranceHandlingStatus, '待缴费' | '已缴费'>;
+  id: string;
+  payrollMonth: string;
+  personalAmount: number;
+  reason?: string;
+  sourceMonth: string;
+};
+
+export type ContributionCorrectionRecord = {
+  category: SocialInsuranceCategory;
+  employeeName: string;
+  employeeNo: string;
+  id: string;
+  sourceRecordId: string;
+  originalPeriod: string;
+  handlingPeriod: string;
+  reason: string;
+  principalEmployerAmount: number;
+  principalEmployeeAmount: number;
+  lateFeeAmount: number;
+  officialReferenceNo?: string;
+  evidenceFileIds: string[];
+  salaryAdjustmentPeriod?: string;
+  accountingAdjustmentReference?: string;
+  paidAt?: string;
+  paymentFileIds?: string[];
+  status: '待办理' | '待核定' | '待缴费' | '已完成' | '已撤销';
+  transactionNo?: string;
+};
+
+export type SocialInsuranceBatchRecord = {
+  category: SocialInsuranceCategory;
+  confirmedAt?: string;
+  confirmedBy?: string;
+  id: string;
+  period: string;
+  status: SocialInsuranceBatchStatus;
+  title: string;
+};
+
+export const socialInsuranceCurrentPeriod = frontendBusinessToday.slice(0, 7);
+
+export const socialInsuranceEnrollmentProfiles: SocialInsuranceEnrollmentProfile[] = [
+  {
+    personId: '20260001',
+    employmentRelationshipType: '全日制劳动关系',
+    obligation: '应参保',
+    insuredRegionCode: '420100',
+    socialSecurityStatus: '已增员',
+    medicalInsuranceStatus: '已增员',
+    plannedEnrollmentMonth: '2026-04',
+    socialSecurityEffectiveMonth: '2026-04',
+    medicalInsuranceEffectiveMonth: '2026-04',
+    housingFundStatus: '已增员',
+    housingFundEffectiveMonth: '2026-04',
+    socialSecurityOfficialReferenceNo: 'WH-SI-202604-001',
+    socialSecurityEvidenceFileIds: ['FILE-SI-20260001-001'],
+    medicalInsuranceOfficialReferenceNo: 'WH-MI-202604-001',
+    medicalInsuranceEvidenceFileIds: ['FILE-MI-20260001-001'],
+    housingFundOfficialReferenceNo: 'WH-HF-202604-001',
+    housingFundEvidenceFileIds: ['FILE-HF-20260001-001'],
+    updatedAt: '2026-04-03'
+  },
+  {
+    personId: '20250018',
+    employmentRelationshipType: '全日制劳动关系',
+    obligation: '应参保',
+    insuredRegionCode: '420100',
+    socialSecurityStatus: '已增员',
+    medicalInsuranceStatus: '已增员',
+    plannedEnrollmentMonth: '2025-11',
+    socialSecurityEffectiveMonth: '2025-11',
+    medicalInsuranceEffectiveMonth: '2025-11',
+    housingFundStatus: '已增员',
+    housingFundEffectiveMonth: '2025-11',
+    socialSecurityOfficialReferenceNo: 'WH-SI-202511-018',
+    socialSecurityEvidenceFileIds: ['FILE-SI-20250018-001'],
+    medicalInsuranceOfficialReferenceNo: 'WH-MI-202511-018',
+    medicalInsuranceEvidenceFileIds: ['FILE-MI-20250018-001'],
+    housingFundOfficialReferenceNo: 'WH-HF-202511-018',
+    housingFundEvidenceFileIds: ['FILE-HF-20250018-001'],
+    updatedAt: '2025-11-18'
+  },
+  {
+    personId: '20240009',
+    employmentRelationshipType: '全日制劳动关系',
+    obligation: '应参保',
+    insuredRegionCode: '420100',
+    socialSecurityStatus: '已停保',
+    medicalInsuranceStatus: '已停保',
+    plannedStopMonth: '2026-05',
+    socialSecurityEffectiveMonth: '2024-08',
+    medicalInsuranceEffectiveMonth: '2024-08',
+    socialSecurityStopEffectiveMonth: '2026-06',
+    medicalInsuranceStopEffectiveMonth: '2026-06',
+    housingFundStatus: '已停保',
+    housingFundEffectiveMonth: '2024-08',
+    housingFundStopEffectiveMonth: '2026-06',
+    socialSecurityOfficialReferenceNo: 'WH-SI-STOP-202605-009',
+    socialSecurityEvidenceFileIds: ['FILE-SI-20240009-STOP'],
+    medicalInsuranceOfficialReferenceNo: 'WH-MI-STOP-202605-009',
+    medicalInsuranceEvidenceFileIds: ['FILE-MI-20240009-STOP'],
+    housingFundOfficialReferenceNo: 'WH-HF-STOP-202605-009',
+    housingFundEvidenceFileIds: ['FILE-HF-20240009-STOP'],
+    updatedAt: '2026-05-06'
+  },
+  {
+    personId: '20260006',
+    employmentRelationshipType: '独立劳务合作',
+    obligation: '无需参保',
+    noObligationReason: '独立劳务合作',
+    socialSecurityStatus: '不适用',
+    medicalInsuranceStatus: '不适用',
+    housingFundStatus: '不适用',
+    socialSecurityEvidenceFileIds: [],
+    medicalInsuranceEvidenceFileIds: [],
+    housingFundEvidenceFileIds: [],
+    updatedAt: '2026-05-01'
+  },
+  {
+    personId: '20250011',
+    employmentRelationshipType: '独立劳务合作',
+    obligation: '无需参保',
+    noObligationReason: '独立劳务合作',
+    socialSecurityStatus: '不适用',
+    medicalInsuranceStatus: '不适用',
+    housingFundStatus: '不适用',
+    socialSecurityEvidenceFileIds: [],
+    medicalInsuranceEvidenceFileIds: [],
+    housingFundEvidenceFileIds: [],
+    updatedAt: '2026-04-30'
+  }
+];
+
+export const socialInsuranceContributionBaseRecords: ContributionBaseRecord[] = [
+  {
+    category: '社保',
+    personId: '20260001',
+    policyYear: '2026',
+    regionCode: '420100',
+    source: '新入职首月工资',
+    sourceAmount: 12000,
+    lowerLimit: 4498,
+    upperLimit: 22488,
+    appliedBase: 12000,
+    effectiveFrom: '2026-04',
+    policyVersionId: 'wuhan-social-insurance-2026-06-v1',
+    evidenceFileIds: []
+  },
+  {
+    category: '公积金',
+    personId: '20260001',
+    policyYear: '2026',
+    regionCode: '420100',
+    source: '新入职首月工资',
+    sourceAmount: 12000,
+    lowerLimit: 2210,
+    upperLimit: 34560.25,
+    appliedBase: 12000,
+    effectiveFrom: '2026-04',
+    policyVersionId: 'wuhan-housing-fund-2026-06-v1',
+    evidenceFileIds: []
+  },
+  {
+    category: '社保',
+    personId: '20250018',
+    policyYear: '2026',
+    regionCode: '420100',
+    source: '上年度月平均工资',
+    sourceAmount: 8200,
+    lowerLimit: 4498,
+    upperLimit: 22488,
+    appliedBase: 8200,
+    effectiveFrom: '2026-01',
+    policyVersionId: 'wuhan-social-insurance-2026-06-v1',
+    evidenceFileIds: []
+  },
+  {
+    category: '公积金',
+    personId: '20250018',
+    policyYear: '2026',
+    regionCode: '420100',
+    source: '上年度月平均工资',
+    sourceAmount: 8200,
+    lowerLimit: 2210,
+    upperLimit: 34560.25,
+    appliedBase: 8200,
+    effectiveFrom: '2026-01',
+    policyVersionId: 'wuhan-housing-fund-2026-06-v1',
+    evidenceFileIds: []
+  }
+];
+
+function buildContributionItems(
+  category: SocialInsuranceCategory,
+  contributionBase: number,
+  assessed: boolean
+): MonthlyContributionItem[] {
+  const policy = getActivePolicyByConfigType(
+    socialInsurancePolicyVersions,
+    category === '社保' ? '社保配置' : '公积金配置',
+    socialInsurancePolicySeedPeriod
+  );
+
+  if (!policy) {
+    throw new Error(`缺少 ${socialInsurancePolicySeedPeriod} 生效的${category}配置`);
+  }
+
+  return policy.socialItems
+    .filter((item) => item.category === category && item.status === '启用')
+    .map((item) => {
+      const employerAmount = Math.round((contributionBase * item.companyRate + (item.companyFixedAmount ?? 0)) * 100) / 100;
+      const employeeAmount = Math.round((contributionBase * item.employeeRate + (item.employeeFixedAmount ?? 0)) * 100) / 100;
+      const itemCode: ContributionItemCode = category === '公积金'
+        ? '住房公积金'
+        : item.name.includes('医疗')
+          ? '职工基本医疗保险'
+          : item.name.includes('失业')
+            ? '失业保险'
+            : item.name.includes('工伤')
+              ? '工伤保险'
+              : '基本养老保险';
+
+      return {
+        itemCode,
+        contributionBase,
+        employerRate: item.companyRate,
+        employeeRate: item.employeeRate,
+        estimatedEmployerAmount: employerAmount,
+        estimatedEmployeeAmount: employeeAmount,
+        assessedEmployerAmount: assessed ? employerAmount : undefined,
+        assessedEmployeeAmount: assessed ? employeeAmount : undefined,
+        policyVersionId: policy.id
+      };
+    });
+}
+
+export const socialInsuranceBatchRecords: SocialInsuranceBatchRecord[] = [
+  {
+    category: '社保',
+    confirmedAt: '2026-06-15',
+    confirmedBy: '李明',
+    id: 'social-2026-06',
+    period: socialInsuranceCurrentPeriod,
+    status: '处理中',
+    title: '2026-06 社保缴纳'
+  },
+  {
+    category: '公积金',
+    id: 'housing-2026-06',
+    period: socialInsuranceCurrentPeriod,
+    status: '待确认',
+    title: '2026-06 公积金缴纳'
+  }
+];
+
+export const socialInsuranceHandlingStatusTone = {
+  待测算: 'gray',
+  待申报: 'blue',
+  待核定: 'blue',
+  核定有差异: 'red',
+  待确认: 'amber',
+  待缴费: 'blue',
+  已缴费: 'green',
+  欠缴待补: 'red',
+  无需缴纳: 'gray'
+} as const satisfies Record<SocialInsuranceHandlingStatus, StatusTagTone>;
+
+export const socialInsuranceBatchStatusTone = {
+  待确认: 'amber',
+  处理中: 'blue',
+  已确认: 'green'
+} as const satisfies Record<SocialInsuranceBatchStatus, StatusTagTone>;
+
+export const socialInsuranceEmployeeRecords: SocialInsuranceEmployeeRecord[] = [
+  {
+    category: '社保',
+    companyAmount: 3240,
+    contributionBase: 12000,
+    department: '经营管理',
+    employeeName: '李明',
+    employeeNo: '20260001',
+    handlingStatus: '待核定',
+    id: 'social-20260001-2026-06',
+    originalPeriod: '2026-06',
+    handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保',
+    items: buildContributionItems('社保', 12000, false),
+    estimatedEmployerAmount: 3240,
+    estimatedEmployeeAmount: 1260,
+    assessmentFileIds: [],
+    paymentFileIds: [],
+    operationRecords: [
+      {
+        action: '待确认',
+        actor: '李明',
+        id: 'op-social-20260001-1',
+        object: '李明 / 社保',
+        summary: '待确认本月社保缴纳数据',
+        time: '2026-06-15 09:40'
+      }
+    ],
+    period: '2026-06',
+    personalAmount: 1260,
+    position: 'CEO',
+    reason: '参保数据待确认',
+    salaryBase: 12000,
+    updatedAt: '2026-06-15'
+  },
+  {
+    category: '公积金',
+    companyAmount: 1200,
+    contributionBase: 12000,
+    department: '经营管理',
+    employeeName: '李明',
+    employeeNo: '20260001',
+    handlingStatus: '待核定',
+    id: 'housing-20260001-2026-06',
+    originalPeriod: '2026-06',
+    handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保',
+    items: buildContributionItems('公积金', 12000, false),
+    estimatedEmployerAmount: 1200,
+    estimatedEmployeeAmount: 1200,
+    assessmentFileIds: [],
+    paymentFileIds: [],
+    operationRecords: [
+      {
+        action: '待确认',
+        actor: '李明',
+        id: 'op-housing-20260001-1',
+        object: '李明 / 公积金',
+        summary: '待确认本月公积金缴存数据',
+        time: '2026-06-15 09:45'
+      }
+    ],
+    period: '2026-06',
+    personalAmount: 1200,
+    position: 'CEO',
+    reason: '缴存基数待确认',
+    salaryBase: 12000,
+    updatedAt: '2026-06-15'
+  },
+  {
+    category: '社保',
+    companyAmount: 2214,
+    contributionBase: 8200,
+    department: '财务部',
+    employeeName: '陈浩',
+    employeeNo: '20250018',
+    handlingStatus: '待缴费',
+    id: 'social-20250018-2026-06',
+    originalPeriod: '2026-06',
+    handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保',
+    items: buildContributionItems('社保', 8200, true),
+    estimatedEmployerAmount: 2214,
+    estimatedEmployeeAmount: 861,
+    assessedEmployerAmount: 2214,
+    assessedEmployeeAmount: 861,
+    assessmentNo: 'WH-ASSESS-SI-202606-018',
+    assessedAt: '2026-06-15',
+    assessmentFileIds: ['FILE-ASSESS-SI-202606-018'],
+    paymentFileIds: [],
+    confirmedAt: '2026-06-15 10:05',
+    operationRecords: [
+      {
+        action: '确认缴纳',
+        actor: '李明',
+        id: 'op-social-20250018-1',
+        object: '陈浩 / 社保',
+        summary: '按缴纳基数确认',
+        time: '2026-06-15 10:05'
+      }
+    ],
+    period: '2026-06',
+    personalAmount: 861,
+    position: '财务专员',
+    salaryBase: 8200,
+    updatedAt: '2026-06-15'
+  },
+  {
+    category: '公积金',
+    companyAmount: 820,
+    contributionBase: 8200,
+    department: '财务部',
+    employeeName: '陈浩',
+    employeeNo: '20250018',
+    handlingStatus: '欠缴待补',
+    id: 'housing-20250018-2026-06',
+    originalPeriod: '2026-06',
+    handlingPeriod: '2026-06',
+    eligibilitySnapshot: '应参保',
+    items: buildContributionItems('公积金', 8200, true),
+    estimatedEmployerAmount: 820,
+    estimatedEmployeeAmount: 820,
+    assessedEmployerAmount: 820,
+    assessedEmployeeAmount: 820,
+    assessmentNo: 'WH-ASSESS-HF-202606-018',
+    assessedAt: '2026-06-15',
+    assessmentFileIds: ['FILE-ASSESS-HF-202606-018'],
+    paymentFileIds: [],
+    operationRecords: [
+      {
+        action: '登记欠缴',
+        actor: '李明',
+        id: 'op-housing-20250018-1',
+        object: '陈浩 / 公积金',
+        summary: '原所属期缴费未完成，转入欠缴补办',
+        time: '2026-06-15 10:10'
+      }
+    ],
+    period: '2026-06',
+    personalAmount: 820,
+    position: '财务专员',
+    reason: '原所属期缴费未完成',
+    salaryBase: 8200,
+    updatedAt: '2026-06-15'
+  }
+];
+
+export function getSocialInsuranceTotalAmount(record: SocialInsuranceEmployeeRecord) {
+  return record.companyAmount + record.personalAmount;
+}
+
+export function getSocialInsuranceContributionAmounts(
+  category: SocialInsuranceCategory,
+  contributionBase: number,
+  policy: SocialInsurancePolicyVersion = getActiveSocialInsurancePolicy()
+) {
+  return getPolicyContributionAmounts(policy, category, contributionBase);
+}
+
+export function getSocialInsuranceBatch(category: SocialInsuranceCategory, period: string) {
+  return socialInsuranceBatchRecords.find((record) => record.category === category && record.period === period);
+}
