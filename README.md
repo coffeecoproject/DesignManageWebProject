@@ -82,13 +82,13 @@ gets its own hostname and port.
 | open local psql | `scripts/local/db-psql.sh` | Opens psql against the isolated local database. |
 | local database logs | `scripts/local/db-logs.sh` | Shows recent Postgres logs. |
 | sleep local database | `scripts/local/db-sleep.sh` | Puts the environment to sleep; data is kept and the next connection wakes it. |
-| period-close PostgreSQL drills | `corepack pnpm db:period-close:dry-run` (also `apply-drill`, `replay-drill`, `concurrency-drill`) | Each run uses its own throwaway napbox Postgres (`napbox up --temp`), not the development database. |
+| period-close PostgreSQL drills | `testpace files apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts` | Runs in a throwaway napbox Postgres, each drill in its own empty database; also part of `testpace full`. |
 | start frontend | `corepack pnpm dev:web` | Serves on this worktree's napbox port; prints the URL. |
 | start API | TBD | Backend runtime not initialized. |
 | lint | `corepack pnpm lint` | Frontend ESLint gate. |
 | format | TBD | Planned gap. |
 | typecheck | `corepack pnpm typecheck` | Frontend TypeScript gate. |
-| test | TBD | Planned gap. |
+| test | `testpace focused` while developing; `testpace full` before landing on main | Vitest in `apps/web` and `apps/api`, configured in `testpace.json`; the merge gate requires a passing full suite. |
 | E2E smoke | TBD | Planned gap. |
 | build | `corepack pnpm build:web` | Frontend production build gate. |
 | migration apply/check | TBD | Database scope pending. |

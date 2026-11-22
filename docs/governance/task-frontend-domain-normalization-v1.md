@@ -6,8 +6,8 @@ This structural remediation normalizes the task frontend before backend integrat
 
 In scope:
 
-- Extract shared task display, file, and operation-record models under `apps/web/src/features/tasks`.
-- Extract task acceptance/scoring/rework validation rules under `apps/web/src/features/tasks/taskAcceptanceModel.ts`.
+- Extract shared task display, file, and operation-record models under `apps/web/src/modules/tasks`.
+- Extract task acceptance/scoring/rework validation rules under `apps/web/src/modules/tasks/taskAcceptanceModel.ts`.
 - Reuse task-specific components for status tags, schedule cells, file sections, operation sections, and task detail tables.
 - Refactor `任务列表`, `人员任务`, `任务提交`, `任务验收`, and `甲方反馈` to consume the shared task frontend model.
 - Add unit coverage for task status/deadline, file record generation, and operation-record behavior.
@@ -92,16 +92,16 @@ Old page-local helper functions are intentionally removed from task pages instea
 
 Expected code paths:
 
-- `apps/web/src/features/tasks/taskDisplayModel.ts`
-- `apps/web/src/features/tasks/taskAcceptanceModel.ts`
-- `apps/web/src/features/tasks/taskFileModel.ts`
-- `apps/web/src/features/tasks/taskOperationModel.ts`
-- `apps/web/src/features/tasks/components/`
-- `apps/web/src/features/tasks/StoreTasksPage.tsx`
-- `apps/web/src/features/tasks/PeopleTasksPage.tsx`
-- `apps/web/src/features/tasks/TaskWorkflowPages.tsx`
-- `apps/web/src/features/tasks/TaskClientFeedbackPage.tsx`
-- `apps/web/src/features/tasks/taskDomainModel.test.ts`
+- `apps/web/src/modules/tasks/taskDisplayModel.ts`
+- `apps/web/src/modules/tasks/taskAcceptanceModel.ts`
+- `apps/web/src/modules/tasks/taskFileModel.ts`
+- `apps/web/src/modules/tasks/taskOperationModel.ts`
+- `apps/web/src/modules/tasks/components/`
+- `apps/web/src/modules/tasks/StoreTasksPage.tsx`
+- `apps/web/src/modules/tasks/PeopleTasksPage.tsx`
+- `apps/web/src/modules/tasks/TaskWorkflowPages.tsx`
+- `apps/web/src/modules/tasks/TaskClientFeedbackPage.tsx`
+- `apps/web/src/modules/tasks/taskDomainModel.test.ts`
 - `apps/web/scripts/run-unit-tests.mjs`
 
 Expected docs:

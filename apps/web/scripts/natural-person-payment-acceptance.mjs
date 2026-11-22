@@ -1,137 +1,137 @@
 export const naturalPersonPaymentAcceptanceEvidence = [
   {
     id: 'NP-01',
-    frontendChainSources: ['src/features/salary/salaryDomain.test.ts'],
-    sources: ['src/features/salary/salaryDomain.test.ts']
+    frontendChainSources: ['src/modules/salary/salaryDomain.test.ts'],
+    sources: ['src/modules/salary/salaryDomain.test.ts']
   },
   {
     id: 'NP-02',
-    frontendChainSources: ['src/features/salary/salaryDomain.test.ts'],
-    sources: ['src/features/salary/salaryDomain.test.ts']
+    frontendChainSources: ['src/modules/salary/salaryDomain.test.ts'],
+    sources: ['src/modules/salary/salaryDomain.test.ts']
   },
   {
     id: 'NP-03',
-    frontendChainSources: ['src/features/salary/salaryDomain.test.ts'],
-    sources: ['src/features/salary/salaryDomain.test.ts']
+    frontendChainSources: ['src/modules/salary/salaryDomain.test.ts'],
+    sources: ['src/modules/salary/salaryDomain.test.ts']
   },
   {
     id: 'NP-04',
-    frontendChainSources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/tasks/taskDomainModel.test.ts',
-      'src/features/finance/financeNaturalPersonPaymentModel.test.ts',
-      'src/features/finance/partTimeLaborFrontendWorkflow.test.ts'
+      'src/modules/tasks/taskDomainModel.test.ts',
+      'src/modules/finance/financeNaturalPersonPaymentModel.test.ts',
+      'src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-05',
-    frontendChainSources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/tasks/taskDomainModel.test.ts',
-      'src/features/finance/partTimeLaborFrontendWorkflow.test.ts'
+      'src/modules/tasks/taskDomainModel.test.ts',
+      'src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-06',
-    frontendChainSources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/tasks/taskDomainModel.test.ts',
-      'src/features/finance/partTimeLaborFrontendWorkflow.test.ts'
+      'src/modules/tasks/taskDomainModel.test.ts',
+      'src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-07',
-    frontendChainSources: ['src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/finance/financeNaturalPersonPaymentModel.test.ts',
-      'src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
+      'src/modules/finance/financeNaturalPersonPaymentModel.test.ts',
+      'src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-08',
-    frontendChainSources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts'],
-    sources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts']
+    frontendChainSources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts'],
+    sources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts']
   },
   {
     id: 'NP-09',
-    frontendChainSources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts'],
-    sources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts']
+    frontendChainSources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts'],
+    sources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts']
   },
   {
     id: 'NP-10',
-    frontendChainSources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts'],
-    sources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts']
+    frontendChainSources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts'],
+    sources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts']
   },
   {
     id: 'NP-11',
-    frontendChainSources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts'],
+    frontendChainSources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts'],
     sources: [
-      'src/features/my-work/myWorkExpenseReviewModel.test.ts',
-      'src/features/finance/financeExpenseApprovalCommitModel.test.ts'
+      'src/modules/my-work/myWorkExpenseReviewModel.test.ts',
+      'src/modules/finance/financeExpenseApprovalCommitModel.test.ts'
     ]
   },
   {
     id: 'NP-12',
-    frontendChainSources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts'],
-    sources: ['src/features/my-work/myWorkExpenseReviewModel.test.ts']
+    frontendChainSources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts'],
+    sources: ['src/modules/my-work/myWorkExpenseReviewModel.test.ts']
   },
   {
     id: 'NP-13',
-    frontendChainSources: ['src/features/my-work/myWorkExpenseCollectionModel.test.ts'],
-    sources: ['src/features/my-work/myWorkExpenseCollectionModel.test.ts']
+    frontendChainSources: ['src/modules/my-work/myWorkExpenseCollectionModel.test.ts'],
+    sources: ['src/modules/my-work/myWorkExpenseCollectionModel.test.ts']
   },
   {
     id: 'NP-14',
-    frontendChainSources: ['src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/finance/financeReceivablesPayablesModel.test.ts',
-      'src/features/finance/financeNaturalPersonPaymentModel.test.ts',
-      'src/features/finance/financeTaxMatterModel.test.ts',
-      'src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
+      'src/modules/finance/financeReceivablesPayablesModel.test.ts',
+      'src/modules/finance/financeNaturalPersonPaymentModel.test.ts',
+      'src/modules/finance/financeTaxMatterModel.test.ts',
+      'src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-15',
-    frontendChainSources: ['src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/finance/financeTaxMatterModel.test.ts',
-      'src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
+      'src/modules/finance/financeTaxMatterModel.test.ts',
+      'src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-16',
-    frontendChainSources: ['src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/finance/financeNaturalPersonPaymentModel.test.ts',
-      'src/features/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
+      'src/modules/finance/financeNaturalPersonPaymentModel.test.ts',
+      'src/modules/finance/naturalPersonPaymentFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-17',
-    frontendChainSources: ['src/features/finance/financeExpenseApprovalCommitModel.test.ts'],
+    frontendChainSources: ['src/modules/finance/financeExpenseApprovalCommitModel.test.ts'],
     sources: [
-      'src/features/my-work/myWorkExpenseReviewModel.test.ts',
-      'src/features/finance/financeExpenseApprovalCommitModel.test.ts'
+      'src/modules/my-work/myWorkExpenseReviewModel.test.ts',
+      'src/modules/finance/financeExpenseApprovalCommitModel.test.ts'
     ]
   },
   {
     id: 'NP-18',
-    frontendChainSources: ['src/features/salary/salaryDomain.test.ts'],
-    sources: ['src/features/salary/salaryDomain.test.ts']
+    frontendChainSources: ['src/modules/salary/salaryDomain.test.ts'],
+    sources: ['src/modules/salary/salaryDomain.test.ts']
   },
   {
     id: 'NP-19',
-    frontendChainSources: ['src/features/finance/salaryFinanceFrontendWorkflow.test.ts'],
+    frontendChainSources: ['src/modules/finance/salaryFinanceFrontendWorkflow.test.ts'],
     sources: [
-      'src/features/salary/salaryDomain.test.ts',
-      'src/features/finance/financeAccountingVoucherModel.test.ts',
-      'src/features/finance/salaryFinanceFrontendWorkflow.test.ts'
+      'src/modules/salary/salaryDomain.test.ts',
+      'src/modules/finance/financeAccountingVoucherModel.test.ts',
+      'src/modules/finance/salaryFinanceFrontendWorkflow.test.ts'
     ]
   },
   {
     id: 'NP-20',
-    frontendChainSources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts'],
-    sources: ['src/features/finance/partTimeLaborFrontendWorkflow.test.ts']
+    frontendChainSources: ['src/modules/finance/partTimeLaborFrontendWorkflow.test.ts'],
+    sources: ['src/modules/finance/partTimeLaborFrontendWorkflow.test.ts']
   }
 ];
 

@@ -513,7 +513,7 @@ type ExpenseReviewDisposition = {
 | NP-19 | 工资结算金额拆分 | 业务计算结果不变；员工实发形成工资应付，个人扣缴与单位承担独立核算，凭证借贷平衡 | `salaryDomain.test.ts`、`financeAccountingVoucherModel.test.ts`、`salaryFinanceFrontendWorkflow.test.ts` |
 | NP-20 | 兼职验收撤销与重新验收 | 未消费劳务应付随来源撤销作废，重新验收恢复同一事实身份且不重复生成 | `partTimeLaborFrontendWorkflow.test.ts` |
 
-`apps/web/scripts/natural-person-payment-acceptance.mjs` 将 NP-01 至 NP-20 绑定到已注册测试模块。`test:web` 必须读取测试运行器实际返回的已执行、已通过场景，不得通过扫描源码中的测试名称构造证据。模型场景证据和前端完整链路证据分别统计，具体状态以 `docs/testing/natural-person-payment-acceptance-traceability.md` 为准。
+`apps/web/scripts/natural-person-payment-acceptance.mjs` 将 NP-01 至 NP-20 绑定到已注册测试模块。整组（`testpace full`）由 `apps/web/scripts/acceptance-evidence-reporter.mjs` 读取测试运行器实际返回的已执行、已通过场景核对，不得通过扫描源码中的测试名称构造证据；只跑部分测试时不做这项核对。模型场景证据和前端完整链路证据分别统计，具体状态以 `docs/testing/natural-person-payment-acceptance-traceability.md` 为准。
 
 ## 16. 自动化门禁
 
@@ -521,7 +521,7 @@ type ExpenseReviewDisposition = {
 
 ```text
 corepack pnpm typecheck
-corepack pnpm test:web
+testpace full
 corepack pnpm build:web
 corepack pnpm ai-native:check
 ```

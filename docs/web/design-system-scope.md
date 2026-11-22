@@ -95,7 +95,7 @@ Typography baseline: admin-console typography is tokenized in `apps/web/src/styl
 | Evidence | Status | Location |
 | --- | --- | --- |
 | UI baseline decision | accepted | `docs/adr/0002-ui-baseline-ant-design-pro.md` |
-| Route/page implementation | implemented | `apps/web/src/app/router.tsx`, `apps/web/src/app/shell.tsx`, `apps/web/src/features/people/`, `apps/web/src/features/customers/`, `apps/web/src/features/tasks/`, `apps/web/src/features/performance/`, `apps/web/src/features/salary/`, `apps/web/src/features/finance/`, `apps/web/src/features/system/` |
+| Route/page implementation | implemented | `apps/web/src/app/router.tsx`, `apps/web/src/app/shell.tsx`, `apps/web/src/modules/people/`, `apps/web/src/modules/customers/`, `apps/web/src/modules/tasks/`, `apps/web/src/modules/performance/`, `apps/web/src/modules/salary/`, `apps/web/src/modules/finance/`, `apps/web/src/features/system/` |
 | TypeScript gate | passed | `corepack pnpm typecheck` |
 | Lint gate | passed | `corepack pnpm lint` |
 | Production build gate | passed | `corepack pnpm build:web` |

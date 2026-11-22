@@ -12,10 +12,10 @@ Consumer: `薪酬社保 / 薪酬明细`.
 
 Code evidence:
 
-- Type: `apps/web/src/features/people/peopleAttendanceSalaryContract.ts`
-- Producer adapter: `toPayrollAttendanceMonthlyContract` in `apps/web/src/features/people/peopleAttendanceMonthlyDomain.ts`
-- Consumer: `buildSalaryMonthlyReports` in `apps/web/src/features/salary/salaryDomain.ts`
-- Unit evidence: `apps/web/src/features/people/peopleAttendanceMonthlyDomain.test.ts`, `apps/web/src/features/salary/salaryDomain.test.ts`
+- Type: `apps/web/src/modules/people/peopleAttendanceSalaryContract.ts`
+- Producer adapter: `toPayrollAttendanceMonthlyContract` in `apps/web/src/modules/people/peopleAttendanceMonthlyDomain.ts`
+- Consumer: `buildSalaryMonthlyReports` in `apps/web/src/modules/salary/salaryDomain.ts`
+- Unit evidence: `apps/web/src/modules/people/peopleAttendanceMonthlyDomain.test.ts`, `apps/web/src/modules/salary/salaryDomain.test.ts`
 
 Contract version: `payroll-attendance-monthly-v1`.
 
@@ -143,9 +143,9 @@ Consumers: `绩效管理 / 绩效明细`, `绩效管理 / 绩效看板`, and `�
 
 Code evidence:
 
-- Type: `PerformanceRuleApplicability` in `apps/web/src/features/performance/performanceTypes.ts`
-- Resolver: `resolvePerformanceRuleApplicability` in `apps/web/src/features/performance/performanceRuleApplicabilityModel.ts`
-- Producer adapter: `buildPerformanceMonthlyRecords` in `apps/web/src/features/performance/performanceMonthlyModel.ts`
+- Type: `PerformanceRuleApplicability` in `apps/web/src/modules/performance/performanceTypes.ts`
+- Resolver: `resolvePerformanceRuleApplicability` in `apps/web/src/modules/performance-rules/performanceRuleApplicabilityModel.ts`
+- Producer adapter: `buildPerformanceMonthlyRecords` in `apps/web/src/modules/performance/performanceMonthlyModel.ts`
 - Consumers: `PerformanceMonthlyPage.tsx`, `PerformanceDashboardPage.tsx`, `salaryReportBuilder.ts`
 - Unit evidence: `performanceRuleApplicabilityModel.test.ts`, `performanceMonthlyModel.test.ts`, `performanceDashboardModel.test.ts`
 
@@ -190,7 +190,7 @@ Before backend integration, this frontend contract should become an API/data con
 
 Owner: `任务管理 / 任务验收` owns task completion and scoring facts. `绩效管理 / 绩效明细` owns monthly aggregation and calculation.
 
-Producer adapter: `buildTaskPerformanceMonthlySourceRecords` in `apps/web/src/features/performance/taskPerformanceMonthlySourceModel.ts`.
+Producer adapter: `buildTaskPerformanceMonthlySourceRecords` in `apps/web/src/modules/performance/taskPerformanceMonthlySourceModel.ts`.
 
 Consumers: `绩效明细`, `绩效看板`, and the performance part of `薪酬明细`.
 
@@ -412,7 +412,7 @@ Contract version: `finance-accounting-voucher-status-v8`.
 
 Tax policy source boundary:
 
-- `apps/web/src/features/finance/financeTaxPolicyModel.ts` owns the current
+- `apps/web/src/modules/finance/financeTaxPolicyModel.ts` owns the current
   frontend tax-policy profile for tax-basis derivation. It is structured
   configuration for the prototype, not official filing evidence and not the
   future source of truth after backend cutover.

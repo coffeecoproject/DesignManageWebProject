@@ -34,7 +34,7 @@ Delivery hints are informational. They do not validate submitted files and do no
 | TCB-05 | Task type is renamed after task creation | Historical task keeps snapshot name | `taskDomainModel.test.ts` |
 | TCB-06 | Delivery hints change after creation | Historical task keeps copied hints | `taskDomainModel.test.ts` |
 | TCB-07 | Brand/type mismatch reaches domain create entry | Creation is rejected | `taskCreationEligibilityModel.ts` and `taskDomainModel.test.ts` |
-| TCB-08 | Existing acceptance/performance/settlement flows run | Existing cross-domain tests remain green | `corepack pnpm test:web` |
+| TCB-08 | Existing acceptance/performance/settlement flows run | Existing cross-domain tests remain green | `testpace full` |
 
 ## Boundaries
 

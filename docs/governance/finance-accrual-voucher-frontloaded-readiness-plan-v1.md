@@ -43,7 +43,7 @@ record.confirmationStatus === '已确认'
 
 Evidence:
 
-- `apps/web/src/features/finance/financeReceivablesPayablesModel.ts:130`
+- `apps/web/src/modules/finance/financeReceivablesPayablesModel.ts:130`
 
 The current form validation only requires period, amount, category, dates,
 owner, and source title. It does not require source number, original evidence,
@@ -51,7 +51,7 @@ tax basis, or accounting subject readiness.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeReceivablesPayablesModel.ts:216`
+- `apps/web/src/modules/finance/financeReceivablesPayablesModel.ts:216`
 
 Current form data can hold files, source number, source title, category, and
 source type, but the validation does not yet make every accrual readiness field
@@ -59,7 +59,7 @@ mandatory before confirmation.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeReceivablesPayablesModel.ts:184`
+- `apps/web/src/modules/finance/financeReceivablesPayablesModel.ts:184`
 
 ### 2.2 会计凭证页当前承接了异常
 
@@ -69,14 +69,14 @@ entries.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeAccountingVoucherModel.ts:558`
+- `apps/web/src/modules/finance/financeAccountingVoucherModel.ts:558`
 
 Earlier voucher generation included every confirmed receivable/payable row and
 then decided whether it was the old complete-candidate state or `需处理`.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeAccountingVoucherModel.ts:1040`
+- `apps/web/src/modules/finance/financeAccountingVoucherModel.ts:1040`
 
 This means the current flow is:
 
@@ -103,7 +103,7 @@ subject mapping cannot be found.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeData.ts:457`
+- `apps/web/src/modules/finance/financeData.ts:457`
 
 That behavior conflicts with the target accounting boundary. Missing category
 or missing accounting subject should block upstream confirmation, not silently
@@ -116,7 +116,7 @@ source type is invoice-applicable and whose tax basis is not `不涉及发票`.
 
 Evidence:
 
-- `apps/web/src/features/finance/financeInvoiceAssociationModel.ts`
+- `apps/web/src/modules/finance/financeInvoiceAssociationModel.ts`
 
 This is directionally correct, but after the hard cut, invoice matching should
 become one of the upstream evidence/settlement tasks that determines whether
@@ -575,7 +575,7 @@ Implementation is complete when:
 - Existing cash/tax/adjustment voucher behavior is not changed unless explicitly
   included in the implementation scope.
 - Unit tests cover readiness and voucher lifecycle.
-- `typecheck`, `test:web`, `lint`, `build:web`, and `git diff --check` pass.
+- `typecheck`, `testpace full`, `lint`, `build:web`, and `git diff --check` pass.
 
 ## 12. Open Decisions
 

@@ -434,7 +434,7 @@ Mock 中不得出现：
 ```bash
 corepack pnpm typecheck
 corepack pnpm lint
-corepack pnpm test:web
+testpace full
 corepack pnpm build:web
 corepack pnpm ai-native:check
 git diff --check

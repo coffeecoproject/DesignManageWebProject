@@ -760,7 +760,7 @@ type ContributionCorrectionRecord = {
 
 ```text
 corepack pnpm typecheck
-corepack pnpm test:web
+testpace full
 corepack pnpm build:web
 corepack pnpm ai-native:check
 ```

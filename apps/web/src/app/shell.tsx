@@ -34,9 +34,7 @@ import {
 import { Avatar, Badge, Breadcrumb, Button, Layout, Menu, Space, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { AuthorizationBoundary } from '../features/auth/AuthorizationBoundary';
-import { useAuthorizationState } from '../features/auth/AuthorizationState';
-import { canAccessRoute, routeByMenuKey } from '../features/auth/routeAuthorization';
+import { AuthorizationBoundary, canAccessRoute, routeByMenuKey, useAuthorizationState } from '../modules/people';
 
 const { Header, Sider, Content } = Layout;
 

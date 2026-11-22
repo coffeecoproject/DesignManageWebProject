@@ -1,7 +1,7 @@
 const stampDutyAcceptanceSources = {
-  model: 'src/features/finance/financeStampDutyModel.test.ts',
-  taxMatter: 'src/features/finance/financeTaxMatterModel.test.ts',
-  accounting: 'src/features/finance/financeAccountingVoucherModel.test.ts'
+  model: 'src/modules/finance/financeStampDutyModel.test.ts',
+  taxMatter: 'src/modules/finance/financeTaxMatterModel.test.ts',
+  accounting: 'src/modules/finance/financeAccountingVoucherModel.test.ts'
 };
 
 export const stampDutyAcceptanceEvidence = Array.from({ length: 17 }, (_, index) => {

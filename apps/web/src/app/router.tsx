@@ -1,289 +1,296 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
+import {
+  useCustomerContractReceiptViews,
+  useSalaryFinanceLink,
+  useSocialInsuranceEnrollmentProfiles,
+  useTaskContractUsageSummaries,
+  useTaskPerformanceSummaryLookup
+} from './moduleLinks';
 import { AppShell } from './shell';
 
 const PeopleOverviewPage = lazy(() =>
-  import('../features/people/PeopleOverviewPage').then((module) => ({
+  import('../modules/people-overview/pages').then((module) => ({
     default: module.PeopleOverviewPage
   }))
 );
 const PeopleArchivesPage = lazy(() =>
-  import('../features/people/PeopleArchivesPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.PeopleArchivesPage
   }))
 );
 const PeoplePositionManagementPage = lazy(() =>
-  import('../features/people/PeoplePositionManagementPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.PeoplePositionManagementPage
   }))
 );
 const PeopleRolesPage = lazy(() =>
-  import('../features/people/PeopleRolesPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.PeopleRolesPage
   }))
 );
 const SystemTaskConfigPage = lazy(() =>
-  import('../features/system/SystemTaskConfigPage').then((module) => ({
+  import('../modules/tasks/pages').then((module) => ({
     default: module.SystemTaskConfigPage
   }))
 );
 const SystemWorkCalendarPage = lazy(() =>
-  import('../features/system/SystemWorkCalendarPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.SystemWorkCalendarPage
   }))
 );
 const SystemFinanceCategoryPage = lazy(() =>
-  import('../features/system/SystemFinanceCategoryPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.SystemFinanceCategoryPage
   }))
 );
 const SystemPublicAccountConfigPage = lazy(() =>
-  import('../features/system/SystemPublicAccountConfigPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.SystemPublicAccountConfigPage
   }))
 );
 const SystemSocialInsuranceConfigPage = lazy(() =>
-  import('../features/system/SystemSocialInsuranceConfigPage').then((module) => ({
+  import('../modules/social-insurance/pages').then((module) => ({
     default: module.SystemSocialInsuranceConfigPage
   }))
 );
 const SystemTaxPolicyPage = lazy(() =>
-  import('../features/system/SystemTaxPolicyPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.SystemTaxPolicyPage
   }))
 );
 const SystemRolesPage = lazy(() =>
-  import('../features/system/SystemRolesPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.SystemRolesPage
   }))
 );
 const PerformanceDashboardPage = lazy(() =>
-  import('../features/performance/PerformanceDashboardPage').then((module) => ({
+  import('../modules/performance/pages').then((module) => ({
     default: module.PerformanceDashboardPage
   }))
 );
 const PerformanceRulesPage = lazy(() =>
-  import('../features/performance/PerformanceRulesPage').then((module) => ({
+  import('../modules/performance-rules/pages').then((module) => ({
     default: module.PerformanceRulesPage
   }))
 );
 const PerformanceSignaturesPage = lazy(() =>
-  import('../features/performance/PerformanceSignaturesPage').then((module) => ({
+  import('../modules/performance/pages').then((module) => ({
     default: module.PerformanceSignaturesPage
   }))
 );
 const PerformanceMonthlyPage = lazy(() =>
-  import('../features/performance/PerformanceMonthlyPage').then((module) => ({
+  import('../modules/performance/pages').then((module) => ({
     default: module.PerformanceMonthlyPage
   }))
 );
 const SalaryOverviewPage = lazy(() =>
-  import('../features/salary/SalaryOverviewPage').then((module) => ({
+  import('../modules/salary/pages').then((module) => ({
     default: module.SalaryOverviewPage
   }))
 );
 const SalaryMonthlyPage = lazy(() =>
-  import('../features/salary/SalaryMonthlyPage').then((module) => ({
+  import('../modules/salary/pages').then((module) => ({
     default: module.SalaryMonthlyPage
   }))
 );
 const SalaryPersonalIncomeTaxDeductionsPage = lazy(() =>
-  import('../features/salary/SalaryPersonalIncomeTaxDeductionsPage').then((module) => ({
+  import('../modules/salary/pages').then((module) => ({
     default: module.SalaryPersonalIncomeTaxDeductionsPage
   }))
 );
 const CustomerArchivePage = lazy(() =>
-  import('../features/customers/CustomerArchivePage').then((module) => ({
+  import('../modules/customers/pages').then((module) => ({
     default: module.CustomerArchivePage
   }))
 );
 const BrandManagementPage = lazy(() =>
-  import('../features/customers/BrandManagementPage').then((module) => ({
+  import('../modules/customers/pages').then((module) => ({
     default: module.BrandManagementPage
   }))
 );
 const StoreManagementPage = lazy(() =>
-  import('../features/customers/StoreManagementPage').then((module) => ({
+  import('../modules/customers/pages').then((module) => ({
     default: module.StoreManagementPage
   }))
 );
 const CustomerContractsPage = lazy(() =>
-  import('../features/customers/CustomerContractsPage').then((module) => ({
+  import('../modules/customers/pages').then((module) => ({
     default: module.CustomerContractsPage
   }))
 );
 const TaskDashboardPage = lazy(() =>
-  import('../features/tasks/TaskDashboardPage').then((module) => ({
+  import('../modules/tasks/pages').then((module) => ({
     default: module.TaskDashboardPage
   }))
 );
 const TaskListPage = lazy(() =>
-  import('../features/tasks/StoreTasksPage').then((module) => ({
+  import('../modules/tasks/pages').then((module) => ({
     default: module.TaskListPage
   }))
 );
 const PeopleTasksPage = lazy(() =>
-  import('../features/tasks/PeopleTasksPage').then((module) => ({
+  import('../modules/tasks/pages').then((module) => ({
     default: module.PeopleTasksPage
   }))
 );
 const TaskFeedbackPage = lazy(() =>
-  import('../features/tasks/TaskFeedbackPage').then((module) => ({
+  import('../modules/tasks/pages').then((module) => ({
     default: module.TaskFeedbackPage
   }))
 );
 const FinanceBusinessOverviewPage = lazy(() =>
-  import('../features/finance/FinanceBusinessOverviewPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceBusinessOverviewPage
   }))
 );
 const FinanceReceivablesPayablesPage = lazy(() =>
-  import('../features/finance/FinanceReceivablesPayablesPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceReceivablesPayablesPage
   }))
 );
 const FinanceInvoicesPage = lazy(() =>
-  import('../features/finance/FinanceInvoicesPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceInvoicesPage
   }))
 );
 const FinanceDeclarationPreparationPage = lazy(() =>
-  import('../features/finance/FinanceDeclarationPreparationPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceDeclarationPreparationPage
   }))
 );
 const FinanceTaxFilingsPage = lazy(() =>
-  import('../features/finance/FinanceTaxFilingsPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceTaxFilingsPage
   }))
 );
 const FinanceSocialInsurancePage = lazy(() =>
-  import('../features/finance/FinanceSocialInsurancePage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceSocialInsurancePage
   }))
 );
 const FinanceTransactionsPage = lazy(() =>
-  import('../features/finance/FinanceTransactionsPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceTransactionsPage
   }))
 );
 const FinanceReviewPage = lazy(() =>
-  import('../features/finance/FinanceReviewPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceReviewPage
   }))
 );
 const FinanceAccountLedgerPage = lazy(() =>
-  import('../features/finance/FinanceAccountLedgerPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceAccountLedgerPage
   }))
 );
 const FinanceLedgerInitializationPage = lazy(() =>
-  import('../features/finance/FinanceLedgerInitializationPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceLedgerInitializationPage
   }))
 );
 const FinanceAccountingSubjectsPage = lazy(() =>
-  import('../features/finance/FinanceAccountingSubjectsPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceAccountingSubjectsPage
   }))
 );
 const FinanceAccountingVouchersPage = lazy(() =>
-  import('../features/finance/FinanceAccountingVouchersPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceAccountingVouchersPage
   }))
 );
 const FinanceAssetsPrepaymentsPage = lazy(() =>
-  import('../features/finance/FinanceAssetsPrepaymentsPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceAssetsPrepaymentsPage
   }))
 );
 const FinanceMonthEndMattersPage = lazy(() =>
-  import('../features/finance/FinanceMonthEndMattersPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceMonthEndMattersPage
   }))
 );
 const FinanceGeneralLedgerPage = lazy(() =>
-  import('../features/finance/FinanceGeneralLedgerPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceGeneralLedgerPage
   }))
 );
 const FinancePeriodClosePage = lazy(() =>
-  import('../features/finance/FinancePeriodClosePage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinancePeriodClosePage
   }))
 );
 const FinanceFinancialStatementsPage = lazy(() =>
-  import('../features/finance/FinanceFinancialStatementsPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceFinancialStatementsPage
   }))
 );
 const FinanceBankReconciliationPage = lazy(() =>
-  import('../features/finance/FinanceBankReconciliationPage').then((module) => ({
+  import('../modules/finance/pages').then((module) => ({
     default: module.FinanceBankReconciliationPage
   }))
 );
 const PeopleMovementPage = lazy(() =>
-  import('../features/people/PeopleMovementPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.PeopleMovementPage
   }))
 );
 const PeopleAttendancePage = lazy(() =>
-  import('../features/people/PeopleAttendancePage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.PeopleAttendancePage
   }))
 );
 const PeopleAttendanceMonthlyPage = lazy(() =>
-  import('../features/people/PeopleAttendanceMonthlyPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.PeopleAttendanceMonthlyPage
   }))
 );
 const NotFoundPage = lazy(() =>
-  import('../features/people/NotFoundPage').then((module) => ({
+  import('../modules/people/pages').then((module) => ({
     default: module.NotFoundPage
   }))
 );
 const MyWorkOverviewPage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyWorkOverviewPage
   }))
 );
 const MyTasksPage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyTasksPage
   }))
 );
 const MyTaskSubmitPage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyTaskSubmitPage
   }))
 );
 const MyTaskAcceptancePage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyTaskAcceptancePage
   }))
 );
 const MyExpenseCollectionPage = lazy(() =>
-  import('../features/my-work/MyExpenseCollectionPage').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyExpenseCollectionPage
   }))
 );
 const MyExpenseReviewPage = lazy(() =>
-  import('../features/my-work/MyExpenseReviewPage').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyExpenseReviewPage
   }))
 );
 const MyArchivePage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyArchivePage
   }))
 );
 const MySalaryPage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MySalaryPage
   }))
 );
 const MyPerformancePage = lazy(() =>
-  import('../features/my-work/MyWorkPages').then((module) => ({
+  import('../modules/my-work/pages').then((module) => ({
     default: module.MyPerformancePage
   }))
 );
@@ -351,7 +358,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'people/archives',
-        element: withPageSuspense(<PeopleArchivesPage />)
+        element: withPageSuspense(<PeopleArchivesPage useSocialInsuranceProfiles={useSocialInsuranceEnrollmentProfiles} />)
       },
       {
         path: 'people/organization',
@@ -427,7 +434,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'customers/brands',
-        element: withPageSuspense(<BrandManagementPage />)
+        element: withPageSuspense(<BrandManagementPage useTaskContractUsageSummaries={useTaskContractUsageSummaries} />)
       },
       {
         path: 'customers/stores',
@@ -435,7 +442,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'customers/contracts',
-        element: withPageSuspense(<CustomerContractsPage />)
+        element: withPageSuspense(<CustomerContractsPage useContractReceiptViews={useCustomerContractReceiptViews} />)
       },
       {
         path: 'tasks',
@@ -447,11 +454,11 @@ export const router = createBrowserRouter([
       },
       {
         path: 'tasks/list',
-        element: withPageSuspense(<TaskListPage />)
+        element: withPageSuspense(<TaskListPage usePerformanceSummaryLookup={useTaskPerformanceSummaryLookup} />)
       },
       {
         path: 'tasks/people',
-        element: withPageSuspense(<PeopleTasksPage />)
+        element: withPageSuspense(<PeopleTasksPage usePerformanceSummaryLookup={useTaskPerformanceSummaryLookup} />)
       },
       {
         path: 'tasks/store-tasks',
@@ -555,7 +562,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'salary/monthly',
-        element: withPageSuspense(<SalaryMonthlyPage />)
+        element: withPageSuspense(<SalaryMonthlyPage useFinanceLink={useSalaryFinanceLink} />)
       },
       {
         path: 'salary/personal-income-tax',

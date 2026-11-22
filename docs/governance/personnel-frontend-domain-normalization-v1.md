@@ -6,7 +6,7 @@ This hardcut normalizes the personnel frontend before backend integration.
 
 In scope:
 
-- Create a personnel frontend domain layer under `apps/web/src/features/people`.
+- Create a personnel frontend domain layer under `apps/web/src/modules/people`.
 - Move stable people-domain rules out of page components.
 - Introduce a mock repository/adapter boundary so current seed data is not consumed as page-owned data.
 - Keep existing route scope: `人员总览`, `人员档案`, `人事异动`, `岗位管理`, `考勤假勤`, and `考勤月报`.
@@ -68,12 +68,12 @@ Visible behavior should remain the same unless existing behavior contradicts con
 
 Expected code paths:
 
-- `apps/web/src/features/people/peopleTypes.ts`
-- `apps/web/src/features/people/PeopleOrganizationState.tsx`
-- `apps/web/src/features/people/PeopleOverviewPage.tsx`
-- `apps/web/src/features/people/PeopleArchivesPage.tsx`
-- `apps/web/src/features/people/PeopleAttendancePage.tsx`
-- new personnel domain/repository files under `apps/web/src/features/people/`
+- `apps/web/src/modules/people/peopleTypes.ts`
+- `apps/web/src/modules/people/PeopleOrganizationState.tsx`
+- `apps/web/src/modules/people-overview/PeopleOverviewPage.tsx`
+- `apps/web/src/modules/people/PeopleArchivesPage.tsx`
+- `apps/web/src/modules/people/PeopleAttendancePage.tsx`
+- new personnel domain/repository files under `apps/web/src/modules/people/`
 
 Expected docs:
 

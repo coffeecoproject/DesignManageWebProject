@@ -8,15 +8,15 @@ Owner: `财务管理 / 期间结账`
 
 Canonical local matrix:
 
-- `apps/web/src/features/finance/financePeriodCloseSourceMutationMatrix.ts`
-- `apps/web/src/features/finance/financePeriodCloseSourceMutationMatrix.test.ts`
+- `apps/web/src/modules/finance/financePeriodCloseSourceMutationMatrix.ts`
+- `apps/web/src/modules/finance/financePeriodCloseSourceMutationMatrix.test.ts`
 
 Related local API skeleton:
 
-- `apps/api/src/finance/periodCloseSourceMutationGuard.ts`
-- `apps/api/src/finance/periodCloseSourceMutationOperationMetadata.ts`
-- `apps/api/src/finance/periodCloseSourceMutationRegistry.ts`
-- `apps/api/src/finance/periodCloseSourceMutationRoutes.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationGuard.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationOperationMetadata.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationRegistry.ts`
+- `apps/api/src/modules/finance/periodCloseSourceMutationRoutes.ts`
 
 ## 1. Purpose
 

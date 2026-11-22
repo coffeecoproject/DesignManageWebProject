@@ -1,0 +1,22 @@
+// Route pages of the finance module, loaded lazily by the app router.
+export { FinanceAccountingSubjectsPage } from './FinanceAccountingSubjectsPage';
+export { FinanceAccountingVouchersPage } from './FinanceAccountingVouchersPage';
+export { FinanceAccountLedgerPage } from './FinanceAccountLedgerPage';
+export { FinanceAssetsPrepaymentsPage } from './FinanceAssetsPrepaymentsPage';
+export { FinanceBankReconciliationPage } from './FinanceBankReconciliationPage';
+export { FinanceBusinessOverviewPage } from './FinanceBusinessOverviewPage';
+export { FinanceDeclarationPreparationPage } from './FinanceDeclarationPreparationPage';
+export { FinanceFinancialStatementsPage } from './FinanceFinancialStatementsPage';
+export { FinanceGeneralLedgerPage } from './FinanceGeneralLedgerPage';
+export { FinanceInvoicesPage } from './FinanceInvoicesPage';
+export { FinanceLedgerInitializationPage } from './FinanceLedgerInitializationPage';
+export { FinanceMonthEndMattersPage } from './FinanceMonthEndMattersPage';
+export { FinancePeriodClosePage } from './FinancePeriodClosePage';
+export { FinanceReceivablesPayablesPage } from './FinanceReceivablesPayablesPage';
+export { FinanceReviewPage } from './FinanceReviewPage';
+export { FinanceSocialInsurancePage } from './FinanceSocialInsurancePage';
+export { FinanceTaxFilingsPage } from './FinanceTaxFilingsPage';
+export { FinanceTransactionsPage } from './FinanceTransactionsPage';
+export { SystemFinanceCategoryPage } from './SystemFinanceCategoryPage';
+export { SystemPublicAccountConfigPage } from './SystemPublicAccountConfigPage';
+export { SystemTaxPolicyPage } from './SystemTaxPolicyPage';

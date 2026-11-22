@@ -62,8 +62,8 @@ must not rewrite historical finance rows.
 
 Current source:
 
-- `apps/web/src/features/system/PublicAccountConfigState.tsx`
-- `apps/web/src/features/system/SystemPublicAccountConfigPage.tsx`
+- `apps/web/src/modules/public-accounts/PublicAccountConfigState.tsx`
+- `apps/web/src/modules/finance/SystemPublicAccountConfigPage.tsx`
 
 Current shape:
 
@@ -95,7 +95,7 @@ Current limitations:
 
 Current source:
 
-- `apps/web/src/features/finance/financeData.ts`
+- `apps/web/src/modules/finance/financeData.ts`
 
 Current shape:
 
@@ -611,7 +611,7 @@ Required commands after implementation:
 
 ```text
 corepack pnpm typecheck
-corepack pnpm test:web
+testpace full
 corepack pnpm lint
 corepack pnpm build:web
 git diff --check
@@ -620,7 +620,7 @@ git diff --check
 Required residual scans:
 
 ```text
-rg -n "settlementAccount|settlementAccountType" apps/web/src/features/finance apps/web/src/features/my-work
+rg -n "settlementAccount|settlementAccountType" apps/web/src/modules/finance apps/web/src/modules/my-work
 rg -n "accountName: publicAccountName|buildBankStatementUniqueKey\\(record: Pick<BankStatementRecord, 'accountName'" apps/web/src
 rg -n "buildPublicAccountOptions\\([^\\n]+\\)\\.map\\(\\(option\\).*option\\.label" apps/web/src
 ```

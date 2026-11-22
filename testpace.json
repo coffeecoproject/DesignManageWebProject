@@ -1,0 +1,10 @@
+{
+  "fast": "corepack pnpm -s check:fast",
+  "files": "scripts/testpace/files.sh",
+  "full": "corepack pnpm -s check:full",
+  "tests": [
+    "apps/api/src/**/*.test.ts",
+    "apps/web/src/**/*.test.ts",
+    "apps/web/scripts/**/*.test.mjs"
+  ]
+}

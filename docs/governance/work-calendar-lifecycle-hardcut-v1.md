@@ -81,6 +81,6 @@
 
 ## 5. 门禁
 
-- 自动门禁：`typecheck`、`test:web`、`lint`、`build:web`、`ai-native:check`、`git diff --check`。
+- 自动门禁：`typecheck`、`testpace full`、`lint`、`build:web`、`ai-native:check`、`git diff --check`。
 - 证据门禁：WC-01 至 WC-21 必须由领域测试或静态契约覆盖。
 - 当前边界：前端状态刷新后不持久，不宣称生产级历史版本、并发控制、服务端鉴权或审计不可篡改。

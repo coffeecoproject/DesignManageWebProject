@@ -35,16 +35,9 @@ Run commands from anywhere inside the repository. Scripts resolve the repository
 | Check health and show the host port | `scripts/local/db-status.sh` |
 | Run psql (stdin is forwarded, no interactive terminal) | `scripts/local/db-psql.sh` |
 | Run one SQL command | `scripts/local/db-psql.sh -c 'SELECT current_database(), current_user;'` |
-| Run period-close PostgreSQL migration dry-run | `corepack pnpm db:period-close:dry-run` |
-| Run period-close PostgreSQL isolated apply drill | `corepack pnpm db:period-close:apply-drill` |
-| Run period-close PostgreSQL persisted replay drill | `corepack pnpm db:period-close:replay-drill` |
-| Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` |
+| Run the period-close PostgreSQL drills (dry-run, apply, persisted replay, row-lock concurrency) on a throwaway database | `testpace files apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts` (also part of `testpace full`) |
 | Show logs | `scripts/local/db-logs.sh` |
 | Sleep Postgres without deleting data | `scripts/local/db-sleep.sh` |
-
-The period-close commands do not touch the development database: each run starts its own throwaway napbox
-Postgres (`napbox up --temp period-close-drill-<pid>`, defined by the same `compose.yaml`), runs psql inside it,
-and deletes it with `napbox down --temp` when the script exits (see `scripts/local/temp-db.sh`).
 
 An idle environment also goes to sleep by itself after 30 minutes. A sleeping environment wakes on the next
 connection or `db-psql.sh` call.
@@ -67,9 +60,9 @@ postgres://startupmanage_app:startupmanage_local_dev_only@postgres:5432/startupm
 
 Do not delete local database data without explicit user approval.
 
-The period-close dry-run, apply, replay, and concurrency drills each run in their own throwaway napbox
-environment, which is deleted with its data when the drill exits; they never touch this worktree's
-development database. The generated SQL must still not drop tables, truncate rows, or delete rows.
+The period-close drills run only in the throwaway napbox Postgres that `testpace files` starts for the batch and
+deletes afterwards, each drill in its own empty database inside it; they never touch this worktree's development
+database. The generated SQL must still not drop tables, truncate rows, or delete rows.
 
 Commands such as these are destructive because they delete local database data:
 
@@ -105,11 +98,11 @@ If host tools cannot connect:
 ## 7. Evidence Boundary
 
 This runbook and the scripts prove only that local dependency commands exist.
-The period-close dry-run command executes generated DDL and schema assertions
-inside a throwaway local PostgreSQL transaction and rolls back. The period-close
-apply drill commits generated DDL and fixture writes to a throwaway database and
-verifies the local write path. The period-close row-lock concurrency drill runs two
-psql sessions against the same throwaway database to prove `FOR UPDATE` lock
+The period-close drills in `apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts` run on every full test suite, each in its own
+empty database inside a throwaway napbox Postgres: the dry-run executes generated DDL and schema assertions
+inside a transaction and rolls back. The apply drill commits generated DDL and fixture writes and
+verifies the local write path. The row-lock concurrency drill runs two
+psql sessions against the same database to prove `FOR UPDATE` lock
 conflict behavior, then verifies close update and closed-period source-guard
 fixture behavior. None of these commands are formal project
 schema migration apply, real repository integration, application DB transaction

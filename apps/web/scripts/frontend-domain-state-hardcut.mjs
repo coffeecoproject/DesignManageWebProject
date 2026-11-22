@@ -24,12 +24,12 @@ async function readRequiredSource(webRoot, relativePath) {
 
 export async function assertFrontendDomainStateHardcut(webRoot) {
   const rootApp = await readRequiredSource(webRoot, 'src/app/RootApp.tsx');
-  const ledgerPage = await readRequiredSource(webRoot, 'src/features/finance/FinanceLedgerInitializationPage.tsx');
-  const generalLedgerPage = await readRequiredSource(webRoot, 'src/features/finance/FinanceGeneralLedgerPage.tsx');
-  const bankPage = await readRequiredSource(webRoot, 'src/features/finance/FinanceBankReconciliationPage.tsx');
-  const movementPage = await readRequiredSource(webRoot, 'src/features/people/PeopleMovementPage.tsx');
-  const signaturePage = await readRequiredSource(webRoot, 'src/features/performance/PerformanceSignaturesPage.tsx');
-  const relatedFileTable = await readRequiredSource(webRoot, 'src/components/RelatedFileTable.tsx');
+  const ledgerPage = await readRequiredSource(webRoot, 'src/modules/finance/FinanceLedgerInitializationPage.tsx');
+  const generalLedgerPage = await readRequiredSource(webRoot, 'src/modules/finance/FinanceGeneralLedgerPage.tsx');
+  const bankPage = await readRequiredSource(webRoot, 'src/modules/finance/FinanceBankReconciliationPage.tsx');
+  const movementPage = await readRequiredSource(webRoot, 'src/modules/people/PeopleMovementPage.tsx');
+  const signaturePage = await readRequiredSource(webRoot, 'src/modules/performance/PerformanceSignaturesPage.tsx');
+  const relatedFileTable = await readRequiredSource(webRoot, 'src/shared/components/RelatedFileTable.tsx');
 
   const requiredRootProviders = [
     'FinanceLedgerInitializationProvider',
@@ -39,7 +39,7 @@ export async function assertFrontendDomainStateHardcut(webRoot) {
   ];
 
   for (const provider of requiredRootProviders) {
-    if (!rootApp.includes(`<${provider}>`)) {
+    if (!new RegExp(`<${provider}[\\s>]`).test(rootApp)) {
       throw new Error(`RootApp must mount ${provider}`);
     }
   }

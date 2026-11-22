@@ -7,7 +7,6 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node scripts/run-unit-tests.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {
@@ -28,6 +27,7 @@
     "globals": "^17.6.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.1",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "5.0.5"
   }
 }

@@ -2,6 +2,9 @@
 .env
 .env.*
 
+# Agent sessions and worktrees
+.claude/
+
 # OS/editor noise
 .DS_Store
 .idea/

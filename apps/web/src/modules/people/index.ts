@@ -1,0 +1,20 @@
+// Entry of the people module: everything other modules and the app use from it.
+export { AuthorizationBoundary } from './AuthorizationBoundary';
+export { canAccessPerson, canAccessTask } from './authorizationModel';
+export { AuthorizationProvider, useAuthorizationState } from './AuthorizationState';
+export { buildAttendanceMonthlyReports, getAttendanceMonthRange, toPayrollAttendanceMonthlyContract } from './peopleAttendanceMonthlyDomain';
+export type { AttendanceMonthlyReport, AttendanceMonthlySalarySettlementRecord } from './peopleAttendanceMonthlyDomain';
+export type { PayrollAttendanceMonthlyContract } from './peopleAttendanceSalaryContract';
+export { getMemberWorkCalendar, getPeopleBaseSalaryText, getPeopleHousingFundStatus, getPeopleMemberPositions, getPeopleOngoingTaskCount, getPeopleOverviewAvailabilitySummary, getPeopleRelationPeriodText, getPeopleRelationshipRangeBlockers, getPeopleSalaryModeText, isPeopleHousingFundContributionApplicable, isPeopleRelationshipActive } from './peopleDomain';
+export type { PeopleOverviewAvailabilitySummary } from './peopleDomain';
+export { createPeopleExpiryRows, formatPeopleExpiryDays, getPeopleExpiryMetrics } from './peopleExpiryModel';
+export type { PeopleExpiryRow, PeopleExpiryUrgency } from './peopleExpiryModel';
+export { peopleAttendanceToday, PeopleOrganizationProvider, peopleOrganizationToday, usePeopleOrganizationState } from './PeopleOrganizationState';
+export type { PeopleAttendanceRecord } from './PeopleOrganizationState';
+export type { EmploymentRelationshipType, PeopleArchiveFile, PeopleArchiveStatus, PeopleFilters, PeopleMember, PeopleStatus, PersonnelType } from './peopleTypes';
+export { PermissionRoleProvider } from './PermissionRoleState';
+export { positionOptions } from './rolePermissionModel';
+export { canAccessRoute, routeByMenuKey } from './routeAuthorization';
+export { formatCalendarDateKey, getAnnualExceptionForDate, isWorkCalendarActiveOnDate, isWorkCalendarDateWorkday, resolveDefaultWorkCalendar, resolveWorkCalendarRule } from './workCalendarRules';
+export { useWorkCalendarState, WorkCalendarProvider } from './WorkCalendarState';
+export type { AnnualExceptionConfigRow, AnnualExceptionItem, WorkCalendarRow } from './WorkCalendarState';

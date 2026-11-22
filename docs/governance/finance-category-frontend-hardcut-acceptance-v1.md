@@ -31,7 +31,7 @@
 ## 门禁
 
 - 文档门禁：本文件明确类目层级、历史快照和消费端边界。
-- 自动门禁：`corepack pnpm typecheck`、`corepack pnpm test:web`、`corepack pnpm build:web`、`corepack pnpm ai-native:check`。
+- 自动门禁：`corepack pnpm typecheck`、`testpace full`、`corepack pnpm build:web`、`corepack pnpm ai-native:check`。
 - 证据门禁：FC-01 至 FC-11 必须至少有领域测试、类型检查或页面约束证据之一；跨模块金额、快照或凭证结果必须有领域测试。
 
 ## 后端接入边界
