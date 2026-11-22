@@ -9,33 +9,8 @@ import {
   type SalaryMonthlyWorkflowRecord
 } from './salaryDomain';
 import { buildSalaryPerformanceSourceRecords } from './salaryPerformanceConsumptionModel';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-type UnitTestResult = {
-  failures: string[];
-  passed: number;
-  total: number;
-};
-
-function fail(message: string): never {
-  throw new Error(message);
-}
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    fail(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (!Object.is(actual, expected)) {
-    fail(`${message}. Expected ${String(expected)}, received ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../../__tests__/assertions';
 
 function createCategoryRecord(
   prepayAmount: number,
@@ -201,291 +176,256 @@ function createWorkflow(
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'PF-20 feedback window and active objections block salary consumption',
-    run() {
-      const pending = createMonthlyResult();
-      const beforeDeadline = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-06-17 10:00',
-        formalResults: [pending],
-        salaryMonthlyWorkflows: []
-      });
-      const afterDeadline = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-06-19 10:00',
-        formalResults: [pending],
-        salaryMonthlyWorkflows: []
-      });
-      const objected = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          objectionReason: '任务计分有误',
-          respondedAt: '2026-06-17 11:00',
-          resultId: pending.id,
-          resultVersion: 1,
-          status: '有异议'
-        }
-      });
-      const objectedRecords = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-06-19 10:00',
-        formalResults: [objected],
-        salaryMonthlyWorkflows: []
-      });
-
-      assertEqual(beforeDeadline.length, 0, 'pending result should not enter salary during feedback window');
-      assertEqual(afterDeadline[0]?.prepayAmount, 600, 'expired result without objection should enter salary');
-      assertEqual(objectedRecords.length, 0, 'active objection should block salary after the deadline');
+it('PF-20 feedback window and active objections block salary consumption', () => {
+  const pending = createMonthlyResult();
+  const beforeDeadline = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-06-17 10:00',
+    formalResults: [pending],
+    salaryMonthlyWorkflows: []
+  });
+  const afterDeadline = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-06-19 10:00',
+    formalResults: [pending],
+    salaryMonthlyWorkflows: []
+  });
+  const objected = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      objectionReason: '任务计分有误',
+      respondedAt: '2026-06-17 11:00',
+      resultId: pending.id,
+      resultVersion: 1,
+      status: '有异议'
     }
-  },
-  {
-    name: 'PF-27 salary consumes monthly prepay and quarterly difference only',
-    run() {
-      const monthly = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          respondedAt: '2026-06-16 10:00',
-          resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
-          resultVersion: 1,
-          status: '已确认'
-        }
-      });
-      const quarterly = createQuarterlyResult();
-      const records = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-07-02 10:00',
-        formalResults: [monthly, quarterly],
-        salaryMonthlyWorkflows: []
-      });
-      const lines = buildSalaryPerformanceSettlementLines({
-        performanceRecords: records,
-        salaryMonthlyWorkflows: []
-      });
+  });
+  const objectedRecords = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-06-19 10:00',
+    formalResults: [objected],
+    salaryMonthlyWorkflows: []
+  });
 
-      assertEqual(lines.length, 2, 'monthly and quarterly results should create two settlement lines');
-      assertEqual(lines.find((line) => line.kind === '月度预发')?.amount, 600, 'monthly line should use prepay');
-      assertEqual(lines.find((line) => line.kind === '季度复核差额')?.amount, 300, 'quarterly line should use final minus prepay');
+  assertEqual(beforeDeadline.length, 0, 'pending result should not enter salary during feedback window');
+  assertEqual(afterDeadline[0]?.prepayAmount, 600, 'expired result without objection should enter salary');
+  assertEqual(objectedRecords.length, 0, 'active objection should block salary after the deadline');
+});
+
+it('PF-27 salary consumes monthly prepay and quarterly difference only', () => {
+  const monthly = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      respondedAt: '2026-06-16 10:00',
+      resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
+      resultVersion: 1,
+      status: '已确认'
     }
-  },
-  {
-    name: 'PF-27 zero-amount formal results retain settlement references and can close with salary',
-    run() {
-      const monthly = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          respondedAt: '2026-06-16 10:00',
-          resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
-          resultVersion: 1,
-          status: '已确认'
-        },
-        monthlyAmount: 0,
-        prepayAmount: 0
-      });
-      const quarterly = createQuarterlyResult({
-        calculationSnapshot: {
-          ...createQuarterlyResult().calculationSnapshot,
-          quarterCalculatedAmount: 1500,
-          quarterDifferenceAmount: 0,
-          quarterFinalAmount: 1500,
-          quarterPrepayAmount: 1500
-        },
-        quarterCalculatedAmount: 1500,
-        quarterDifferenceAmount: 0,
-        quarterFinalAmount: 1500,
-        quarterPrepayAmount: 1500
-      });
-      const records = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-07-02 10:00',
-        formalResults: [monthly, quarterly],
-        salaryMonthlyWorkflows: []
-      });
-      const lines = buildSalaryPerformanceSettlementLines({
-        performanceRecords: records,
-        salaryMonthlyWorkflows: []
-      });
-      const settlement = settlePerformanceResults([monthly, quarterly], {
-        actor: '李明',
-        salarySettlementReferences: lines.map((line) => line.salarySettlementReference),
-        settledAt: '2026-07-02 10:00'
-      });
+  });
+  const quarterly = createQuarterlyResult();
+  const records = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-07-02 10:00',
+    formalResults: [monthly, quarterly],
+    salaryMonthlyWorkflows: []
+  });
+  const lines = buildSalaryPerformanceSettlementLines({
+    performanceRecords: records,
+    salaryMonthlyWorkflows: []
+  });
 
-      assertEqual(records.length, 2, 'zero-amount formal results should remain visible to the salary consumer');
-      assertEqual(lines.length, 2, 'monthly zero prepay and quarterly zero difference should each retain one reference');
-      assert(lines.every((line) => line.amount === 0), 'zero-amount references must not change salary amounts');
-      assert(settlement.success, 'salary should be able to close zero-amount formal results');
-      assert(
-        settlement.results.every((result) => result.lifecycleStatus === '已结算'),
-        'zero-amount formal results should not remain published forever'
-      );
+  assertEqual(lines.length, 2, 'monthly and quarterly results should create two settlement lines');
+  assertEqual(lines.find((line) => line.kind === '月度预发')?.amount, 600, 'monthly line should use prepay');
+  assertEqual(lines.find((line) => line.kind === '季度复核差额')?.amount, 300, 'quarterly line should use final minus prepay');
+});
+
+it('PF-27 zero-amount formal results retain settlement references and can close with salary', () => {
+  const monthly = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      respondedAt: '2026-06-16 10:00',
+      resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
+      resultVersion: 1,
+      status: '已确认'
+    },
+    monthlyAmount: 0,
+    prepayAmount: 0
+  });
+  const quarterly = createQuarterlyResult({
+    calculationSnapshot: {
+      ...createQuarterlyResult().calculationSnapshot,
+      quarterCalculatedAmount: 1500,
+      quarterDifferenceAmount: 0,
+      quarterFinalAmount: 1500,
+      quarterPrepayAmount: 1500
+    },
+    quarterCalculatedAmount: 1500,
+    quarterDifferenceAmount: 0,
+    quarterFinalAmount: 1500,
+    quarterPrepayAmount: 1500
+  });
+  const records = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-07-02 10:00',
+    formalResults: [monthly, quarterly],
+    salaryMonthlyWorkflows: []
+  });
+  const lines = buildSalaryPerformanceSettlementLines({
+    performanceRecords: records,
+    salaryMonthlyWorkflows: []
+  });
+  const settlement = settlePerformanceResults([monthly, quarterly], {
+    actor: '李明',
+    salarySettlementReferences: lines.map((line) => line.salarySettlementReference),
+    settledAt: '2026-07-02 10:00'
+  });
+
+  assertEqual(records.length, 2, 'zero-amount formal results should remain visible to the salary consumer');
+  assertEqual(lines.length, 2, 'monthly zero prepay and quarterly zero difference should each retain one reference');
+  assert(lines.every((line) => line.amount === 0), 'zero-amount references must not change salary amounts');
+  assert(settlement.success, 'salary should be able to close zero-amount formal results');
+  assert(
+    settlement.results.every((result) => result.lifecycleStatus === '已结算'),
+    'zero-amount formal results should not remain published forever'
+  );
+});
+
+it('PF-28 correction after salary confirmation creates a future-month difference', () => {
+  const v1 = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      respondedAt: '2026-06-16 10:00',
+      resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
+      resultVersion: 1,
+      status: '已确认'
+    },
+    lifecycleStatus: '已结算'
+  });
+  const v2 = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      respondedAt: '2026-07-02 10:00',
+      resultId: 'monthly:employee-001:2026-06:绘图任务制:v2',
+      resultVersion: 2,
+      status: '已确认'
+    },
+    prepayAmount: 750,
+    supersedesResultId: v1.id,
+    version: 2
+  });
+  const workflow = createWorkflow({
+    salarySettlementReferences: [v1.salarySettlementReference]
+  });
+  const records = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-07-02 12:00',
+    formalResults: [v1, v2],
+    salaryMonthlyWorkflows: [workflow]
+  });
+  const lines = buildSalaryPerformanceSettlementLines({
+    performanceRecords: records,
+    salaryMonthlyWorkflows: [workflow]
+  });
+  const originalLine = lines.find((line) => line.salarySettlementReference === v1.salarySettlementReference);
+  const correctionLine = lines.find((line) => line.salarySettlementReference === v2.salarySettlementReference);
+
+  assertEqual(originalLine?.amount, 600, 'claimed V1 should preserve the frozen historical amount');
+  assertEqual(originalLine?.salaryMonth, '2026-06', 'claimed V1 should remain in its original salary month');
+  assertEqual(correctionLine?.amount, 150, 'V2 should settle only the difference from claimed V1');
+  assertEqual(correctionLine?.salaryMonth, '2026-07', 'confirmed June salary must not be rewritten');
+  assertEqual(correctionLine?.deferredFromMonth, '2026-06', 'deferred line should retain the original month');
+});
+
+it('PF-28 quarterly V2 settles only its difference in the next unlocked salary month', () => {
+  const v1 = createQuarterlyResult({ lifecycleStatus: '已结算' });
+  const v2 = createQuarterlyResult({
+    calculationSnapshot: {
+      ...v1.calculationSnapshot,
+      quarterCalculatedAmount: 2100,
+      quarterDifferenceAmount: 450,
+      quarterFinalAmount: 2100,
+      quarterPrepayAmount: 1650
+    },
+    employeeResponse: {
+      employeeId: 'employee-001',
+      respondedAt: '2026-07-03 10:00',
+      resultId: 'quarterly:employee-001:2026-Q2:绘图任务制:v2',
+      resultVersion: 2,
+      status: '已确认'
+    },
+    id: 'quarterly:employee-001:2026-Q2:绘图任务制:v2',
+    quarterCalculatedAmount: 2100,
+    quarterDifferenceAmount: 450,
+    quarterFinalAmount: 2100,
+    quarterPrepayAmount: 1650,
+    salarySettlementReference: 'performance-result:quarterly:employee-001:2026-Q2:drawing:v2',
+    sourceHash: 'quarter-source-hash-v2',
+    supersedesResultId: v1.id,
+    version: 2
+  });
+  const workflow = createWorkflow({
+    salarySettlementReferences: [v1.salarySettlementReference]
+  });
+  const records = buildSalaryPerformanceSourceRecords({
+    asOf: '2026-07-03 12:00',
+    formalResults: [v1, v2],
+    salaryMonthlyWorkflows: [workflow]
+  });
+  const lines = buildSalaryPerformanceSettlementLines({
+    performanceRecords: records,
+    salaryMonthlyWorkflows: [workflow]
+  });
+  const originalLine = lines.find((line) => line.salarySettlementReference === v1.salarySettlementReference);
+  const correctionLine = lines.find((line) => line.salarySettlementReference === v2.salarySettlementReference);
+
+  assertEqual(originalLine?.amount, 300, 'claimed quarterly V1 should preserve its frozen settlement amount');
+  assertEqual(originalLine?.salaryMonth, '2026-06', 'claimed quarterly V1 should remain in June salary');
+  assertEqual(correctionLine?.amount, 150, 'quarterly V2 should settle only the difference from V1');
+  assertEqual(correctionLine?.salaryMonth, '2026-07', 'confirmed June salary must not be rewritten');
+  assertEqual(correctionLine?.deferredFromMonth, '2026-06', 'quarterly V2 should retain its original month');
+});
+
+it('PF-27 salary confirmation settles only referenced formal results', () => {
+  const monthly = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      respondedAt: '2026-06-16 10:00',
+      resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
+      resultVersion: 1,
+      status: '已确认'
     }
-  },
-  {
-    name: 'PF-28 correction after salary confirmation creates a future-month difference',
-    run() {
-      const v1 = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          respondedAt: '2026-06-16 10:00',
-          resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
-          resultVersion: 1,
-          status: '已确认'
-        },
-        lifecycleStatus: '已结算'
-      });
-      const v2 = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          respondedAt: '2026-07-02 10:00',
-          resultId: 'monthly:employee-001:2026-06:绘图任务制:v2',
-          resultVersion: 2,
-          status: '已确认'
-        },
-        prepayAmount: 750,
-        supersedesResultId: v1.id,
-        version: 2
-      });
-      const workflow = createWorkflow({
-        salarySettlementReferences: [v1.salarySettlementReference]
-      });
-      const records = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-07-02 12:00',
-        formalResults: [v1, v2],
-        salaryMonthlyWorkflows: [workflow]
-      });
-      const lines = buildSalaryPerformanceSettlementLines({
-        performanceRecords: records,
-        salaryMonthlyWorkflows: [workflow]
-      });
-      const originalLine = lines.find((line) => line.salarySettlementReference === v1.salarySettlementReference);
-      const correctionLine = lines.find((line) => line.salarySettlementReference === v2.salarySettlementReference);
+  });
+  const quarterly = createQuarterlyResult();
+  const outcome = settlePerformanceResults([monthly, quarterly], {
+    actor: '李明',
+    salarySettlementReferences: [monthly.salarySettlementReference],
+    settledAt: '2026-06-30 10:00'
+  });
+  const nextMonthly = outcome.results.find((result) => result.id === monthly.id);
+  const nextQuarterly = outcome.results.find((result) => result.id === quarterly.id);
 
-      assertEqual(originalLine?.amount, 600, 'claimed V1 should preserve the frozen historical amount');
-      assertEqual(originalLine?.salaryMonth, '2026-06', 'claimed V1 should remain in its original salary month');
-      assertEqual(correctionLine?.amount, 150, 'V2 should settle only the difference from claimed V1');
-      assertEqual(correctionLine?.salaryMonth, '2026-07', 'confirmed June salary must not be rewritten');
-      assertEqual(correctionLine?.deferredFromMonth, '2026-06', 'deferred line should retain the original month');
+  assert(outcome.success, 'valid references should settle successfully');
+  assertEqual(nextMonthly?.lifecycleStatus, '已结算', 'referenced result should become settled');
+  assertEqual(nextQuarterly?.lifecycleStatus, '已发布', 'unreferenced result should remain published');
+  assertEqual(nextMonthly?.events.at(-1)?.action, '结算结果', 'settlement should keep an audit event');
+
+  const missing = settlePerformanceResults([monthly], {
+    actor: '李明',
+    salarySettlementReferences: ['missing-reference'],
+    settledAt: '2026-06-30 10:00'
+  });
+
+  assertEqual(missing.success, false, 'unknown references must block salary confirmation');
+
+  const objected = createMonthlyResult({
+    employeeResponse: {
+      employeeId: 'employee-001',
+      objectionReason: '任务计分有误',
+      respondedAt: '2026-06-17 11:00',
+      resultId: monthly.id,
+      resultVersion: 1,
+      status: '有异议'
     }
-  },
-  {
-    name: 'PF-28 quarterly V2 settles only its difference in the next unlocked salary month',
-    run() {
-      const v1 = createQuarterlyResult({ lifecycleStatus: '已结算' });
-      const v2 = createQuarterlyResult({
-        calculationSnapshot: {
-          ...v1.calculationSnapshot,
-          quarterCalculatedAmount: 2100,
-          quarterDifferenceAmount: 450,
-          quarterFinalAmount: 2100,
-          quarterPrepayAmount: 1650
-        },
-        employeeResponse: {
-          employeeId: 'employee-001',
-          respondedAt: '2026-07-03 10:00',
-          resultId: 'quarterly:employee-001:2026-Q2:绘图任务制:v2',
-          resultVersion: 2,
-          status: '已确认'
-        },
-        id: 'quarterly:employee-001:2026-Q2:绘图任务制:v2',
-        quarterCalculatedAmount: 2100,
-        quarterDifferenceAmount: 450,
-        quarterFinalAmount: 2100,
-        quarterPrepayAmount: 1650,
-        salarySettlementReference: 'performance-result:quarterly:employee-001:2026-Q2:drawing:v2',
-        sourceHash: 'quarter-source-hash-v2',
-        supersedesResultId: v1.id,
-        version: 2
-      });
-      const workflow = createWorkflow({
-        salarySettlementReferences: [v1.salarySettlementReference]
-      });
-      const records = buildSalaryPerformanceSourceRecords({
-        asOf: '2026-07-03 12:00',
-        formalResults: [v1, v2],
-        salaryMonthlyWorkflows: [workflow]
-      });
-      const lines = buildSalaryPerformanceSettlementLines({
-        performanceRecords: records,
-        salaryMonthlyWorkflows: [workflow]
-      });
-      const originalLine = lines.find((line) => line.salarySettlementReference === v1.salarySettlementReference);
-      const correctionLine = lines.find((line) => line.salarySettlementReference === v2.salarySettlementReference);
+  });
+  const objectedSettlement = settlePerformanceResults([objected], {
+    actor: '李明',
+    salarySettlementReferences: [objected.salarySettlementReference],
+    settledAt: '2026-06-30 10:00'
+  });
 
-      assertEqual(originalLine?.amount, 300, 'claimed quarterly V1 should preserve its frozen settlement amount');
-      assertEqual(originalLine?.salaryMonth, '2026-06', 'claimed quarterly V1 should remain in June salary');
-      assertEqual(correctionLine?.amount, 150, 'quarterly V2 should settle only the difference from V1');
-      assertEqual(correctionLine?.salaryMonth, '2026-07', 'confirmed June salary must not be rewritten');
-      assertEqual(correctionLine?.deferredFromMonth, '2026-06', 'quarterly V2 should retain its original month');
-    }
-  },
-  {
-    name: 'PF-27 salary confirmation settles only referenced formal results',
-    run() {
-      const monthly = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          respondedAt: '2026-06-16 10:00',
-          resultId: 'monthly:employee-001:2026-06:绘图任务制:v1',
-          resultVersion: 1,
-          status: '已确认'
-        }
-      });
-      const quarterly = createQuarterlyResult();
-      const outcome = settlePerformanceResults([monthly, quarterly], {
-        actor: '李明',
-        salarySettlementReferences: [monthly.salarySettlementReference],
-        settledAt: '2026-06-30 10:00'
-      });
-      const nextMonthly = outcome.results.find((result) => result.id === monthly.id);
-      const nextQuarterly = outcome.results.find((result) => result.id === quarterly.id);
-
-      assert(outcome.success, 'valid references should settle successfully');
-      assertEqual(nextMonthly?.lifecycleStatus, '已结算', 'referenced result should become settled');
-      assertEqual(nextQuarterly?.lifecycleStatus, '已发布', 'unreferenced result should remain published');
-      assertEqual(nextMonthly?.events.at(-1)?.action, '结算结果', 'settlement should keep an audit event');
-
-      const missing = settlePerformanceResults([monthly], {
-        actor: '李明',
-        salarySettlementReferences: ['missing-reference'],
-        settledAt: '2026-06-30 10:00'
-      });
-
-      assertEqual(missing.success, false, 'unknown references must block salary confirmation');
-
-      const objected = createMonthlyResult({
-        employeeResponse: {
-          employeeId: 'employee-001',
-          objectionReason: '任务计分有误',
-          respondedAt: '2026-06-17 11:00',
-          resultId: monthly.id,
-          resultVersion: 1,
-          status: '有异议'
-        }
-      });
-      const objectedSettlement = settlePerformanceResults([objected], {
-        actor: '李明',
-        salarySettlementReferences: [objected.salarySettlementReference],
-        settledAt: '2026-06-30 10:00'
-      });
-
-      assertEqual(objectedSettlement.success, false, 'active objection must block result settlement');
-    }
-  }
-];
-
-export function runSalaryPerformanceConsumptionModelTests(): UnitTestResult {
-  const failures: string[] = [];
-  let passed = 0;
-
-  for (const test of tests) {
-    try {
-      test.run();
-      passed += 1;
-    } catch (error) {
-      failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  return {
-    failures,
-    passed,
-    total: tests.length
-  };
-}
+  assertEqual(objectedSettlement.success, false, 'active objection must block result settlement');
+});

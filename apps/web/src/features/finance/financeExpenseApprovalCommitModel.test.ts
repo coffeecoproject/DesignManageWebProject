@@ -1,12 +1,8 @@
 import type { SalaryAdjustmentRecord } from '../salary/salaryDomain';
 import { buildFinanceExpenseApprovalCommit } from './financeExpenseApprovalCommitModel';
 import type { FinanceReceivablePayableRecord } from './financeReceivablesPayablesData';
-
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assert } from '../../__tests__/assertions';
 
 function assertThrows(action: () => void, expectedMessage: string, message: string) {
   try {
@@ -32,62 +28,31 @@ const salaryAdjustment = {
   month: '2026-07'
 } as SalaryAdjustmentRecord;
 
-const tests = [
-  {
-    name: 'NP-11 commits reimbursement payable and salary adjustment from one validated snapshot',
-    run() {
-      const result = buildFinanceExpenseApprovalCommit({
-        isSalaryAdjustmentPeriodOpen: () => true,
-        isAccountingPeriodOpen: () => true,
-        plan: { payableRecord, salaryAdjustment },
-        snapshot: { payableRows: [], salaryAdjustments: [] }
-      });
+it('NP-11 commits reimbursement payable and salary adjustment from one validated snapshot', () => {
+  const result = buildFinanceExpenseApprovalCommit({
+    isSalaryAdjustmentPeriodOpen: () => true,
+    isAccountingPeriodOpen: () => true,
+    plan: { payableRecord, salaryAdjustment },
+    snapshot: { payableRows: [], salaryAdjustments: [] }
+  });
 
-      assert(result.payableRows[0] === payableRecord, 'approved reimbursement payable should be committed');
-      assert(result.salaryAdjustments[0] === salaryAdjustment, 'taxable allowance should be committed to salary');
-    }
-  },
-  {
-    name: 'NP-17 FRONTEND-CHAIN rejects the whole financial commit before either result changes',
-    run() {
-      const snapshot = { payableRows: [], salaryAdjustments: [] };
+  assert(result.payableRows[0] === payableRecord, 'approved reimbursement payable should be committed');
+  assert(result.salaryAdjustments[0] === salaryAdjustment, 'taxable allowance should be committed to salary');
+});
 
-      assertThrows(
-        () => buildFinanceExpenseApprovalCommit({
-          isSalaryAdjustmentPeriodOpen: () => false,
-          isAccountingPeriodOpen: () => true,
-          plan: { payableRecord, salaryAdjustment },
-          snapshot
-        }),
-        '目标薪酬月份已发放',
-        'a closed salary month should reject the complete financial commit'
-      );
-      assert(snapshot.payableRows.length === 0, 'rejected commit must not create a payable');
-      assert(snapshot.salaryAdjustments.length === 0, 'rejected commit must not create a salary adjustment');
-    }
-  }
-];
+it('NP-17 FRONTEND-CHAIN rejects the whole financial commit before either result changes', () => {
+  const snapshot = { payableRows: [], salaryAdjustments: [] };
 
-export function runFinanceExpenseApprovalCommitModelTests() {
-  const failures: string[] = [];
-  const passedTestNames: string[] = [];
-  let passed = 0;
-
-  for (const test of tests) {
-    try {
-      test.run();
-      passed += 1;
-      passedTestNames.push(test.name);
-    } catch (error) {
-      failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  return {
-    executedTestNames: tests.map((test) => test.name),
-    failures,
-    passed,
-    passedTestNames,
-    total: tests.length
-  };
-}
+  assertThrows(
+    () => buildFinanceExpenseApprovalCommit({
+      isSalaryAdjustmentPeriodOpen: () => false,
+      isAccountingPeriodOpen: () => true,
+      plan: { payableRecord, salaryAdjustment },
+      snapshot
+    }),
+    '目标薪酬月份已发放',
+    'a closed salary month should reject the complete financial commit'
+  );
+  assert(snapshot.payableRows.length === 0, 'rejected commit must not create a payable');
+  assert(snapshot.salaryAdjustments.length === 0, 'rejected commit must not create a salary adjustment');
+});

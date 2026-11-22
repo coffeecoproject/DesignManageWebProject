@@ -32,11 +32,8 @@ import {
   createFinanceSourceTableSqlRepositoryContract,
   type FinanceSourceTableSqlRow,
 } from './periodCloseSourceTableSqlRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 type HttpClientResponse = {
   bodyText: string;
@@ -44,16 +41,8 @@ type HttpClientResponse = {
   status: number;
 };
 
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
 function assertStringIncludes(actual: string, expected: string, message: string) {
-  if (!actual.includes(expected)) {
-    throw new Error(`${message}. Expected ${expected} in ${actual}`);
-  }
+  assert(actual.includes(expected), `${message}. Expected ${expected} in ${actual}`);
 }
 
 function parseJson(bodyText: string) {
@@ -529,121 +518,108 @@ function createProcessFixture(readinessPackage: PeriodClosePostgresRuntimeReadin
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects local listener startup when project runtime process is not active',
-    run: async () => {
-      const fixture = createProcessFixture(createBlockedReadinessPackage());
+it('rejects local listener startup when project runtime process is not active', async () => {
+  const fixture = createProcessFixture(createBlockedReadinessPackage());
 
-      try {
-        await createFinanceHttpPostgresManagedProjectRuntimeNodeServerContract({
-          process: fixture.process,
-        }).listen();
-      } catch (error) {
-        assertStringIncludes(
-          String(error),
-          'blocked_by_runtime_readiness',
-          'blocked process should fail listener startup before binding',
-        );
-        assertEqual(fixture.fakeRuntime.readCounts().guardCallCount, 0, 'blocked startup must not call runtime');
-        assertEqual(fixture.fallback.readCallCount(), 0, 'blocked startup must not call fallback');
+  try {
+    await createFinanceHttpPostgresManagedProjectRuntimeNodeServerContract({
+      process: fixture.process,
+    }).listen();
+  } catch (error) {
+    assertStringIncludes(
+      String(error),
+      'blocked_by_runtime_readiness',
+      'blocked process should fail listener startup before binding',
+    );
+    assertEqual(fixture.fakeRuntime.readCounts().guardCallCount, 0, 'blocked startup must not call runtime');
+    assertEqual(fixture.fallback.readCallCount(), 0, 'blocked startup must not call fallback');
 
-        return;
-      }
+    return;
+  }
 
-      throw new Error('blocked project runtime process should not start local listener');
-    },
-  },
-  {
-    name: 'hosts active project runtime process behind a local Node HTTP listener',
-    run: async () => {
-      const fixture = createProcessFixture(createReadyReadinessPackage());
-      const server = await createFinanceHttpPostgresManagedProjectRuntimeNodeServerContract({
-        process: fixture.process,
-      }).listen();
+  throw new Error('blocked project runtime process should not start local listener');
+});
 
-      try {
-        const response = await sendHttpRequest({
-          bodyText: JSON.stringify({
-            amount: '1300.00',
-            expectedVersion: 1,
-            targetAccountingPeriod: '2026-06',
-          }),
-          headers: {
-            authorization: 'Bearer finance-user',
-            'content-type': 'application/json',
-          },
-          method: 'PATCH',
-          origin: server.origin,
-          path: '/api/finance/receivables-payables/source-001/adjust',
-        });
-        const body = parseJson(response.bodyText);
-        const rows = fixture.sourceSqlRepository.readSqlRows();
+it('hosts active project runtime process behind a local Node HTTP listener', async () => {
+  const fixture = createProcessFixture(createReadyReadinessPackage());
+  const server = await createFinanceHttpPostgresManagedProjectRuntimeNodeServerContract({
+    process: fixture.process,
+  }).listen();
 
-        assertEqual(response.status, 200, 'local Node host should return project runtime response');
-        assertEqual(body.sourceId, 'source-001', 'local Node host should preserve source mutation body');
-        assertEqual(body.version, 2, 'local Node host should preserve updated source version');
-        assertEqual(rows[0]?.amount, '1300.00', 'local Node host should write source SQL row after managed commit');
-        assertEqual(
-          response.headers['x-finance-local-project-runtime-node-server-entry'],
-          'project-runtime-process',
-          'local Node host should expose project runtime process provenance',
-        );
-        assertEqual(
-          response.headers['x-finance-local-project-runtime-node-server-lifecycle'],
-          'active',
-          'local Node host should expose active lifecycle while handling request',
-        );
-        assertEqual(
-          response.headers['x-finance-local-project-runtime-node-server-runtime-bundle'],
-          fixture.admission.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
-          'local Node host should expose the active runtime bundle evidence id',
-        );
-        assertEqual(fixture.fakeRuntime.readCounts().guardCallCount, 1, 'local Node host should call runtime once');
-        assertEqual(fixture.fallback.readCallCount(), 0, 'source mutation should not fall through to fallback');
+  try {
+    const response = await sendHttpRequest({
+      bodyText: JSON.stringify({
+        amount: '1300.00',
+        expectedVersion: 1,
+        targetAccountingPeriod: '2026-06',
+      }),
+      headers: {
+        authorization: 'Bearer finance-user',
+        'content-type': 'application/json',
+      },
+      method: 'PATCH',
+      origin: server.origin,
+      path: '/api/finance/receivables-payables/source-001/adjust',
+    });
+    const body = parseJson(response.bodyText);
+    const rows = fixture.sourceSqlRepository.readSqlRows();
 
-        const shutdown = await server.close({ requestId: 'project-runtime-node-shutdown-001' });
+    assertEqual(response.status, 200, 'local Node host should return project runtime response');
+    assertEqual(body.sourceId, 'source-001', 'local Node host should preserve source mutation body');
+    assertEqual(body.version, 2, 'local Node host should preserve updated source version');
+    assertEqual(rows[0]?.amount, '1300.00', 'local Node host should write source SQL row after managed commit');
+    assertEqual(
+      response.headers['x-finance-local-project-runtime-node-server-entry'],
+      'project-runtime-process',
+      'local Node host should expose project runtime process provenance',
+    );
+    assertEqual(
+      response.headers['x-finance-local-project-runtime-node-server-lifecycle'],
+      'active',
+      'local Node host should expose active lifecycle while handling request',
+    );
+    assertEqual(
+      response.headers['x-finance-local-project-runtime-node-server-runtime-bundle'],
+      fixture.admission.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
+      'local Node host should expose the active runtime bundle evidence id',
+    );
+    assertEqual(fixture.fakeRuntime.readCounts().guardCallCount, 1, 'local Node host should call runtime once');
+    assertEqual(fixture.fallback.readCallCount(), 0, 'source mutation should not fall through to fallback');
 
-        assertEqual(shutdown.httpServerClosed, true, 'local Node host should close HTTP server');
-        assertEqual(
-          shutdown.processShutdown.runtimeShutdown.status,
-          'closed',
-          'local Node host should shutdown managed runtime',
-        );
-        assertEqual(
-          fixture.process.getProcessSummary().lifecycleState,
-          'closed',
-          'local Node host close should close process lifecycle',
-        );
-        assertEqual(fixture.fakeRuntime.readCounts().shutdownCallCount, 1, 'local Node host should shutdown runtime once');
-      } finally {
-        if (fixture.process.getProcessSummary().lifecycleState !== 'closed') {
-          await server.close({ requestId: 'project-runtime-node-finally-close' });
-        }
-      }
-    },
-  },
-  {
-    name: 'rejects non-local bind hosts in the local node server contract',
-    run: async () => {
-      const fixture = createProcessFixture(createReadyReadinessPackage());
+    const shutdown = await server.close({ requestId: 'project-runtime-node-shutdown-001' });
 
-      try {
-        await createFinanceHttpPostgresManagedProjectRuntimeNodeServerContract({
-          process: fixture.process,
-        }).listen({ host: '0.0.0.0' });
-      } catch (error) {
-        assertStringIncludes(String(error), 'localhost', 'non-local host should be rejected before binding');
-        assertEqual(fixture.fakeRuntime.readCounts().guardCallCount, 0, 'non-local host reject must not call runtime');
+    assertEqual(shutdown.httpServerClosed, true, 'local Node host should close HTTP server');
+    assertEqual(
+      shutdown.processShutdown.runtimeShutdown.status,
+      'closed',
+      'local Node host should shutdown managed runtime',
+    );
+    assertEqual(
+      fixture.process.getProcessSummary().lifecycleState,
+      'closed',
+      'local Node host close should close process lifecycle',
+    );
+    assertEqual(fixture.fakeRuntime.readCounts().shutdownCallCount, 1, 'local Node host should shutdown runtime once');
+  } finally {
+    if (fixture.process.getProcessSummary().lifecycleState !== 'closed') {
+      await server.close({ requestId: 'project-runtime-node-finally-close' });
+    }
+  }
+});
 
-        return;
-      }
+it('rejects non-local bind hosts in the local node server contract', async () => {
+  const fixture = createProcessFixture(createReadyReadinessPackage());
 
-      throw new Error('non-local host should not be accepted by local node server contract');
-    },
-  },
-];
+  try {
+    await createFinanceHttpPostgresManagedProjectRuntimeNodeServerContract({
+      process: fixture.process,
+    }).listen({ host: '0.0.0.0' });
+  } catch (error) {
+    assertStringIncludes(String(error), 'localhost', 'non-local host should be rejected before binding');
+    assertEqual(fixture.fakeRuntime.readCounts().guardCallCount, 0, 'non-local host reject must not call runtime');
 
-for (const test of tests) {
-  await test.run();
-}
+    return;
+  }
+
+  throw new Error('non-local host should not be accepted by local node server contract');
+});

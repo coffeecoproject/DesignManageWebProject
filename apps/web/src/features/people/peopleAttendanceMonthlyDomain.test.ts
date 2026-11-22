@@ -20,33 +20,8 @@ import {
   type AttendanceMonthlySalarySettlementRecord
 } from './peopleAttendanceMonthlyDomain';
 import type { PeopleMember } from './peopleTypes';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-type UnitTestResult = {
-  failures: string[];
-  passed: number;
-  total: number;
-};
-
-function fail(message: string): never {
-  throw new Error(message);
-}
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    fail(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (!Object.is(actual, expected)) {
-    fail(`${message}. Expected ${String(expected)}, received ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../../__tests__/assertions';
 
 const weekdayCalendar: WorkCalendarRow = {
   alternateWorkdays: [],
@@ -248,302 +223,62 @@ function buildReports({
   });
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'derives month ranges and hourly payroll day equivalents',
-    run: () => {
-      const range = getAttendanceMonthRange('2026-06');
+it('derives month ranges and hourly payroll day equivalents', () => {
+  const range = getAttendanceMonthRange('2026-06');
 
-      assertEqual(range.startDateText, '2026-06-01', 'month range should start on first day');
-      assertEqual(range.endDateText, '2026-06-30', 'month range should end on last day');
-      assertEqual(getPayrollAttendanceDaysFromHours(4), 0.5, 'four hours should be half a payroll day');
-      assertEqual(getPayrollAttendanceDaysFromHours(9), 1.13, 'nine hours should keep hourly payroll-day equivalent');
-      assertEqual(getPayrollAttendanceDaysFromHours(12), 1.5, 'twelve hours should round to one and a half payroll days');
-    }
-  },
-  {
-    name: 'builds reports for full-time monthly-scope members only',
-    run: () => {
-      const reports = buildReports({
-        peopleRows: [
-          createMember({ id: 'member-001', personnelType: '全职', status: '在职' }),
-          createMember({ id: 'member-002', personnelType: '兼职', status: '合作中' }),
-          createMember({ contractEndAt: '2026-05-31', id: 'member-003', status: '离职' }),
-          createMember({ id: 'member-004', joinedAt: '2026-07-01', status: '试用期' })
-        ]
-      });
+  assertEqual(range.startDateText, '2026-06-01', 'month range should start on first day');
+  assertEqual(range.endDateText, '2026-06-30', 'month range should end on last day');
+  assertEqual(getPayrollAttendanceDaysFromHours(4), 0.5, 'four hours should be half a payroll day');
+  assertEqual(getPayrollAttendanceDaysFromHours(9), 1.13, 'nine hours should keep hourly payroll-day equivalent');
+  assertEqual(getPayrollAttendanceDaysFromHours(12), 1.5, 'twelve hours should round to one and a half payroll days');
+});
 
-      assertEqual(reports.length, 1, 'only active full-time members in the month should produce reports');
-      assertEqual(reports[0].member.id, 'member-001', 'active full-time member should remain in report');
-    }
-  },
-  {
-    name: 'uses work-calendar and annual exceptions for expected workdays',
-    run: () => {
-      const normalReport = buildReports()[0];
-      const restDayReport = buildReports({ annualExceptionRows: restDayExceptionRows })[0];
-      const specialWorkdayReport = buildReports({ annualExceptionRows: specialWorkdayExceptionRows })[0];
-      const disabledCalendarReport = buildReports({
-        peopleRows: [createMember({ workCalendarId: disabledCalendar.id })],
-        workCalendarRows: [disabledCalendar]
-      })[0];
+it('builds reports for full-time monthly-scope members only', () => {
+  const reports = buildReports({
+    peopleRows: [
+      createMember({ id: 'member-001', personnelType: '全职', status: '在职' }),
+      createMember({ id: 'member-002', personnelType: '兼职', status: '合作中' }),
+      createMember({ contractEndAt: '2026-05-31', id: 'member-003', status: '离职' }),
+      createMember({ id: 'member-004', joinedAt: '2026-07-01', status: '试用期' })
+    ]
+  });
 
-      assertEqual(normalReport.expectedWorkdays, 22, 'June 2026 weekday calendar should have 22 workdays');
-      assertEqual(restDayReport.expectedWorkdays, 21, 'enabled rest-day exception should reduce expected workdays');
-      assertEqual(specialWorkdayReport.expectedWorkdays, 23, 'enabled special-workday exception should increase expected workdays');
-      assertEqual(disabledCalendarReport.expectedWorkdays, 0, 'disabled calendar should not create expected workdays');
-    }
-  },
-  {
-    name: 'derives payable attendance from exceptions and adjustments',
-    run: () => {
-      const reports = buildReports({
-        adjustments: [
-          {
-            actor: '测试人',
-            createdAt: '2026-06-12 10:00',
-            direction: '增加',
-            hours: 4,
-            id: 'adjust-plus',
-            memberId: 'member-001',
-            month: '2026-06',
-            reason: '测试增加',
-            type: '增加计薪出勤'
-          },
-          {
-            actor: '测试人',
-            createdAt: '2026-06-13 10:00',
-            direction: '扣减',
-            hours: 8,
-            id: 'adjust-minus',
-            memberId: 'member-001',
-            month: '2026-06',
-            reason: '测试扣减',
-            type: '扣减计薪出勤'
-          }
-        ],
-        attendanceRecords: [
-          createAttendanceRecord({ durationHours: 9, id: 'leave', type: '请假' }),
-          createAttendanceRecord({
-            durationHours: 8,
-            effect: '可用',
-            endAt: '2026-06-14 18:00',
-            id: 'makeup',
-            startAt: '2026-06-14 10:00',
-            type: '补班'
-          }),
-          createAttendanceRecord({ durationHours: 8, id: 'rest', type: '调休' }),
-          createAttendanceRecord({ durationHours: 8, id: 'cancelled', status: '已取消', type: '请假' })
-        ]
-      });
-      const report = reports[0];
+  assertEqual(reports.length, 1, 'only active full-time members in the month should produce reports');
+  assertEqual(reports[0].member.id, 'member-001', 'active full-time member should remain in report');
+});
 
-      assertEqual(report.leaveDays, 1, 'leave should be summarized as deduction facts');
-      assertEqual(report.leaveHours, 8, 'single-day leave should keep payroll-hour deduction capped to standard day hours');
-      assertEqual(report.makeupWorkDays, 1, 'make-up work should be summarized as exception facts');
-      assertEqual(report.makeupWorkHours, 8, 'make-up work should retain exception hours');
-      assertEqual(report.payrollIncreaseDays, 0, 'make-up work should not automatically create payroll increase days');
-      assertEqual(report.payrollIncreaseHours, 0, 'make-up work should not automatically create payroll increase hours');
-      assertEqual(report.restDays, 1, 'rest should be summarized as exception facts');
-      assertEqual(report.restCoveredHours, 0, 'later make-up work should not cover earlier compensatory rest');
-      assertEqual(report.restUncoveredHours, 8, 'compensatory rest without prior credit should be uncovered');
-      assertEqual(report.restBalanceHours, 8, 'later make-up work should remain as available balance');
-      assertEqual(report.payrollDeductionHours, 16, 'leave and uncovered compensatory rest should both deduct payroll attendance');
-      assertEqual(report.payrollDeductionEntries.length, 2, 'leave and uncovered rest should both produce date-scoped deduction entries');
-      assertEqual(report.adjustmentDays, -0.5, 'adjustments should use signed days');
-      assertEqual(report.adjustmentHours, -4, 'adjustments should expose signed hours for salary calculation');
-      assertEqual(report.payableAttendanceDays, 19.5, 'payable days should derive from default attendance, payroll exceptions, and adjustments');
-      assertEqual(report.payableAttendanceHours, 156, 'payable hours should drive salary calculation');
-      assertEqual(report.relatedExceptions.length, 3, 'cancelled attendance records should be ignored');
-    }
-  },
-  {
-    name: 'keeps rest-day leave as a record without deducting payroll attendance',
-    run: () => {
-      const report = buildReports({
-        attendanceRecords: [
-          createAttendanceRecord({
-            endAt: '2026-06-14 18:00',
-            id: 'rest-day-leave',
-            startAt: '2026-06-14 10:00',
-            type: '请假'
-          })
-        ]
-      })[0];
+it('uses work-calendar and annual exceptions for expected workdays', () => {
+  const normalReport = buildReports()[0];
+  const restDayReport = buildReports({ annualExceptionRows: restDayExceptionRows })[0];
+  const specialWorkdayReport = buildReports({ annualExceptionRows: specialWorkdayExceptionRows })[0];
+  const disabledCalendarReport = buildReports({
+    peopleRows: [createMember({ workCalendarId: disabledCalendar.id })],
+    workCalendarRows: [disabledCalendar]
+  })[0];
 
-      assertEqual(report.recordedLeaveHours, 8, 'rest-day leave should remain visible in recorded hours');
-      assertEqual(report.leaveHours, 0, 'rest-day leave should not become effective leave');
-      assertEqual(report.payrollDeductionHours, 0, 'rest-day leave should not deduct payroll attendance');
-    }
-  },
-  {
-    name: 'covers compensatory rest with prior make-up work credit',
-    run: () => {
-      const report = buildReports({
-        attendanceRecords: [
-          createAttendanceRecord({
-            durationHours: 8,
-            effect: '可用',
-            endAt: '2026-06-06 18:00',
-            id: 'makeup-before-rest',
-            startAt: '2026-06-06 10:00',
-            type: '补班'
-          }),
-          createAttendanceRecord({ durationHours: 8, id: 'covered-rest', type: '调休' })
-        ]
-      })[0];
+  assertEqual(normalReport.expectedWorkdays, 22, 'June 2026 weekday calendar should have 22 workdays');
+  assertEqual(restDayReport.expectedWorkdays, 21, 'enabled rest-day exception should reduce expected workdays');
+  assertEqual(specialWorkdayReport.expectedWorkdays, 23, 'enabled special-workday exception should increase expected workdays');
+  assertEqual(disabledCalendarReport.expectedWorkdays, 0, 'disabled calendar should not create expected workdays');
+});
 
-      assertEqual(report.makeupWorkHours, 8, 'make-up work should create compensatory rest credit');
-      assertEqual(report.restHours, 8, 'compensatory rest should keep exception hours');
-      assertEqual(report.restCoveredHours, 8, 'prior make-up work should cover rest hours');
-      assertEqual(report.restUncoveredHours, 0, 'covered compensatory rest should not create uncovered hours');
-      assertEqual(report.restBalanceHours, 0, 'covered rest should consume available credit');
-      assertEqual(report.payrollDeductionHours, 0, 'covered compensatory rest should not deduct payroll attendance');
-      assertEqual(report.payrollDeductionEntries.length, 0, 'covered compensatory rest should not produce deduction entries');
-      assertEqual(report.payableAttendanceHours, 176, 'covered compensatory rest should keep default payable attendance');
-    }
-  },
-  {
-    name: 'exports stable payroll-attendance contract for salary',
-    run: () => {
-      const report = buildReports({
-        attendanceRecords: [
-          createAttendanceRecord({ durationHours: 8, id: 'leave-for-contract', type: '请假' }),
-          createAttendanceRecord({
-            durationHours: 8,
-            effect: '可用',
-            endAt: '2026-06-14 18:00',
-            id: 'makeup-after-rest-for-contract',
-            startAt: '2026-06-14 10:00',
-            type: '补班'
-          }),
-          createAttendanceRecord({ durationHours: 8, id: 'uncovered-rest-for-contract', type: '调休' })
-        ]
-      })[0];
-      const contract = toPayrollAttendanceMonthlyContract(report);
-
-      assertEqual(contract.contractVersion, 'payroll-attendance-monthly-v1', 'contract version should be explicit');
-      assertEqual(contract.sourceModule, '考勤月报', 'contract should keep source module ownership');
-      assertEqual(contract.reportId, report.id, 'contract should retain source report id');
-      assertEqual(contract.memberId, report.member.id, 'contract should retain member id');
-      assertEqual(contract.month, report.month, 'contract should retain payroll month');
-      assertEqual(contract.reportStatus, report.status, 'contract should expose report confirmation status');
-      assertEqual(contract.salarySettlementStatus, report.salarySettlementStatus, 'contract should expose settlement lock status');
-      assertEqual(contract.payrollDeductionHours, 16, 'contract should expose total payroll deduction hours');
-      assertEqual(contract.restUncoveredHours, 8, 'contract should expose uncovered compensatory-rest hours');
-      assertEqual(contract.restBalanceHours, 8, 'contract should expose remaining compensatory-rest balance');
-      assertEqual(contract.payrollDeductionEntries.length, 2, 'contract should expose date-scoped deduction entries');
-      assertEqual(contract.payrollDeductionEntries[0].dateText, '2026-06-10', 'leave deduction date should be retained');
-      assertEqual(contract.payrollDeductionEntries[0].hours, 8, 'leave deduction hours should be retained');
-      assertEqual(contract.payrollDeductionEntries[1].type, '调休超额', 'uncovered rest should be a payroll deduction entry');
-      assert(contract.expectedWorkdayDates !== report.expectedWorkdayDates, 'contract should not leak mutable report workday array');
-      assert(contract.payrollDeductionEntries !== report.payrollDeductionEntries, 'contract should not leak mutable report deduction array');
-    }
-  },
-  {
-    name: 'marks salary-settled reports as locked against adjustments',
-    run: () => {
-      const report = buildReports({
-        salarySettlements: [
-          {
-            actor: '结算人',
-            memberId: 'member-001',
-            month: '2026-06',
-            note: '工资已结算',
-            settledAt: '2026-06-17 11:00',
-            settlementNo: 'PAY-TEST-001',
-            status: '已结算'
-          }
-        ]
-      })[0];
-
-      assertEqual(report.salarySettlementStatus, '已结算', 'settlement record should mark salary as settled');
-      assertEqual(report.canAdjust, false, 'settled salary reports should not be adjustable');
-      assert(report.salarySettlement, 'salary settlement metadata should be attached to report');
-    }
-  },
-  {
-    name: 'invalidates stale confirmations when later adjustments exist',
-    run: () => {
-      const staleConfirmationReport = buildReports({
-        adjustments: [
-          {
-            actor: '调整人',
-            createdAt: '2026-06-17 12:00',
-            direction: '增加',
-            hours: 4,
-            id: 'adjust-after-confirm',
-            memberId: 'member-001',
-            month: '2026-06',
-            reason: '确认后补充调整',
-            type: '增加计薪出勤'
-          }
-        ],
-        confirmations: [
-          {
-            actor: '确认人',
-            confirmedAt: '2026-06-17 10:00',
-            memberId: 'member-001',
-            month: '2026-06',
-            note: '调整前确认'
-          }
-        ]
-      })[0];
-      const freshConfirmationReport = buildReports({
-        adjustments: [
-          {
-            actor: '调整人',
-            createdAt: '2026-06-17 09:00',
-            direction: '增加',
-            hours: 4,
-            id: 'adjust-before-confirm',
-            memberId: 'member-001',
-            month: '2026-06',
-            reason: '确认前调整',
-            type: '增加计薪出勤'
-          }
-        ],
-        confirmations: [
-          {
-            actor: '确认人',
-            confirmedAt: '2026-06-17 10:00',
-            memberId: 'member-001',
-            month: '2026-06',
-            note: '调整后确认'
-          }
-        ]
-      })[0];
-
-      assertEqual(staleConfirmationReport.status, '待确认', 'later adjustment should invalidate old confirmation');
-      assertEqual(staleConfirmationReport.confirmation, undefined, 'stale confirmation should not be attached');
-      assertEqual(freshConfirmationReport.status, '已确认', 'confirmation after adjustment should remain valid');
-      assert(freshConfirmationReport.confirmation, 'fresh confirmation should be attached');
-    }
-  },
-  {
-    name: 'places a new confirmation after the latest monthly adjustment',
-    run: () => {
-      assertEqual(
-        getAttendanceMonthlyConfirmationTimestamp('2026-06-16 10:30', [
-          { createdAt: '2026-06-16 09:00' },
-          { createdAt: '2026-06-16 16:20' }
-        ]),
-        '2026-06-16 16:21',
-        'confirmation should remain effective when the month already contains a later adjustment'
-      );
-      assertEqual(
-        getAttendanceMonthlyConfirmationTimestamp('2026-06-16 10:30', []),
-        '2026-06-16 10:30',
-        'confirmation should keep the operation timestamp when no later adjustment exists'
-      );
-    }
-  },
-  {
-    name: 'uses confirmation state and adjustment direction helpers',
-    run: () => {
-      const adjustment: AttendanceMonthlyAdjustmentRecord = {
+it('derives payable attendance from exceptions and adjustments', () => {
+  const reports = buildReports({
+    adjustments: [
+      {
         actor: '测试人',
         createdAt: '2026-06-12 10:00',
+        direction: '增加',
+        hours: 4,
+        id: 'adjust-plus',
+        memberId: 'member-001',
+        month: '2026-06',
+        reason: '测试增加',
+        type: '增加计薪出勤'
+      },
+      {
+        actor: '测试人',
+        createdAt: '2026-06-13 10:00',
         direction: '扣减',
         hours: 8,
         id: 'adjust-minus',
@@ -551,147 +286,335 @@ const tests: UnitTest[] = [
         month: '2026-06',
         reason: '测试扣减',
         type: '扣减计薪出勤'
-      };
-      const report = buildReports({
-        adjustments: [adjustment],
-        confirmations: [
-          {
-            actor: '确认人',
-            confirmedAt: '2026-06-17 10:00',
-            memberId: 'member-001',
-            month: '2026-06',
-            note: '已确认'
-          }
-        ]
-      })[0];
+      }
+    ],
+    attendanceRecords: [
+      createAttendanceRecord({ durationHours: 9, id: 'leave', type: '请假' }),
+      createAttendanceRecord({
+        durationHours: 8,
+        effect: '可用',
+        endAt: '2026-06-14 18:00',
+        id: 'makeup',
+        startAt: '2026-06-14 10:00',
+        type: '补班'
+      }),
+      createAttendanceRecord({ durationHours: 8, id: 'rest', type: '调休' }),
+      createAttendanceRecord({ durationHours: 8, id: 'cancelled', status: '已取消', type: '请假' })
+    ]
+  });
+  const report = reports[0];
 
-      assertEqual(report.status, '已确认', 'confirmation record should lock report status');
-      assert(report.confirmation, 'confirmation should be attached to report');
-      assertEqual(getMonthlyAdjustmentSignedDays(adjustment), -1, 'deduction adjustment should be negative');
-      assertEqual(getMonthlyAdjustmentSignedHours(adjustment), -8, 'deduction adjustment hours should be negative');
-      assertEqual(getAdjustmentDirectionFromType('增加计薪出勤'), '增加', 'increase type should map to increase direction');
-      assertEqual(getAdjustmentDirectionFromType('扣减计薪出勤'), '扣减', 'deduction type should map to deduction direction');
-      assertEqual(getAdjustmentDirectionFromType('备注修正'), '备注', 'remark type should map to remark direction');
-    }
-  },
-  {
-    name: 'freezes confirmed monthly calculation against later calendar changes',
-    run: () => {
-      const originalReport = buildReports()[0];
-      const confirmation: AttendanceMonthlyConfirmationRecord = {
+  assertEqual(report.leaveDays, 1, 'leave should be summarized as deduction facts');
+  assertEqual(report.leaveHours, 8, 'single-day leave should keep payroll-hour deduction capped to standard day hours');
+  assertEqual(report.makeupWorkDays, 1, 'make-up work should be summarized as exception facts');
+  assertEqual(report.makeupWorkHours, 8, 'make-up work should retain exception hours');
+  assertEqual(report.payrollIncreaseDays, 0, 'make-up work should not automatically create payroll increase days');
+  assertEqual(report.payrollIncreaseHours, 0, 'make-up work should not automatically create payroll increase hours');
+  assertEqual(report.restDays, 1, 'rest should be summarized as exception facts');
+  assertEqual(report.restCoveredHours, 0, 'later make-up work should not cover earlier compensatory rest');
+  assertEqual(report.restUncoveredHours, 8, 'compensatory rest without prior credit should be uncovered');
+  assertEqual(report.restBalanceHours, 8, 'later make-up work should remain as available balance');
+  assertEqual(report.payrollDeductionHours, 16, 'leave and uncovered compensatory rest should both deduct payroll attendance');
+  assertEqual(report.payrollDeductionEntries.length, 2, 'leave and uncovered rest should both produce date-scoped deduction entries');
+  assertEqual(report.adjustmentDays, -0.5, 'adjustments should use signed days');
+  assertEqual(report.adjustmentHours, -4, 'adjustments should expose signed hours for salary calculation');
+  assertEqual(report.payableAttendanceDays, 19.5, 'payable days should derive from default attendance, payroll exceptions, and adjustments');
+  assertEqual(report.payableAttendanceHours, 156, 'payable hours should drive salary calculation');
+  assertEqual(report.relatedExceptions.length, 3, 'cancelled attendance records should be ignored');
+});
+
+it('keeps rest-day leave as a record without deducting payroll attendance', () => {
+  const report = buildReports({
+    attendanceRecords: [
+      createAttendanceRecord({
+        endAt: '2026-06-14 18:00',
+        id: 'rest-day-leave',
+        startAt: '2026-06-14 10:00',
+        type: '请假'
+      })
+    ]
+  })[0];
+
+  assertEqual(report.recordedLeaveHours, 8, 'rest-day leave should remain visible in recorded hours');
+  assertEqual(report.leaveHours, 0, 'rest-day leave should not become effective leave');
+  assertEqual(report.payrollDeductionHours, 0, 'rest-day leave should not deduct payroll attendance');
+});
+
+it('covers compensatory rest with prior make-up work credit', () => {
+  const report = buildReports({
+    attendanceRecords: [
+      createAttendanceRecord({
+        durationHours: 8,
+        effect: '可用',
+        endAt: '2026-06-06 18:00',
+        id: 'makeup-before-rest',
+        startAt: '2026-06-06 10:00',
+        type: '补班'
+      }),
+      createAttendanceRecord({ durationHours: 8, id: 'covered-rest', type: '调休' })
+    ]
+  })[0];
+
+  assertEqual(report.makeupWorkHours, 8, 'make-up work should create compensatory rest credit');
+  assertEqual(report.restHours, 8, 'compensatory rest should keep exception hours');
+  assertEqual(report.restCoveredHours, 8, 'prior make-up work should cover rest hours');
+  assertEqual(report.restUncoveredHours, 0, 'covered compensatory rest should not create uncovered hours');
+  assertEqual(report.restBalanceHours, 0, 'covered rest should consume available credit');
+  assertEqual(report.payrollDeductionHours, 0, 'covered compensatory rest should not deduct payroll attendance');
+  assertEqual(report.payrollDeductionEntries.length, 0, 'covered compensatory rest should not produce deduction entries');
+  assertEqual(report.payableAttendanceHours, 176, 'covered compensatory rest should keep default payable attendance');
+});
+
+it('exports stable payroll-attendance contract for salary', () => {
+  const report = buildReports({
+    attendanceRecords: [
+      createAttendanceRecord({ durationHours: 8, id: 'leave-for-contract', type: '请假' }),
+      createAttendanceRecord({
+        durationHours: 8,
+        effect: '可用',
+        endAt: '2026-06-14 18:00',
+        id: 'makeup-after-rest-for-contract',
+        startAt: '2026-06-14 10:00',
+        type: '补班'
+      }),
+      createAttendanceRecord({ durationHours: 8, id: 'uncovered-rest-for-contract', type: '调休' })
+    ]
+  })[0];
+  const contract = toPayrollAttendanceMonthlyContract(report);
+
+  assertEqual(contract.contractVersion, 'payroll-attendance-monthly-v1', 'contract version should be explicit');
+  assertEqual(contract.sourceModule, '考勤月报', 'contract should keep source module ownership');
+  assertEqual(contract.reportId, report.id, 'contract should retain source report id');
+  assertEqual(contract.memberId, report.member.id, 'contract should retain member id');
+  assertEqual(contract.month, report.month, 'contract should retain payroll month');
+  assertEqual(contract.reportStatus, report.status, 'contract should expose report confirmation status');
+  assertEqual(contract.salarySettlementStatus, report.salarySettlementStatus, 'contract should expose settlement lock status');
+  assertEqual(contract.payrollDeductionHours, 16, 'contract should expose total payroll deduction hours');
+  assertEqual(contract.restUncoveredHours, 8, 'contract should expose uncovered compensatory-rest hours');
+  assertEqual(contract.restBalanceHours, 8, 'contract should expose remaining compensatory-rest balance');
+  assertEqual(contract.payrollDeductionEntries.length, 2, 'contract should expose date-scoped deduction entries');
+  assertEqual(contract.payrollDeductionEntries[0].dateText, '2026-06-10', 'leave deduction date should be retained');
+  assertEqual(contract.payrollDeductionEntries[0].hours, 8, 'leave deduction hours should be retained');
+  assertEqual(contract.payrollDeductionEntries[1].type, '调休超额', 'uncovered rest should be a payroll deduction entry');
+  assert(contract.expectedWorkdayDates !== report.expectedWorkdayDates, 'contract should not leak mutable report workday array');
+  assert(contract.payrollDeductionEntries !== report.payrollDeductionEntries, 'contract should not leak mutable report deduction array');
+});
+
+it('marks salary-settled reports as locked against adjustments', () => {
+  const report = buildReports({
+    salarySettlements: [
+      {
+        actor: '结算人',
+        memberId: 'member-001',
+        month: '2026-06',
+        note: '工资已结算',
+        settledAt: '2026-06-17 11:00',
+        settlementNo: 'PAY-TEST-001',
+        status: '已结算'
+      }
+    ]
+  })[0];
+
+  assertEqual(report.salarySettlementStatus, '已结算', 'settlement record should mark salary as settled');
+  assertEqual(report.canAdjust, false, 'settled salary reports should not be adjustable');
+  assert(report.salarySettlement, 'salary settlement metadata should be attached to report');
+});
+
+it('invalidates stale confirmations when later adjustments exist', () => {
+  const staleConfirmationReport = buildReports({
+    adjustments: [
+      {
+        actor: '调整人',
+        createdAt: '2026-06-17 12:00',
+        direction: '增加',
+        hours: 4,
+        id: 'adjust-after-confirm',
+        memberId: 'member-001',
+        month: '2026-06',
+        reason: '确认后补充调整',
+        type: '增加计薪出勤'
+      }
+    ],
+    confirmations: [
+      {
         actor: '确认人',
         confirmedAt: '2026-06-17 10:00',
-        memberId: originalReport.member.id,
-        month: originalReport.month,
-        note: '确认并冻结',
-        snapshot: createAttendanceMonthlyConfirmationSnapshot(originalReport)
-      };
-      const rebuiltReport = buildReports({
-        confirmations: [confirmation],
-        peopleRows: [createMember({ workCalendarId: disabledCalendar.id })],
-        workCalendarRows: [disabledCalendar]
-      })[0];
+        memberId: 'member-001',
+        month: '2026-06',
+        note: '调整前确认'
+      }
+    ]
+  })[0];
+  const freshConfirmationReport = buildReports({
+    adjustments: [
+      {
+        actor: '调整人',
+        createdAt: '2026-06-17 09:00',
+        direction: '增加',
+        hours: 4,
+        id: 'adjust-before-confirm',
+        memberId: 'member-001',
+        month: '2026-06',
+        reason: '确认前调整',
+        type: '增加计薪出勤'
+      }
+    ],
+    confirmations: [
+      {
+        actor: '确认人',
+        confirmedAt: '2026-06-17 10:00',
+        memberId: 'member-001',
+        month: '2026-06',
+        note: '调整后确认'
+      }
+    ]
+  })[0];
 
-      assertEqual(rebuiltReport.status, '已确认', 'confirmed report should remain confirmed');
-      assertEqual(rebuiltReport.expectedWorkdays, originalReport.expectedWorkdays, 'confirmed workdays should use the frozen snapshot');
-      assertEqual(rebuiltReport.payableAttendanceHours, originalReport.payableAttendanceHours, 'confirmed payable hours should not drift');
-      assertEqual(rebuiltReport.workCalendarName, originalReport.workCalendarName, 'confirmed calendar label should remain auditable');
-    }
-  },
-  {
-    name: 'keeps the official 2026 statutory holiday correction set',
-    run: () => {
-      const itemByDate = new Map(statutoryHolidayItems2026.map((item) => [item.date, item.type]));
+  assertEqual(staleConfirmationReport.status, '待确认', 'later adjustment should invalidate old confirmation');
+  assertEqual(staleConfirmationReport.confirmation, undefined, 'stale confirmation should not be attached');
+  assertEqual(freshConfirmationReport.status, '已确认', 'confirmation after adjustment should remain valid');
+  assert(freshConfirmationReport.confirmation, 'fresh confirmation should be attached');
+});
 
-      assertEqual(itemByDate.get('2026-02-15'), '休息日', 'Spring Festival should include February 15');
-      assertEqual(itemByDate.get('2026-09-20'), '特殊工作日', 'September 20 should be a special workday');
-      assertEqual(itemByDate.get('2026-09-25'), '休息日', 'Mid-Autumn Festival should start on September 25');
-      assertEqual(itemByDate.get('2026-09-27'), '休息日', 'Mid-Autumn Festival should include September 27');
-      assertEqual(itemByDate.get('2026-10-10'), '特殊工作日', 'October 10 should be a special workday');
-      assertEqual(itemByDate.has('2026-04-26'), false, 'April 26 should not be configured as a special workday');
-      assertEqual(itemByDate.has('2026-10-08'), false, 'October 8 should not be configured as a holiday');
-    }
-  },
-  {
-    name: 'resolves work-calendar rule versions by effective date',
-    run: () => {
-      const versionedCalendar: WorkCalendarRow = {
-        ...weekdayCalendar,
-        currentVersionId: 'calendar-version-2',
-        versions: [
-          {
-            alternateWorkdays: [],
-            createdAt: '2026-01-01',
-            effectiveFrom: '2026-01-01',
-            effectiveTo: '2026-06-15',
-            fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
-            id: 'calendar-version-1',
-            note: '双休',
-            type: '双休',
-            version: 1
-          },
-          {
-            alternateWorkdays: [],
-            createdAt: '2026-06-16',
-            effectiveFrom: '2026-06-16',
-            fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
-            id: 'calendar-version-2',
-            note: '周一休息',
-            type: '自定义',
-            version: 2
-          }
-        ]
-      };
-      const beforeEffectiveDate = new Date('2026-06-15T00:00:00');
-      const afterEffectiveDate = new Date('2026-06-22T00:00:00');
+it('places a new confirmation after the latest monthly adjustment', () => {
+  assertEqual(
+    getAttendanceMonthlyConfirmationTimestamp('2026-06-16 10:30', [
+      { createdAt: '2026-06-16 09:00' },
+      { createdAt: '2026-06-16 16:20' }
+    ]),
+    '2026-06-16 16:21',
+    'confirmation should remain effective when the month already contains a later adjustment'
+  );
+  assertEqual(
+    getAttendanceMonthlyConfirmationTimestamp('2026-06-16 10:30', []),
+    '2026-06-16 10:30',
+    'confirmation should keep the operation timestamp when no later adjustment exists'
+  );
+});
 
-      assertEqual(resolveWorkCalendarRule(versionedCalendar, beforeEffectiveDate)?.id, 'calendar-version-1', 'date before change should resolve the old version');
-      assertEqual(resolveWorkCalendarRule(versionedCalendar, afterEffectiveDate)?.id, 'calendar-version-2', 'date after change should resolve the new version');
-      assertEqual(isWorkCalendarDateWorkday(versionedCalendar, beforeEffectiveDate), true, 'Monday should be a workday before the change');
-      assertEqual(isWorkCalendarDateWorkday(versionedCalendar, afterEffectiveDate), false, 'Monday should be a rest day after the change');
-    }
-  },
-  {
-    name: 'preserves historical calendar availability after a later status change',
-    run: () => {
-      const statusVersionedCalendar: WorkCalendarRow = {
-        ...weekdayCalendar,
-        status: '停用',
-        statusPeriods: [
-          { effectiveFrom: '2026-01-01', effectiveTo: '2026-06-15', status: '启用' },
-          { effectiveFrom: '2026-06-16', status: '停用' }
-        ]
-      };
-
-      assertEqual(
-        isWorkCalendarDateWorkday(statusVersionedCalendar, new Date('2026-06-15T00:00:00')),
-        true,
-        'a later stop must not erase historical workdays'
-      );
-      assertEqual(
-        isWorkCalendarDateWorkday(statusVersionedCalendar, new Date('2026-06-16T00:00:00')),
-        false,
-        'the calendar should stop from the status effective date'
-      );
-    }
-  }
-];
-
-export function runPeopleAttendanceMonthlyDomainTests(): UnitTestResult {
-  const failures: string[] = [];
-
-  for (const test of tests) {
-    try {
-      test.run();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      failures.push(`${test.name}: ${message}`);
-    }
-  }
-
-  return {
-    failures,
-    passed: tests.length - failures.length,
-    total: tests.length
+it('uses confirmation state and adjustment direction helpers', () => {
+  const adjustment: AttendanceMonthlyAdjustmentRecord = {
+    actor: '测试人',
+    createdAt: '2026-06-12 10:00',
+    direction: '扣减',
+    hours: 8,
+    id: 'adjust-minus',
+    memberId: 'member-001',
+    month: '2026-06',
+    reason: '测试扣减',
+    type: '扣减计薪出勤'
   };
-}
+  const report = buildReports({
+    adjustments: [adjustment],
+    confirmations: [
+      {
+        actor: '确认人',
+        confirmedAt: '2026-06-17 10:00',
+        memberId: 'member-001',
+        month: '2026-06',
+        note: '已确认'
+      }
+    ]
+  })[0];
+
+  assertEqual(report.status, '已确认', 'confirmation record should lock report status');
+  assert(report.confirmation, 'confirmation should be attached to report');
+  assertEqual(getMonthlyAdjustmentSignedDays(adjustment), -1, 'deduction adjustment should be negative');
+  assertEqual(getMonthlyAdjustmentSignedHours(adjustment), -8, 'deduction adjustment hours should be negative');
+  assertEqual(getAdjustmentDirectionFromType('增加计薪出勤'), '增加', 'increase type should map to increase direction');
+  assertEqual(getAdjustmentDirectionFromType('扣减计薪出勤'), '扣减', 'deduction type should map to deduction direction');
+  assertEqual(getAdjustmentDirectionFromType('备注修正'), '备注', 'remark type should map to remark direction');
+});
+
+it('freezes confirmed monthly calculation against later calendar changes', () => {
+  const originalReport = buildReports()[0];
+  const confirmation: AttendanceMonthlyConfirmationRecord = {
+    actor: '确认人',
+    confirmedAt: '2026-06-17 10:00',
+    memberId: originalReport.member.id,
+    month: originalReport.month,
+    note: '确认并冻结',
+    snapshot: createAttendanceMonthlyConfirmationSnapshot(originalReport)
+  };
+  const rebuiltReport = buildReports({
+    confirmations: [confirmation],
+    peopleRows: [createMember({ workCalendarId: disabledCalendar.id })],
+    workCalendarRows: [disabledCalendar]
+  })[0];
+
+  assertEqual(rebuiltReport.status, '已确认', 'confirmed report should remain confirmed');
+  assertEqual(rebuiltReport.expectedWorkdays, originalReport.expectedWorkdays, 'confirmed workdays should use the frozen snapshot');
+  assertEqual(rebuiltReport.payableAttendanceHours, originalReport.payableAttendanceHours, 'confirmed payable hours should not drift');
+  assertEqual(rebuiltReport.workCalendarName, originalReport.workCalendarName, 'confirmed calendar label should remain auditable');
+});
+
+it('keeps the official 2026 statutory holiday correction set', () => {
+  const itemByDate = new Map(statutoryHolidayItems2026.map((item) => [item.date, item.type]));
+
+  assertEqual(itemByDate.get('2026-02-15'), '休息日', 'Spring Festival should include February 15');
+  assertEqual(itemByDate.get('2026-09-20'), '特殊工作日', 'September 20 should be a special workday');
+  assertEqual(itemByDate.get('2026-09-25'), '休息日', 'Mid-Autumn Festival should start on September 25');
+  assertEqual(itemByDate.get('2026-09-27'), '休息日', 'Mid-Autumn Festival should include September 27');
+  assertEqual(itemByDate.get('2026-10-10'), '特殊工作日', 'October 10 should be a special workday');
+  assertEqual(itemByDate.has('2026-04-26'), false, 'April 26 should not be configured as a special workday');
+  assertEqual(itemByDate.has('2026-10-08'), false, 'October 8 should not be configured as a holiday');
+});
+
+it('resolves work-calendar rule versions by effective date', () => {
+  const versionedCalendar: WorkCalendarRow = {
+    ...weekdayCalendar,
+    currentVersionId: 'calendar-version-2',
+    versions: [
+      {
+        alternateWorkdays: [],
+        createdAt: '2026-01-01',
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-06-15',
+        fixedWorkdays: ['周一', '周二', '周三', '周四', '周五'],
+        id: 'calendar-version-1',
+        note: '双休',
+        type: '双休',
+        version: 1
+      },
+      {
+        alternateWorkdays: [],
+        createdAt: '2026-06-16',
+        effectiveFrom: '2026-06-16',
+        fixedWorkdays: ['周二', '周三', '周四', '周五', '周六'],
+        id: 'calendar-version-2',
+        note: '周一休息',
+        type: '自定义',
+        version: 2
+      }
+    ]
+  };
+  const beforeEffectiveDate = new Date('2026-06-15T00:00:00');
+  const afterEffectiveDate = new Date('2026-06-22T00:00:00');
+
+  assertEqual(resolveWorkCalendarRule(versionedCalendar, beforeEffectiveDate)?.id, 'calendar-version-1', 'date before change should resolve the old version');
+  assertEqual(resolveWorkCalendarRule(versionedCalendar, afterEffectiveDate)?.id, 'calendar-version-2', 'date after change should resolve the new version');
+  assertEqual(isWorkCalendarDateWorkday(versionedCalendar, beforeEffectiveDate), true, 'Monday should be a workday before the change');
+  assertEqual(isWorkCalendarDateWorkday(versionedCalendar, afterEffectiveDate), false, 'Monday should be a rest day after the change');
+});
+
+it('preserves historical calendar availability after a later status change', () => {
+  const statusVersionedCalendar: WorkCalendarRow = {
+    ...weekdayCalendar,
+    status: '停用',
+    statusPeriods: [
+      { effectiveFrom: '2026-01-01', effectiveTo: '2026-06-15', status: '启用' },
+      { effectiveFrom: '2026-06-16', status: '停用' }
+    ]
+  };
+
+  assertEqual(
+    isWorkCalendarDateWorkday(statusVersionedCalendar, new Date('2026-06-15T00:00:00')),
+    true,
+    'a later stop must not erase historical workdays'
+  );
+  assertEqual(
+    isWorkCalendarDateWorkday(statusVersionedCalendar, new Date('2026-06-16T00:00:00')),
+    false,
+    'the calendar should stop from the status effective date'
+  );
+});

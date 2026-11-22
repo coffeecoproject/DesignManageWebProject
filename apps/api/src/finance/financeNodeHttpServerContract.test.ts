@@ -20,35 +20,14 @@ import type {
   PersistentAccountingPeriodRecord,
   PersistentFinanceSourceRecord
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void>;
-};
+import { it } from 'vitest';
+import { assert, assertEqual, assertObject } from '../__tests__/assertions.js';
 
 type HttpClientResponse = {
   bodyText: string;
   headers: Record<string, string | readonly string[] | undefined>;
   status: number;
 };
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
 
 function parseBody(bodyText: string) {
   return JSON.parse(bodyText) as unknown;
@@ -256,125 +235,112 @@ function sendHttpRequest({
   });
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'serves close checks through a real local HTTP listener with SQL-backed cookie identity',
-    run: async () => {
-      const { serverContract } = createServerStack();
-      const server = await serverContract.listen();
+it('serves close checks through a real local HTTP listener with SQL-backed cookie identity', async () => {
+  const { serverContract } = createServerStack();
+  const server = await serverContract.listen();
 
-      try {
-        const response = await sendHttpRequest({
-          headers: {
-            cookie: 'sms_session=node-server-session-token',
-            'x-permission-scopes': ''
-          },
-          method: 'GET',
-          origin: server.origin,
-          path: '/api/finance/accounting-periods/2026-06/close-checks?include=checks&include=sources'
-        });
-        const body = parseBody(response.bodyText);
+  try {
+    const response = await sendHttpRequest({
+      headers: {
+        cookie: 'sms_session=node-server-session-token',
+        'x-permission-scopes': ''
+      },
+      method: 'GET',
+      origin: server.origin,
+      path: '/api/finance/accounting-periods/2026-06/close-checks?include=checks&include=sources'
+    });
+    const body = parseBody(response.bodyText);
 
-        assertObject(body, 'node server close-check body should be object');
-        assertEqual(response.status, 200, 'node server should serve close checks');
-        assertEqual(response.headers['x-finance-local-server-handled'], 'true', 'node server should mark finance route handled');
-        assertEqual(body.period, '2026-06', 'node server close-check should preserve period');
-      } finally {
-        await server.close();
-      }
-    }
-  },
-  {
-    name: 'closes a period and rejects later source mutation through the same real local HTTP listener',
-    run: async () => {
-      const { repository, serverContract } = createServerStack();
-      const server = await serverContract.listen();
-
-      try {
-        const closeResponse = await sendHttpRequest({
-          bodyText: JSON.stringify({
-            idempotencyKey: 'node-http-close-001',
-            reason: '2026-06 月结',
-            version: 1
-          }),
-          headers: {
-            cookie: 'sms_session=node-server-session-token',
-            'content-type': 'application/json',
-            'x-actor-id': 'forged-node-client',
-            'x-finance-resource-scopes': 'finance.ledger:*',
-            'x-permission-scopes': ''
-          },
-          method: 'POST',
-          origin: server.origin,
-          path: '/api/finance/accounting-periods/2026-06/close'
-        });
-        const closeBody = parseBody(closeResponse.bodyText);
-        const closeEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
-
-        assertObject(closeBody, 'node server close body should be object');
-        assertEqual(closeResponse.status, 201, 'node server should close period');
-        assertEqual(repository.readState().periods[0]?.status, '已结账', 'node server close should persist row-backed lock');
-        assertObject(closeBody.closedBySnapshot, 'node server close should include actor snapshot');
-        assertEqual(closeBody.closedBySnapshot.id, 'user-node-server-001', 'close actor should come from SQL-backed session');
-        assert(closeEvent !== undefined, 'node server close should write close event');
-        assertEqual(closeEvent.request_id, 'req-node-http-server-001', 'node server close should use trusted request id');
-
-        const sourceResponse = await sendHttpRequest({
-          bodyText: JSON.stringify({
-            amount: '1600.00',
-            expectedVersion: 1,
-            status: '已调整'
-          }),
-          headers: {
-            cookie: 'sms_session=node-server-session-token',
-            'content-type': 'application/json'
-          },
-          method: 'PATCH',
-          origin: server.origin,
-          path: '/api/finance/receivables-payables/rp-node-server-001/adjust'
-        });
-        const sourceBody = parseBody(sourceResponse.bodyText);
-        const sourceRecord = repository.readState().sourceRecords[0];
-        const sourceEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_source_mutation_events[0];
-
-        assertObject(sourceBody, 'node server source mutation body should be object');
-        assertEqual(sourceResponse.status, 409, 'node server closed-period source mutation should be rejected');
-        assertEqual(sourceBody.code, canonicalClosedAccountingPeriodErrorCode, 'node server source mutation code should match');
-        assertEqual(sourceRecord?.amount, '1200.00', 'node server source mutation should keep amount unchanged');
-        assertEqual(sourceRecord?.version, 1, 'node server source mutation should keep version unchanged');
-        assert(sourceEvent !== undefined, 'node server source mutation should write guard event');
-        assertEqual(sourceEvent.request_id, 'req-node-http-server-001', 'node server source guard should use trusted request id');
-      } finally {
-        await server.close();
-      }
-    }
-  },
-  {
-    name: 'keeps non-finance requests outside the runtime through the real local HTTP listener',
-    run: async () => {
-      const { repository, serverContract } = createServerStack();
-      const server = await serverContract.listen();
-
-      try {
-        const response = await sendHttpRequest({
-          method: 'GET',
-          origin: server.origin,
-          path: '/api/people/overview'
-        });
-        const body = parseBody(response.bodyText);
-
-        assertObject(body, 'node server non-finance response should be object');
-        assertEqual(response.status, 404, 'node server non-finance route should return 404');
-        assertEqual(response.headers['x-finance-local-server-handled'], 'false', 'node server should mark non-finance route unhandled');
-        assertEqual(body.code, 'FINANCE_ROUTE_NOT_BOUND', 'node server non-finance code should match');
-        assertEqual(repository.readState().periods[0]?.status, '开放', 'non-finance request must not change period state');
-      } finally {
-        await server.close();
-      }
-    }
+    assertObject(body, 'node server close-check body should be object');
+    assertEqual(response.status, 200, 'node server should serve close checks');
+    assertEqual(response.headers['x-finance-local-server-handled'], 'true', 'node server should mark finance route handled');
+    assertEqual(body.period, '2026-06', 'node server close-check should preserve period');
+  } finally {
+    await server.close();
   }
-];
+});
 
-for (const test of tests) {
-  await test.run();
-}
+it('closes a period and rejects later source mutation through the same real local HTTP listener', async () => {
+  const { repository, serverContract } = createServerStack();
+  const server = await serverContract.listen();
+
+  try {
+    const closeResponse = await sendHttpRequest({
+      bodyText: JSON.stringify({
+        idempotencyKey: 'node-http-close-001',
+        reason: '2026-06 月结',
+        version: 1
+      }),
+      headers: {
+        cookie: 'sms_session=node-server-session-token',
+        'content-type': 'application/json',
+        'x-actor-id': 'forged-node-client',
+        'x-finance-resource-scopes': 'finance.ledger:*',
+        'x-permission-scopes': ''
+      },
+      method: 'POST',
+      origin: server.origin,
+      path: '/api/finance/accounting-periods/2026-06/close'
+    });
+    const closeBody = parseBody(closeResponse.bodyText);
+    const closeEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
+
+    assertObject(closeBody, 'node server close body should be object');
+    assertEqual(closeResponse.status, 201, 'node server should close period');
+    assertEqual(repository.readState().periods[0]?.status, '已结账', 'node server close should persist row-backed lock');
+    assertObject(closeBody.closedBySnapshot, 'node server close should include actor snapshot');
+    assertEqual(closeBody.closedBySnapshot.id, 'user-node-server-001', 'close actor should come from SQL-backed session');
+    assert(closeEvent !== undefined, 'node server close should write close event');
+    assertEqual(closeEvent.request_id, 'req-node-http-server-001', 'node server close should use trusted request id');
+
+    const sourceResponse = await sendHttpRequest({
+      bodyText: JSON.stringify({
+        amount: '1600.00',
+        expectedVersion: 1,
+        status: '已调整'
+      }),
+      headers: {
+        cookie: 'sms_session=node-server-session-token',
+        'content-type': 'application/json'
+      },
+      method: 'PATCH',
+      origin: server.origin,
+      path: '/api/finance/receivables-payables/rp-node-server-001/adjust'
+    });
+    const sourceBody = parseBody(sourceResponse.bodyText);
+    const sourceRecord = repository.readState().sourceRecords[0];
+    const sourceEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_source_mutation_events[0];
+
+    assertObject(sourceBody, 'node server source mutation body should be object');
+    assertEqual(sourceResponse.status, 409, 'node server closed-period source mutation should be rejected');
+    assertEqual(sourceBody.code, canonicalClosedAccountingPeriodErrorCode, 'node server source mutation code should match');
+    assertEqual(sourceRecord?.amount, '1200.00', 'node server source mutation should keep amount unchanged');
+    assertEqual(sourceRecord?.version, 1, 'node server source mutation should keep version unchanged');
+    assert(sourceEvent !== undefined, 'node server source mutation should write guard event');
+    assertEqual(sourceEvent.request_id, 'req-node-http-server-001', 'node server source guard should use trusted request id');
+  } finally {
+    await server.close();
+  }
+});
+
+it('keeps non-finance requests outside the runtime through the real local HTTP listener', async () => {
+  const { repository, serverContract } = createServerStack();
+  const server = await serverContract.listen();
+
+  try {
+    const response = await sendHttpRequest({
+      method: 'GET',
+      origin: server.origin,
+      path: '/api/people/overview'
+    });
+    const body = parseBody(response.bodyText);
+
+    assertObject(body, 'node server non-finance response should be object');
+    assertEqual(response.status, 404, 'node server non-finance route should return 404');
+    assertEqual(response.headers['x-finance-local-server-handled'], 'false', 'node server should mark non-finance route unhandled');
+    assertEqual(body.code, 'FINANCE_ROUTE_NOT_BOUND', 'node server non-finance code should match');
+    assertEqual(repository.readState().periods[0]?.status, '开放', 'non-finance request must not change period state');
+  } finally {
+    await server.close();
+  }
+});

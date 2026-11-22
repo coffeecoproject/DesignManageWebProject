@@ -224,7 +224,7 @@ export const financePeriodCloseStageAuditMatrix: readonly FinancePeriodCloseStag
       'apps/api/src/finance/periodCloseMigrationOperationalGateContract.ts',
       'apps/api/src/finance/periodCloseMigrationArtifactFileContract.ts',
       'apps/api/migrations/not-applied/20260704_000001_period_close_persistent_lock.sql',
-      'apps/api/scripts/period-close-migration-artifact-file-contract.test.mjs',
+      'apps/api/src/finance/periodCloseMigrationArtifactFileContract.test.ts',
       'apps/api/src/finance/periodClosePostgresDryRunContract.ts',
       'apps/api/src/finance/periodClosePostgresApplyDrillContract.ts',
       'apps/api/src/finance/periodClosePostgresReplayDrillContract.ts',

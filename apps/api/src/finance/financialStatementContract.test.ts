@@ -7,22 +7,11 @@ import {
   type FinancialStatementLedgerEntry
 } from './financialStatementContract.js';
 import type { AccountingPeriodRecord, ActorSnapshot } from './periodCloseContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 function assertNotEqual<T>(actual: T, expected: T, message: string) {
-  if (actual === expected) {
-    throw new Error(`${message}. Did not expect ${String(expected)}`);
-  }
+  assert(actual !== expected, `${message}. Did not expect ${String(expected)}`);
 }
 
 const actor: ActorSnapshot = { id: 'user-001', name: '李明' };
@@ -73,175 +62,158 @@ function createLedgerEntries(overrides: Partial<FinancialStatementLedgerEntry>[]
   ];
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'creates stable cash-flow mapping version hash independent of row order',
-    run: () => {
-      const mappings = [
-        createMapping({ subjectCode: '2211.01', item: '支付给职工以及为职工支付的现金' }),
-        createMapping()
-      ];
-      const reversedMappings = [mappings[1], mappings[0]];
+it('creates stable cash-flow mapping version hash independent of row order', () => {
+  const mappings = [
+    createMapping({ subjectCode: '2211.01', item: '支付给职工以及为职工支付的现金' }),
+    createMapping()
+  ];
+  const reversedMappings = [mappings[1], mappings[0]];
 
-      assertEqual(
-        createCashFlowMappingVersionHash(mappings),
-        createCashFlowMappingVersionHash(reversedMappings),
-        'mapping version hash should not depend on row order'
-      );
+  assertEqual(
+    createCashFlowMappingVersionHash(mappings),
+    createCashFlowMappingVersionHash(reversedMappings),
+    'mapping version hash should not depend on row order'
+  );
+});
+
+it('resolves latest effective mapping for the requested accounting period', () => {
+  const resolved = resolveCashFlowMappingsForPeriod({
+    accountingPeriod: '2026-06',
+    mappings: [
+      createMapping({ effectivePeriod: '2026-01', item: '旧映射', version: 1 }),
+      createMapping({ effectivePeriod: '2026-06', item: '新映射', version: 2 }),
+      createMapping({ effectivePeriod: '2026-07', item: '未来映射', version: 3 })
+    ]
+  });
+
+  assertEqual(resolved.length, 1, 'only one mapping should be effective for one subject');
+  assertEqual(resolved[0]?.item, '新映射', 'latest mapping before or at period should win');
+});
+
+it('blocks formal statement snapshot when booked cash voucher counterpart lacks mapping', () => {
+  const readiness = buildFinancialStatementReadiness({
+    accountingPeriod: '2026-06',
+    cashFlowMappings: [],
+    ledgerEntries: createLedgerEntries([{ subjectCode: '1002' }, { subjectCode: '9999' }])
+  });
+  const result = createFinancialStatementSnapshot({
+    period: createPeriod(),
+    readiness,
+    request: {
+      generatedAt: '2026-07-02T18:30:00+08:00',
+      generatedBySnapshot: actor,
+      requestId: 'req-statement-001'
     }
-  },
-  {
-    name: 'resolves latest effective mapping for the requested accounting period',
-    run: () => {
-      const resolved = resolveCashFlowMappingsForPeriod({
-        accountingPeriod: '2026-06',
-        mappings: [
-          createMapping({ effectivePeriod: '2026-01', item: '旧映射', version: 1 }),
-          createMapping({ effectivePeriod: '2026-06', item: '新映射', version: 2 }),
-          createMapping({ effectivePeriod: '2026-07', item: '未来映射', version: 3 })
-        ]
-      });
+  });
 
-      assertEqual(resolved.length, 1, 'only one mapping should be effective for one subject');
-      assertEqual(resolved[0]?.item, '新映射', 'latest mapping before or at period should win');
-    }
-  },
-  {
-    name: 'blocks formal statement snapshot when booked cash voucher counterpart lacks mapping',
-    run: () => {
-      const readiness = buildFinancialStatementReadiness({
-        accountingPeriod: '2026-06',
-        cashFlowMappings: [],
-        ledgerEntries: createLedgerEntries([{ subjectCode: '1002' }, { subjectCode: '9999' }])
-      });
-      const result = createFinancialStatementSnapshot({
-        period: createPeriod(),
-        readiness,
-        request: {
-          generatedAt: '2026-07-02T18:30:00+08:00',
-          generatedBySnapshot: actor,
-          requestId: 'req-statement-001'
-        }
-      });
+  assertEqual(readiness.canGenerateSnapshot, false, 'readiness should block missing cash-flow mapping');
+  assertEqual(readiness.status, '需处理', 'readiness status should be actionable when mapping is missing');
+  assertEqual(readiness.cashFlowMappingGaps.length, 1, 'missing counterpart should create one gap');
+  assertEqual(result.ok, false, 'formal snapshot should reject incomplete mapping');
+  assertEqual(
+    result.ok ? '' : result.error.code,
+    'CASH_FLOW_MAPPING_INCOMPLETE',
+    'missing mapping should use stable error code'
+  );
+});
 
-      assertEqual(readiness.canGenerateSnapshot, false, 'readiness should block missing cash-flow mapping');
-      assertEqual(readiness.status, '需处理', 'readiness status should be actionable when mapping is missing');
-      assertEqual(readiness.cashFlowMappingGaps.length, 1, 'missing counterpart should create one gap');
-      assertEqual(result.ok, false, 'formal snapshot should reject incomplete mapping');
-      assertEqual(
-        result.ok ? '' : result.error.code,
-        'CASH_FLOW_MAPPING_INCOMPLETE',
-        'missing mapping should use stable error code'
-      );
-    }
-  },
-  {
-    name: 'generates closed-period snapshot and preserves it when mappings later change',
-    run: () => {
-      const ledgerEntries = createLedgerEntries();
-      const readiness = buildFinancialStatementReadiness({
-        accountingPeriod: '2026-06',
-        balanceSheetLines: [
-          {
-            amount: '1200.00',
-            item: '应收账款',
-            section: '资产',
-            sourceSubjectCodes: ['1122'],
-            voucherNos: ['记-202606-001']
-          }
-        ],
-        cashFlowMappings: [createMapping()],
-        ledgerEntries,
-        profitStatementLines: []
-      });
-      const result = createFinancialStatementSnapshot({
-        period: createPeriod(),
-        readiness,
-        request: {
-          generatedAt: '2026-07-02T18:30:00+08:00',
-          generatedBySnapshot: actor,
-          requestId: 'req-statement-002'
-        }
-      });
-
-      assertEqual(readiness.canGenerateSnapshot, true, 'complete mapping should allow formal snapshot');
-      assertEqual(readiness.generalLedgerLines.length, 2, 'readiness should include close-period general-ledger subject lines');
-      assertEqual(
-        readiness.generalLedgerLines[0]?.sourceLedgerHash,
-        readiness.sourceLedgerHash,
-        'general-ledger snapshot lines should bind to the same source ledger hash'
-      );
-      assertEqual(result.ok, true, 'closed period with complete mapping should create snapshot');
-
-      if (!result.ok) {
-        return;
+it('generates closed-period snapshot and preserves it when mappings later change', () => {
+  const ledgerEntries = createLedgerEntries();
+  const readiness = buildFinancialStatementReadiness({
+    accountingPeriod: '2026-06',
+    balanceSheetLines: [
+      {
+        amount: '1200.00',
+        item: '应收账款',
+        section: '资产',
+        sourceSubjectCodes: ['1122'],
+        voucherNos: ['记-202606-001']
       }
-
-      const originalSnapshotHash = result.snapshot.snapshotHash;
-      const originalMappingHash = result.snapshot.cashFlowMappingVersionHash;
-      const revisedReadiness = buildFinancialStatementReadiness({
-        accountingPeriod: '2026-06',
-        cashFlowMappings: [createMapping({ item: '调整后的映射', version: 2 })],
-        ledgerEntries
-      });
-
-      assertEqual(result.snapshot.cashFlowLines[0]?.amount, '1200.00', 'cash-flow line should use cash movement');
-      assertEqual(result.snapshot.generalLedgerLines.length, 2, 'formal snapshot should persist general-ledger subject lines');
-      assertEqual(
-        result.snapshot.generalLedgerLines.find((line) => line.subjectCode === '1002')?.debitAmount,
-        '1200.00',
-        'general-ledger snapshot should preserve cash-subject debit amount'
-      );
-      assertEqual(
-        result.snapshot.generalLedgerLines.find((line) => line.subjectCode === '1122')?.creditAmount,
-        '1200.00',
-        'general-ledger snapshot should preserve counterpart credit amount'
-      );
-      assertEqual(
-        result.snapshot.cashFlowLines[0]?.item,
-        '销售商品、提供劳务收到的现金',
-        'snapshot should keep the mapping item used at generation time'
-      );
-      assertNotEqual(
-        revisedReadiness.cashFlowMappingVersionHash,
-        originalMappingHash,
-        'later mapping changes should produce a new readiness mapping hash'
-      );
-      assertEqual(
-        result.snapshot.snapshotHash,
-        originalSnapshotHash,
-        'persisted snapshot should not drift after later mapping changes'
-      );
+    ],
+    cashFlowMappings: [createMapping()],
+    ledgerEntries,
+    profitStatementLines: []
+  });
+  const result = createFinancialStatementSnapshot({
+    period: createPeriod(),
+    readiness,
+    request: {
+      generatedAt: '2026-07-02T18:30:00+08:00',
+      generatedBySnapshot: actor,
+      requestId: 'req-statement-002'
     }
-  },
-  {
-    name: 'rejects formal snapshot for an open period',
-    run: () => {
-      const readiness = buildFinancialStatementReadiness({
-        accountingPeriod: '2026-06',
-        cashFlowMappings: [createMapping()],
-        ledgerEntries: createLedgerEntries()
-      });
-      const result = createFinancialStatementSnapshot({
-        period: createPeriod({ status: '开放' }),
-        readiness,
-        request: {
-          generatedAt: '2026-07-02T18:30:00+08:00',
-          generatedBySnapshot: actor,
-          requestId: 'req-statement-003'
-        }
-      });
+  });
 
-      assertEqual(result.ok, false, 'open period should not create formal statement snapshot');
-      assertEqual(
-        result.ok ? '' : result.error.code,
-        'FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED',
-        'open-period snapshot rejection should use stable code'
-      );
-    }
+  assertEqual(readiness.canGenerateSnapshot, true, 'complete mapping should allow formal snapshot');
+  assertEqual(readiness.generalLedgerLines.length, 2, 'readiness should include close-period general-ledger subject lines');
+  assertEqual(
+    readiness.generalLedgerLines[0]?.sourceLedgerHash,
+    readiness.sourceLedgerHash,
+    'general-ledger snapshot lines should bind to the same source ledger hash'
+  );
+  assertEqual(result.ok, true, 'closed period with complete mapping should create snapshot');
+
+  if (!result.ok) {
+    return;
   }
-];
 
-for (const test of tests) {
-  test.run();
-}
+  const originalSnapshotHash = result.snapshot.snapshotHash;
+  const originalMappingHash = result.snapshot.cashFlowMappingVersionHash;
+  const revisedReadiness = buildFinancialStatementReadiness({
+    accountingPeriod: '2026-06',
+    cashFlowMappings: [createMapping({ item: '调整后的映射', version: 2 })],
+    ledgerEntries
+  });
+
+  assertEqual(result.snapshot.cashFlowLines[0]?.amount, '1200.00', 'cash-flow line should use cash movement');
+  assertEqual(result.snapshot.generalLedgerLines.length, 2, 'formal snapshot should persist general-ledger subject lines');
+  assertEqual(
+    result.snapshot.generalLedgerLines.find((line) => line.subjectCode === '1002')?.debitAmount,
+    '1200.00',
+    'general-ledger snapshot should preserve cash-subject debit amount'
+  );
+  assertEqual(
+    result.snapshot.generalLedgerLines.find((line) => line.subjectCode === '1122')?.creditAmount,
+    '1200.00',
+    'general-ledger snapshot should preserve counterpart credit amount'
+  );
+  assertEqual(
+    result.snapshot.cashFlowLines[0]?.item,
+    '销售商品、提供劳务收到的现金',
+    'snapshot should keep the mapping item used at generation time'
+  );
+  assertNotEqual(
+    revisedReadiness.cashFlowMappingVersionHash,
+    originalMappingHash,
+    'later mapping changes should produce a new readiness mapping hash'
+  );
+  assertEqual(
+    result.snapshot.snapshotHash,
+    originalSnapshotHash,
+    'persisted snapshot should not drift after later mapping changes'
+  );
+});
+
+it('rejects formal snapshot for an open period', () => {
+  const readiness = buildFinancialStatementReadiness({
+    accountingPeriod: '2026-06',
+    cashFlowMappings: [createMapping()],
+    ledgerEntries: createLedgerEntries()
+  });
+  const result = createFinancialStatementSnapshot({
+    period: createPeriod({ status: '开放' }),
+    readiness,
+    request: {
+      generatedAt: '2026-07-02T18:30:00+08:00',
+      generatedBySnapshot: actor,
+      requestId: 'req-statement-003'
+    }
+  });
+
+  assertEqual(result.ok, false, 'open period should not create formal statement snapshot');
+  assertEqual(
+    result.ok ? '' : result.error.code,
+    'FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED',
+    'open-period snapshot rejection should use stable code'
+  );
+});

@@ -55,25 +55,10 @@ import {
   type FinanceSourceTableSqlRepositoryContract,
   type FinanceSourceTableSqlRow
 } from './periodCloseSourceTableSqlRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
+import { it } from 'vitest';
+import { assertEqual, assertObject } from '../__tests__/assertions.js';
 
 type CapturedManagedRuntimeResult = PeriodClosePostgresManagedServicePoolRuntimeResult<PersistentSourceMutationResult>;
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
 
 function bodyAsRecord(response: FinanceHttpPostgresManagedSourceMutationBridgeResponse) {
   assertObject(response.body, 'managed source mutation bridge response body should be an object');
@@ -510,221 +495,202 @@ function assertBridgeTrace({
   assertEqual(errors.length, 0, `managed source mutation bridge trace should validate: ${errors.join('; ')}`);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects invalid source mutation payload before managed runtime and source SQL writeback',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:01:00+08:00',
-        initialRows: [createSqlRow()]
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
-        admission: fixture.admission,
-        request: createSourceAdjustmentRequest('req-managed-source-invalid-payload', {
-          body: {
-            amount: 1500,
-            expectedVersion: 1,
-            targetAccountingPeriod: '2026-06'
-          }
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository
-      });
+it('rejects invalid source mutation payload before managed runtime and source SQL writeback', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:01:00+08:00',
+    initialRows: [createSqlRow()]
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
+    admission: fixture.admission,
+    request: createSourceAdjustmentRequest('req-managed-source-invalid-payload', {
+      body: {
+        amount: 1500,
+        expectedVersion: 1,
+        targetAccountingPeriod: '2026-06'
+      }
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository
+  });
 
-      assertEqual(response.status, 400, 'invalid source mutation payload should reject');
-      assertEqual(bodyAsRecord(response).code, 'INVALID_REQUEST', 'invalid payload should use stable error code');
-      assertEqual(response.managedRuntime, undefined, 'invalid payload should not expose runtime evidence');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'invalid payload should keep SQL amount');
-      assertEqual(fixture.readPgState().constructCount, 0, 'invalid payload should not construct managed pg pool');
-      assertEqual(fixture.readCapturedResults().length, 0, 'invalid payload should not call managed runtime');
-      assertBridgeTrace({ delegated: false, response, writeback: false });
+  assertEqual(response.status, 400, 'invalid source mutation payload should reject');
+  assertEqual(bodyAsRecord(response).code, 'INVALID_REQUEST', 'invalid payload should use stable error code');
+  assertEqual(response.managedRuntime, undefined, 'invalid payload should not expose runtime evidence');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'invalid payload should keep SQL amount');
+  assertEqual(fixture.readPgState().constructCount, 0, 'invalid payload should not construct managed pg pool');
+  assertEqual(fixture.readCapturedResults().length, 0, 'invalid payload should not call managed runtime');
+  assertBridgeTrace({ delegated: false, response, writeback: false });
+});
+
+it('rejects unauthorized source mutation before managed runtime and source SQL writeback', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:02:00+08:00',
+    initialRows: [createSqlRow()]
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
+    admission: fixture.admission,
+    request: createSourceAdjustmentRequest('req-managed-source-unauthorized', {
+      headers: {
+        ...createHeaders(''),
+        'x-request-id': 'req-managed-source-unauthorized'
+      }
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository
+  });
+
+  assertEqual(response.status, 403, 'unauthorized source mutation should reject');
+  assertEqual(bodyAsRecord(response).code, 'FORBIDDEN', 'unauthorized source mutation should use forbidden code');
+  assertEqual(response.managedRuntime, undefined, 'unauthorized source mutation should not expose runtime evidence');
+  assertEqual(response.sourceSqlRows[0]?.version, 1, 'unauthorized source mutation should keep SQL version');
+  assertEqual(fixture.readPgState().constructCount, 0, 'unauthorized source mutation should not construct managed pg pool');
+  assertEqual(fixture.readCapturedResults().length, 0, 'unauthorized source mutation should not call managed runtime');
+  assertBridgeTrace({ delegated: false, response, writeback: false });
+});
+
+it('does not write source SQL rows when managed runtime readiness blocks the write route', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:03:00+08:00',
+    initialRows: [createSqlRow()]
+  });
+  const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
+  const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
+    operationalGate
+  });
+  const fixture = createRuntimeFixture({ readinessPackage, sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
+    admission: fixture.admission,
+    request: createSourceAdjustmentRequest('req-managed-source-readiness-blocked'),
+    runtime: fixture.runtime,
+    sourceSqlRepository
+  });
+
+  assertEqual(response.status, 503, 'blocked readiness should return service unavailable');
+  assertEqual(bodyAsRecord(response).code, 'POSTGRES_RUNTIME_UNAVAILABLE', 'blocked readiness should expose runtime unavailable code');
+  assertEqual(response.managedRuntime?.status, 'readiness_blocked', 'response should preserve managed runtime readiness status');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'blocked readiness should keep SQL amount');
+  assertEqual(fixture.readPgState().constructCount, 0, 'blocked readiness should not construct managed pg pool');
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertBridgeTrace({ delegated: true, response, writeback: false });
+});
+
+it('writes source SQL rows only after open-period managed runtime commit', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:04:00+08:00',
+    initialRows: [
+      createSqlRow({
+        amount: '800.00',
+        status: '待调整',
+        version: 2
+      })
+    ]
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
+    admission: fixture.admission,
+    request: createSourceAdjustmentRequest('req-managed-source-open', {
+      body: {
+        amount: '1200.00',
+        expectedVersion: 2,
+        status: '已调整',
+        targetAccountingPeriod: '2026-06'
+      }
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository
+  });
+
+  assertEqual(response.status, 200, 'open-period source mutation should pass');
+  assertEqual(response.managedRuntime?.status, 'committed', 'open-period source mutation should commit runtime work');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1200.00', 'open-period bridge should write SQL amount');
+  assertEqual(response.sourceSqlRows[0]?.status, '已调整', 'open-period bridge should write SQL status');
+  assertEqual(response.sourceSqlRows[0]?.version, 3, 'open-period bridge should bump SQL version after commit');
+  assertEqual(fixture.readPgState().constructCount, 1, 'open-period bridge should construct one managed pg pool');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'open-period bridge should commit once before SQL writeback');
+  assertEqual(fixture.readCommittedState().sourceRecords[0]?.amount, '1200.00', 'committed state should contain source change');
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertBridgeTrace({ delegated: true, response, writeback: true });
+});
+
+it('keeps source SQL rows unchanged when closed-period guard commits only rejection audit', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:05:00+08:00',
+    initialRows: [createSqlRow({ amount: '3200.00', version: 4 })]
+  });
+  const fixture = createRuntimeFixture({
+    sourceSqlRepository,
+    stateOverrides: {
+      closeCheckSnapshots: [createCloseSnapshot()],
+      periods: [createClosedPeriod(), createPeriod({ period: '2026-07' })]
     }
-  },
-  {
-    name: 'rejects unauthorized source mutation before managed runtime and source SQL writeback',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:02:00+08:00',
-        initialRows: [createSqlRow()]
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
-        admission: fixture.admission,
-        request: createSourceAdjustmentRequest('req-managed-source-unauthorized', {
-          headers: {
-            ...createHeaders(''),
-            'x-request-id': 'req-managed-source-unauthorized'
-          }
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository
-      });
+  });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
+    admission: fixture.admission,
+    request: createSourceAdjustmentRequest('req-managed-source-closed', {
+      body: {
+        amount: '3600.00',
+        expectedVersion: 4,
+        targetAccountingPeriod: '2026-06'
+      }
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository
+  });
 
-      assertEqual(response.status, 403, 'unauthorized source mutation should reject');
-      assertEqual(bodyAsRecord(response).code, 'FORBIDDEN', 'unauthorized source mutation should use forbidden code');
-      assertEqual(response.managedRuntime, undefined, 'unauthorized source mutation should not expose runtime evidence');
-      assertEqual(response.sourceSqlRows[0]?.version, 1, 'unauthorized source mutation should keep SQL version');
-      assertEqual(fixture.readPgState().constructCount, 0, 'unauthorized source mutation should not construct managed pg pool');
-      assertEqual(fixture.readCapturedResults().length, 0, 'unauthorized source mutation should not call managed runtime');
-      assertBridgeTrace({ delegated: false, response, writeback: false });
-    }
-  },
-  {
-    name: 'does not write source SQL rows when managed runtime readiness blocks the write route',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:03:00+08:00',
-        initialRows: [createSqlRow()]
-      });
-      const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
-      const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
-        operationalGate
-      });
-      const fixture = createRuntimeFixture({ readinessPackage, sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
-        admission: fixture.admission,
-        request: createSourceAdjustmentRequest('req-managed-source-readiness-blocked'),
-        runtime: fixture.runtime,
-        sourceSqlRepository
-      });
+  assertEqual(response.status, 409, 'closed-period source mutation should reject');
+  assertEqual(bodyAsRecord(response).code, canonicalClosedAccountingPeriodErrorCode, 'closed-period rejection code should match');
+  assertEqual(response.managedRuntime?.status, 'committed', 'closed-period guard audit should commit atomically');
+  assertEqual(response.sourceSqlRows[0]?.amount, '3200.00', 'closed-period bridge should not write SQL amount');
+  assertEqual(response.sourceSqlRows[0]?.version, 4, 'closed-period bridge should not bump SQL version');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'closed-period rejection audit should publish one service commit');
+  assertEqual(
+    fixture.readCommittedState().sourceMutationEvents.length,
+    1,
+    'closed-period rejection should persist one guard audit event inside service state'
+  );
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertBridgeTrace({ delegated: true, response, writeback: false });
+});
 
-      assertEqual(response.status, 503, 'blocked readiness should return service unavailable');
-      assertEqual(bodyAsRecord(response).code, 'POSTGRES_RUNTIME_UNAVAILABLE', 'blocked readiness should expose runtime unavailable code');
-      assertEqual(response.managedRuntime?.status, 'readiness_blocked', 'response should preserve managed runtime readiness status');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'blocked readiness should keep SQL amount');
-      assertEqual(fixture.readPgState().constructCount, 0, 'blocked readiness should not construct managed pg pool');
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertBridgeTrace({ delegated: true, response, writeback: false });
-    }
-  },
-  {
-    name: 'writes source SQL rows only after open-period managed runtime commit',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:04:00+08:00',
-        initialRows: [
-          createSqlRow({
-            amount: '800.00',
-            status: '待调整',
-            version: 2
-          })
-        ]
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
-        admission: fixture.admission,
-        request: createSourceAdjustmentRequest('req-managed-source-open', {
-          body: {
-            amount: '1200.00',
-            expectedVersion: 2,
-            status: '已调整',
-            targetAccountingPeriod: '2026-06'
-          }
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository
-      });
+it('inserts create-type source SQL row only after managed runtime commit', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:06:00+08:00',
+    initialRows: []
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
+    admission: fixture.admission,
+    request: {
+      body: {
+        amount: '2100.00',
+        sourceId: 'invoice-managed-bridge-create',
+        sourceNo: 'INV-MANAGED-BRIDGE-CREATE',
+        targetAccountingPeriod: '2026-06'
+      },
+      headers: {
+        ...createHeaders('finance.invoiceLedger.write'),
+        'x-request-id': 'req-managed-source-create'
+      },
+      method: 'POST',
+      path: '/api/finance/invoices/import'
+    },
+    runtime: fixture.runtime,
+    sourceSqlRepository
+  });
 
-      assertEqual(response.status, 200, 'open-period source mutation should pass');
-      assertEqual(response.managedRuntime?.status, 'committed', 'open-period source mutation should commit runtime work');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1200.00', 'open-period bridge should write SQL amount');
-      assertEqual(response.sourceSqlRows[0]?.status, '已调整', 'open-period bridge should write SQL status');
-      assertEqual(response.sourceSqlRows[0]?.version, 3, 'open-period bridge should bump SQL version after commit');
-      assertEqual(fixture.readPgState().constructCount, 1, 'open-period bridge should construct one managed pg pool');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'open-period bridge should commit once before SQL writeback');
-      assertEqual(fixture.readCommittedState().sourceRecords[0]?.amount, '1200.00', 'committed state should contain source change');
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertBridgeTrace({ delegated: true, response, writeback: true });
-    }
-  },
-  {
-    name: 'keeps source SQL rows unchanged when closed-period guard commits only rejection audit',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:05:00+08:00',
-        initialRows: [createSqlRow({ amount: '3200.00', version: 4 })]
-      });
-      const fixture = createRuntimeFixture({
-        sourceSqlRepository,
-        stateOverrides: {
-          closeCheckSnapshots: [createCloseSnapshot()],
-          periods: [createClosedPeriod(), createPeriod({ period: '2026-07' })]
-        }
-      });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
-        admission: fixture.admission,
-        request: createSourceAdjustmentRequest('req-managed-source-closed', {
-          body: {
-            amount: '3600.00',
-            expectedVersion: 4,
-            targetAccountingPeriod: '2026-06'
-          }
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository
-      });
-
-      assertEqual(response.status, 409, 'closed-period source mutation should reject');
-      assertEqual(bodyAsRecord(response).code, canonicalClosedAccountingPeriodErrorCode, 'closed-period rejection code should match');
-      assertEqual(response.managedRuntime?.status, 'committed', 'closed-period guard audit should commit atomically');
-      assertEqual(response.sourceSqlRows[0]?.amount, '3200.00', 'closed-period bridge should not write SQL amount');
-      assertEqual(response.sourceSqlRows[0]?.version, 4, 'closed-period bridge should not bump SQL version');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'closed-period rejection audit should publish one service commit');
-      assertEqual(
-        fixture.readCommittedState().sourceMutationEvents.length,
-        1,
-        'closed-period rejection should persist one guard audit event inside service state'
-      );
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertBridgeTrace({ delegated: true, response, writeback: false });
-    }
-  },
-  {
-    name: 'inserts create-type source SQL row only after managed runtime commit',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:06:00+08:00',
-        initialRows: []
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationBridge({
-        admission: fixture.admission,
-        request: {
-          body: {
-            amount: '2100.00',
-            sourceId: 'invoice-managed-bridge-create',
-            sourceNo: 'INV-MANAGED-BRIDGE-CREATE',
-            targetAccountingPeriod: '2026-06'
-          },
-          headers: {
-            ...createHeaders('finance.invoiceLedger.write'),
-            'x-request-id': 'req-managed-source-create'
-          },
-          method: 'POST',
-          path: '/api/finance/invoices/import'
-        },
-        runtime: fixture.runtime,
-        sourceSqlRepository
-      });
-
-      assertEqual(response.status, 201, 'create-type bridge should return created');
-      assertEqual(response.managedRuntime?.status, 'committed', 'create-type bridge should commit runtime work');
-      assertEqual(response.sourceSqlRows.length, 1, 'create-type bridge should insert one SQL row');
-      assertEqual(
-        response.sourceSqlRows[0]?.tableName,
-        getDefaultFinanceSourceTableName('invoice_ledger'),
-        'create-type bridge should insert into invoice-ledger SQL table'
-      );
-      assertEqual(response.sourceSqlRows[0]?.accounting_period, '2026-06', 'create-type bridge should persist target period');
-      assertEqual(response.sourceSqlRows[0]?.version, 1, 'create-type bridge should start with version 1');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'create-type bridge should commit before SQL writeback');
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertBridgeTrace({ delegated: true, response, writeback: true });
-    }
-  }
-];
-
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(response.status, 201, 'create-type bridge should return created');
+  assertEqual(response.managedRuntime?.status, 'committed', 'create-type bridge should commit runtime work');
+  assertEqual(response.sourceSqlRows.length, 1, 'create-type bridge should insert one SQL row');
+  assertEqual(
+    response.sourceSqlRows[0]?.tableName,
+    getDefaultFinanceSourceTableName('invoice_ledger'),
+    'create-type bridge should insert into invoice-ledger SQL table'
+  );
+  assertEqual(response.sourceSqlRows[0]?.accounting_period, '2026-06', 'create-type bridge should persist target period');
+  assertEqual(response.sourceSqlRows[0]?.version, 1, 'create-type bridge should start with version 1');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'create-type bridge should commit before SQL writeback');
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertBridgeTrace({ delegated: true, response, writeback: true });
+});

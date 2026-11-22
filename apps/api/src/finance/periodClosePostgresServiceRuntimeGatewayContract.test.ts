@@ -33,17 +33,8 @@ import {
   type PersistentFinanceSourceRecord,
   type PersistentSourceMutationResult
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assertEqual } from '../__tests__/assertions.js';
 
 const apiPackageManifestPath = 'apps/api/package.json';
 const lockfilePath = 'pnpm-lock.yaml';
@@ -440,126 +431,113 @@ function assertValid<T extends PersistentCloseAccountingPeriodResult | Persisten
   assertEqual(errors.length, 0, `service runtime gateway trace should validate: ${errors.join('; ')}`);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'blocks service work when readiness package is still operationally blocked',
-    run: async () => {
-      const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
-      const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
-        operationalGate
-      });
-      const { readCallCount, serviceBoundary } = createBlockedServiceBoundarySpy();
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const gateway = createPeriodClosePostgresServiceRuntimeGatewayContract({
-        loadPgModule,
-        serviceBoundary
-      });
-      const result = await gateway.closeAccountingPeriod({
-        admission: createAdmissionInput({ readinessPackage }),
-        period: '2026-06',
-        request: createCloseRequest()
-      });
+it('blocks service work when readiness package is still operationally blocked', async () => {
+  const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
+  const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
+    operationalGate
+  });
+  const { readCallCount, serviceBoundary } = createBlockedServiceBoundarySpy();
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const gateway = createPeriodClosePostgresServiceRuntimeGatewayContract({
+    loadPgModule,
+    serviceBoundary
+  });
+  const result = await gateway.closeAccountingPeriod({
+    admission: createAdmissionInput({ readinessPackage }),
+    period: '2026-06',
+    request: createCloseRequest()
+  });
 
-      assertEqual(result.status, 'runtime_blocked', 'blocked readiness must block service runtime gateway');
-      assertEqual(result.serviceResult, undefined, 'blocked runtime must not return a service result');
-      assertEqual(readCallCount(), 0, 'blocked runtime must not call service atomic boundary');
-      assertEqual(readPgState().constructCount, 0, 'blocked runtime must not construct pg pool');
-      assertValid(result);
+  assertEqual(result.status, 'runtime_blocked', 'blocked readiness must block service runtime gateway');
+  assertEqual(result.serviceResult, undefined, 'blocked runtime must not return a service result');
+  assertEqual(readCallCount(), 0, 'blocked runtime must not call service atomic boundary');
+  assertEqual(readPgState().constructCount, 0, 'blocked runtime must not construct pg pool');
+  assertValid(result);
+});
+
+it('runs runtime admission before committing close through service atomic boundary', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { readCommittedSnapshot, readPoolState, readUnitOfWorkState, serviceBoundary } = createServiceBoundary();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const gateway = createPeriodClosePostgresServiceRuntimeGatewayContract({
+    loadPgModule,
+    secretResolver,
+    serviceBoundary
+  });
+  const result = await gateway.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-06',
+    request: createCloseRequest()
+  });
+
+  assertEqual(result.status, 'committed', 'ready runtime should allow service close commit');
+  assertEqual(result.runtimeAdmissionResult.status, 'committed', 'runtime admission should complete before service work');
+  assertEqual(result.serviceResult?.status, 'committed', 'service boundary should commit after runtime admission');
+  assertEqual(readPgState().constructCount, 1, 'runtime admission should construct one pg pool for readiness proof');
+  assertEqual(readPoolState().connectCount, 1, 'service boundary should run one pg-like replay after readiness proof');
+  assertEqual(readUnitOfWorkState().commitCount, 1, 'service boundary should publish the staged close state');
+  assertEqual(
+    readCommittedSnapshot().periodCloseRows.accounting_periods[0]?.status,
+    '已结账',
+    'service runtime gateway close should persist the period lock in the local contract state'
+  );
+  assertValid(result);
+});
+
+it('runs source mutation guard through the same service runtime gateway after close', async () => {
+  const { loadPgModule } = createFakePgModule();
+  const { readCommittedSnapshot, readUnitOfWorkState, serviceBoundary } = createServiceBoundary();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const gateway = createPeriodClosePostgresServiceRuntimeGatewayContract({
+    loadPgModule,
+    secretResolver,
+    serviceBoundary
+  });
+
+  await gateway.closeAccountingPeriod({
+    admission: createAdmissionInput({
+      requestId: 'req-postgres-service-runtime-close-before-source'
+    }),
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-service-runtime-close-before-source' })
+  });
+
+  const result = await gateway.guardSourceMutation({
+    admission: createAdmissionInput({
+      operation: 'guard_source_mutation',
+      requestId: 'req-postgres-service-runtime-source-guard'
+    }),
+    context: {
+      actorSnapshot: { id: 'user-001', name: '李明' },
+      now: '2026-07-05T12:05:00+08:00',
+      requestId: 'req-postgres-service-runtime-source-guard'
+    },
+    mutation: {
+      amount: '1500.00',
+      expectedVersion: 1,
+      operation: '调整应收应付事项',
+      sourceArea: 'receivable_payable',
+      sourceId: 'source-001',
+      status: '已调整'
     }
-  },
-  {
-    name: 'runs runtime admission before committing close through service atomic boundary',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { readCommittedSnapshot, readPoolState, readUnitOfWorkState, serviceBoundary } = createServiceBoundary();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const gateway = createPeriodClosePostgresServiceRuntimeGatewayContract({
-        loadPgModule,
-        secretResolver,
-        serviceBoundary
-      });
-      const result = await gateway.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-06',
-        request: createCloseRequest()
-      });
+  });
+  const committedSnapshot = readCommittedSnapshot();
 
-      assertEqual(result.status, 'committed', 'ready runtime should allow service close commit');
-      assertEqual(result.runtimeAdmissionResult.status, 'committed', 'runtime admission should complete before service work');
-      assertEqual(result.serviceResult?.status, 'committed', 'service boundary should commit after runtime admission');
-      assertEqual(readPgState().constructCount, 1, 'runtime admission should construct one pg pool for readiness proof');
-      assertEqual(readPoolState().connectCount, 1, 'service boundary should run one pg-like replay after readiness proof');
-      assertEqual(readUnitOfWorkState().commitCount, 1, 'service boundary should publish the staged close state');
-      assertEqual(
-        readCommittedSnapshot().periodCloseRows.accounting_periods[0]?.status,
-        '已结账',
-        'service runtime gateway close should persist the period lock in the local contract state'
-      );
-      assertValid(result);
-    }
-  },
-  {
-    name: 'runs source mutation guard through the same service runtime gateway after close',
-    run: async () => {
-      const { loadPgModule } = createFakePgModule();
-      const { readCommittedSnapshot, readUnitOfWorkState, serviceBoundary } = createServiceBoundary();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const gateway = createPeriodClosePostgresServiceRuntimeGatewayContract({
-        loadPgModule,
-        secretResolver,
-        serviceBoundary
-      });
-
-      await gateway.closeAccountingPeriod({
-        admission: createAdmissionInput({
-          requestId: 'req-postgres-service-runtime-close-before-source'
-        }),
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-service-runtime-close-before-source' })
-      });
-
-      const result = await gateway.guardSourceMutation({
-        admission: createAdmissionInput({
-          operation: 'guard_source_mutation',
-          requestId: 'req-postgres-service-runtime-source-guard'
-        }),
-        context: {
-          actorSnapshot: { id: 'user-001', name: '李明' },
-          now: '2026-07-05T12:05:00+08:00',
-          requestId: 'req-postgres-service-runtime-source-guard'
-        },
-        mutation: {
-          amount: '1500.00',
-          expectedVersion: 1,
-          operation: '调整应收应付事项',
-          sourceArea: 'receivable_payable',
-          sourceId: 'source-001',
-          status: '已调整'
-        }
-      });
-      const committedSnapshot = readCommittedSnapshot();
-
-      assertEqual(result.status, 'committed', 'ready runtime should allow source guard audit commit');
-      assertEqual(result.runtimeAdmissionResult.status, 'committed', 'source guard should also pass runtime admission first');
-      assertEqual(result.serviceResult?.status, 'committed', 'source guard should commit service boundary audit');
-      assertEqual(committedSnapshot.sourceRecords[0]?.amount, '1000.00', 'closed-period source row should remain unchanged');
-      assertEqual(
-        committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
-        1,
-        'closed-period source guard audit should be persisted after service runtime gateway'
-      );
-      assertEqual(readUnitOfWorkState().commitCount, 2, 'close and source guard should publish separate staged units');
-      assertValid(result);
-    }
-  }
-];
-
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(result.status, 'committed', 'ready runtime should allow source guard audit commit');
+  assertEqual(result.runtimeAdmissionResult.status, 'committed', 'source guard should also pass runtime admission first');
+  assertEqual(result.serviceResult?.status, 'committed', 'source guard should commit service boundary audit');
+  assertEqual(committedSnapshot.sourceRecords[0]?.amount, '1000.00', 'closed-period source row should remain unchanged');
+  assertEqual(
+    committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
+    1,
+    'closed-period source guard audit should be persisted after service runtime gateway'
+  );
+  assertEqual(readUnitOfWorkState().commitCount, 2, 'close and source guard should publish separate staged units');
+  assertValid(result);
+});

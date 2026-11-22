@@ -61,11 +61,8 @@ import type {
 import { createInMemoryPeriodCloseSqlDriverExecutor } from './periodCloseSqlDriverRepositoryContract.js';
 import { createPeriodCloseSqlRepositoryContract } from './periodCloseSqlRepositoryContract.js';
 import { getDefaultFinanceSourceTableName } from './periodCloseSourceTableRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
+import { it } from 'vitest';
+import { assertEqual, assertObject } from '../__tests__/assertions.js';
 
 type CapturedManagedRuntimeResult = PeriodClosePostgresManagedServicePoolRuntimeResult<PersistentSourceMutationResult>;
 
@@ -74,18 +71,6 @@ type NodeManagedSourceHttpClientResponse = {
   headers: Record<string, string | readonly string[] | undefined>;
   status: number;
 };
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
 
 function bodyAsRecord(response: FinanceHttpPostgresManagedSourceMutationServerResponse) {
   assertObject(response.body, 'managed source mutation server response body should be an object');
@@ -578,601 +563,566 @@ function assertAdapterTrace(response: FinanceHttpPostgresManagedSourceMutationFr
   assertEqual(result.errors.length, 0, `managed source mutation framework adapter trace should validate: ${result.errors.join('; ')}`);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'does not delegate non-finance routes into managed source mutation runtime',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:01:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({ method: 'GET', url: '/health' }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
+it('does not delegate non-finance routes into managed source mutation runtime', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:01:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({ method: 'GET', url: '/health' }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
 
-      assertEqual(response.status, 404, 'non-finance route should not be handled as source mutation');
-      assertEqual(response.handled, false, 'non-finance route should remain unhandled');
-      assertEqual(fixture.readPgState().constructCount, 0, 'non-finance route should not construct managed pg pool');
-      assertEqual(fixture.readCapturedResults().length, 0, 'non-finance route should not call managed runtime');
-      assertServerTrace({ delegated: false, response });
+  assertEqual(response.status, 404, 'non-finance route should not be handled as source mutation');
+  assertEqual(response.handled, false, 'non-finance route should remain unhandled');
+  assertEqual(fixture.readPgState().constructCount, 0, 'non-finance route should not construct managed pg pool');
+  assertEqual(fixture.readCapturedResults().length, 0, 'non-finance route should not call managed runtime');
+  assertServerTrace({ delegated: false, response });
+});
+
+it('rejects unsupported finance method before managed runtime', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:02:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({ method: 'GET' }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 405, 'GET source mutation should be rejected');
+  assertEqual(fixture.readPgState().constructCount, 0, 'unsupported method should not construct managed pg pool');
+  assertEqual(fixture.readCapturedResults().length, 0, 'unsupported method should not call managed runtime');
+  assertServerTrace({ delegated: false, response });
+});
+
+it('rejects missing server principal and ignores client-forged finance headers', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:03:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({ principal: undefined }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 401, 'missing server principal should reject');
+  assertEqual(bodyAsRecord(response).code, 'UNAUTHENTICATED', 'missing principal should use stable error code');
+  assertEqual(response.sourceSqlRows[0]?.version, 1, 'missing principal should not write source SQL rows');
+  assertEqual(fixture.readCapturedResults().length, 0, 'missing principal should not call managed runtime');
+  assertServerTrace({ delegated: false, response });
+});
+
+it('rejects missing ledger resource scope before managed runtime', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:04:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({
+      principal: createPrincipal(['finance.receivablePayable.write'], []),
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 403, 'missing ledger resource scope should reject');
+  assertEqual(bodyAsRecord(response).code, 'FORBIDDEN', 'missing ledger scope should use forbidden code');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'missing ledger scope should not write SQL amount');
+  assertEqual(fixture.readCapturedResults().length, 0, 'missing ledger scope should not call managed runtime');
+  assertServerTrace({ delegated: false, response });
+});
+
+it('rejects invalid JSON before managed runtime and source SQL writeback', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:05:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({ bodyText: '{bad json' }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 400, 'invalid JSON should reject');
+  assertEqual(bodyAsRecord(response).code, 'INVALID_JSON_REQUEST', 'invalid JSON should use stable error code');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'invalid JSON should not write SQL amount');
+  assertEqual(fixture.readCapturedResults().length, 0, 'invalid JSON should not call managed runtime');
+  assertServerTrace({ delegated: false, response });
+});
+
+it('does not allow forged permission headers to bypass server-owned principal scopes', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:06:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({
+      principal: createPrincipal([], ['finance.ledger:default-ledger']),
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 403, 'empty server principal permission should reject even with forged client header');
+  assertEqual(bodyAsRecord(response).code, 'FORBIDDEN', 'empty server permission should use forbidden code');
+  assertEqual(response.sourceBridge?.status, 403, 'forged permission should be rejected by source bridge after trusted header overwrite');
+  assertEqual(response.sourceSqlRows[0]?.version, 1, 'forged permission should not write source SQL rows');
+  assertEqual(fixture.readCapturedResults().length, 0, 'forged permission should not call managed runtime');
+  assertServerTrace({ delegated: true, response });
+});
+
+it('writes source SQL rows only after open-period managed runtime commit through server chain', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:07:00+08:00',
+    initialRows: [
+      createSqlRow({
+        amount: '800.00',
+        status: '待调整',
+        version: 2,
+      }),
+    ],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({
+      bodyText: JSON.stringify({
+        amount: '1200.00',
+        expectedVersion: 2,
+        status: '已调整',
+        targetAccountingPeriod: '2026-06',
+      }),
+      requestId: 'req-managed-source-server-open',
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 200, 'open-period server source mutation should pass');
+  assertEqual(response.sourceBridge?.status, 200, 'server chain should delegate to bridge successfully');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1200.00', 'server chain should write SQL amount after commit');
+  assertEqual(response.sourceSqlRows[0]?.status, '已调整', 'server chain should write SQL status after commit');
+  assertEqual(response.sourceSqlRows[0]?.version, 3, 'server chain should bump SQL version after commit');
+  assertEqual(fixture.readPgState().constructCount, 1, 'server chain should construct one managed pg pool');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'server chain should commit once before SQL writeback');
+  assertEqual(
+    fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
+    'server-user-001',
+    'server chain should use server principal actor instead of forged client header',
+  );
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertServerTrace({ delegated: true, response });
+});
+
+it('keeps SQL rows unchanged when closed-period guard commits only rejection audit through server chain', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:08:00+08:00',
+    initialRows: [createSqlRow({ amount: '3200.00', version: 4 })],
+  });
+  const fixture = createRuntimeFixture({
+    sourceSqlRepository,
+    stateOverrides: {
+      closeCheckSnapshots: [createCloseSnapshot()],
+      periods: [createClosedPeriod(), createPeriod({ period: '2026-07' })],
     },
-  },
-  {
-    name: 'rejects unsupported finance method before managed runtime',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:02:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({ method: 'GET' }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
+  });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({
+      bodyText: JSON.stringify({
+        amount: '3600.00',
+        expectedVersion: 4,
+        targetAccountingPeriod: '2026-06',
+      }),
+      requestId: 'req-managed-source-server-closed',
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
 
-      assertEqual(response.status, 405, 'GET source mutation should be rejected');
-      assertEqual(fixture.readPgState().constructCount, 0, 'unsupported method should not construct managed pg pool');
-      assertEqual(fixture.readCapturedResults().length, 0, 'unsupported method should not call managed runtime');
-      assertServerTrace({ delegated: false, response });
+  assertEqual(response.status, 409, 'closed-period server source mutation should reject');
+  assertEqual(bodyAsRecord(response).code, canonicalClosedAccountingPeriodErrorCode, 'closed-period rejection code should match');
+  assertEqual(response.sourceSqlRows[0]?.amount, '3200.00', 'closed-period server chain should not write SQL amount');
+  assertEqual(response.sourceSqlRows[0]?.version, 4, 'closed-period server chain should not bump SQL version');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'closed-period rejection audit should still commit once');
+  assertEqual(
+    fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
+    'server-user-001',
+    'closed-period rejection audit should use server principal actor',
+  );
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertServerTrace({ delegated: true, response });
+});
+
+it('inserts create-type invoice SQL row after managed runtime commit through server chain', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:09:00+08:00',
+    initialRows: [],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
+    admission: fixture.admission,
+    request: createSourceAdjustmentServerRequest({
+      bodyText: JSON.stringify({
+        amount: '2100.00',
+        sourceId: 'invoice-managed-server-create',
+        sourceNo: 'INV-MANAGED-SERVER-CREATE',
+        targetAccountingPeriod: '2026-06',
+      }),
+      method: 'POST',
+      principal: createPrincipal(['finance.invoiceLedger.write']),
+      requestId: 'req-managed-source-server-create',
+      url: '/api/finance/invoices/import',
+    }),
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+
+  assertEqual(response.status, 201, 'create-type server source mutation should return created');
+  assertEqual(response.sourceSqlRows.length, 1, 'create-type server chain should insert one SQL row');
+  assertEqual(
+    response.sourceSqlRows[0]?.tableName,
+    getDefaultFinanceSourceTableName('invoice_ledger'),
+    'create-type server chain should insert invoice-ledger SQL row',
+  );
+  assertEqual(response.sourceSqlRows[0]?.version, 1, 'create-type server chain should start SQL version at 1');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'create-type server chain should commit before SQL writeback');
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertServerTrace({ delegated: true, response });
+});
+
+it('framework adapter maps object body path query identity and writes response after managed source commit', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:10:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  let capturedIdentityRequest:
+    | Parameters<
+        Parameters<typeof createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter>[0]['resolvePrincipal']
+      >[0]
+    | undefined;
+  const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
+    admission: fixture.admission,
+    frameworkName: 'express-like-managed-source-test',
+    now: () => '2026-07-05T13:00:00+08:00',
+    requestIdFactory: () => 'req-framework-managed-source-open',
+    resolvePrincipal: (request) => {
+      capturedIdentityRequest = request;
+
+      return createPrincipal();
     },
-  },
-  {
-    name: 'rejects missing server principal and ignores client-forged finance headers',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:03:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({ principal: undefined }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-
-      assertEqual(response.status, 401, 'missing server principal should reject');
-      assertEqual(bodyAsRecord(response).code, 'UNAUTHENTICATED', 'missing principal should use stable error code');
-      assertEqual(response.sourceSqlRows[0]?.version, 1, 'missing principal should not write source SQL rows');
-      assertEqual(fixture.readCapturedResults().length, 0, 'missing principal should not call managed runtime');
-      assertServerTrace({ delegated: false, response });
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+  const response = await adapter.handleConcreteFrameworkRequest({
+    body: {
+      amount: '1200.00',
+      expectedVersion: 1,
+      status: '已调整',
+      targetAccountingPeriod: '2026-06',
     },
-  },
-  {
-    name: 'rejects missing ledger resource scope before managed runtime',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:04:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({
-          principal: createPrincipal(['finance.receivablePayable.write'], []),
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-
-      assertEqual(response.status, 403, 'missing ledger resource scope should reject');
-      assertEqual(bodyAsRecord(response).code, 'FORBIDDEN', 'missing ledger scope should use forbidden code');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'missing ledger scope should not write SQL amount');
-      assertEqual(fixture.readCapturedResults().length, 0, 'missing ledger scope should not call managed runtime');
-      assertServerTrace({ delegated: false, response });
+    headers: {
+      authorization: ['Bearer local-token'],
+      'content-type': 'application/json',
+      'x-actor-id': 'forged-framework-user',
+      'x-permission-scopes': 'finance.receivablePayable.write',
     },
-  },
-  {
-    name: 'rejects invalid JSON before managed runtime and source SQL writeback',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:05:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({ bodyText: '{bad json' }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-
-      assertEqual(response.status, 400, 'invalid JSON should reject');
-      assertEqual(bodyAsRecord(response).code, 'INVALID_JSON_REQUEST', 'invalid JSON should use stable error code');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'invalid JSON should not write SQL amount');
-      assertEqual(fixture.readCapturedResults().length, 0, 'invalid JSON should not call managed runtime');
-      assertServerTrace({ delegated: false, response });
+    method: 'PATCH',
+    path: 'api/finance/receivables-payables/source-managed-server-001/adjust',
+    query: {
+      debug: true,
+      repeated: ['a', 'b'],
     },
-  },
-  {
-    name: 'does not allow forged permission headers to bypass server-owned principal scopes',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:06:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({
-          principal: createPrincipal([], ['finance.ledger:default-ledger']),
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
+  });
 
-      assertEqual(response.status, 403, 'empty server principal permission should reject even with forged client header');
-      assertEqual(bodyAsRecord(response).code, 'FORBIDDEN', 'empty server permission should use forbidden code');
-      assertEqual(response.sourceBridge?.status, 403, 'forged permission should be rejected by source bridge after trusted header overwrite');
-      assertEqual(response.sourceSqlRows[0]?.version, 1, 'forged permission should not write source SQL rows');
-      assertEqual(fixture.readCapturedResults().length, 0, 'forged permission should not call managed runtime');
-      assertServerTrace({ delegated: true, response });
+  assertEqual(response.status, 200, 'framework adapter source mutation should pass');
+  assertEqual(response.adapterTrace.frameworkName, 'express-like-managed-source-test', 'adapter trace should carry framework name');
+  assertEqual(
+    response.adapterTrace.url,
+    '/api/finance/receivables-payables/source-managed-server-001/adjust?debug=true&repeated=a&repeated=b',
+    'adapter should serialize path and query into server URL',
+  );
+  assertEqual(capturedIdentityRequest?.authorization, 'Bearer local-token', 'adapter should normalize authorization for resolver');
+  assertEqual(capturedIdentityRequest?.method, 'PATCH', 'adapter should pass upper-case method to resolver');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1200.00', 'framework adapter should write SQL amount after managed commit');
+  assertEqual(response.sourceSqlRows[0]?.version, 2, 'framework adapter should bump SQL version after managed commit');
+  assertEqual(fixture.readFactoryState().commitCount, 1, 'framework adapter should commit through managed runtime');
+  assertEqual(
+    fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
+    'server-user-001',
+    'framework adapter should use resolved server principal instead of forged headers',
+  );
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  assertServerTrace({ delegated: true, response });
+  assertAdapterTrace(response);
+
+  const writerOutput: {
+    bodyText?: string;
+    headers: Record<string, string>;
+    status?: number;
+  } = { headers: {} };
+  adapter.writeConcreteFrameworkResponse(
+    {
+      send: (bodyText) => {
+        writerOutput.bodyText = bodyText;
+      },
+      setHeader: (name, value) => {
+        writerOutput.headers[name] = value;
+      },
+      status: (status) => {
+        writerOutput.status = status;
+
+        return undefined;
+      },
     },
-  },
-  {
-    name: 'writes source SQL rows only after open-period managed runtime commit through server chain',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:07:00+08:00',
-        initialRows: [
-          createSqlRow({
-            amount: '800.00',
-            status: '待调整',
-            version: 2,
-          }),
-        ],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({
-          bodyText: JSON.stringify({
-            amount: '1200.00',
-            expectedVersion: 2,
-            status: '已调整',
-            targetAccountingPeriod: '2026-06',
-          }),
-          requestId: 'req-managed-source-server-open',
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
+    response,
+  );
 
-      assertEqual(response.status, 200, 'open-period server source mutation should pass');
-      assertEqual(response.sourceBridge?.status, 200, 'server chain should delegate to bridge successfully');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1200.00', 'server chain should write SQL amount after commit');
-      assertEqual(response.sourceSqlRows[0]?.status, '已调整', 'server chain should write SQL status after commit');
-      assertEqual(response.sourceSqlRows[0]?.version, 3, 'server chain should bump SQL version after commit');
-      assertEqual(fixture.readPgState().constructCount, 1, 'server chain should construct one managed pg pool');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'server chain should commit once before SQL writeback');
-      assertEqual(
-        fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
-        'server-user-001',
-        'server chain should use server principal actor instead of forged client header',
-      );
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertServerTrace({ delegated: true, response });
+  assertEqual(writerOutput.status, 200, 'framework writer should receive response status');
+  assertEqual(
+    writerOutput.headers['content-type'],
+    'application/json; charset=utf-8',
+    'framework writer should receive JSON content type',
+  );
+  assertEqual(writerOutput.bodyText, response.bodyText, 'framework writer should send response body text');
+});
+
+it('framework adapter rejects oversized body before identity resolution and managed runtime', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:11:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  let resolveCount = 0;
+  const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
+    admission: fixture.admission,
+    maxBodyBytes: 5,
+    requestIdFactory: () => 'req-framework-body-too-large',
+    resolvePrincipal: () => {
+      resolveCount += 1;
+
+      return createPrincipal();
     },
-  },
-  {
-    name: 'keeps SQL rows unchanged when closed-period guard commits only rejection audit through server chain',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:08:00+08:00',
-        initialRows: [createSqlRow({ amount: '3200.00', version: 4 })],
-      });
-      const fixture = createRuntimeFixture({
-        sourceSqlRepository,
-        stateOverrides: {
-          closeCheckSnapshots: [createCloseSnapshot()],
-          periods: [createClosedPeriod(), createPeriod({ period: '2026-07' })],
-        },
-      });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({
-          bodyText: JSON.stringify({
-            amount: '3600.00',
-            expectedVersion: 4,
-            targetAccountingPeriod: '2026-06',
-          }),
-          requestId: 'req-managed-source-server-closed',
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-
-      assertEqual(response.status, 409, 'closed-period server source mutation should reject');
-      assertEqual(bodyAsRecord(response).code, canonicalClosedAccountingPeriodErrorCode, 'closed-period rejection code should match');
-      assertEqual(response.sourceSqlRows[0]?.amount, '3200.00', 'closed-period server chain should not write SQL amount');
-      assertEqual(response.sourceSqlRows[0]?.version, 4, 'closed-period server chain should not bump SQL version');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'closed-period rejection audit should still commit once');
-      assertEqual(
-        fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
-        'server-user-001',
-        'closed-period rejection audit should use server principal actor',
-      );
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertServerTrace({ delegated: true, response });
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+  const response = await adapter.handleConcreteFrameworkRequest({
+    bodyText: JSON.stringify({
+      amount: '1200.00',
+      expectedVersion: 1,
+      targetAccountingPeriod: '2026-06',
+    }),
+    headers: {
+      'content-type': 'application/json',
     },
-  },
-  {
-    name: 'inserts create-type invoice SQL row after managed runtime commit through server chain',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:09:00+08:00',
-        initialRows: [],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const response = await handleFinanceHttpPostgresManagedSourceMutationServer({
-        admission: fixture.admission,
-        request: createSourceAdjustmentServerRequest({
-          bodyText: JSON.stringify({
-            amount: '2100.00',
-            sourceId: 'invoice-managed-server-create',
-            sourceNo: 'INV-MANAGED-SERVER-CREATE',
-            targetAccountingPeriod: '2026-06',
-          }),
-          method: 'POST',
-          principal: createPrincipal(['finance.invoiceLedger.write']),
-          requestId: 'req-managed-source-server-create',
-          url: '/api/finance/invoices/import',
-        }),
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/source-managed-server-001/adjust',
+  });
 
-      assertEqual(response.status, 201, 'create-type server source mutation should return created');
-      assertEqual(response.sourceSqlRows.length, 1, 'create-type server chain should insert one SQL row');
-      assertEqual(
-        response.sourceSqlRows[0]?.tableName,
-        getDefaultFinanceSourceTableName('invoice_ledger'),
-        'create-type server chain should insert invoice-ledger SQL row',
-      );
-      assertEqual(response.sourceSqlRows[0]?.version, 1, 'create-type server chain should start SQL version at 1');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'create-type server chain should commit before SQL writeback');
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertServerTrace({ delegated: true, response });
+  assertEqual(response.status, 413, 'oversized source mutation request should reject at adapter');
+  assertEqual(bodyAsRecord(response).code, 'PAYLOAD_TOO_LARGE', 'oversized body should use stable code');
+  assertEqual(response.adapterTrace.delegatedToServerEntry, false, 'oversized body should not delegate to server entry');
+  assertEqual(response.trace.length, 0, 'oversized body should not have server trace');
+  assertEqual(resolveCount, 0, 'oversized body should not resolve identity');
+  assertEqual(fixture.readCapturedResults().length, 0, 'oversized body should not call managed runtime');
+  assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'oversized body should not write SQL rows');
+  assertAdapterTrace(response);
+});
+
+it('framework adapter delegates missing resolved principal to server-entry authentication rejection', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:12:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
+    admission: fixture.admission,
+    requestIdFactory: () => 'req-framework-missing-principal',
+    resolvePrincipal: () => undefined,
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+  const response = await adapter.handleConcreteFrameworkRequest({
+    body: {
+      amount: '1200.00',
+      expectedVersion: 1,
+      targetAccountingPeriod: '2026-06',
     },
-  },
-  {
-    name: 'framework adapter maps object body path query identity and writes response after managed source commit',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:10:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      let capturedIdentityRequest:
-        | Parameters<
-            Parameters<typeof createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter>[0]['resolvePrincipal']
-          >[0]
-        | undefined;
-      const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
-        admission: fixture.admission,
-        frameworkName: 'express-like-managed-source-test',
-        now: () => '2026-07-05T13:00:00+08:00',
-        requestIdFactory: () => 'req-framework-managed-source-open',
-        resolvePrincipal: (request) => {
-          capturedIdentityRequest = request;
-
-          return createPrincipal();
-        },
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-      const response = await adapter.handleConcreteFrameworkRequest({
-        body: {
-          amount: '1200.00',
-          expectedVersion: 1,
-          status: '已调整',
-          targetAccountingPeriod: '2026-06',
-        },
-        headers: {
-          authorization: ['Bearer local-token'],
-          'content-type': 'application/json',
-          'x-actor-id': 'forged-framework-user',
-          'x-permission-scopes': 'finance.receivablePayable.write',
-        },
-        method: 'PATCH',
-        path: 'api/finance/receivables-payables/source-managed-server-001/adjust',
-        query: {
-          debug: true,
-          repeated: ['a', 'b'],
-        },
-      });
-
-      assertEqual(response.status, 200, 'framework adapter source mutation should pass');
-      assertEqual(response.adapterTrace.frameworkName, 'express-like-managed-source-test', 'adapter trace should carry framework name');
-      assertEqual(
-        response.adapterTrace.url,
-        '/api/finance/receivables-payables/source-managed-server-001/adjust?debug=true&repeated=a&repeated=b',
-        'adapter should serialize path and query into server URL',
-      );
-      assertEqual(capturedIdentityRequest?.authorization, 'Bearer local-token', 'adapter should normalize authorization for resolver');
-      assertEqual(capturedIdentityRequest?.method, 'PATCH', 'adapter should pass upper-case method to resolver');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1200.00', 'framework adapter should write SQL amount after managed commit');
-      assertEqual(response.sourceSqlRows[0]?.version, 2, 'framework adapter should bump SQL version after managed commit');
-      assertEqual(fixture.readFactoryState().commitCount, 1, 'framework adapter should commit through managed runtime');
-      assertEqual(
-        fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
-        'server-user-001',
-        'framework adapter should use resolved server principal instead of forged headers',
-      );
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      assertServerTrace({ delegated: true, response });
-      assertAdapterTrace(response);
-
-      const writerOutput: {
-        bodyText?: string;
-        headers: Record<string, string>;
-        status?: number;
-      } = { headers: {} };
-      adapter.writeConcreteFrameworkResponse(
-        {
-          send: (bodyText) => {
-            writerOutput.bodyText = bodyText;
-          },
-          setHeader: (name, value) => {
-            writerOutput.headers[name] = value;
-          },
-          status: (status) => {
-            writerOutput.status = status;
-
-            return undefined;
-          },
-        },
-        response,
-      );
-
-      assertEqual(writerOutput.status, 200, 'framework writer should receive response status');
-      assertEqual(
-        writerOutput.headers['content-type'],
-        'application/json; charset=utf-8',
-        'framework writer should receive JSON content type',
-      );
-      assertEqual(writerOutput.bodyText, response.bodyText, 'framework writer should send response body text');
+    headers: {
+      'content-type': 'application/json',
+      'x-permission-scopes': 'finance.receivablePayable.write',
     },
-  },
-  {
-    name: 'framework adapter rejects oversized body before identity resolution and managed runtime',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:11:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      let resolveCount = 0;
-      const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
-        admission: fixture.admission,
-        maxBodyBytes: 5,
-        requestIdFactory: () => 'req-framework-body-too-large',
-        resolvePrincipal: () => {
-          resolveCount += 1;
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/source-managed-server-001/adjust',
+  });
 
-          return createPrincipal();
-        },
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-      const response = await adapter.handleConcreteFrameworkRequest({
-        bodyText: JSON.stringify({
-          amount: '1200.00',
-          expectedVersion: 1,
-          targetAccountingPeriod: '2026-06',
-        }),
-        headers: {
-          'content-type': 'application/json',
-        },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/source-managed-server-001/adjust',
-      });
+  assertEqual(response.status, 401, 'missing resolved principal should reject in server entry');
+  assertEqual(bodyAsRecord(response).code, 'UNAUTHENTICATED', 'missing resolved principal should use stable code');
+  assertEqual(response.adapterTrace.delegatedToServerEntry, true, 'missing principal should still prove server-entry delegation');
+  assertEqual(response.sourceSqlRows[0]?.version, 1, 'missing principal should not write SQL rows');
+  assertEqual(fixture.readCapturedResults().length, 0, 'missing principal should not call managed runtime');
+  assertServerTrace({ delegated: false, response });
+  assertAdapterTrace(response);
+});
 
-      assertEqual(response.status, 413, 'oversized source mutation request should reject at adapter');
-      assertEqual(bodyAsRecord(response).code, 'PAYLOAD_TOO_LARGE', 'oversized body should use stable code');
-      assertEqual(response.adapterTrace.delegatedToServerEntry, false, 'oversized body should not delegate to server entry');
-      assertEqual(response.trace.length, 0, 'oversized body should not have server trace');
-      assertEqual(resolveCount, 0, 'oversized body should not resolve identity');
-      assertEqual(fixture.readCapturedResults().length, 0, 'oversized body should not call managed runtime');
-      assertEqual(response.sourceSqlRows[0]?.amount, '1000.00', 'oversized body should not write SQL rows');
-      assertAdapterTrace(response);
-    },
-  },
-  {
-    name: 'framework adapter delegates missing resolved principal to server-entry authentication rejection',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:12:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
-        admission: fixture.admission,
-        requestIdFactory: () => 'req-framework-missing-principal',
-        resolvePrincipal: () => undefined,
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-      const response = await adapter.handleConcreteFrameworkRequest({
-        body: {
-          amount: '1200.00',
-          expectedVersion: 1,
-          targetAccountingPeriod: '2026-06',
-        },
-        headers: {
-          'content-type': 'application/json',
-          'x-permission-scopes': 'finance.receivablePayable.write',
-        },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/source-managed-server-001/adjust',
-      });
+it('node listener accepts real HTTP request and writes SQL after managed source commit', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:13:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
+    admission: fixture.admission,
+    frameworkName: 'node-managed-source-listener-test',
+    now: () => '2026-07-05T14:00:00+08:00',
+    requestIdFactory: () => 'req-node-managed-source-open',
+    resolvePrincipal: (request) =>
+      request.authorization === 'Bearer node-managed-source-token' ? createPrincipal() : undefined,
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+  const server = await createFinanceHttpPostgresManagedSourceMutationNodeServerContract({ adapter }).listen();
 
-      assertEqual(response.status, 401, 'missing resolved principal should reject in server entry');
-      assertEqual(bodyAsRecord(response).code, 'UNAUTHENTICATED', 'missing resolved principal should use stable code');
-      assertEqual(response.adapterTrace.delegatedToServerEntry, true, 'missing principal should still prove server-entry delegation');
-      assertEqual(response.sourceSqlRows[0]?.version, 1, 'missing principal should not write SQL rows');
-      assertEqual(fixture.readCapturedResults().length, 0, 'missing principal should not call managed runtime');
-      assertServerTrace({ delegated: false, response });
-      assertAdapterTrace(response);
-    },
-  },
-  {
-    name: 'node listener accepts real HTTP request and writes SQL after managed source commit',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:13:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
-        admission: fixture.admission,
-        frameworkName: 'node-managed-source-listener-test',
-        now: () => '2026-07-05T14:00:00+08:00',
-        requestIdFactory: () => 'req-node-managed-source-open',
-        resolvePrincipal: (request) =>
-          request.authorization === 'Bearer node-managed-source-token' ? createPrincipal() : undefined,
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-      const server = await createFinanceHttpPostgresManagedSourceMutationNodeServerContract({ adapter }).listen();
+  try {
+    const response = await sendManagedSourceHttpRequest({
+      bodyText: JSON.stringify({
+        amount: '1300.00',
+        expectedVersion: 1,
+        status: '已调整',
+        targetAccountingPeriod: '2026-06',
+      }),
+      headers: {
+        authorization: 'Bearer node-managed-source-token',
+        'content-type': 'application/json',
+        'x-actor-id': 'forged-node-user',
+        'x-permission-scopes': 'finance.receivablePayable.write',
+      },
+      method: 'PATCH',
+      origin: server.origin,
+      path: '/api/finance/receivables-payables/source-managed-server-001/adjust?via=node',
+    });
+    const body = parseBodyTextAsRecord(
+      response.bodyText,
+      'node listener success response body should parse as object',
+    );
 
-      try {
-        const response = await sendManagedSourceHttpRequest({
-          bodyText: JSON.stringify({
-            amount: '1300.00',
-            expectedVersion: 1,
-            status: '已调整',
-            targetAccountingPeriod: '2026-06',
-          }),
-          headers: {
-            authorization: 'Bearer node-managed-source-token',
-            'content-type': 'application/json',
-            'x-actor-id': 'forged-node-user',
-            'x-permission-scopes': 'finance.receivablePayable.write',
-          },
-          method: 'PATCH',
-          origin: server.origin,
-          path: '/api/finance/receivables-payables/source-managed-server-001/adjust?via=node',
-        });
-        const body = parseBodyTextAsRecord(
-          response.bodyText,
-          'node listener success response body should parse as object',
-        );
+    assertEqual(response.status, 200, 'node listener source mutation should pass');
+    assertEqual(
+      response.headers['x-finance-local-managed-source-server-handled'],
+      'true',
+      'node listener should mark request as handled',
+    );
+    assertEqual(
+      response.headers['x-finance-local-managed-source-server-delegated'],
+      'true',
+      'node listener should mark request as delegated to server entry',
+    );
+    assertEqual(body.status, '已调整', 'node listener response body should expose updated source status');
+    assertEqual(
+      sourceSqlRepository.readSqlRows()[0]?.amount,
+      '1300.00',
+      'node listener should write SQL amount after managed commit',
+    );
+    assertEqual(
+      sourceSqlRepository.readSqlRows()[0]?.version,
+      2,
+      'node listener should bump SQL version after managed commit',
+    );
+    assertEqual(fixture.readFactoryState().commitCount, 1, 'node listener should commit runtime once');
+    assertEqual(
+      fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
+      'server-user-001',
+      'node listener should use resolved server principal instead of forged headers',
+    );
+    assertCapturedRuntimeTraces(fixture.readCapturedResults());
+  } finally {
+    await server.close();
+  }
+});
 
-        assertEqual(response.status, 200, 'node listener source mutation should pass');
-        assertEqual(
-          response.headers['x-finance-local-managed-source-server-handled'],
-          'true',
-          'node listener should mark request as handled',
-        );
-        assertEqual(
-          response.headers['x-finance-local-managed-source-server-delegated'],
-          'true',
-          'node listener should mark request as delegated to server entry',
-        );
-        assertEqual(body.status, '已调整', 'node listener response body should expose updated source status');
-        assertEqual(
-          sourceSqlRepository.readSqlRows()[0]?.amount,
-          '1300.00',
-          'node listener should write SQL amount after managed commit',
-        );
-        assertEqual(
-          sourceSqlRepository.readSqlRows()[0]?.version,
-          2,
-          'node listener should bump SQL version after managed commit',
-        );
-        assertEqual(fixture.readFactoryState().commitCount, 1, 'node listener should commit runtime once');
-        assertEqual(
-          fixture.readCommittedState().sourceMutationEvents[0]?.actorSnapshot.id,
-          'server-user-001',
-          'node listener should use resolved server principal instead of forged headers',
-        );
-        assertCapturedRuntimeTraces(fixture.readCapturedResults());
-      } finally {
-        await server.close();
-      }
-    },
-  },
-  {
-    name: 'node listener returns authentication rejection without SQL write when bearer is missing',
-    run: async () => {
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-06T11:14:00+08:00',
-        initialRows: [createSqlRow()],
-      });
-      const fixture = createRuntimeFixture({ sourceSqlRepository });
-      const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
-        admission: fixture.admission,
-        frameworkName: 'node-managed-source-listener-auth-test',
-        now: () => '2026-07-05T14:10:00+08:00',
-        requestIdFactory: () => 'req-node-managed-source-unauthenticated',
-        resolvePrincipal: (request) =>
-          request.authorization === 'Bearer node-managed-source-token' ? createPrincipal() : undefined,
-        runtime: fixture.runtime,
-        sourceSqlRepository,
-      });
-      const server = await createFinanceHttpPostgresManagedSourceMutationNodeServerContract({ adapter }).listen();
+it('node listener returns authentication rejection without SQL write when bearer is missing', async () => {
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-06T11:14:00+08:00',
+    initialRows: [createSqlRow()],
+  });
+  const fixture = createRuntimeFixture({ sourceSqlRepository });
+  const adapter = createFinanceHttpPostgresManagedSourceMutationFrameworkAdapter({
+    admission: fixture.admission,
+    frameworkName: 'node-managed-source-listener-auth-test',
+    now: () => '2026-07-05T14:10:00+08:00',
+    requestIdFactory: () => 'req-node-managed-source-unauthenticated',
+    resolvePrincipal: (request) =>
+      request.authorization === 'Bearer node-managed-source-token' ? createPrincipal() : undefined,
+    runtime: fixture.runtime,
+    sourceSqlRepository,
+  });
+  const server = await createFinanceHttpPostgresManagedSourceMutationNodeServerContract({ adapter }).listen();
 
-      try {
-        const response = await sendManagedSourceHttpRequest({
-          bodyText: JSON.stringify({
-            amount: '1300.00',
-            expectedVersion: 1,
-            status: '已调整',
-            targetAccountingPeriod: '2026-06',
-          }),
-          headers: {
-            'content-type': 'application/json',
-          },
-          method: 'PATCH',
-          origin: server.origin,
-          path: '/api/finance/receivables-payables/source-managed-server-001/adjust',
-        });
-        const body = parseBodyTextAsRecord(
-          response.bodyText,
-          'node listener authentication rejection body should parse as object',
-        );
+  try {
+    const response = await sendManagedSourceHttpRequest({
+      bodyText: JSON.stringify({
+        amount: '1300.00',
+        expectedVersion: 1,
+        status: '已调整',
+        targetAccountingPeriod: '2026-06',
+      }),
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'PATCH',
+      origin: server.origin,
+      path: '/api/finance/receivables-payables/source-managed-server-001/adjust',
+    });
+    const body = parseBodyTextAsRecord(
+      response.bodyText,
+      'node listener authentication rejection body should parse as object',
+    );
 
-        assertEqual(response.status, 401, 'node listener missing bearer should reject');
-        assertEqual(body.code, 'UNAUTHENTICATED', 'node listener authentication rejection should use stable code');
-        assertEqual(
-          response.headers['x-finance-local-managed-source-server-handled'],
-          'true',
-          'node listener should mark authentication rejection as handled',
-        );
-        assertEqual(
-          response.headers['x-finance-local-managed-source-server-delegated'],
-          'true',
-          'node listener should still prove server-entry delegation for authentication rejection',
-        );
-        assertEqual(
-          sourceSqlRepository.readSqlRows()[0]?.amount,
-          '1000.00',
-          'node listener authentication rejection should not write SQL amount',
-        );
-        assertEqual(
-          sourceSqlRepository.readSqlRows()[0]?.version,
-          1,
-          'node listener authentication rejection should not bump SQL version',
-        );
-        assertEqual(
-          fixture.readCapturedResults().length,
-          0,
-          'node listener authentication rejection should not call managed runtime',
-        );
-      } finally {
-        await server.close();
-      }
-    },
-  },
-];
-
-for (const test of tests) {
-  await test.run();
-}
+    assertEqual(response.status, 401, 'node listener missing bearer should reject');
+    assertEqual(body.code, 'UNAUTHENTICATED', 'node listener authentication rejection should use stable code');
+    assertEqual(
+      response.headers['x-finance-local-managed-source-server-handled'],
+      'true',
+      'node listener should mark authentication rejection as handled',
+    );
+    assertEqual(
+      response.headers['x-finance-local-managed-source-server-delegated'],
+      'true',
+      'node listener should still prove server-entry delegation for authentication rejection',
+    );
+    assertEqual(
+      sourceSqlRepository.readSqlRows()[0]?.amount,
+      '1000.00',
+      'node listener authentication rejection should not write SQL amount',
+    );
+    assertEqual(
+      sourceSqlRepository.readSqlRows()[0]?.version,
+      1,
+      'node listener authentication rejection should not bump SQL version',
+    );
+    assertEqual(
+      fixture.readCapturedResults().length,
+      0,
+      'node listener authentication rejection should not call managed runtime',
+    );
+  } finally {
+    await server.close();
+  }
+});

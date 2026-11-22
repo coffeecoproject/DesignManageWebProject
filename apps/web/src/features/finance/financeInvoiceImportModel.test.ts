@@ -4,23 +4,8 @@ import {
   buildFinanceInvoiceRecordsFromImportBatch
 } from './financeInvoiceImportModel';
 import { getRedInvoiceOriginalAssociationAffectedInvoices } from './financeInvoiceModel';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../../__tests__/assertions';
 
 function createInvoice(overrides: Partial<FinanceInvoiceRecord>): FinanceInvoiceRecord {
   return {
@@ -50,81 +35,52 @@ function createInvoice(overrides: Partial<FinanceInvoiceRecord>): FinanceInvoice
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'builds an import batch and generated invoice rows for frontend session import',
-    run: () => {
-      const batch = buildFinanceInvoiceImportBatch({
-        direction: '进销项',
-        fileName: '2026-06_进销项发票_税务下载.xlsx',
-        importedAt: '2026-06-15 10:00',
-        period: '2026-06',
-        sequence: 5
-      });
-      const invoiceRows = buildFinanceInvoiceRecordsFromImportBatch(batch, 5);
+it('builds an import batch and generated invoice rows for frontend session import', () => {
+  const batch = buildFinanceInvoiceImportBatch({
+    direction: '进销项',
+    fileName: '2026-06_进销项发票_税务下载.xlsx',
+    importedAt: '2026-06-15 10:00',
+    period: '2026-06',
+    sequence: 5
+  });
+  const invoiceRows = buildFinanceInvoiceRecordsFromImportBatch(batch, 5);
 
-      assertEqual(batch.invoiceCount, 2, 'combined import should count generated output and input rows');
-      assertEqual(invoiceRows.length, 2, 'combined import should generate two invoice rows');
-      assertEqual(invoiceRows[0]?.accountingPeriod, '2026-06', 'generated invoice should use import period');
-      assertEqual(invoiceRows[0]?.sourceFile, batch.fileName, 'generated invoice should keep imported file as source evidence');
-      assert(invoiceRows.every((invoice) => invoice.invoiceStatus === '正常'), 'generated rows should be active normal invoices');
-    }
-  },
-  {
-    name: 'single-direction import keeps batch count aligned with generated invoices',
-    run: () => {
-      const batch = buildFinanceInvoiceImportBatch({
-        direction: '销项',
-        fileName: '2026-07_销项发票_税务下载.xlsx',
-        importedAt: '2026-07-02 09:10',
-        period: '2026-07',
-        sequence: 6
-      });
+  assertEqual(batch.invoiceCount, 2, 'combined import should count generated output and input rows');
+  assertEqual(invoiceRows.length, 2, 'combined import should generate two invoice rows');
+  assertEqual(invoiceRows[0]?.accountingPeriod, '2026-06', 'generated invoice should use import period');
+  assertEqual(invoiceRows[0]?.sourceFile, batch.fileName, 'generated invoice should keep imported file as source evidence');
+  assert(invoiceRows.every((invoice) => invoice.invoiceStatus === '正常'), 'generated rows should be active normal invoices');
+});
 
-      assertEqual(batch.invoiceCount, 1, 'single-direction import should count one generated invoice row');
-      assertEqual(buildFinanceInvoiceRecordsFromImportBatch(batch, 6)[0]?.direction, '销项', 'generated row should follow import direction');
-    }
-  },
-  {
-    name: 'red invoice original association resolves both previous and next original invoices',
-    run: () => {
-      const originalJune = createInvoice({ id: 'invoice-origin-june', accountingPeriod: '2026-06' });
-      const originalJuly = createInvoice({ id: 'invoice-origin-july', accountingPeriod: '2026-07' });
-      const currentRed = createInvoice({
-        id: 'invoice-red',
-        invoiceColor: '红票',
-        invoiceStatus: '红冲',
-        originalInvoiceId: 'invoice-origin-june'
-      });
-      const nextRed = {
-        ...currentRed,
-        originalInvoiceId: 'invoice-origin-july'
-      } satisfies FinanceInvoiceRecord;
-
-      const affected = getRedInvoiceOriginalAssociationAffectedInvoices(currentRed, nextRed, [originalJune, originalJuly, currentRed]);
-
-      assertEqual(affected.length, 2, 'changing red original link should guard previous and next original periods');
-      assertEqual(affected.map((invoice) => invoice.accountingPeriod).join('|'), '2026-06|2026-07', 'affected original periods should be stable');
-    }
-  }
-];
-
-export function runFinanceInvoiceImportModelTests() {
-  const failures: string[] = [];
-  let passed = 0;
-
-  tests.forEach((test) => {
-    try {
-      test.run();
-      passed += 1;
-    } catch (error) {
-      failures.push(`${test.name}: ${(error as Error).message}`);
-    }
+it('single-direction import keeps batch count aligned with generated invoices', () => {
+  const batch = buildFinanceInvoiceImportBatch({
+    direction: '销项',
+    fileName: '2026-07_销项发票_税务下载.xlsx',
+    importedAt: '2026-07-02 09:10',
+    period: '2026-07',
+    sequence: 6
   });
 
-  return {
-    failures,
-    passed,
-    total: tests.length
-  };
-}
+  assertEqual(batch.invoiceCount, 1, 'single-direction import should count one generated invoice row');
+  assertEqual(buildFinanceInvoiceRecordsFromImportBatch(batch, 6)[0]?.direction, '销项', 'generated row should follow import direction');
+});
+
+it('red invoice original association resolves both previous and next original invoices', () => {
+  const originalJune = createInvoice({ id: 'invoice-origin-june', accountingPeriod: '2026-06' });
+  const originalJuly = createInvoice({ id: 'invoice-origin-july', accountingPeriod: '2026-07' });
+  const currentRed = createInvoice({
+    id: 'invoice-red',
+    invoiceColor: '红票',
+    invoiceStatus: '红冲',
+    originalInvoiceId: 'invoice-origin-june'
+  });
+  const nextRed = {
+    ...currentRed,
+    originalInvoiceId: 'invoice-origin-july'
+  } satisfies FinanceInvoiceRecord;
+
+  const affected = getRedInvoiceOriginalAssociationAffectedInvoices(currentRed, nextRed, [originalJune, originalJuly, currentRed]);
+
+  assertEqual(affected.length, 2, 'changing red original link should guard previous and next original periods');
+  assertEqual(affected.map((invoice) => invoice.accountingPeriod).join('|'), '2026-06|2026-07', 'affected original periods should be stable');
+});

@@ -48,34 +48,21 @@ import {
 } from './periodClosePersistenceContract.js';
 import { createInMemoryPeriodCloseSqlDriverExecutor } from './periodCloseSqlDriverRepositoryContract.js';
 import { createPeriodCloseSqlRepositoryContract } from './periodCloseSqlRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 type CapturedManagedRuntimeResult =
   | PeriodClosePostgresManagedServicePoolRuntimeResult<PersistentCloseAccountingPeriodResult>
   | PeriodClosePostgresManagedServicePoolRuntimeResult<PersistentSourceMutationResult>;
 
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
 function assertIncludes<T>(values: readonly T[], expected: T, message: string) {
-  if (!values.includes(expected)) {
-    throw new Error(`${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
-  }
+  assert(values.includes(expected), `${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
 }
 
 function assertManagedRuntime(
   response: FinanceHttpPostgresManagedRuntimeGatewayResponse
 ): NonNullable<FinanceHttpPostgresManagedRuntimeGatewayResponse['managedRuntime']> {
-  if (!response.managedRuntime) {
-    throw new Error('response should include managed runtime evidence');
-  }
+  assert(response.managedRuntime, 'response should include managed runtime evidence');
 
   return response.managedRuntime;
 }
@@ -489,122 +476,107 @@ function assertCapturedRuntimeTraces(results: readonly CapturedManagedRuntimeRes
   }
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects unauthorized close request before managed runtime admission',
-    run: async () => {
-      const fixture = createRuntimeFixture();
-      const response = await handleFinanceHttpPostgresManagedRuntimeGateway({
-        admission: fixture.admission,
-        request: createCloseRequest({ requestId: 'req-http-managed-runtime-unauthorized', scopes: '' }),
-        runtime: fixture.runtime
-      });
+it('rejects unauthorized close request before managed runtime admission', async () => {
+  const fixture = createRuntimeFixture();
+  const response = await handleFinanceHttpPostgresManagedRuntimeGateway({
+    admission: fixture.admission,
+    request: createCloseRequest({ requestId: 'req-http-managed-runtime-unauthorized', scopes: '' }),
+    runtime: fixture.runtime
+  });
 
-      assertEqual(response.status, 403, 'unauthorized HTTP close request should be rejected');
-      assertEqual(response.managedRuntime, undefined, 'unauthorized response must not expose runtime work');
-      assertEqual(fixture.readPgState().constructCount, 0, 'unauthorized request must not construct managed pool');
-      assertEqual(fixture.readCapturedResults().length, 0, 'unauthorized request must not call runtime methods');
-    }
-  },
-  {
-    name: 'returns managed runtime evidence when operational readiness blocks the write route',
-    run: async () => {
-      const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
-      const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
-        operationalGate
-      });
-      const fixture = createRuntimeFixture({ readinessPackage });
-      const response = await handleFinanceHttpPostgresManagedRuntimeGateway({
-        admission: fixture.admission,
-        request: createCloseRequest({ requestId: 'req-http-managed-runtime-readiness-blocked' }),
-        runtime: fixture.runtime
-      });
-      const managedRuntime = assertManagedRuntime(response);
+  assertEqual(response.status, 403, 'unauthorized HTTP close request should be rejected');
+  assertEqual(response.managedRuntime, undefined, 'unauthorized response must not expose runtime work');
+  assertEqual(fixture.readPgState().constructCount, 0, 'unauthorized request must not construct managed pool');
+  assertEqual(fixture.readCapturedResults().length, 0, 'unauthorized request must not call runtime methods');
+});
 
-      assertEqual(response.status, 503, 'blocked readiness should return service unavailable at HTTP boundary');
-      assertEqual(bodyAsRecord(response).code, 'POSTGRES_RUNTIME_UNAVAILABLE', 'blocked readiness should expose runtime unavailable code');
-      assertEqual(managedRuntime.status, 'readiness_blocked', 'response should preserve managed runtime readiness status');
-      assertEqual(managedRuntime.poolLifecycleState, 'not_initialized', 'blocked readiness should not initialize pool');
-      assertEqual(fixture.readPgState().constructCount, 0, 'blocked readiness must not construct managed pool');
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-    }
-  },
-  {
-    name: 'rejects invalid source mutation payload before managed runtime admission',
-    run: async () => {
-      const fixture = createRuntimeFixture();
-      const response = await handleFinanceHttpPostgresManagedRuntimeGateway({
-        admission: fixture.admission,
-        request: {
-          body: {
-            amount: 1500,
-            expectedVersion: 1,
-            targetAccountingPeriod: '2026-06'
-          },
-          headers: {
-            ...createHeaders('finance.receivablePayable.write'),
-            'x-request-id': 'req-http-managed-runtime-invalid-source-payload'
-          },
-          method: 'PATCH',
-          path: '/api/finance/receivables-payables/source-001/adjust'
-        },
-        runtime: fixture.runtime
-      });
+it('returns managed runtime evidence when operational readiness blocks the write route', async () => {
+  const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
+  const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
+    operationalGate
+  });
+  const fixture = createRuntimeFixture({ readinessPackage });
+  const response = await handleFinanceHttpPostgresManagedRuntimeGateway({
+    admission: fixture.admission,
+    request: createCloseRequest({ requestId: 'req-http-managed-runtime-readiness-blocked' }),
+    runtime: fixture.runtime
+  });
+  const managedRuntime = assertManagedRuntime(response);
 
-      assertEqual(response.status, 400, 'invalid source payload should return bad request');
-      assertEqual(bodyAsRecord(response).code, 'INVALID_REQUEST', 'invalid source payload should use stable error code');
-      assertEqual(response.managedRuntime, undefined, 'invalid source payload must not expose runtime work');
-      assertEqual(fixture.readPgState().constructCount, 0, 'invalid source payload must not construct managed pool');
-      assertEqual(fixture.readCapturedResults().length, 0, 'invalid source payload must not call runtime methods');
-    }
-  },
-  {
-    name: 'routes authorized HTTP close and source mutation through one reused managed pool',
-    run: async () => {
-      const fixture = createRuntimeFixture();
-      const closeResponse = await handleFinanceHttpPostgresManagedRuntimeGateway({
-        admission: fixture.admission,
-        request: createCloseRequest({ requestId: 'req-http-managed-runtime-close' }),
-        runtime: fixture.runtime
-      });
-      const sourceResponse = await handleFinanceHttpPostgresManagedRuntimeGateway({
-        admission: fixture.admission,
-        request: createSourceAdjustmentRequest('req-http-managed-runtime-closed-source-adjust'),
-        runtime: fixture.runtime
-      });
-      const closeRuntime = assertManagedRuntime(closeResponse);
-      const sourceRuntime = assertManagedRuntime(sourceResponse);
-      const pgState = fixture.readPgState();
-      const factoryState = fixture.readFactoryState();
-      const committedSnapshot = fixture.readCommittedSnapshot();
+  assertEqual(response.status, 503, 'blocked readiness should return service unavailable at HTTP boundary');
+  assertEqual(bodyAsRecord(response).code, 'POSTGRES_RUNTIME_UNAVAILABLE', 'blocked readiness should expose runtime unavailable code');
+  assertEqual(managedRuntime.status, 'readiness_blocked', 'response should preserve managed runtime readiness status');
+  assertEqual(managedRuntime.poolLifecycleState, 'not_initialized', 'blocked readiness should not initialize pool');
+  assertEqual(fixture.readPgState().constructCount, 0, 'blocked readiness must not construct managed pool');
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+});
 
-      assertEqual(closeResponse.status, 201, 'HTTP close request should create a closed period result');
-      assertEqual(bodyAsRecord(closeResponse).status, '已结账', 'close response should expose closed period status');
-      assertEqual(closeRuntime.status, 'committed', 'close should commit through managed runtime');
-      assertEqual(sourceResponse.status, 409, 'closed-period source mutation should return business conflict');
-      assertEqual(sourceRuntime.status, 'committed', 'source guard rejection audit should still commit atomically');
-      assertIncludes(sourceRuntime.runtimeEventNames, 'reuse_managed_pool', 'second HTTP write should reuse managed pool');
-      assertEqual(pgState.constructCount, 1, 'HTTP write sequence should construct exactly one managed pg pool');
-      assertEqual(pgState.connectCount, 2, 'both HTTP writes should acquire from the same managed pool');
-      assertEqual(pgState.releaseCount, 2, 'both HTTP writes should release managed pool clients');
-      assertEqual(factoryState.factoryCallCount, 2, 'runtime should create a request-scoped service boundary per HTTP write');
-      assertEqual(factoryState.uniquePoolCount, 1, 'request-scoped service boundaries should share the managed pool adapter');
-      assertEqual(factoryState.commitCount, 2, 'close and rejection audit should publish separate commits');
-      assertEqual(
-        committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
-        1,
-        'closed-period HTTP source mutation should persist a rejection audit event'
-      );
-      assertEqual(
-        committedSnapshot.sourceRecords[0]?.amount,
-        '1000.00',
-        'closed-period source mutation must not alter the source record'
-      );
-      assertCapturedRuntimeTraces(fixture.readCapturedResults());
-    }
-  }
-];
+it('rejects invalid source mutation payload before managed runtime admission', async () => {
+  const fixture = createRuntimeFixture();
+  const response = await handleFinanceHttpPostgresManagedRuntimeGateway({
+    admission: fixture.admission,
+    request: {
+      body: {
+        amount: 1500,
+        expectedVersion: 1,
+        targetAccountingPeriod: '2026-06'
+      },
+      headers: {
+        ...createHeaders('finance.receivablePayable.write'),
+        'x-request-id': 'req-http-managed-runtime-invalid-source-payload'
+      },
+      method: 'PATCH',
+      path: '/api/finance/receivables-payables/source-001/adjust'
+    },
+    runtime: fixture.runtime
+  });
 
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(response.status, 400, 'invalid source payload should return bad request');
+  assertEqual(bodyAsRecord(response).code, 'INVALID_REQUEST', 'invalid source payload should use stable error code');
+  assertEqual(response.managedRuntime, undefined, 'invalid source payload must not expose runtime work');
+  assertEqual(fixture.readPgState().constructCount, 0, 'invalid source payload must not construct managed pool');
+  assertEqual(fixture.readCapturedResults().length, 0, 'invalid source payload must not call runtime methods');
+});
+
+it('routes authorized HTTP close and source mutation through one reused managed pool', async () => {
+  const fixture = createRuntimeFixture();
+  const closeResponse = await handleFinanceHttpPostgresManagedRuntimeGateway({
+    admission: fixture.admission,
+    request: createCloseRequest({ requestId: 'req-http-managed-runtime-close' }),
+    runtime: fixture.runtime
+  });
+  const sourceResponse = await handleFinanceHttpPostgresManagedRuntimeGateway({
+    admission: fixture.admission,
+    request: createSourceAdjustmentRequest('req-http-managed-runtime-closed-source-adjust'),
+    runtime: fixture.runtime
+  });
+  const closeRuntime = assertManagedRuntime(closeResponse);
+  const sourceRuntime = assertManagedRuntime(sourceResponse);
+  const pgState = fixture.readPgState();
+  const factoryState = fixture.readFactoryState();
+  const committedSnapshot = fixture.readCommittedSnapshot();
+
+  assertEqual(closeResponse.status, 201, 'HTTP close request should create a closed period result');
+  assertEqual(bodyAsRecord(closeResponse).status, '已结账', 'close response should expose closed period status');
+  assertEqual(closeRuntime.status, 'committed', 'close should commit through managed runtime');
+  assertEqual(sourceResponse.status, 409, 'closed-period source mutation should return business conflict');
+  assertEqual(sourceRuntime.status, 'committed', 'source guard rejection audit should still commit atomically');
+  assertIncludes(sourceRuntime.runtimeEventNames, 'reuse_managed_pool', 'second HTTP write should reuse managed pool');
+  assertEqual(pgState.constructCount, 1, 'HTTP write sequence should construct exactly one managed pg pool');
+  assertEqual(pgState.connectCount, 2, 'both HTTP writes should acquire from the same managed pool');
+  assertEqual(pgState.releaseCount, 2, 'both HTTP writes should release managed pool clients');
+  assertEqual(factoryState.factoryCallCount, 2, 'runtime should create a request-scoped service boundary per HTTP write');
+  assertEqual(factoryState.uniquePoolCount, 1, 'request-scoped service boundaries should share the managed pool adapter');
+  assertEqual(factoryState.commitCount, 2, 'close and rejection audit should publish separate commits');
+  assertEqual(
+    committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
+    1,
+    'closed-period HTTP source mutation should persist a rejection audit event'
+  );
+  assertEqual(
+    committedSnapshot.sourceRecords[0]?.amount,
+    '1000.00',
+    'closed-period source mutation must not alter the source record'
+  );
+  assertCapturedRuntimeTraces(fixture.readCapturedResults());
+});

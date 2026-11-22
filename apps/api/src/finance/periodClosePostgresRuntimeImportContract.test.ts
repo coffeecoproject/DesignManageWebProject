@@ -14,23 +14,8 @@ import type {
 } from './periodCloseNativePostgresPoolAdapterContract.js';
 import type { PeriodClosePostgresPoolConstructorOptions } from './periodClosePostgresPoolFactoryContract.js';
 import type { PeriodCloseSqlDriverStatement } from './periodCloseSqlDriverRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 function assertValid(result: PeriodClosePostgresRuntimeImportResult) {
   const errors = validatePeriodClosePostgresRuntimeImportTrace(result);
@@ -198,147 +183,128 @@ function createFakePgModule() {
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'blocks pg module import when dependency admission is still blocked',
-    run: async () => {
-      let loadCount = 0;
-      const contract = createPeriodClosePostgresRuntimeImportContract({
-        loadPgModule: async () => {
-          loadCount += 1;
+it('blocks pg module import when dependency admission is still blocked', async () => {
+  let loadCount = 0;
+  const contract = createPeriodClosePostgresRuntimeImportContract({
+    loadPgModule: async () => {
+      loadCount += 1;
 
-          return createFakePgModule().module;
-        }
-      });
-      const result = await contract.run(createRunInput({ admission: createAdmission(blockedRuntimeEvidence) }));
-
-      assertEqual(result.status, 'admission_blocked', 'blocked admission must stop before runtime import');
-      assertEqual(result.runtimeImportAllowed, false, 'runtime import should not be allowed');
-      assertEqual(loadCount, 0, 'blocked admission must not load pg module');
-      assert(
-        !result.runtimeEvents.some((event) => event.event === 'import_pg_module'),
-        'blocked admission must not record pg import'
-      );
-      assertValid(result);
+      return createFakePgModule().module;
     }
-  },
-  {
-    name: 'validates config before loading pg module',
-    run: async () => {
-      let loadCount = 0;
-      const contract = createPeriodClosePostgresRuntimeImportContract({
-        loadPgModule: async () => {
-          loadCount += 1;
+  });
+  const result = await contract.run(createRunInput({ admission: createAdmission(blockedRuntimeEvidence) }));
 
-          return createFakePgModule().module;
-        }
-      });
-      const result = await contract.run(
-        createRunInput({
-          config: createLocalConfig({ databaseUrl: 'postgres://remote-db.example:5432/startupmanage' })
-        })
-      );
+  assertEqual(result.status, 'admission_blocked', 'blocked admission must stop before runtime import');
+  assertEqual(result.runtimeImportAllowed, false, 'runtime import should not be allowed');
+  assertEqual(loadCount, 0, 'blocked admission must not load pg module');
+  assert(
+    !result.runtimeEvents.some((event) => event.event === 'import_pg_module'),
+    'blocked admission must not record pg import'
+  );
+  assertValid(result);
+});
 
-      assertEqual(result.status, 'config_invalid', 'invalid runtime config must stop before pg import');
-      assertEqual(loadCount, 0, 'invalid config must not load pg module');
-      assert(
-        result.configErrors.some((error) => error.includes('localhost')),
-        'invalid config should explain local/test localhost boundary'
-      );
-      assertValid(result);
+it('validates config before loading pg module', async () => {
+  let loadCount = 0;
+  const contract = createPeriodClosePostgresRuntimeImportContract({
+    loadPgModule: async () => {
+      loadCount += 1;
+
+      return createFakePgModule().module;
     }
-  },
-  {
-    name: 'rejects pg module without Pool constructor',
-    run: async () => {
-      let loadCount = 0;
-      const contract = createPeriodClosePostgresRuntimeImportContract({
-        loadPgModule: async () => {
-          loadCount += 1;
+  });
+  const result = await contract.run(
+    createRunInput({
+      config: createLocalConfig({ databaseUrl: 'postgres://remote-db.example:5432/startupmanage' })
+    })
+  );
 
-          return { default: {} };
-        }
-      });
-      const result = await contract.run(createRunInput());
+  assertEqual(result.status, 'config_invalid', 'invalid runtime config must stop before pg import');
+  assertEqual(loadCount, 0, 'invalid config must not load pg module');
+  assert(
+    result.configErrors.some((error) => error.includes('localhost')),
+    'invalid config should explain local/test localhost boundary'
+  );
+  assertValid(result);
+});
 
-      assertEqual(result.status, 'module_invalid', 'pg module without Pool constructor should be rejected');
-      assertEqual(loadCount, 1, 'valid admission/config should load pg module once');
-      assertEqual(Boolean(result.factoryResult), false, 'invalid module must not run pool factory');
-      assert(
-        result.importErrors.some((error) => error.includes('Pool constructor')),
-        'module invalid result should explain Pool constructor requirement'
-      );
-      assertValid(result);
+it('rejects pg module without Pool constructor', async () => {
+  let loadCount = 0;
+  const contract = createPeriodClosePostgresRuntimeImportContract({
+    loadPgModule: async () => {
+      loadCount += 1;
+
+      return { default: {} };
     }
-  },
-  {
-    name: 'keeps loader failure separate from database driver failure',
-    run: async () => {
-      const contract = createPeriodClosePostgresRuntimeImportContract({
-        loadPgModule: async () => {
-          throw new Error('fake pg import failed');
-        }
-      });
-      const result = await contract.run(createRunInput());
+  });
+  const result = await contract.run(createRunInput());
 
-      assertEqual(result.status, 'loader_failed', 'loader failure should not be classified as db driver failure');
-      assertEqual(Boolean(result.factoryResult), false, 'loader failure must not run pool factory');
-      assert(
-        result.importErrors.some((error) => error.includes('fake pg import failed')),
-        'loader failure should be visible in import errors'
-      );
-      assertValid(result);
+  assertEqual(result.status, 'module_invalid', 'pg module without Pool constructor should be rejected');
+  assertEqual(loadCount, 1, 'valid admission/config should load pg module once');
+  assertEqual(Boolean(result.factoryResult), false, 'invalid module must not run pool factory');
+  assert(
+    result.importErrors.some((error) => error.includes('Pool constructor')),
+    'module invalid result should explain Pool constructor requirement'
+  );
+  assertValid(result);
+});
+
+it('keeps loader failure separate from database driver failure', async () => {
+  const contract = createPeriodClosePostgresRuntimeImportContract({
+    loadPgModule: async () => {
+      throw new Error('fake pg import failed');
     }
-  },
-  {
-    name: 'delegates admitted pg Pool constructor into pool factory runtime binding',
-    run: async () => {
-      const fakePg = createFakePgModule();
-      const contract = createPeriodClosePostgresRuntimeImportContract({
-        loadPgModule: async () => fakePg.module
-      });
-      const result = await contract.run(createRunInput());
-      const state = fakePg.readState();
+  });
+  const result = await contract.run(createRunInput());
 
-      assertEqual(result.status, 'committed', 'admitted pg module should run through pool factory and client port');
-      assertEqual(result.factoryResult?.status, 'committed', 'pool factory should commit fake pg statements');
-      assertEqual(result.importErrors.length, 0, 'valid pg module should not produce import errors');
-      assertEqual(state.constructedOptions.length, 1, 'runtime import should construct one pg pool');
-      assertEqual(
-        state.constructedOptions[0]?.application_name,
-        'startupmanage-period-close-runtime-import-local',
-        'runtime import should preserve period-close application name'
-      );
-      assertEqual(state.queries.at(-1)?.sql, 'COMMIT;', 'runtime import should reach terminal COMMIT');
-      assertEqual(state.releaseCount, 1, 'runtime import should release fake pg client');
-      assert(
-        result.runtimeEvents.some((event) => event.event === 'delegate_pool_factory'),
-        'runtime import should record pool factory delegation'
-      );
-      assertValid(result);
-    }
-  },
-  {
-    name: 'supports commonjs default pg module shape',
-    run: async () => {
-      const fakePg = createFakePgModule();
-      const contract = createPeriodClosePostgresRuntimeImportContract({
-        loadPgModule: async () => ({ default: fakePg.module })
-      });
-      const result = await contract.run(
-        createRunInput({
-          requestId: 'req-pg-runtime-import-default',
-          transactionId: 'tx-pg-runtime-import-default'
-        })
-      );
+  assertEqual(result.status, 'loader_failed', 'loader failure should not be classified as db driver failure');
+  assertEqual(Boolean(result.factoryResult), false, 'loader failure must not run pool factory');
+  assert(
+    result.importErrors.some((error) => error.includes('fake pg import failed')),
+    'loader failure should be visible in import errors'
+  );
+  assertValid(result);
+});
 
-      assertEqual(result.status, 'committed', 'runtime import should accept pg default export with Pool');
-      assertEqual(fakePg.readState().constructedOptions.length, 1, 'default export should still construct one pool');
-      assertValid(result);
-    }
-  }
-];
+it('delegates admitted pg Pool constructor into pool factory runtime binding', async () => {
+  const fakePg = createFakePgModule();
+  const contract = createPeriodClosePostgresRuntimeImportContract({
+    loadPgModule: async () => fakePg.module
+  });
+  const result = await contract.run(createRunInput());
+  const state = fakePg.readState();
 
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(result.status, 'committed', 'admitted pg module should run through pool factory and client port');
+  assertEqual(result.factoryResult?.status, 'committed', 'pool factory should commit fake pg statements');
+  assertEqual(result.importErrors.length, 0, 'valid pg module should not produce import errors');
+  assertEqual(state.constructedOptions.length, 1, 'runtime import should construct one pg pool');
+  assertEqual(
+    state.constructedOptions[0]?.application_name,
+    'startupmanage-period-close-runtime-import-local',
+    'runtime import should preserve period-close application name'
+  );
+  assertEqual(state.queries.at(-1)?.sql, 'COMMIT;', 'runtime import should reach terminal COMMIT');
+  assertEqual(state.releaseCount, 1, 'runtime import should release fake pg client');
+  assert(
+    result.runtimeEvents.some((event) => event.event === 'delegate_pool_factory'),
+    'runtime import should record pool factory delegation'
+  );
+  assertValid(result);
+});
+
+it('supports commonjs default pg module shape', async () => {
+  const fakePg = createFakePgModule();
+  const contract = createPeriodClosePostgresRuntimeImportContract({
+    loadPgModule: async () => ({ default: fakePg.module })
+  });
+  const result = await contract.run(
+    createRunInput({
+      requestId: 'req-pg-runtime-import-default',
+      transactionId: 'tx-pg-runtime-import-default'
+    })
+  );
+
+  assertEqual(result.status, 'committed', 'runtime import should accept pg default export with Pool');
+  assertEqual(fakePg.readState().constructedOptions.length, 1, 'default export should still construct one pool');
+  assertValid(result);
+});

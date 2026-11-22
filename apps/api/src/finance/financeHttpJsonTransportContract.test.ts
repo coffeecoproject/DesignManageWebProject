@@ -8,29 +8,8 @@ import type { CashFlowMappingRecord, FinancialStatementLedgerEntry } from './fin
 import type { GeneralLedgerSubjectRecord } from './generalLedgerContract.js';
 import { financePeriodClosePermissionScopes } from './periodCloseAuthorizationContract.js';
 import { requiredCloseCheckCodes, type AccountingPeriodRecord, type CloseCheckRow } from './periodCloseContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function parseResponseBody(responseBodyText: string) {
   return JSON.parse(responseBodyText) as unknown;
@@ -216,140 +195,127 @@ const headers = {
   'x-request-time': '2026-07-04T12:00:00+08:00'
 };
 
-const tests: UnitTest[] = [
-  {
-    name: 'parses HTTP URL query headers and JSON body before delegating to the gateway',
-    run: () => {
-      let receivedRequest: unknown;
-      const transport = createFinanceHttpJsonTransport({
-        handle: (request) => {
-          receivedRequest = request;
+it('parses HTTP URL query headers and JSON body before delegating to the gateway', () => {
+  let receivedRequest: unknown;
+  const transport = createFinanceHttpJsonTransport({
+    handle: (request) => {
+      receivedRequest = request;
 
-          return {
-            body: {
-              amount: (request.body as { amount?: string } | undefined)?.amount,
-              period: request.query?.period,
-              requestId: request.headers?.['x-request-id']
-            },
-            headers: {
-              'content-type': 'application/json; charset=utf-8',
-              'x-contract': 'transport'
-            },
-            status: 202
-          };
-        }
-      });
-      const response = transport.handleHttpRequest({
-        bodyText: '{"amount":"1200.00"}',
-        headers,
-        method: 'post',
-        url: 'https://local.test/api/finance/example?period=2026-06'
-      });
-      const body = parseResponseBody(response.bodyText);
-
-      assertObject(receivedRequest, 'delegated request should be captured');
-      assertEqual(receivedRequest.method, 'POST', 'transport should normalize method');
-      assertEqual(receivedRequest.path, '/api/finance/example', 'transport should parse path');
-      assertObject(receivedRequest.query, 'delegated request should include query');
-      assertEqual(receivedRequest.query.period, '2026-06', 'transport should parse query');
-      assertEqual(response.status, 202, 'transport should preserve gateway status');
-      assertEqual(response.headers['x-contract'], 'transport', 'transport should preserve gateway headers');
-      assertObject(body, 'serialized response body should parse as JSON');
-      assertEqual(body.amount, '1200.00', 'transport should pass parsed JSON body to gateway');
-    }
-  },
-  {
-    name: 'rejects invalid JSON before gateway state changes',
-    run: () => {
-      let delegated = false;
-      const transport = createFinanceHttpJsonTransport({
-        handle: () => {
-          delegated = true;
-
-          return {
-            body: {},
-            headers: {},
-            status: 200
-          };
-        }
-      });
-      const response = transport.handleHttpRequest({
-        bodyText: '{"amount":',
-        headers,
-        method: 'POST',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseResponseBody(response.bodyText);
-
-      assertEqual(response.status, 400, 'invalid JSON should be rejected at transport boundary');
-      assertEqual(delegated, false, 'invalid JSON should not call the gateway');
-      assertObject(body, 'error response should be JSON');
-      assertEqual(body.code, 'INVALID_JSON_REQUEST', 'transport should use stable invalid JSON code');
-    }
-  },
-  {
-    name: 'runs period-close and source-mutation guard through JSON transport and gateway state',
-    run: () => {
-      let state = createGatewayState();
-      const transport = createFinanceHttpJsonTransport({
-        handle: (request) => {
-          const response = handleFinanceHttpApiGateway({
-            request,
-            state
-          });
-
-          state = response.state;
-
-          return response;
-        }
-      });
-      const closeResponse = transport.handleHttpRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'transport-close-202606',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers,
-        method: 'POST',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const closeBody = parseResponseBody(closeResponse.bodyText);
-
-      assertEqual(closeResponse.status, 201, 'period close should pass through transport');
-      assertObject(closeBody, 'period close body should be serialized JSON');
-      assertEqual(closeBody.status, '已结账', 'period close should update gateway state');
-      assertEqual(state.periodClose.periods[0]?.status, '已结账', 'transport should preserve delegated state update');
-
-      const mutationResponse = transport.handleHttpRequest({
-        bodyText: JSON.stringify({
-          amount: '1300.00',
-          targetAccountingPeriod: '2026-06'
-        }),
-        headers: {
-          ...headers,
-          'x-request-id': 'req-transport-source-mutation'
+      return {
+        body: {
+          amount: (request.body as { amount?: string } | undefined)?.amount,
+          period: request.query?.period,
+          requestId: request.headers?.['x-request-id']
         },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/rp-transport-001/adjust'
-      });
-      const mutationBody = parseResponseBody(mutationResponse.bodyText);
-
-      assertEqual(mutationResponse.status, 409, 'closed-period source mutation should reject through transport');
-      assertObject(mutationBody, 'source mutation rejection should be serialized JSON');
-      assertEqual(mutationBody.code, 'CLOSED_ACCOUNTING_PERIOD', 'closed-period rejection code should survive transport');
-      assertEqual(
-        state.sourceMutation.sourceRecords[0]?.amount,
-        '1200.00',
-        'rejected mutation should not change source amount after transport delegation'
-      );
-      assert(
-        state.sourceMutation.events.some((event) => event.eventType === 'source_mutation_rejected'),
-        'rejected mutation should still write local guard audit event'
-      );
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'x-contract': 'transport'
+        },
+        status: 202
+      };
     }
-  }
-];
+  });
+  const response = transport.handleHttpRequest({
+    bodyText: '{"amount":"1200.00"}',
+    headers,
+    method: 'post',
+    url: 'https://local.test/api/finance/example?period=2026-06'
+  });
+  const body = parseResponseBody(response.bodyText);
 
-for (const test of tests) {
-  test.run();
-}
+  assertObject(receivedRequest, 'delegated request should be captured');
+  assertEqual(receivedRequest.method, 'POST', 'transport should normalize method');
+  assertEqual(receivedRequest.path, '/api/finance/example', 'transport should parse path');
+  assertObject(receivedRequest.query, 'delegated request should include query');
+  assertEqual(receivedRequest.query.period, '2026-06', 'transport should parse query');
+  assertEqual(response.status, 202, 'transport should preserve gateway status');
+  assertEqual(response.headers['x-contract'], 'transport', 'transport should preserve gateway headers');
+  assertObject(body, 'serialized response body should parse as JSON');
+  assertEqual(body.amount, '1200.00', 'transport should pass parsed JSON body to gateway');
+});
+
+it('rejects invalid JSON before gateway state changes', () => {
+  let delegated = false;
+  const transport = createFinanceHttpJsonTransport({
+    handle: () => {
+      delegated = true;
+
+      return {
+        body: {},
+        headers: {},
+        status: 200
+      };
+    }
+  });
+  const response = transport.handleHttpRequest({
+    bodyText: '{"amount":',
+    headers,
+    method: 'POST',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseResponseBody(response.bodyText);
+
+  assertEqual(response.status, 400, 'invalid JSON should be rejected at transport boundary');
+  assertEqual(delegated, false, 'invalid JSON should not call the gateway');
+  assertObject(body, 'error response should be JSON');
+  assertEqual(body.code, 'INVALID_JSON_REQUEST', 'transport should use stable invalid JSON code');
+});
+
+it('runs period-close and source-mutation guard through JSON transport and gateway state', () => {
+  let state = createGatewayState();
+  const transport = createFinanceHttpJsonTransport({
+    handle: (request) => {
+      const response = handleFinanceHttpApiGateway({
+        request,
+        state
+      });
+
+      state = response.state;
+
+      return response;
+    }
+  });
+  const closeResponse = transport.handleHttpRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'transport-close-202606',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers,
+    method: 'POST',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const closeBody = parseResponseBody(closeResponse.bodyText);
+
+  assertEqual(closeResponse.status, 201, 'period close should pass through transport');
+  assertObject(closeBody, 'period close body should be serialized JSON');
+  assertEqual(closeBody.status, '已结账', 'period close should update gateway state');
+  assertEqual(state.periodClose.periods[0]?.status, '已结账', 'transport should preserve delegated state update');
+
+  const mutationResponse = transport.handleHttpRequest({
+    bodyText: JSON.stringify({
+      amount: '1300.00',
+      targetAccountingPeriod: '2026-06'
+    }),
+    headers: {
+      ...headers,
+      'x-request-id': 'req-transport-source-mutation'
+    },
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/rp-transport-001/adjust'
+  });
+  const mutationBody = parseResponseBody(mutationResponse.bodyText);
+
+  assertEqual(mutationResponse.status, 409, 'closed-period source mutation should reject through transport');
+  assertObject(mutationBody, 'source mutation rejection should be serialized JSON');
+  assertEqual(mutationBody.code, 'CLOSED_ACCOUNTING_PERIOD', 'closed-period rejection code should survive transport');
+  assertEqual(
+    state.sourceMutation.sourceRecords[0]?.amount,
+    '1200.00',
+    'rejected mutation should not change source amount after transport delegation'
+  );
+  assert(
+    state.sourceMutation.events.some((event) => event.eventType === 'source_mutation_rejected'),
+    'rejected mutation should still write local guard audit event'
+  );
+});

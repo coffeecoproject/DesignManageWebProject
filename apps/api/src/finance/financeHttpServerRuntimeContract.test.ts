@@ -10,29 +10,8 @@ import type {
   PersistentAccountingPeriodRecord,
   PersistentFinanceSourceRecord
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function parseBody(bodyText: string) {
   return JSON.parse(bodyText) as unknown;
@@ -179,118 +158,103 @@ function jsonRequest(overrides: Partial<FinanceHttpServerRuntimeRequest> = {}): 
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects unauthenticated requests even when client sends forged finance headers',
-    run: () => {
-      const { repository, runtime } = createRuntimeStack();
-      const response = runtime.handleServerRequest(
-        jsonRequest({
-          headers: {
-            authorization: 'Bearer invalid-token',
-            'content-type': 'application/json',
-            'x-actor-id': 'forged-client-user',
-            'x-permission-scopes': financePeriodClosePermissionScopes.join(',')
-          }
-        })
-      );
-      const body = parseBody(response.bodyText);
+it('rejects unauthenticated requests even when client sends forged finance headers', () => {
+  const { repository, runtime } = createRuntimeStack();
+  const response = runtime.handleServerRequest(
+    jsonRequest({
+      headers: {
+        authorization: 'Bearer invalid-token',
+        'content-type': 'application/json',
+        'x-actor-id': 'forged-client-user',
+        'x-permission-scopes': financePeriodClosePermissionScopes.join(',')
+      }
+    })
+  );
+  const body = parseBody(response.bodyText);
 
-      assertObject(body, 'unauthenticated response body should be an object');
-      assertEqual(response.status, 401, 'unauthenticated request should be rejected by runtime/auth chain');
-      assertEqual(body.code, 'UNAUTHENTICATED', 'unauthenticated error code should match');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'unauthenticated request must not close period');
-    }
-  },
-  {
-    name: 'closes period through runtime with server-owned actor time request id and row-backed lock',
-    run: () => {
-      const { repository, runtime } = createRuntimeStack({
-        principal: createPrincipal()
-      });
-      const response = runtime.handleServerRequest(jsonRequest());
-      const body = parseBody(response.bodyText);
-      const state = repository.readState();
-      const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
+  assertObject(body, 'unauthenticated response body should be an object');
+  assertEqual(response.status, 401, 'unauthenticated request should be rejected by runtime/auth chain');
+  assertEqual(body.code, 'UNAUTHENTICATED', 'unauthenticated error code should match');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'unauthenticated request must not close period');
+});
 
-      assertObject(body, 'close response body should be an object');
-      assertEqual(response.status, 201, 'runtime close should create a close snapshot');
-      assertEqual(state.periods[0]?.status, '已结账', 'runtime close should persist row-backed period lock');
-      assertObject(body.closedBySnapshot, 'close actor snapshot should be returned');
-      assertEqual(body.closedBySnapshot.id, 'user-runtime-001', 'close actor should come from runtime principal');
-      assertEqual(body.closedAt, '2026-07-04T13:30:00+08:00', 'close time should come from runtime clock');
-      assert(event !== undefined, 'close event should be persisted');
-      assertEqual(event.actor_id, 'user-runtime-001', 'event actor should come from runtime principal');
-      assertEqual(event.request_id, 'req-runtime-server-001', 'event request id should come from runtime factory');
-    }
-  },
-  {
-    name: 'rejects closed-period source mutation through the same runtime and keeps source row unchanged',
-    run: () => {
-      const { repository, runtime } = createRuntimeStack({
-        principal: createPrincipal()
-      });
+it('closes period through runtime with server-owned actor time request id and row-backed lock', () => {
+  const { repository, runtime } = createRuntimeStack({
+    principal: createPrincipal()
+  });
+  const response = runtime.handleServerRequest(jsonRequest());
+  const body = parseBody(response.bodyText);
+  const state = repository.readState();
+  const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
 
-      runtime.handleServerRequest(jsonRequest());
-      const response = runtime.handleServerRequest(
-        jsonRequest({
-          bodyText: JSON.stringify({
-            amount: '1300.00',
-            expectedVersion: 1,
-            status: '已调整'
-          }),
-          method: 'PATCH',
-          url: '/api/finance/receivables-payables/rp-runtime-001/adjust'
-        })
-      );
-      const body = parseBody(response.bodyText);
-      const sourceRecord = repository.readState().sourceRecords[0];
-      const sourceEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_source_mutation_events[0];
+  assertObject(body, 'close response body should be an object');
+  assertEqual(response.status, 201, 'runtime close should create a close snapshot');
+  assertEqual(state.periods[0]?.status, '已结账', 'runtime close should persist row-backed period lock');
+  assertObject(body.closedBySnapshot, 'close actor snapshot should be returned');
+  assertEqual(body.closedBySnapshot.id, 'user-runtime-001', 'close actor should come from runtime principal');
+  assertEqual(body.closedAt, '2026-07-04T13:30:00+08:00', 'close time should come from runtime clock');
+  assert(event !== undefined, 'close event should be persisted');
+  assertEqual(event.actor_id, 'user-runtime-001', 'event actor should come from runtime principal');
+  assertEqual(event.request_id, 'req-runtime-server-001', 'event request id should come from runtime factory');
+});
 
-      assertObject(body, 'closed source mutation response body should be an object');
-      assertEqual(response.status, 409, 'closed source mutation should be rejected');
-      assertEqual(body.code, canonicalClosedAccountingPeriodErrorCode, 'closed source mutation code should match');
-      assertEqual(sourceRecord?.amount, '1200.00', 'closed source mutation should not change source amount');
-      assertEqual(sourceRecord?.version, 1, 'closed source mutation should not change source version');
-      assert(sourceEvent !== undefined, 'closed source mutation rejection should write audit row');
-      assertEqual(sourceEvent.event_type, 'source_mutation_rejected', 'source mutation audit event should be rejection');
-      assertEqual(sourceEvent.request_id, 'req-runtime-server-001', 'source mutation audit uses runtime request id');
-    }
-  },
-  {
-    name: 'rejects oversized request body before auth middleware delegation',
-    run: () => {
-      let delegated = false;
-      const runtime = createFinanceHttpServerRuntime({
-        authMiddleware: {
-          handleAuthenticatedRequest: () => {
-            delegated = true;
+it('rejects closed-period source mutation through the same runtime and keeps source row unchanged', () => {
+  const { repository, runtime } = createRuntimeStack({
+    principal: createPrincipal()
+  });
 
-            return {
-              bodyText: JSON.stringify({ ok: true }),
-              headers: { 'content-type': 'application/json; charset=utf-8' },
-              status: 200
-            };
-          }
-        },
-        maxBodyBytes: 8,
-        resolvePrincipal: () => createPrincipal()
-      });
-      const response = runtime.handleServerRequest(
-        jsonRequest({
-          bodyText: JSON.stringify({ value: '超过限制' })
-        })
-      );
-      const body = parseBody(response.bodyText);
+  runtime.handleServerRequest(jsonRequest());
+  const response = runtime.handleServerRequest(
+    jsonRequest({
+      bodyText: JSON.stringify({
+        amount: '1300.00',
+        expectedVersion: 1,
+        status: '已调整'
+      }),
+      method: 'PATCH',
+      url: '/api/finance/receivables-payables/rp-runtime-001/adjust'
+    })
+  );
+  const body = parseBody(response.bodyText);
+  const sourceRecord = repository.readState().sourceRecords[0];
+  const sourceEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_source_mutation_events[0];
 
-      assertObject(body, 'payload limit response body should be an object');
-      assertEqual(response.status, 413, 'oversized request should be rejected');
-      assertEqual(body.code, 'PAYLOAD_TOO_LARGE', 'oversized request code should match');
-      assertEqual(delegated, false, 'oversized request must not reach auth middleware');
-    }
-  }
-];
+  assertObject(body, 'closed source mutation response body should be an object');
+  assertEqual(response.status, 409, 'closed source mutation should be rejected');
+  assertEqual(body.code, canonicalClosedAccountingPeriodErrorCode, 'closed source mutation code should match');
+  assertEqual(sourceRecord?.amount, '1200.00', 'closed source mutation should not change source amount');
+  assertEqual(sourceRecord?.version, 1, 'closed source mutation should not change source version');
+  assert(sourceEvent !== undefined, 'closed source mutation rejection should write audit row');
+  assertEqual(sourceEvent.event_type, 'source_mutation_rejected', 'source mutation audit event should be rejection');
+  assertEqual(sourceEvent.request_id, 'req-runtime-server-001', 'source mutation audit uses runtime request id');
+});
 
-for (const test of tests) {
-  test.run();
-}
+it('rejects oversized request body before auth middleware delegation', () => {
+  let delegated = false;
+  const runtime = createFinanceHttpServerRuntime({
+    authMiddleware: {
+      handleAuthenticatedRequest: () => {
+        delegated = true;
+
+        return {
+          bodyText: JSON.stringify({ ok: true }),
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          status: 200
+        };
+      }
+    },
+    maxBodyBytes: 8,
+    resolvePrincipal: () => createPrincipal()
+  });
+  const response = runtime.handleServerRequest(
+    jsonRequest({
+      bodyText: JSON.stringify({ value: '超过限制' })
+    })
+  );
+  const body = parseBody(response.bodyText);
+
+  assertObject(body, 'payload limit response body should be an object');
+  assertEqual(response.status, 413, 'oversized request should be rejected');
+  assertEqual(body.code, 'PAYLOAD_TOO_LARGE', 'oversized request code should match');
+  assertEqual(delegated, false, 'oversized request must not reach auth middleware');
+});

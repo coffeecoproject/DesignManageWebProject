@@ -15,29 +15,8 @@ import type {
   PersistentAccountingPeriodRecord,
   PersistentFinanceSourceRecord
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function parseBody(bodyText: string) {
   return JSON.parse(bodyText) as unknown;
@@ -162,155 +141,140 @@ function createHandlerStack({
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'parses absolute server url query hash and headers into framework route request',
-    run: () => {
-      let delegatedRequest: FinanceHttpFrameworkRouteRequest | undefined;
-      const handler = createFinanceHttpServerHandler({
-        routeBinding: {
-          handleFrameworkRouteRequest: (request) => {
-            delegatedRequest = request;
+it('parses absolute server url query hash and headers into framework route request', () => {
+  let delegatedRequest: FinanceHttpFrameworkRouteRequest | undefined;
+  const handler = createFinanceHttpServerHandler({
+    routeBinding: {
+      handleFrameworkRouteRequest: (request) => {
+        delegatedRequest = request;
 
-            return {
-              bodyText: JSON.stringify({ ok: true }),
-              handled: true,
-              headers: { 'content-type': 'application/json; charset=utf-8' },
-              status: 200
-            };
-          }
-        }
-      });
-      const response = handler.handleServerHandlerRequest({
-        bodyText: '{"ok":true}',
-        headers: {
-          authorization: 'Bearer token',
-          accept: ['application/json', 'text/plain']
-        },
-        method: 'get',
-        url: 'https://sms.test/api/finance/accounting-periods/2026-06/close-checks?include=checks&include=sources&keyword=%E6%9C%88%E7%BB%93#ignored'
-      });
-
-      assertEqual(response.status, 200, 'server handler should return delegated response');
-      assert(delegatedRequest !== undefined, 'server handler should delegate parsed request');
-      assertEqual(delegatedRequest.method, 'get', 'server handler should preserve raw method for route binding normalization');
-      assertEqual(
-        delegatedRequest.pathname,
-        '/api/finance/accounting-periods/2026-06/close-checks',
-        'server handler should parse absolute URL pathname'
-      );
-      assertEqual(Array.isArray(delegatedRequest.query?.include), true, 'repeated query should become array');
-      assertEqual(delegatedRequest.query?.keyword, '月结', 'server handler should decode query values');
-      assertEqual(Array.isArray(delegatedRequest.headers?.accept), true, 'server handler should preserve server headers');
-      assertEqual(delegatedRequest.bodyText, '{"ok":true}', 'server handler should preserve body text');
+        return {
+          bodyText: JSON.stringify({ ok: true }),
+          handled: true,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          status: 200
+        };
+      }
     }
-  },
-  {
-    name: 'keeps non-finance server requests outside the runtime chain',
-    run: () => {
-      const { handler, repository } = createHandlerStack({
-        principal: createPrincipal()
-      });
-      const response = handler.handleServerHandlerRequest({
-        headers: {
-          authorization: 'Bearer finance-handler-token'
-        },
-        method: 'GET',
-        url: '/api/people/overview'
-      });
-      const body = parseBody(response.bodyText);
+  });
+  const response = handler.handleServerHandlerRequest({
+    bodyText: '{"ok":true}',
+    headers: {
+      authorization: 'Bearer token',
+      accept: ['application/json', 'text/plain']
+    },
+    method: 'get',
+    url: 'https://sms.test/api/finance/accounting-periods/2026-06/close-checks?include=checks&include=sources&keyword=%E6%9C%88%E7%BB%93#ignored'
+  });
 
-      assertObject(body, 'non-finance server response body should be an object');
-      assertEqual(response.handled, false, 'non-finance server request should not be handled by finance chain');
-      assertEqual(response.status, 404, 'non-finance server request should return route not bound');
-      assertEqual(body.code, 'FINANCE_ROUTE_NOT_BOUND', 'non-finance server request code should match');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'non-finance request must not change period state');
-    }
-  },
-  {
-    name: 'closes a period through server handler binding runtime auth transport and repository gateway',
-    run: () => {
-      const { handler, repository } = createHandlerStack({
-        principal: createPrincipal()
-      });
-      const response = handler.handleServerHandlerRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'handler-close-001',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          authorization: 'Bearer finance-handler-token',
-          'content-type': 'application/json',
-          'x-actor-id': 'forged-client-user',
-          'x-permission-scopes': ''
-        },
-        method: 'POST',
-        url: 'https://sms.test/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseBody(response.bodyText);
-      const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
+  assertEqual(response.status, 200, 'server handler should return delegated response');
+  assert(delegatedRequest !== undefined, 'server handler should delegate parsed request');
+  assertEqual(delegatedRequest.method, 'get', 'server handler should preserve raw method for route binding normalization');
+  assertEqual(
+    delegatedRequest.pathname,
+    '/api/finance/accounting-periods/2026-06/close-checks',
+    'server handler should parse absolute URL pathname'
+  );
+  assertEqual(Array.isArray(delegatedRequest.query?.include), true, 'repeated query should become array');
+  assertEqual(delegatedRequest.query?.keyword, '月结', 'server handler should decode query values');
+  assertEqual(Array.isArray(delegatedRequest.headers?.accept), true, 'server handler should preserve server headers');
+  assertEqual(delegatedRequest.bodyText, '{"ok":true}', 'server handler should preserve body text');
+});
 
-      assertObject(body, 'server handler close response body should be an object');
-      assertEqual(response.handled, true, 'server handler should handle finance close route');
-      assertEqual(response.status, 201, 'server handler close should create close snapshot');
-      assertEqual(repository.readState().periods[0]?.status, '已结账', 'server handler close should persist period lock');
-      assertObject(body.closedBySnapshot, 'server handler close response should include actor snapshot');
-      assertEqual(body.closedBySnapshot.id, 'user-server-handler-001', 'close actor should come from server principal');
-      assertEqual(body.closedAt, '2026-07-04T15:30:00+08:00', 'close time should come from server runtime clock');
-      assert(event !== undefined, 'server handler close should write close event');
-      assertEqual(event.request_id, 'req-server-handler-001', 'close event request id should come from server runtime');
-    }
-  },
-  {
-    name: 'rejects closed-period source mutation through the same server handler chain',
-    run: () => {
-      const { handler, repository } = createHandlerStack({
-        principal: createPrincipal()
-      });
+it('keeps non-finance server requests outside the runtime chain', () => {
+  const { handler, repository } = createHandlerStack({
+    principal: createPrincipal()
+  });
+  const response = handler.handleServerHandlerRequest({
+    headers: {
+      authorization: 'Bearer finance-handler-token'
+    },
+    method: 'GET',
+    url: '/api/people/overview'
+  });
+  const body = parseBody(response.bodyText);
 
-      handler.handleServerHandlerRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'handler-close-before-source-001',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          authorization: 'Bearer finance-handler-token',
-          'content-type': 'application/json'
-        },
-        method: 'POST',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const response = handler.handleServerHandlerRequest({
-        bodyText: JSON.stringify({
-          amount: '1600.00',
-          expectedVersion: 1,
-          status: '已调整'
-        }),
-        headers: {
-          authorization: 'Bearer finance-handler-token',
-          'content-type': 'application/json'
-        },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/rp-handler-001/adjust'
-      });
-      const body = parseBody(response.bodyText);
-      const sourceRecord = repository.readState().sourceRecords[0];
-      const sourceEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_source_mutation_events[0];
+  assertObject(body, 'non-finance server response body should be an object');
+  assertEqual(response.handled, false, 'non-finance server request should not be handled by finance chain');
+  assertEqual(response.status, 404, 'non-finance server request should return route not bound');
+  assertEqual(body.code, 'FINANCE_ROUTE_NOT_BOUND', 'non-finance server request code should match');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'non-finance request must not change period state');
+});
 
-      assertObject(body, 'server handler source mutation response body should be an object');
-      assertEqual(response.status, 409, 'closed-period source mutation should be rejected');
-      assertEqual(body.code, canonicalClosedAccountingPeriodErrorCode, 'closed source mutation code should match');
-      assertEqual(sourceRecord?.amount, '1200.00', 'closed source mutation should keep source amount unchanged');
-      assertEqual(sourceRecord?.version, 1, 'closed source mutation should keep source version unchanged');
-      assert(sourceEvent !== undefined, 'closed source mutation should write audit event');
-      assertEqual(sourceEvent.event_type, 'source_mutation_rejected', 'source mutation event should be rejection');
-      assertEqual(sourceEvent.request_id, 'req-server-handler-001', 'source mutation event should use server runtime request id');
-    }
-  }
-];
+it('closes a period through server handler binding runtime auth transport and repository gateway', () => {
+  const { handler, repository } = createHandlerStack({
+    principal: createPrincipal()
+  });
+  const response = handler.handleServerHandlerRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'handler-close-001',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      authorization: 'Bearer finance-handler-token',
+      'content-type': 'application/json',
+      'x-actor-id': 'forged-client-user',
+      'x-permission-scopes': ''
+    },
+    method: 'POST',
+    url: 'https://sms.test/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseBody(response.bodyText);
+  const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
 
-for (const test of tests) {
-  test.run();
-}
+  assertObject(body, 'server handler close response body should be an object');
+  assertEqual(response.handled, true, 'server handler should handle finance close route');
+  assertEqual(response.status, 201, 'server handler close should create close snapshot');
+  assertEqual(repository.readState().periods[0]?.status, '已结账', 'server handler close should persist period lock');
+  assertObject(body.closedBySnapshot, 'server handler close response should include actor snapshot');
+  assertEqual(body.closedBySnapshot.id, 'user-server-handler-001', 'close actor should come from server principal');
+  assertEqual(body.closedAt, '2026-07-04T15:30:00+08:00', 'close time should come from server runtime clock');
+  assert(event !== undefined, 'server handler close should write close event');
+  assertEqual(event.request_id, 'req-server-handler-001', 'close event request id should come from server runtime');
+});
+
+it('rejects closed-period source mutation through the same server handler chain', () => {
+  const { handler, repository } = createHandlerStack({
+    principal: createPrincipal()
+  });
+
+  handler.handleServerHandlerRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'handler-close-before-source-001',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      authorization: 'Bearer finance-handler-token',
+      'content-type': 'application/json'
+    },
+    method: 'POST',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const response = handler.handleServerHandlerRequest({
+    bodyText: JSON.stringify({
+      amount: '1600.00',
+      expectedVersion: 1,
+      status: '已调整'
+    }),
+    headers: {
+      authorization: 'Bearer finance-handler-token',
+      'content-type': 'application/json'
+    },
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/rp-handler-001/adjust'
+  });
+  const body = parseBody(response.bodyText);
+  const sourceRecord = repository.readState().sourceRecords[0];
+  const sourceEvent = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_source_mutation_events[0];
+
+  assertObject(body, 'server handler source mutation response body should be an object');
+  assertEqual(response.status, 409, 'closed-period source mutation should be rejected');
+  assertEqual(body.code, canonicalClosedAccountingPeriodErrorCode, 'closed source mutation code should match');
+  assertEqual(sourceRecord?.amount, '1200.00', 'closed source mutation should keep source amount unchanged');
+  assertEqual(sourceRecord?.version, 1, 'closed source mutation should keep source version unchanged');
+  assert(sourceEvent !== undefined, 'closed source mutation should write audit event');
+  assertEqual(sourceEvent.event_type, 'source_mutation_rejected', 'source mutation event should be rejection');
+  assertEqual(sourceEvent.request_id, 'req-server-handler-001', 'source mutation event should use server runtime request id');
+});

@@ -7,23 +7,8 @@ import {
 import type { GeneralLedgerLifecycleRow } from './accountingVoucherLifecycleContract.js';
 import type { AccountingPeriodRecord, ActorSnapshot } from './periodCloseContract.js';
 import type { GeneralLedgerSubjectRecord } from './generalLedgerContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function assertReadModelBody(value: unknown, message: string): asserts value is {
   accountingPeriod: string;
@@ -137,97 +122,84 @@ function createState(overrides: Partial<GeneralLedgerRouteState> = {}): GeneralL
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects general-ledger reads before business logic when permission is missing',
-    run: () => {
-      const state = createState();
-      const response = handleGeneralLedgerRoute({
-        context: createContext({ permissionScopes: [] }),
-        request: {
-          method: 'GET',
-          path: '/api/finance/general-ledger/2026-06'
-        },
-        state
-      });
+it('rejects general-ledger reads before business logic when permission is missing', () => {
+  const state = createState();
+  const response = handleGeneralLedgerRoute({
+    context: createContext({ permissionScopes: [] }),
+    request: {
+      method: 'GET',
+      path: '/api/finance/general-ledger/2026-06'
+    },
+    state
+  });
 
-      assertEqual(response.status, 403, 'general-ledger route should require read permission');
-      assertObject(response.body, 'forbidden response should be an object');
-      assertEqual(response.body.code, 'FORBIDDEN', 'forbidden response should use stable code');
-      assertEqual(response.state.ledgerRows.length, state.ledgerRows.length, 'forbidden read should not mutate state');
-    }
-  },
-  {
-    name: 'reads general ledger balances with unfiltered metrics and visible row filters',
-    run: () => {
-      const response = handleGeneralLedgerRoute({
-        context: createContext(),
-        request: {
-          method: 'GET',
-          path: '/api/finance/general-ledger',
-          query: {
-            keyword: '主营业务收入',
-            period: '2026-06',
-            subjectType: '损益类'
-          }
-        },
-        state: createState()
-      });
+  assertEqual(response.status, 403, 'general-ledger route should require read permission');
+  assertObject(response.body, 'forbidden response should be an object');
+  assertEqual(response.body.code, 'FORBIDDEN', 'forbidden response should use stable code');
+  assertEqual(response.state.ledgerRows.length, state.ledgerRows.length, 'forbidden read should not mutate state');
+});
 
-      assertEqual(response.status, 200, 'general-ledger route should return read model');
-      assertReadModelBody(response.body, 'read model body should be an object');
-      assertEqual(response.body.accountingPeriod, '2026-06', 'read model should carry requested period');
-      assertEqual(response.body.periodStatus, '开放', 'read model should expose period status');
-      assertEqual(response.body.readbackSource, '已记账总账', 'open period should read posted ledger rows');
-      assertEqual(response.body.rows.length, 1, 'visible rows should follow subject and keyword filters');
-      assertEqual(response.body.metrics.subjectCount, 2, 'metrics should remain full-period, not visible-filtered');
-      assertEqual(response.body.trialBalance.status, '平衡', 'balanced ledger rows should pass trial balance');
-      assertEqual(response.body.serverTime, '2026-07-04T10:00:00+08:00', 'route should return server time');
-    }
-  },
-  {
-    name: 'returns closed-period general-ledger readback source and stable errors',
-    run: () => {
-      const closedRead = handleGeneralLedgerRoute({
-        context: createContext(),
-        request: {
-          method: 'GET',
-          path: '/api/finance/general-ledger/2026-06'
-        },
-        state: createState({
-          periods: [createPeriod({ status: '已结账' })]
-        })
-      });
-      const missingPeriod = handleGeneralLedgerRoute({
-        context: createContext(),
-        request: {
-          method: 'GET',
-          path: '/api/finance/general-ledger/2026-05'
-        },
-        state: createState()
-      });
-      const invalidPeriod = handleGeneralLedgerRoute({
-        context: createContext(),
-        request: {
-          method: 'GET',
-          path: '/api/finance/general-ledger',
-          query: { period: '2026' }
-        },
-        state: createState()
-      });
+it('reads general ledger balances with unfiltered metrics and visible row filters', () => {
+  const response = handleGeneralLedgerRoute({
+    context: createContext(),
+    request: {
+      method: 'GET',
+      path: '/api/finance/general-ledger',
+      query: {
+        keyword: '主营业务收入',
+        period: '2026-06',
+        subjectType: '损益类'
+      }
+    },
+    state: createState()
+  });
 
-      assertReadModelBody(closedRead.body, 'closed read body should be an object');
-      assertEqual(closedRead.body.readbackSource, '结账总账', 'closed period should expose close-ledger readback');
-      assertEqual(missingPeriod.status, 404, 'missing period should return not found');
-      assertObject(missingPeriod.body, 'missing period response should be an object');
-      assertEqual(missingPeriod.body.code, 'NOT_FOUND', 'missing period should use stable code');
-      assertEqual(invalidPeriod.status, 400, 'invalid period should return bad request');
-      assertObject(invalidPeriod.body, 'invalid period response should be an object');
-      assertEqual(invalidPeriod.body.code, 'INVALID_REQUEST', 'invalid period should use stable code');
-    }
-  }
-];
+  assertEqual(response.status, 200, 'general-ledger route should return read model');
+  assertReadModelBody(response.body, 'read model body should be an object');
+  assertEqual(response.body.accountingPeriod, '2026-06', 'read model should carry requested period');
+  assertEqual(response.body.periodStatus, '开放', 'read model should expose period status');
+  assertEqual(response.body.readbackSource, '已记账总账', 'open period should read posted ledger rows');
+  assertEqual(response.body.rows.length, 1, 'visible rows should follow subject and keyword filters');
+  assertEqual(response.body.metrics.subjectCount, 2, 'metrics should remain full-period, not visible-filtered');
+  assertEqual(response.body.trialBalance.status, '平衡', 'balanced ledger rows should pass trial balance');
+  assertEqual(response.body.serverTime, '2026-07-04T10:00:00+08:00', 'route should return server time');
+});
 
-for (const test of tests) {
-  test.run();
-}
+it('returns closed-period general-ledger readback source and stable errors', () => {
+  const closedRead = handleGeneralLedgerRoute({
+    context: createContext(),
+    request: {
+      method: 'GET',
+      path: '/api/finance/general-ledger/2026-06'
+    },
+    state: createState({
+      periods: [createPeriod({ status: '已结账' })]
+    })
+  });
+  const missingPeriod = handleGeneralLedgerRoute({
+    context: createContext(),
+    request: {
+      method: 'GET',
+      path: '/api/finance/general-ledger/2026-05'
+    },
+    state: createState()
+  });
+  const invalidPeriod = handleGeneralLedgerRoute({
+    context: createContext(),
+    request: {
+      method: 'GET',
+      path: '/api/finance/general-ledger',
+      query: { period: '2026' }
+    },
+    state: createState()
+  });
+
+  assertReadModelBody(closedRead.body, 'closed read body should be an object');
+  assertEqual(closedRead.body.readbackSource, '结账总账', 'closed period should expose close-ledger readback');
+  assertEqual(missingPeriod.status, 404, 'missing period should return not found');
+  assertObject(missingPeriod.body, 'missing period response should be an object');
+  assertEqual(missingPeriod.body.code, 'NOT_FOUND', 'missing period should use stable code');
+  assertEqual(invalidPeriod.status, 400, 'invalid period should return bad request');
+  assertObject(invalidPeriod.body, 'invalid period response should be an object');
+  assertEqual(invalidPeriod.body.code, 'INVALID_REQUEST', 'invalid period should use stable code');
+});

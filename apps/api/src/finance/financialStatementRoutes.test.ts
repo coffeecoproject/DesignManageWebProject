@@ -6,23 +6,8 @@ import {
 } from './financialStatementRoutes.js';
 import type { CashFlowMappingRecord, FinancialStatementLedgerEntry } from './financialStatementContract.js';
 import type { AccountingPeriodRecord, ActorSnapshot } from './periodCloseContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assertEqual, assertObject } from '../__tests__/assertions.js';
 
 const actor: ActorSnapshot = { id: 'user-001', name: '李明' };
 
@@ -106,182 +91,163 @@ function createRouteState(overrides: Partial<FinancialStatementRouteState> = {})
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects financial statement routes before business logic when required permission is missing',
-    run: () => {
-      const response = handleFinancialStatementRoute({
-        context: createContext({ permissionScopes: [] }),
-        request: {
-          method: 'GET',
-          path: '/api/finance/financial-statements/2026-06/readiness'
-        },
-        state: createRouteState()
-      });
+it('rejects financial statement routes before business logic when required permission is missing', () => {
+  const response = handleFinancialStatementRoute({
+    context: createContext({ permissionScopes: [] }),
+    request: {
+      method: 'GET',
+      path: '/api/finance/financial-statements/2026-06/readiness'
+    },
+    state: createRouteState()
+  });
 
-      assertEqual(response.status, 403, 'readiness route should require statement read permission');
-      assertObject(response.body, 'forbidden body should be an object');
-      assertEqual(response.body.code, 'FORBIDDEN', 'forbidden response should use stable code');
-      assertEqual(response.state.statementSnapshots.length, 0, 'forbidden read should not mutate snapshots');
+  assertEqual(response.status, 403, 'readiness route should require statement read permission');
+  assertObject(response.body, 'forbidden body should be an object');
+  assertEqual(response.body.code, 'FORBIDDEN', 'forbidden response should use stable code');
+  assertEqual(response.state.statementSnapshots.length, 0, 'forbidden read should not mutate snapshots');
+});
+
+it('reads statement readiness with cash-flow mapping gaps and formal snapshot eligibility', () => {
+  const response = handleFinancialStatementRoute({
+    context: createContext(),
+    request: {
+      method: 'GET',
+      path: '/api/finance/financial-statements/2026-06/readiness'
+    },
+    state: createRouteState({
+      cashFlowMappings: [],
+      ledgerEntries: createLedgerEntries([{ subjectCode: '1002' }, { subjectCode: '9999' }])
+    })
+  });
+
+  assertEqual(response.status, 200, 'readiness route should return 200');
+  assertObject(response.body, 'readiness body should be an object');
+  assertEqual(response.body.status, '需处理', 'readiness should expose mapping issue status');
+  assertEqual(response.body.canGenerateSnapshot, false, 'readiness should block missing cash-flow mapping');
+  assertEqual(response.body.canGenerateFormalSnapshot, false, 'formal snapshot should not be eligible with gaps');
+  assertEqual((response.body.cashFlowMappingGaps as unknown[]).length, 1, 'readiness should expose one mapping gap');
+});
+
+it('rejects snapshot generation when displayed readiness hashes are stale', () => {
+  const response = handleFinancialStatementRoute({
+    context: createContext(),
+    request: {
+      body: {
+        expectedCashFlowMappingVersionHash: 'chk_stale_mapping',
+        expectedSourceLedgerHash: 'chk_stale_ledger'
+      },
+      method: 'POST',
+      path: '/api/finance/financial-statements/2026-06/snapshots'
+    },
+    state: createRouteState()
+  });
+
+  assertEqual(response.status, 409, 'stale readiness should return conflict');
+  assertObject(response.body, 'stale response body should be an object');
+  assertEqual(
+    response.body.code,
+    'FINANCIAL_STATEMENT_READINESS_STALE',
+    'stale readiness should use stable code'
+  );
+  assertEqual(response.state.statementSnapshots.length, 0, 'stale request should not create snapshot');
+});
+
+it('rejects formal snapshot generation before period close', () => {
+  const response = handleFinancialStatementRoute({
+    context: createContext(),
+    request: {
+      method: 'POST',
+      path: '/api/finance/financial-statements/2026-06/snapshots'
+    },
+    state: createRouteState({
+      periods: [createPeriod({ status: '开放' })]
+    })
+  });
+
+  assertEqual(response.status, 422, 'open-period snapshot should return validation failure');
+  assertObject(response.body, 'open-period snapshot body should be an object');
+  assertEqual(
+    response.body.code,
+    'FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED',
+    'open-period snapshot should use stable code'
+  );
+  assertEqual(response.state.statementSnapshots.length, 0, 'open period should not create snapshot');
+});
+
+it('creates and reads latest closed-period statement snapshot without drift', () => {
+  const createResponse = handleFinancialStatementRoute({
+    context: createContext(),
+    request: {
+      method: 'POST',
+      path: '/api/finance/financial-statements/2026-06/snapshots'
+    },
+    state: createRouteState()
+  });
+
+  assertEqual(createResponse.status, 201, 'closed-period snapshot should be created');
+  assertObject(createResponse.body, 'create snapshot body should be an object');
+  const createdSnapshot = (createResponse.body as { snapshot: Record<string, unknown> }).snapshot;
+  const originalSnapshotHash = createdSnapshot.snapshotHash;
+
+  const readResponse = handleFinancialStatementRoute({
+    context: createContext(),
+    request: {
+      method: 'GET',
+      path: '/api/finance/financial-statements/2026-06/snapshots/latest'
+    },
+    state: {
+      ...createResponse.state,
+      cashFlowMappings: [createMapping({ item: '调整后的现金流映射', version: 2 })],
+      ledgerEntries: createLedgerEntries([
+        { debitAmount: '9999.00' },
+        { creditAmount: '9999.00' }
+      ])
     }
-  },
-  {
-    name: 'reads statement readiness with cash-flow mapping gaps and formal snapshot eligibility',
-    run: () => {
-      const response = handleFinancialStatementRoute({
-        context: createContext(),
-        request: {
-          method: 'GET',
-          path: '/api/finance/financial-statements/2026-06/readiness'
-        },
-        state: createRouteState({
-          cashFlowMappings: [],
-          ledgerEntries: createLedgerEntries([{ subjectCode: '1002' }, { subjectCode: '9999' }])
-        })
-      });
+  });
 
-      assertEqual(response.status, 200, 'readiness route should return 200');
-      assertObject(response.body, 'readiness body should be an object');
-      assertEqual(response.body.status, '需处理', 'readiness should expose mapping issue status');
-      assertEqual(response.body.canGenerateSnapshot, false, 'readiness should block missing cash-flow mapping');
-      assertEqual(response.body.canGenerateFormalSnapshot, false, 'formal snapshot should not be eligible with gaps');
-      assertEqual((response.body.cashFlowMappingGaps as unknown[]).length, 1, 'readiness should expose one mapping gap');
+  assertEqual(readResponse.status, 200, 'latest snapshot route should return 200');
+  assertObject(readResponse.body, 'latest snapshot body should be an object');
+  const latestSnapshot = (readResponse.body as { snapshot: Record<string, unknown> }).snapshot;
+  const cashFlowLines = latestSnapshot.cashFlowLines as Array<Record<string, unknown>>;
+  const generalLedgerLines = latestSnapshot.generalLedgerLines as Array<Record<string, unknown>>;
+
+  assertEqual(latestSnapshot.snapshotHash, originalSnapshotHash, 'readback snapshot hash should not drift');
+  assertEqual(generalLedgerLines.length, 2, 'readback snapshot should include original general-ledger lines');
+  assertEqual(
+    generalLedgerLines.find((line) => line.subjectCode === '1002')?.debitAmount,
+    '1200.00',
+    'readback general-ledger snapshot should not drift with current ledger entries'
+  );
+  assertEqual(
+    cashFlowLines[0]?.item,
+    '销售商品、提供劳务收到的现金',
+    'readback snapshot should preserve original mapping item'
+  );
+});
+
+it('replays existing snapshot instead of rewriting closed-period snapshot', () => {
+  const createResponse = handleFinancialStatementRoute({
+    context: createContext(),
+    request: {
+      method: 'POST',
+      path: '/api/finance/financial-statements/2026-06/snapshots'
+    },
+    state: createRouteState()
+  });
+  const replayResponse = handleFinancialStatementRoute({
+    context: createContext({ now: '2026-07-03T10:00:00+08:00' }),
+    request: {
+      method: 'POST',
+      path: '/api/finance/financial-statements/2026-06/snapshots'
+    },
+    state: {
+      ...createResponse.state,
+      cashFlowMappings: [createMapping({ item: '调整后的现金流映射', version: 2 })]
     }
-  },
-  {
-    name: 'rejects snapshot generation when displayed readiness hashes are stale',
-    run: () => {
-      const response = handleFinancialStatementRoute({
-        context: createContext(),
-        request: {
-          body: {
-            expectedCashFlowMappingVersionHash: 'chk_stale_mapping',
-            expectedSourceLedgerHash: 'chk_stale_ledger'
-          },
-          method: 'POST',
-          path: '/api/finance/financial-statements/2026-06/snapshots'
-        },
-        state: createRouteState()
-      });
+  });
 
-      assertEqual(response.status, 409, 'stale readiness should return conflict');
-      assertObject(response.body, 'stale response body should be an object');
-      assertEqual(
-        response.body.code,
-        'FINANCIAL_STATEMENT_READINESS_STALE',
-        'stale readiness should use stable code'
-      );
-      assertEqual(response.state.statementSnapshots.length, 0, 'stale request should not create snapshot');
-    }
-  },
-  {
-    name: 'rejects formal snapshot generation before period close',
-    run: () => {
-      const response = handleFinancialStatementRoute({
-        context: createContext(),
-        request: {
-          method: 'POST',
-          path: '/api/finance/financial-statements/2026-06/snapshots'
-        },
-        state: createRouteState({
-          periods: [createPeriod({ status: '开放' })]
-        })
-      });
-
-      assertEqual(response.status, 422, 'open-period snapshot should return validation failure');
-      assertObject(response.body, 'open-period snapshot body should be an object');
-      assertEqual(
-        response.body.code,
-        'FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED',
-        'open-period snapshot should use stable code'
-      );
-      assertEqual(response.state.statementSnapshots.length, 0, 'open period should not create snapshot');
-    }
-  },
-  {
-    name: 'creates and reads latest closed-period statement snapshot without drift',
-    run: () => {
-      const createResponse = handleFinancialStatementRoute({
-        context: createContext(),
-        request: {
-          method: 'POST',
-          path: '/api/finance/financial-statements/2026-06/snapshots'
-        },
-        state: createRouteState()
-      });
-
-      assertEqual(createResponse.status, 201, 'closed-period snapshot should be created');
-      assertObject(createResponse.body, 'create snapshot body should be an object');
-      const createdSnapshot = (createResponse.body as { snapshot: Record<string, unknown> }).snapshot;
-      const originalSnapshotHash = createdSnapshot.snapshotHash;
-
-      const readResponse = handleFinancialStatementRoute({
-        context: createContext(),
-        request: {
-          method: 'GET',
-          path: '/api/finance/financial-statements/2026-06/snapshots/latest'
-        },
-        state: {
-          ...createResponse.state,
-          cashFlowMappings: [createMapping({ item: '调整后的现金流映射', version: 2 })],
-          ledgerEntries: createLedgerEntries([
-            { debitAmount: '9999.00' },
-            { creditAmount: '9999.00' }
-          ])
-        }
-      });
-
-      assertEqual(readResponse.status, 200, 'latest snapshot route should return 200');
-      assertObject(readResponse.body, 'latest snapshot body should be an object');
-      const latestSnapshot = (readResponse.body as { snapshot: Record<string, unknown> }).snapshot;
-      const cashFlowLines = latestSnapshot.cashFlowLines as Array<Record<string, unknown>>;
-      const generalLedgerLines = latestSnapshot.generalLedgerLines as Array<Record<string, unknown>>;
-
-      assertEqual(latestSnapshot.snapshotHash, originalSnapshotHash, 'readback snapshot hash should not drift');
-      assertEqual(generalLedgerLines.length, 2, 'readback snapshot should include original general-ledger lines');
-      assertEqual(
-        generalLedgerLines.find((line) => line.subjectCode === '1002')?.debitAmount,
-        '1200.00',
-        'readback general-ledger snapshot should not drift with current ledger entries'
-      );
-      assertEqual(
-        cashFlowLines[0]?.item,
-        '销售商品、提供劳务收到的现金',
-        'readback snapshot should preserve original mapping item'
-      );
-    }
-  },
-  {
-    name: 'replays existing snapshot instead of rewriting closed-period snapshot',
-    run: () => {
-      const createResponse = handleFinancialStatementRoute({
-        context: createContext(),
-        request: {
-          method: 'POST',
-          path: '/api/finance/financial-statements/2026-06/snapshots'
-        },
-        state: createRouteState()
-      });
-      const replayResponse = handleFinancialStatementRoute({
-        context: createContext({ now: '2026-07-03T10:00:00+08:00' }),
-        request: {
-          method: 'POST',
-          path: '/api/finance/financial-statements/2026-06/snapshots'
-        },
-        state: {
-          ...createResponse.state,
-          cashFlowMappings: [createMapping({ item: '调整后的现金流映射', version: 2 })]
-        }
-      });
-
-      assertEqual(replayResponse.status, 200, 'existing snapshot should replay');
-      assertObject(replayResponse.body, 'replay body should be an object');
-      assertEqual(replayResponse.body.replayed, true, 'replay body should mark existing snapshot');
-      assertEqual(replayResponse.state.statementSnapshots.length, 1, 'replay should not append duplicate snapshot');
-    }
-  }
-];
-
-for (const test of tests) {
-  test.run();
-}
+  assertEqual(replayResponse.status, 200, 'existing snapshot should replay');
+  assertObject(replayResponse.body, 'replay body should be an object');
+  assertEqual(replayResponse.body.replayed, true, 'replay body should mark existing snapshot');
+  assertEqual(replayResponse.state.statementSnapshots.length, 1, 'replay should not append duplicate snapshot');
+});

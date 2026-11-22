@@ -39,6 +39,7 @@ Run commands from anywhere inside the repository. Scripts resolve the repository
 | Run period-close PostgreSQL isolated apply drill | `corepack pnpm db:period-close:apply-drill` |
 | Run period-close PostgreSQL persisted replay drill | `corepack pnpm db:period-close:replay-drill` |
 | Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` (needs `rg` on PATH) |
+| Run the same four drills automatically on a throwaway database | `testpace files apps/api/src/finance/periodClosePostgresDrills.postgres.test.ts` (also part of `testpace full`) |
 | Show logs | `scripts/local/db-logs.sh` |
 | Sleep Postgres without deleting data | `scripts/local/db-down.sh` |
 

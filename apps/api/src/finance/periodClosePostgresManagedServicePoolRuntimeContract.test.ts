@@ -41,22 +41,11 @@ import {
   type PersistentFinanceSourceRecord,
   type PersistentSourceMutationResult
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 function assertIncludes<T>(values: readonly T[], expected: T, message: string) {
-  if (!values.includes(expected)) {
-    throw new Error(`${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
-  }
+  assert(values.includes(expected), `${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
 }
 
 const apiPackageManifestPath = 'apps/api/package.json';
@@ -395,249 +384,232 @@ function assertValidShutdown(result: PeriodClosePostgresManagedServicePoolShutdo
   assertEqual(errors.length, 0, `managed service pool shutdown trace should validate: ${errors.join('; ')}`);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'blocks before managed pool construction when readiness is not operationally ready',
-    run: async () => {
-      const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
-      const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
-        operationalGate
-      });
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
-      const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule
-      });
-      const result = await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(readinessPackage),
-        period: '2026-06',
-        request: createCloseRequest()
-      });
+it('blocks before managed pool construction when readiness is not operationally ready', async () => {
+  const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
+  const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
+    operationalGate
+  });
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
+  const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule
+  });
+  const result = await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(readinessPackage),
+    period: '2026-06',
+    request: createCloseRequest()
+  });
 
-      assertEqual(result.status, 'readiness_blocked', 'blocked readiness must stop before managed pool construction');
-      assertEqual(result.poolLifecycleState, 'not_initialized', 'blocked runtime must keep pool uninitialized');
-      assertEqual(readFactoryState().factoryCallCount, 0, 'blocked runtime must not create service boundary');
-      assertEqual(readPgState().constructCount, 0, 'blocked runtime must not construct pg pool');
-      assertEqual(readPgState().connectCount, 0, 'blocked runtime must not connect pg pool');
-      assertValid(result);
+  assertEqual(result.status, 'readiness_blocked', 'blocked readiness must stop before managed pool construction');
+  assertEqual(result.poolLifecycleState, 'not_initialized', 'blocked runtime must keep pool uninitialized');
+  assertEqual(readFactoryState().factoryCallCount, 0, 'blocked runtime must not create service boundary');
+  assertEqual(readPgState().constructCount, 0, 'blocked runtime must not construct pg pool');
+  assertEqual(readPgState().connectCount, 0, 'blocked runtime must not connect pg pool');
+  assertValid(result);
+});
+
+it('reuses one managed runtime pool across close and source guard requests', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readCommittedSnapshot, readFactoryState } = createManagedPoolServiceBoundaryFactory();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule,
+    secretResolver
+  });
+
+  const closeResult = await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-close-before-source' })
+  });
+  const guardResult = await runtime.guardSourceMutation({
+    admission: createAdmissionInput(),
+    context: {
+      actorSnapshot: { id: 'user-001', name: '李明' },
+      now: '2026-07-05T12:05:00+08:00',
+      requestId: 'req-postgres-managed-service-pool-source-guard'
+    },
+    mutation: {
+      amount: '1500.00',
+      expectedVersion: 1,
+      operation: '调整应收应付事项',
+      sourceArea: 'receivable_payable',
+      sourceId: 'source-001',
+      status: '已调整',
+      targetAccountingPeriod: '2026-06'
     }
-  },
-  {
-    name: 'reuses one managed runtime pool across close and source guard requests',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readCommittedSnapshot, readFactoryState } = createManagedPoolServiceBoundaryFactory();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule,
-        secretResolver
-      });
+  });
+  const committedSnapshot = readCommittedSnapshot();
+  const pgState = readPgState();
+  const factoryState = readFactoryState();
 
-      const closeResult = await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-close-before-source' })
-      });
-      const guardResult = await runtime.guardSourceMutation({
-        admission: createAdmissionInput(),
-        context: {
-          actorSnapshot: { id: 'user-001', name: '李明' },
-          now: '2026-07-05T12:05:00+08:00',
-          requestId: 'req-postgres-managed-service-pool-source-guard'
-        },
-        mutation: {
-          amount: '1500.00',
-          expectedVersion: 1,
-          operation: '调整应收应付事项',
-          sourceArea: 'receivable_payable',
-          sourceId: 'source-001',
-          status: '已调整',
-          targetAccountingPeriod: '2026-06'
+  assertEqual(closeResult.status, 'committed', 'ready managed runtime should commit close');
+  assertEqual(guardResult.status, 'committed', 'ready managed runtime should commit source guard audit');
+  assertEqual(closeResult.poolLifecycleState, 'active', 'close should initialize the managed pool');
+  assertEqual(guardResult.poolLifecycleState, 'active', 'source guard should reuse the managed pool');
+  assertEqual(pgState.constructCount, 1, 'runtime should construct exactly one process-level managed pg pool');
+  assertEqual(pgState.connectCount, 2, 'close and source guard should each acquire from the same managed pool');
+  assertEqual(pgState.releaseCount, 2, 'both service requests must release their managed pool clients');
+  assertEqual(factoryState.factoryCallCount, 2, 'runtime should create one service boundary per request');
+  assertEqual(factoryState.uniquePoolCount, 1, 'service boundaries must receive the same managed pool adapter instance');
+  assertEqual(factoryState.commitCount, 2, 'close and source guard should publish separate staged units');
+  assertEqual(committedSnapshot.sourceRecords[0]?.amount, '1000.00', 'closed-period source row should remain unchanged');
+  assertEqual(
+    committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
+    1,
+    'closed-period source guard audit should persist after managed pool handoff'
+  );
+  assertIncludes(
+    guardResult.events.map((event) => event.event),
+    'reuse_managed_pool',
+    'second request should explicitly reuse the managed pool'
+  );
+  assertIncludes(
+    guardResult.adapterEvents.map((event) => event.event),
+    'execute_native_query',
+    'managed runtime should expose SQL replay through the native pool adapter'
+  );
+  assertEqual(
+    JSON.stringify(closeResult.resolvedSecretEvidence).includes('resolved-production-secret'),
+    false,
+    'runtime result must not expose raw secret values'
+  );
+  assertValid(closeResult);
+  assertValid(guardResult);
+});
+
+it('shutdown closes the managed pool and blocks later service requests', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule,
+    secretResolver
+  });
+
+  await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-before-shutdown' })
+  });
+
+  const shutdownResult = await runtime.shutdown({ requestId: 'req-postgres-managed-service-pool-shutdown' });
+  const afterShutdownResult = await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-07',
+    request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-after-shutdown' })
+  });
+  const pgState = readPgState();
+  const factoryState = readFactoryState();
+
+  assertEqual(shutdownResult.status, 'closed', 'shutdown should close the active managed pool');
+  assertEqual(shutdownResult.poolLifecycleState, 'closed', 'shutdown should mark runtime lifecycle closed');
+  assertEqual(afterShutdownResult.status, 'pool_closed', 'closed managed runtime must reject later service work');
+  assertEqual(pgState.constructCount, 1, 'closed runtime must not construct another pg pool');
+  assertEqual(pgState.connectCount, 1, 'closed runtime must not acquire another pg client');
+  assertEqual(pgState.endCount, 1, 'shutdown should call native pool end exactly once');
+  assertEqual(factoryState.factoryCallCount, 1, 'closed runtime must not create another service boundary');
+  assertValidShutdown(shutdownResult);
+  assertValid(afterShutdownResult);
+});
+
+it('rejects runtime implementation bundle pool config drift before managed pool construction', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
+  const readinessPackage = createReadyProductionReadinessPackage();
+  const admission = createAdmissionInput(readinessPackage);
+  const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule
+  });
+
+  const result = await runtime.closeAccountingPeriod({
+    admission: {
+      ...admission,
+      runtimeImplementationBundle: {
+        ...admission.runtimeImplementationBundle,
+        poolConfig: {
+          ...admission.runtimeImplementationBundle.poolConfig,
+          applicationName: 'startupmanage-period-close-managed-service-pool-drifted-bundle'
         }
-      });
-      const committedSnapshot = readCommittedSnapshot();
-      const pgState = readPgState();
-      const factoryState = readFactoryState();
+      }
+    },
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-bundle-drift' })
+  });
 
-      assertEqual(closeResult.status, 'committed', 'ready managed runtime should commit close');
-      assertEqual(guardResult.status, 'committed', 'ready managed runtime should commit source guard audit');
-      assertEqual(closeResult.poolLifecycleState, 'active', 'close should initialize the managed pool');
-      assertEqual(guardResult.poolLifecycleState, 'active', 'source guard should reuse the managed pool');
-      assertEqual(pgState.constructCount, 1, 'runtime should construct exactly one process-level managed pg pool');
-      assertEqual(pgState.connectCount, 2, 'close and source guard should each acquire from the same managed pool');
-      assertEqual(pgState.releaseCount, 2, 'both service requests must release their managed pool clients');
-      assertEqual(factoryState.factoryCallCount, 2, 'runtime should create one service boundary per request');
-      assertEqual(factoryState.uniquePoolCount, 1, 'service boundaries must receive the same managed pool adapter instance');
-      assertEqual(factoryState.commitCount, 2, 'close and source guard should publish separate staged units');
-      assertEqual(committedSnapshot.sourceRecords[0]?.amount, '1000.00', 'closed-period source row should remain unchanged');
-      assertEqual(
-        committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
-        1,
-        'closed-period source guard audit should persist after managed pool handoff'
-      );
-      assertIncludes(
-        guardResult.events.map((event) => event.event),
-        'reuse_managed_pool',
-        'second request should explicitly reuse the managed pool'
-      );
-      assertIncludes(
-        guardResult.adapterEvents.map((event) => event.event),
-        'execute_native_query',
-        'managed runtime should expose SQL replay through the native pool adapter'
-      );
-      assertEqual(
-        JSON.stringify(closeResult.resolvedSecretEvidence).includes('resolved-production-secret'),
-        false,
-        'runtime result must not expose raw secret values'
-      );
-      assertValid(closeResult);
-      assertValid(guardResult);
+  assertEqual(result.status, 'runtime_bundle_invalid', 'bundle pool config drift should block before pool construction');
+  assertIncludes(
+    result.runtimeBundleErrors,
+    'managed service pool runtime bundle pool config must match derived readiness pool config',
+    'bundle drift should be reported as runtime bundle error'
+  );
+  assertEqual(readPgState().constructCount, 0, 'bundle drift must not construct pg pool');
+  assertEqual(readPgState().connectCount, 0, 'bundle drift must not connect pg pool');
+  assertEqual(readFactoryState().factoryCallCount, 0, 'bundle drift must not create service boundary');
+  assertValid(result);
+});
+
+it('rejects runtime config drift after managed pool initialization', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule,
+    secretResolver
+  });
+  const originalReadiness = createReadyProductionReadinessPackage();
+  const driftReadiness = createReadyProductionReadinessPackage({
+    poolPolicy: {
+      ...originalReadiness.poolPolicy,
+      applicationName: 'startupmanage-period-close-managed-service-pool-production-v2'
     }
-  },
-  {
-    name: 'shutdown closes the managed pool and blocks later service requests',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule,
-        secretResolver
-      });
+  });
 
-      await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-before-shutdown' })
-      });
-
-      const shutdownResult = await runtime.shutdown({ requestId: 'req-postgres-managed-service-pool-shutdown' });
-      const afterShutdownResult = await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-07',
-        request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-after-shutdown' })
-      });
-      const pgState = readPgState();
-      const factoryState = readFactoryState();
-
-      assertEqual(shutdownResult.status, 'closed', 'shutdown should close the active managed pool');
-      assertEqual(shutdownResult.poolLifecycleState, 'closed', 'shutdown should mark runtime lifecycle closed');
-      assertEqual(afterShutdownResult.status, 'pool_closed', 'closed managed runtime must reject later service work');
-      assertEqual(pgState.constructCount, 1, 'closed runtime must not construct another pg pool');
-      assertEqual(pgState.connectCount, 1, 'closed runtime must not acquire another pg client');
-      assertEqual(pgState.endCount, 1, 'shutdown should call native pool end exactly once');
-      assertEqual(factoryState.factoryCallCount, 1, 'closed runtime must not create another service boundary');
-      assertValidShutdown(shutdownResult);
-      assertValid(afterShutdownResult);
+  await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(originalReadiness),
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-before-config-drift' })
+  });
+  const driftResult = await runtime.guardSourceMutation({
+    admission: createAdmissionInput(driftReadiness),
+    context: {
+      actorSnapshot: { id: 'user-001', name: '李明' },
+      now: '2026-07-05T12:05:00+08:00',
+      requestId: 'req-postgres-managed-service-pool-config-drift'
+    },
+    mutation: {
+      amount: '1500.00',
+      expectedVersion: 1,
+      operation: '调整应收应付事项',
+      sourceArea: 'receivable_payable',
+      sourceId: 'source-001',
+      status: '已调整',
+      targetAccountingPeriod: '2026-06'
     }
-  },
-  {
-    name: 'rejects runtime implementation bundle pool config drift before managed pool construction',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
-      const readinessPackage = createReadyProductionReadinessPackage();
-      const admission = createAdmissionInput(readinessPackage);
-      const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule
-      });
+  });
 
-      const result = await runtime.closeAccountingPeriod({
-        admission: {
-          ...admission,
-          runtimeImplementationBundle: {
-            ...admission.runtimeImplementationBundle,
-            poolConfig: {
-              ...admission.runtimeImplementationBundle.poolConfig,
-              applicationName: 'startupmanage-period-close-managed-service-pool-drifted-bundle'
-            }
-          }
-        },
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-bundle-drift' })
-      });
-
-      assertEqual(result.status, 'runtime_bundle_invalid', 'bundle pool config drift should block before pool construction');
-      assertIncludes(
-        result.runtimeBundleErrors,
-        'managed service pool runtime bundle pool config must match derived readiness pool config',
-        'bundle drift should be reported as runtime bundle error'
-      );
-      assertEqual(readPgState().constructCount, 0, 'bundle drift must not construct pg pool');
-      assertEqual(readPgState().connectCount, 0, 'bundle drift must not connect pg pool');
-      assertEqual(readFactoryState().factoryCallCount, 0, 'bundle drift must not create service boundary');
-      assertValid(result);
-    }
-  },
-  {
-    name: 'rejects runtime config drift after managed pool initialization',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readFactoryState } = createManagedPoolServiceBoundaryFactory();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const runtime = createPeriodClosePostgresManagedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule,
-        secretResolver
-      });
-      const originalReadiness = createReadyProductionReadinessPackage();
-      const driftReadiness = createReadyProductionReadinessPackage({
-        poolPolicy: {
-          ...originalReadiness.poolPolicy,
-          applicationName: 'startupmanage-period-close-managed-service-pool-production-v2'
-        }
-      });
-
-      await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(originalReadiness),
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-managed-service-pool-before-config-drift' })
-      });
-      const driftResult = await runtime.guardSourceMutation({
-        admission: createAdmissionInput(driftReadiness),
-        context: {
-          actorSnapshot: { id: 'user-001', name: '李明' },
-          now: '2026-07-05T12:05:00+08:00',
-          requestId: 'req-postgres-managed-service-pool-config-drift'
-        },
-        mutation: {
-          amount: '1500.00',
-          expectedVersion: 1,
-          operation: '调整应收应付事项',
-          sourceArea: 'receivable_payable',
-          sourceId: 'source-001',
-          status: '已调整',
-          targetAccountingPeriod: '2026-06'
-        }
-      });
-
-      assertEqual(driftResult.status, 'config_invalid', 'managed runtime should reject config drift after pool initialization');
-      assertEqual(
-        driftResult.configErrors.includes('period-close managed service pool runtime config changed after pool initialization'),
-        true,
-        'config drift should be visible in runtime errors'
-      );
-      assertEqual(readPgState().constructCount, 1, 'config drift must not construct a replacement pool');
-      assertEqual(readPgState().connectCount, 1, 'config drift must not enter service work');
-      assertEqual(readFactoryState().factoryCallCount, 1, 'config drift must not create another service boundary');
-      assertValid(driftResult);
-    }
-  }
-];
-
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(driftResult.status, 'config_invalid', 'managed runtime should reject config drift after pool initialization');
+  assertEqual(
+    driftResult.configErrors.includes('period-close managed service pool runtime config changed after pool initialization'),
+    true,
+    'config drift should be visible in runtime errors'
+  );
+  assertEqual(readPgState().constructCount, 1, 'config drift must not construct a replacement pool');
+  assertEqual(readPgState().connectCount, 1, 'config drift must not enter service work');
+  assertEqual(readFactoryState().factoryCallCount, 1, 'config drift must not create another service boundary');
+  assertValid(driftResult);
+});

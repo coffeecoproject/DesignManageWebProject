@@ -16,23 +16,8 @@ import type {
   PersistentAccountingPeriodRecord,
   PersistentFinanceSourceRecord
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 function createPgError(message: string, code: string) {
   const error = new Error(message) as Error & { code: string };
@@ -194,141 +179,124 @@ function cloneResult<T extends PeriodClosePostgresDbClientRepositoryBridgeResult
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'commits close through DB client repository and pg-like client port bridge',
-    run: async () => {
-      const { bridge, readPoolState, repository } = createBridge();
-      const result = await bridge.closeAccountingPeriod({
-        period: '2026-06',
-        request: createCloseRequest()
-      });
-      const poolState = readPoolState();
+it('commits close through DB client repository and pg-like client port bridge', async () => {
+  const { bridge, readPoolState, repository } = createBridge();
+  const result = await bridge.closeAccountingPeriod({
+    period: '2026-06',
+    request: createCloseRequest()
+  });
+  const poolState = readPoolState();
 
-      assertEqual(result.status, 'committed', 'bridge should report committed close when both traces commit');
-      assertEqual(result.traceErrors.length, 0, `bridge trace should validate: ${result.traceErrors.join('; ')}`);
-      assertEqual(result.postgresResult?.status, 'committed', 'postgres client port should commit');
-      assertEqual(
-        poolState.queries.length,
-        result.driverExecutions.length,
-        'postgres client port should execute every repository SQL driver statement'
-      );
-      assertEqual(poolState.releaseCount, 1, 'postgres client port should release the client once');
-      assertEqual(
-        repository.readDatabaseSnapshot().periodCloseRows.accounting_periods[0]?.status,
-        '已结账',
-        'bridge repository path should commit the close into local rows'
-      );
+  assertEqual(result.status, 'committed', 'bridge should report committed close when both traces commit');
+  assertEqual(result.traceErrors.length, 0, `bridge trace should validate: ${result.traceErrors.join('; ')}`);
+  assertEqual(result.postgresResult?.status, 'committed', 'postgres client port should commit');
+  assertEqual(
+    poolState.queries.length,
+    result.driverExecutions.length,
+    'postgres client port should execute every repository SQL driver statement'
+  );
+  assertEqual(poolState.releaseCount, 1, 'postgres client port should release the client once');
+  assertEqual(
+    repository.readDatabaseSnapshot().periodCloseRows.accounting_periods[0]?.status,
+    '已结账',
+    'bridge repository path should commit the close into local rows'
+  );
+});
+
+it('rolls back stale close through both DB client and pg-like client traces', async () => {
+  const { bridge, repository } = createBridge();
+  const result = await bridge.closeAccountingPeriod({
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-pg-bridge-stale', version: 99 })
+  });
+
+  assertEqual(result.status, 'rolled_back', 'stale close should report rolled_back');
+  assertEqual(result.traceErrors.length, 0, `stale close bridge trace should validate: ${result.traceErrors.join('; ')}`);
+  assertEqual(result.postgresResult?.status, 'rolled_back', 'postgres client port should execute rollback terminal');
+  assertEqual(
+    repository.readDatabaseSnapshot().periodCloseRows.accounting_periods[0]?.status,
+    '开放',
+    'stale close should not mutate the accounting period'
+  );
+});
+
+it('commits closed-period source guard audit without source mutation through pg-like bridge', async () => {
+  const { bridge, repository } = createBridge();
+
+  await bridge.closeAccountingPeriod({
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-pg-bridge-close-before-source' })
+  });
+
+  const result = await bridge.guardSourceMutation({
+    context: {
+      actorSnapshot: { id: 'user-001', name: '李明' },
+      now: '2026-07-02T22:35:00+08:00',
+      requestId: 'req-pg-bridge-source-guard'
+    },
+    mutation: {
+      amount: '1500.00',
+      expectedVersion: 1,
+      operation: '调整应收应付事项',
+      sourceArea: 'receivable_payable',
+      sourceId: 'source-001',
+      status: '已调整'
     }
-  },
-  {
-    name: 'rolls back stale close through both DB client and pg-like client traces',
-    run: async () => {
-      const { bridge, repository } = createBridge();
-      const result = await bridge.closeAccountingPeriod({
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-pg-bridge-stale', version: 99 })
-      });
+  });
 
-      assertEqual(result.status, 'rolled_back', 'stale close should report rolled_back');
-      assertEqual(result.traceErrors.length, 0, `stale close bridge trace should validate: ${result.traceErrors.join('; ')}`);
-      assertEqual(result.postgresResult?.status, 'rolled_back', 'postgres client port should execute rollback terminal');
-      assertEqual(
-        repository.readDatabaseSnapshot().periodCloseRows.accounting_periods[0]?.status,
-        '开放',
-        'stale close should not mutate the accounting period'
-      );
-    }
-  },
-  {
-    name: 'commits closed-period source guard audit without source mutation through pg-like bridge',
-    run: async () => {
-      const { bridge, repository } = createBridge();
+  assertEqual(result.status, 'committed', 'closed-period source guard audit should commit');
+  assertEqual(result.traceErrors.length, 0, `source guard bridge trace should validate: ${result.traceErrors.join('; ')}`);
+  assertEqual(result.postgresResult?.status, 'committed', 'postgres client port should commit the guard audit');
 
-      await bridge.closeAccountingPeriod({
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-pg-bridge-close-before-source' })
-      });
+  assert(result.repositoryResult.driverOk, 'source guard should reach repository driver');
+  assert(result.repositoryResult.result.ok, 'source guard wrapper transaction should commit audit result');
+  assertEqual(result.repositoryResult.result.value.ok, false, 'closed-period source mutation should be rejected');
+  assertEqual(repository.readDatabaseSnapshot().sourceRecords[0]?.amount, '1000.00', 'source amount should remain unchanged');
+});
 
-      const result = await bridge.guardSourceMutation({
-        context: {
-          actorSnapshot: { id: 'user-001', name: '李明' },
-          now: '2026-07-02T22:35:00+08:00',
-          requestId: 'req-pg-bridge-source-guard'
-        },
-        mutation: {
-          amount: '1500.00',
-          expectedVersion: 1,
-          operation: '调整应收应付事项',
-          sourceArea: 'receivable_payable',
-          sourceId: 'source-001',
-          status: '已调整'
-        }
-      });
+it('marks bridge trace invalid when pg-like client fails after a repository commit plan', async () => {
+  const { bridge, readPoolState } = createBridge({ failWhenSqlIncludes: 'UPDATE "accounting_periods"' });
+  const result = await bridge.closeAccountingPeriod({
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-pg-bridge-client-failure' })
+  });
 
-      assertEqual(result.status, 'committed', 'closed-period source guard audit should commit');
-      assertEqual(result.traceErrors.length, 0, `source guard bridge trace should validate: ${result.traceErrors.join('; ')}`);
-      assertEqual(result.postgresResult?.status, 'committed', 'postgres client port should commit the guard audit');
+  assertEqual(result.status, 'trace_invalid', 'postgres runtime mismatch should not be reported as committed');
+  assertEqual(result.postgresResult?.status, 'driver_failed', 'postgres client port should surface query failure');
+  assertEqual(readPoolState().releaseCount, 1, 'postgres failure should still release the client');
+  assert(
+    result.traceErrors.some((error) => error.includes('cannot satisfy repository terminal commit')),
+    'bridge should explain repository terminal and postgres terminal mismatch'
+  );
+});
 
-      assert(result.repositoryResult.driverOk, 'source guard should reach repository driver');
-      assert(result.repositoryResult.result.ok, 'source guard wrapper transaction should commit audit result');
-      assertEqual(result.repositoryResult.result.value.ok, false, 'closed-period source mutation should be rejected');
-      assertEqual(repository.readDatabaseSnapshot().sourceRecords[0]?.amount, '1000.00', 'source amount should remain unchanged');
-    }
-  },
-  {
-    name: 'marks bridge trace invalid when pg-like client fails after a repository commit plan',
-    run: async () => {
-      const { bridge, readPoolState } = createBridge({ failWhenSqlIncludes: 'UPDATE "accounting_periods"' });
-      const result = await bridge.closeAccountingPeriod({
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-pg-bridge-client-failure' })
-      });
+it('validator rejects mismatched pg execution text', async () => {
+  const { bridge } = createBridge();
+  const result = cloneResult(
+    (await bridge.closeAccountingPeriod({
+      period: '2026-06',
+      request: createCloseRequest({ requestId: 'req-pg-bridge-mutated-trace' })
+    })) as PeriodClosePostgresDbClientRepositoryBridgeResult<never>
+  );
 
-      assertEqual(result.status, 'trace_invalid', 'postgres runtime mismatch should not be reported as committed');
-      assertEqual(result.postgresResult?.status, 'driver_failed', 'postgres client port should surface query failure');
-      assertEqual(readPoolState().releaseCount, 1, 'postgres failure should still release the client');
-      assert(
-        result.traceErrors.some((error) => error.includes('cannot satisfy repository terminal commit')),
-        'bridge should explain repository terminal and postgres terminal mismatch'
-      );
-    }
-  },
-  {
-    name: 'validator rejects mismatched pg execution text',
-    run: async () => {
-      const { bridge } = createBridge();
-      const result = cloneResult(
-        (await bridge.closeAccountingPeriod({
-          period: '2026-06',
-          request: createCloseRequest({ requestId: 'req-pg-bridge-mutated-trace' })
-        })) as PeriodClosePostgresDbClientRepositoryBridgeResult<never>
-      );
-
-      if (!result.postgresResult) {
-        throw new Error('expected postgres result for mutated trace test');
-      }
-
-      result.postgresResult.executions = result.postgresResult.executions.map(
-        (execution, index): PeriodCloseSqlDriverExecution =>
-          index === 1
-            ? {
-                ...execution,
-                sql: 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;'
-              }
-            : execution
-      );
-
-      const errors = validatePeriodClosePostgresDbClientRepositoryBridgeTrace(result);
-
-      assert(
-        errors.some((error) => error.includes('must match SQL driver execution')),
-        'bridge validator should reject postgres execution drift from repository SQL plan'
-      );
-    }
+  if (!result.postgresResult) {
+    throw new Error('expected postgres result for mutated trace test');
   }
-];
 
-for (const test of tests) {
-  await test.run();
-}
+  result.postgresResult.executions = result.postgresResult.executions.map(
+    (execution, index): PeriodCloseSqlDriverExecution =>
+      index === 1
+        ? {
+            ...execution,
+            sql: 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;'
+          }
+        : execution
+  );
+
+  const errors = validatePeriodClosePostgresDbClientRepositoryBridgeTrace(result);
+
+  assert(
+    errors.some((error) => error.includes('must match SQL driver execution')),
+    'bridge validator should reject postgres execution drift from repository SQL plan'
+  );
+});

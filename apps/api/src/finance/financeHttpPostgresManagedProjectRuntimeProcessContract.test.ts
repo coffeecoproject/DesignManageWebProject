@@ -33,22 +33,11 @@ import {
   createFinanceSourceTableSqlRepositoryContract,
   type FinanceSourceTableSqlRow,
 } from './periodCloseSourceTableSqlRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 function assertIncludes<T>(values: readonly T[], expected: T, message: string) {
-  if (!values.includes(expected)) {
-    throw new Error(`${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
-  }
+  assert(values.includes(expected), `${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
 }
 
 function parseJson(bodyText: string) {
@@ -459,245 +448,230 @@ function createFallbackHandler() {
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'blocks project API server construction when runtime readiness is incomplete',
-    run: async () => {
-      const admission = createAdmissionInput(createBlockedReadinessPackage());
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
-        initialRows: [createSourceRow()],
-      });
-      const fakeRuntime = createFakeRuntime({ admission });
-      const fallback = createFallbackHandler();
-      const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
-        admission,
-        fallbackHandler: fallback.handler,
-        resolvePrincipal: createPrincipal,
-        runtime: fakeRuntime.runtime,
-        sourceSqlRepository,
-      });
-      const summary = process.getProcessSummary();
-      const validation = validateFinanceHttpPostgresManagedProjectRuntimeProcessSummary(summary);
+it('blocks project API server construction when runtime readiness is incomplete', async () => {
+  const admission = createAdmissionInput(createBlockedReadinessPackage());
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
+    initialRows: [createSourceRow()],
+  });
+  const fakeRuntime = createFakeRuntime({ admission });
+  const fallback = createFallbackHandler();
+  const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
+    admission,
+    fallbackHandler: fallback.handler,
+    resolvePrincipal: createPrincipal,
+    runtime: fakeRuntime.runtime,
+    sourceSqlRepository,
+  });
+  const summary = process.getProcessSummary();
+  const validation = validateFinanceHttpPostgresManagedProjectRuntimeProcessSummary(summary);
 
-      assertEqual(summary.lifecycleState, 'blocked_by_runtime_readiness', 'blocked readiness should stop startup');
-      assertEqual(summary.projectApiServerConstructed, false, 'blocked readiness must not construct project API server');
-      assertEqual(validation.ok, true, `blocked readiness summary should validate: ${validation.errors.join(', ')}`);
+  assertEqual(summary.lifecycleState, 'blocked_by_runtime_readiness', 'blocked readiness should stop startup');
+  assertEqual(summary.projectApiServerConstructed, false, 'blocked readiness must not construct project API server');
+  assertEqual(validation.ok, true, `blocked readiness summary should validate: ${validation.errors.join(', ')}`);
 
-      const response = await process.handleConcreteFrameworkRequest({
-        body: {
-          amount: '1200.00',
-          expectedVersion: 1,
-          targetAccountingPeriod: '2026-06',
-        },
-        headers: {
-          authorization: 'Bearer finance-user',
-          'content-type': 'application/json',
-        },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/source-001/adjust',
-      });
-      const body = parseJson(response.bodyText);
-
-      assertEqual(response.status, 503, 'blocked readiness should reject framework requests');
-      assertEqual(
-        body.code,
-        'FINANCE_PROJECT_RUNTIME_READINESS_BLOCKED',
-        'blocked readiness should return runtime readiness code',
-      );
-      assertEqual(fakeRuntime.readCounts().guardCallCount, 0, 'blocked readiness must not call managed runtime');
-      assertEqual(fallback.readCallCount(), 0, 'blocked readiness must not call fallback handler');
+  const response = await process.handleConcreteFrameworkRequest({
+    body: {
+      amount: '1200.00',
+      expectedVersion: 1,
+      targetAccountingPeriod: '2026-06',
     },
-  },
-  {
-    name: 'delegates active source mutations through project API server wiring into one managed runtime',
-    run: async () => {
-      let requestCounter = 0;
-      const admission = createAdmissionInput(createReadyReadinessPackage());
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
-        initialRows: [createSourceRow()],
-      });
-      const fakeRuntime = createFakeRuntime({ admission });
-      const fallback = createFallbackHandler();
-      const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
-        admission,
-        fallbackHandler: fallback.handler,
-        requestIdFactory: () => {
-          requestCounter += 1;
-
-          return `project-process-request-${requestCounter}`;
-        },
-        resolvePrincipal: createPrincipal,
-        runtime: fakeRuntime.runtime,
-        sourceSqlRepository,
-      });
-      const summary = process.getProcessSummary();
-      const validation = validateFinanceHttpPostgresManagedProjectRuntimeProcessSummary(summary);
-
-      assertEqual(summary.lifecycleState, 'active', 'ready admission should start active process');
-      assertEqual(summary.projectApiServerConstructed, true, 'active process should construct project API server');
-      assertEqual(summary.runtimeBundleErrors.length, 0, 'active process should not expose runtime bundle errors');
-      assertEqual(
-        summary.runtimeImplementationBundle?.serviceRuntimeAdmissionEvidenceId,
-        admission.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
-        'active process summary should expose admitted runtime bundle evidence',
-      );
-      assertEqual(validation.ok, true, `active summary should validate: ${validation.errors.join(', ')}`);
-      const nodeServerTraceHeaders = createFinanceHttpPostgresManagedProjectRuntimeNodeServerTraceHeaders(summary);
-
-      assertEqual(
-        nodeServerTraceHeaders['x-finance-local-project-runtime-node-server-runtime-bundle'],
-        admission.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
-        'Node host trace headers should preserve active runtime bundle evidence id without requiring a listener',
-      );
-
-      const response = await process.handleConcreteFrameworkRequest({
-        body: {
-          amount: '1200.00',
-          expectedVersion: 1,
-          targetAccountingPeriod: '2026-06',
-        },
-        headers: {
-          authorization: 'Bearer finance-user',
-          'content-type': 'application/json',
-        },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/source-001/adjust',
-      });
-      const body = parseJson(response.bodyText);
-      const processEvents = response.processTrace.map((event) => event.event);
-      const sourceSqlRows = sourceSqlRepository.readSqlRows();
-
-      assertEqual(response.status, 200, 'source mutation should return managed runtime success');
-      assertEqual(body.sourceId, 'source-001', 'response should expose source id');
-      assertEqual(body.version, 2, 'response should expose updated source version');
-      assertEqual(sourceSqlRows[0]?.amount, '1200.00', 'source SQL row should be written back after managed commit');
-      assertEqual(sourceSqlRows[0]?.version, 2, 'source SQL row version should be written back after managed commit');
-      assertEqual(fakeRuntime.readCounts().guardCallCount, 1, 'managed runtime should be called once');
-      assertEqual(fallback.readCallCount(), 0, 'managed source mutation should not fall through to fallback');
-      assertEqual(
-        response.headers['x-finance-local-project-api-server-entry'],
-        'framework-route-plugin',
-        'response should preserve project API server provenance',
-      );
-      assertIncludes(
-        processEvents,
-        'delegate_project_api_server_wiring',
-        'active process should delegate into project API server wiring',
-      );
+    headers: {
+      authorization: 'Bearer finance-user',
+      'content-type': 'application/json',
     },
-  },
-  {
-    name: 'blocks project API server construction when runtime implementation bundle drifts from readiness',
-    run: async () => {
-      const admission = createAdmissionInput(createReadyReadinessPackage());
-      const driftedAdmission: PeriodClosePostgresManagedServicePoolRuntimeAdmissionInput = {
-        ...admission,
-        runtimeImplementationBundle: {
-          ...admission.runtimeImplementationBundle,
-          poolConfig: {
-            ...admission.runtimeImplementationBundle.poolConfig,
-            applicationName: 'period-close-drifted-project-runtime',
-          },
-        },
-      };
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
-        initialRows: [createSourceRow()],
-      });
-      const fakeRuntime = createFakeRuntime({ admission: driftedAdmission });
-      const fallback = createFallbackHandler();
-      const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
-        admission: driftedAdmission,
-        fallbackHandler: fallback.handler,
-        resolvePrincipal: createPrincipal,
-        runtime: fakeRuntime.runtime,
-        sourceSqlRepository,
-      });
-      const summary = process.getProcessSummary();
-      const validation = validateFinanceHttpPostgresManagedProjectRuntimeProcessSummary(summary);
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/source-001/adjust',
+  });
+  const body = parseJson(response.bodyText);
 
-      assertEqual(summary.lifecycleState, 'blocked_by_runtime_bundle', 'bundle drift should block project runtime');
-      assertEqual(summary.projectApiServerConstructed, false, 'bundle drift must not construct project API server');
-      assertEqual(summary.runtimeBundleErrors.length, 1, 'bundle drift should expose one process summary error');
-      assertIncludes(
-        summary.runtimeBundleErrors,
-        'project runtime bundle pool config must match derived readiness pool config',
-        'bundle drift should be explicit in process summary',
-      );
-      assertEqual(
-        summary.runtimeImplementationBundle,
-        undefined,
-        'blocked runtime bundle must not be exposed as active process evidence',
-      );
-      assertEqual(validation.ok, true, `bundle-blocked summary should validate: ${validation.errors.join(', ')}`);
+  assertEqual(response.status, 503, 'blocked readiness should reject framework requests');
+  assertEqual(
+    body.code,
+    'FINANCE_PROJECT_RUNTIME_READINESS_BLOCKED',
+    'blocked readiness should return runtime readiness code',
+  );
+  assertEqual(fakeRuntime.readCounts().guardCallCount, 0, 'blocked readiness must not call managed runtime');
+  assertEqual(fallback.readCallCount(), 0, 'blocked readiness must not call fallback handler');
+});
 
-      const response = await process.handleConcreteFrameworkRequest({
-        body: {
-          amount: '1200.00',
-          expectedVersion: 1,
-          targetAccountingPeriod: '2026-06',
-        },
-        headers: {
-          authorization: 'Bearer finance-user',
-          'content-type': 'application/json',
-        },
-        method: 'PATCH',
-        url: '/api/finance/receivables-payables/source-001/adjust',
-      });
-      const body = parseJson(response.bodyText);
+it('delegates active source mutations through project API server wiring into one managed runtime', async () => {
+  let requestCounter = 0;
+  const admission = createAdmissionInput(createReadyReadinessPackage());
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
+    initialRows: [createSourceRow()],
+  });
+  const fakeRuntime = createFakeRuntime({ admission });
+  const fallback = createFallbackHandler();
+  const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
+    admission,
+    fallbackHandler: fallback.handler,
+    requestIdFactory: () => {
+      requestCounter += 1;
 
-      assertEqual(response.status, 503, 'bundle-blocked process should reject framework requests');
-      assertEqual(
-        body.code,
-        'FINANCE_PROJECT_RUNTIME_BUNDLE_BLOCKED',
-        'bundle-blocked process should return runtime bundle code',
-      );
-      assertEqual(fakeRuntime.readCounts().guardCallCount, 0, 'bundle drift must not call managed runtime');
-      assertEqual(fallback.readCallCount(), 0, 'bundle drift must not call fallback handler');
+      return `project-process-request-${requestCounter}`;
     },
-  },
-  {
-    name: 'shuts down managed runtime and rejects subsequent framework requests',
-    run: async () => {
-      const admission = createAdmissionInput(createReadyReadinessPackage());
-      const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
-        fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
-        initialRows: [createSourceRow()],
-      });
-      const fakeRuntime = createFakeRuntime({ admission });
-      const fallback = createFallbackHandler();
-      const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
-        admission,
-        fallbackHandler: fallback.handler,
-        resolvePrincipal: createPrincipal,
-        runtime: fakeRuntime.runtime,
-        sourceSqlRepository,
-      });
-      const shutdown = await process.shutdown({ requestId: 'shutdown-request-001' });
+    resolvePrincipal: createPrincipal,
+    runtime: fakeRuntime.runtime,
+    sourceSqlRepository,
+  });
+  const summary = process.getProcessSummary();
+  const validation = validateFinanceHttpPostgresManagedProjectRuntimeProcessSummary(summary);
 
-      assertEqual(shutdown.lifecycleState, 'closed', 'shutdown should close process lifecycle');
-      assertEqual(shutdown.runtimeShutdown.status, 'closed', 'shutdown should call managed runtime shutdown');
-      assertEqual(fakeRuntime.readCounts().shutdownCallCount, 1, 'managed runtime shutdown should be called once');
+  assertEqual(summary.lifecycleState, 'active', 'ready admission should start active process');
+  assertEqual(summary.projectApiServerConstructed, true, 'active process should construct project API server');
+  assertEqual(summary.runtimeBundleErrors.length, 0, 'active process should not expose runtime bundle errors');
+  assertEqual(
+    summary.runtimeImplementationBundle?.serviceRuntimeAdmissionEvidenceId,
+    admission.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
+    'active process summary should expose admitted runtime bundle evidence',
+  );
+  assertEqual(validation.ok, true, `active summary should validate: ${validation.errors.join(', ')}`);
+  const nodeServerTraceHeaders = createFinanceHttpPostgresManagedProjectRuntimeNodeServerTraceHeaders(summary);
 
-      const response = await process.handleConcreteFrameworkRequest({
-        method: 'GET',
-        url: '/api/finance/accounting-periods/2026-06/close-checks',
-      });
-      const body = parseJson(response.bodyText);
+  assertEqual(
+    nodeServerTraceHeaders['x-finance-local-project-runtime-node-server-runtime-bundle'],
+    admission.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
+    'Node host trace headers should preserve active runtime bundle evidence id without requiring a listener',
+  );
 
-      assertEqual(response.status, 503, 'closed process should reject later requests');
-      assertEqual(
-        body.code,
-        'FINANCE_PROJECT_RUNTIME_PROCESS_CLOSED',
-        'closed process should return closed lifecycle code',
-      );
-      assertEqual(fallback.readCallCount(), 0, 'closed process should not call fallback handler');
+  const response = await process.handleConcreteFrameworkRequest({
+    body: {
+      amount: '1200.00',
+      expectedVersion: 1,
+      targetAccountingPeriod: '2026-06',
     },
-  },
-];
+    headers: {
+      authorization: 'Bearer finance-user',
+      'content-type': 'application/json',
+    },
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/source-001/adjust',
+  });
+  const body = parseJson(response.bodyText);
+  const processEvents = response.processTrace.map((event) => event.event);
+  const sourceSqlRows = sourceSqlRepository.readSqlRows();
 
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(response.status, 200, 'source mutation should return managed runtime success');
+  assertEqual(body.sourceId, 'source-001', 'response should expose source id');
+  assertEqual(body.version, 2, 'response should expose updated source version');
+  assertEqual(sourceSqlRows[0]?.amount, '1200.00', 'source SQL row should be written back after managed commit');
+  assertEqual(sourceSqlRows[0]?.version, 2, 'source SQL row version should be written back after managed commit');
+  assertEqual(fakeRuntime.readCounts().guardCallCount, 1, 'managed runtime should be called once');
+  assertEqual(fallback.readCallCount(), 0, 'managed source mutation should not fall through to fallback');
+  assertEqual(
+    response.headers['x-finance-local-project-api-server-entry'],
+    'framework-route-plugin',
+    'response should preserve project API server provenance',
+  );
+  assertIncludes(
+    processEvents,
+    'delegate_project_api_server_wiring',
+    'active process should delegate into project API server wiring',
+  );
+});
+
+it('blocks project API server construction when runtime implementation bundle drifts from readiness', async () => {
+  const admission = createAdmissionInput(createReadyReadinessPackage());
+  const driftedAdmission: PeriodClosePostgresManagedServicePoolRuntimeAdmissionInput = {
+    ...admission,
+    runtimeImplementationBundle: {
+      ...admission.runtimeImplementationBundle,
+      poolConfig: {
+        ...admission.runtimeImplementationBundle.poolConfig,
+        applicationName: 'period-close-drifted-project-runtime',
+      },
+    },
+  };
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
+    initialRows: [createSourceRow()],
+  });
+  const fakeRuntime = createFakeRuntime({ admission: driftedAdmission });
+  const fallback = createFallbackHandler();
+  const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
+    admission: driftedAdmission,
+    fallbackHandler: fallback.handler,
+    resolvePrincipal: createPrincipal,
+    runtime: fakeRuntime.runtime,
+    sourceSqlRepository,
+  });
+  const summary = process.getProcessSummary();
+  const validation = validateFinanceHttpPostgresManagedProjectRuntimeProcessSummary(summary);
+
+  assertEqual(summary.lifecycleState, 'blocked_by_runtime_bundle', 'bundle drift should block project runtime');
+  assertEqual(summary.projectApiServerConstructed, false, 'bundle drift must not construct project API server');
+  assertEqual(summary.runtimeBundleErrors.length, 1, 'bundle drift should expose one process summary error');
+  assertIncludes(
+    summary.runtimeBundleErrors,
+    'project runtime bundle pool config must match derived readiness pool config',
+    'bundle drift should be explicit in process summary',
+  );
+  assertEqual(
+    summary.runtimeImplementationBundle,
+    undefined,
+    'blocked runtime bundle must not be exposed as active process evidence',
+  );
+  assertEqual(validation.ok, true, `bundle-blocked summary should validate: ${validation.errors.join(', ')}`);
+
+  const response = await process.handleConcreteFrameworkRequest({
+    body: {
+      amount: '1200.00',
+      expectedVersion: 1,
+      targetAccountingPeriod: '2026-06',
+    },
+    headers: {
+      authorization: 'Bearer finance-user',
+      'content-type': 'application/json',
+    },
+    method: 'PATCH',
+    url: '/api/finance/receivables-payables/source-001/adjust',
+  });
+  const body = parseJson(response.bodyText);
+
+  assertEqual(response.status, 503, 'bundle-blocked process should reject framework requests');
+  assertEqual(
+    body.code,
+    'FINANCE_PROJECT_RUNTIME_BUNDLE_BLOCKED',
+    'bundle-blocked process should return runtime bundle code',
+  );
+  assertEqual(fakeRuntime.readCounts().guardCallCount, 0, 'bundle drift must not call managed runtime');
+  assertEqual(fallback.readCallCount(), 0, 'bundle drift must not call fallback handler');
+});
+
+it('shuts down managed runtime and rejects subsequent framework requests', async () => {
+  const admission = createAdmissionInput(createReadyReadinessPackage());
+  const sourceSqlRepository = createFinanceSourceTableSqlRepositoryContract({
+    fallbackUpdatedAt: '2026-07-05T06:00:00.000Z',
+    initialRows: [createSourceRow()],
+  });
+  const fakeRuntime = createFakeRuntime({ admission });
+  const fallback = createFallbackHandler();
+  const process = createFinanceHttpPostgresManagedProjectRuntimeProcessContract({
+    admission,
+    fallbackHandler: fallback.handler,
+    resolvePrincipal: createPrincipal,
+    runtime: fakeRuntime.runtime,
+    sourceSqlRepository,
+  });
+  const shutdown = await process.shutdown({ requestId: 'shutdown-request-001' });
+
+  assertEqual(shutdown.lifecycleState, 'closed', 'shutdown should close process lifecycle');
+  assertEqual(shutdown.runtimeShutdown.status, 'closed', 'shutdown should call managed runtime shutdown');
+  assertEqual(fakeRuntime.readCounts().shutdownCallCount, 1, 'managed runtime shutdown should be called once');
+
+  const response = await process.handleConcreteFrameworkRequest({
+    method: 'GET',
+    url: '/api/finance/accounting-periods/2026-06/close-checks',
+  });
+  const body = parseJson(response.bodyText);
+
+  assertEqual(response.status, 503, 'closed process should reject later requests');
+  assertEqual(
+    body.code,
+    'FINANCE_PROJECT_RUNTIME_PROCESS_CLOSED',
+    'closed process should return closed lifecycle code',
+  );
+  assertEqual(fallback.readCallCount(), 0, 'closed process should not call fallback handler');
+});

@@ -7,23 +7,8 @@ import { requiredCloseCheckCodes, type AccountingPeriodRecord, type CloseCheckCo
 import type { CashFlowMappingRecord, FinancialStatementLedgerEntry } from './financialStatementContract.js';
 import type { GeneralLedgerLifecycleRow } from './accountingVoucherLifecycleContract.js';
 import type { GeneralLedgerSubjectRecord } from './generalLedgerContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function createPeriod(overrides: Partial<AccountingPeriodRecord> = {}): AccountingPeriodRecord {
   return {
@@ -206,154 +191,137 @@ const headers = {
   'x-request-time': '2026-07-02T18:00:00+08:00'
 };
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects HTTP gateway requests before route logic when permission headers are missing',
-    run: () => {
-      const response = handleFinanceHttpApiGateway({
-        request: {
-          method: 'GET',
-          path: '/api/finance/accounting-periods'
-        },
-        state: createGatewayState()
-      });
+it('rejects HTTP gateway requests before route logic when permission headers are missing', () => {
+  const response = handleFinanceHttpApiGateway({
+    request: {
+      method: 'GET',
+      path: '/api/finance/accounting-periods'
+    },
+    state: createGatewayState()
+  });
 
-      assertEqual(response.status, 403, 'gateway should enforce route permission contract');
-      assertObject(response.body, 'permission error body should be an object');
-      assertEqual(response.body.code, 'FORBIDDEN', 'permission error should use stable code');
-      assertEqual(response.headers['content-type'], 'application/json; charset=utf-8', 'gateway should return JSON responses');
-    }
-  },
-  {
-    name: 'routes close checks through the HTTP gateway',
-    run: () => {
-      const response = handleFinanceHttpApiGateway({
-        request: {
-          headers,
-          method: 'GET',
-          path: '/api/finance/accounting-periods/2026-06/close-checks'
-        },
-        state: createGatewayState()
-      });
+  assertEqual(response.status, 403, 'gateway should enforce route permission contract');
+  assertObject(response.body, 'permission error body should be an object');
+  assertEqual(response.body.code, 'FORBIDDEN', 'permission error should use stable code');
+  assertEqual(response.headers['content-type'], 'application/json; charset=utf-8', 'gateway should return JSON responses');
+});
 
-      assertEqual(response.status, 200, 'gateway close-check route should return 200');
-      assertObject(response.body, 'close-check body should be an object');
-      assertEqual(response.body.period, '2026-06', 'gateway should preserve period route parameter');
-      assertEqual(response.body.canClose, true, 'gateway should expose route-adapter close result');
-    }
-  },
-  {
-    name: 'propagates period close locks to source mutation guard and financial statements',
-    run: () => {
-      const closeResponse = handleFinanceHttpApiGateway({
-        request: {
-          body: {
-            idempotencyKey: 'http-gateway-close-001',
-            reason: '2026-06 月结',
-            version: 1
-          },
-          headers,
-          method: 'POST',
-          path: '/api/finance/accounting-periods/2026-06/close'
-        },
-        state: createGatewayState()
-      });
+it('routes close checks through the HTTP gateway', () => {
+  const response = handleFinanceHttpApiGateway({
+    request: {
+      headers,
+      method: 'GET',
+      path: '/api/finance/accounting-periods/2026-06/close-checks'
+    },
+    state: createGatewayState()
+  });
 
-      assertEqual(closeResponse.status, 201, 'gateway close route should create close event');
-      assertEqual(closeResponse.state.periodClose.periods[0]?.status, '已结账', 'period-close state should be closed');
-      assertEqual(closeResponse.state.sourceMutation.periods[0]?.status, '已结账', 'source mutation guard should receive closed period');
-      assertEqual(closeResponse.state.financialStatements.periods[0]?.status, '已结账', 'financial statements should receive closed period');
-      assertEqual(closeResponse.state.generalLedger.periods[0]?.status, '已结账', 'general ledger should receive closed period');
+  assertEqual(response.status, 200, 'gateway close-check route should return 200');
+  assertObject(response.body, 'close-check body should be an object');
+  assertEqual(response.body.period, '2026-06', 'gateway should preserve period route parameter');
+  assertEqual(response.body.canClose, true, 'gateway should expose route-adapter close result');
+});
 
-      const sourceMutationResponse = handleFinanceHttpApiGateway({
-        request: {
-          body: {
-            amount: '1300.00',
-            targetAccountingPeriod: '2026-06'
-          },
-          headers: {
-            ...headers,
-            'x-request-id': 'req-http-gateway-source-001'
-          },
-          method: 'PATCH',
-          path: '/api/finance/receivables-payables/rp-001/adjust'
-        },
-        state: closeResponse.state
-      });
+it('propagates period close locks to source mutation guard and financial statements', () => {
+  const closeResponse = handleFinanceHttpApiGateway({
+    request: {
+      body: {
+        idempotencyKey: 'http-gateway-close-001',
+        reason: '2026-06 月结',
+        version: 1
+      },
+      headers,
+      method: 'POST',
+      path: '/api/finance/accounting-periods/2026-06/close'
+    },
+    state: createGatewayState()
+  });
 
-      assertEqual(sourceMutationResponse.status, 409, 'closed period source mutation should be rejected');
-      assertObject(sourceMutationResponse.body, 'source mutation rejection body should be an object');
-      assertEqual(sourceMutationResponse.body.code, 'CLOSED_ACCOUNTING_PERIOD', 'source mutation should use closed-period guard code');
-      assertEqual(
-        sourceMutationResponse.state.sourceMutation.sourceRecords[0]?.amount,
-        '1200.00',
-        'rejected source mutation should not change source amount'
-      );
-      assertEqual(
-        sourceMutationResponse.state.sourceMutation.events[0]?.eventType,
-        'source_mutation_rejected',
-        'rejected source mutation should append guard event'
-      );
+  assertEqual(closeResponse.status, 201, 'gateway close route should create close event');
+  assertEqual(closeResponse.state.periodClose.periods[0]?.status, '已结账', 'period-close state should be closed');
+  assertEqual(closeResponse.state.sourceMutation.periods[0]?.status, '已结账', 'source mutation guard should receive closed period');
+  assertEqual(closeResponse.state.financialStatements.periods[0]?.status, '已结账', 'financial statements should receive closed period');
+  assertEqual(closeResponse.state.generalLedger.periods[0]?.status, '已结账', 'general ledger should receive closed period');
 
-      const snapshotResponse = handleFinanceHttpApiGateway({
-        request: {
-          headers: {
-            ...headers,
-            'x-request-id': 'req-http-gateway-snapshot-001'
-          },
-          method: 'POST',
-          path: '/api/finance/financial-statements/2026-06/snapshots'
-        },
-        state: closeResponse.state
-      });
+  const sourceMutationResponse = handleFinanceHttpApiGateway({
+    request: {
+      body: {
+        amount: '1300.00',
+        targetAccountingPeriod: '2026-06'
+      },
+      headers: {
+        ...headers,
+        'x-request-id': 'req-http-gateway-source-001'
+      },
+      method: 'PATCH',
+      path: '/api/finance/receivables-payables/rp-001/adjust'
+    },
+    state: closeResponse.state
+  });
 
-      assertEqual(snapshotResponse.status, 201, 'closed period should allow statement snapshot generation');
-      assertObject(snapshotResponse.body, 'statement snapshot body should be an object');
-      assertEqual(snapshotResponse.state.financialStatements.statementSnapshots.length, 1, 'snapshot should be persisted in gateway state');
-    }
-  },
-  {
-    name: 'routes general-ledger reads through the HTTP gateway',
-    run: () => {
-      const response = handleFinanceHttpApiGateway({
-        request: {
-          headers,
-          method: 'GET',
-          path: '/api/finance/general-ledger',
-          query: {
-            period: '2026-06'
-          }
-        },
-        state: createGatewayState()
-      });
+  assertEqual(sourceMutationResponse.status, 409, 'closed period source mutation should be rejected');
+  assertObject(sourceMutationResponse.body, 'source mutation rejection body should be an object');
+  assertEqual(sourceMutationResponse.body.code, 'CLOSED_ACCOUNTING_PERIOD', 'source mutation should use closed-period guard code');
+  assertEqual(
+    sourceMutationResponse.state.sourceMutation.sourceRecords[0]?.amount,
+    '1200.00',
+    'rejected source mutation should not change source amount'
+  );
+  assertEqual(
+    sourceMutationResponse.state.sourceMutation.events[0]?.eventType,
+    'source_mutation_rejected',
+    'rejected source mutation should append guard event'
+  );
 
-      assertEqual(response.status, 200, 'gateway general-ledger route should return 200');
-      assertObject(response.body, 'general-ledger body should be an object');
-      assertEqual(response.body.accountingPeriod, '2026-06', 'gateway should preserve requested ledger period');
-      assertEqual(response.body.periodStatus, '开放', 'gateway should expose period status');
-      assertObject(response.body.trialBalance, 'general-ledger body should include trial balance');
-      assertEqual(response.body.trialBalance.status, '平衡', 'gateway should expose balanced ledger status');
-    }
-  },
-  {
-    name: 'returns stable not-found responses for unknown gateway routes',
-    run: () => {
-      const response = handleFinanceHttpApiGateway({
-        request: {
-          headers,
-          method: 'GET',
-          path: '/api/finance/unknown'
-        },
-        state: createGatewayState()
-      });
+  const snapshotResponse = handleFinanceHttpApiGateway({
+    request: {
+      headers: {
+        ...headers,
+        'x-request-id': 'req-http-gateway-snapshot-001'
+      },
+      method: 'POST',
+      path: '/api/finance/financial-statements/2026-06/snapshots'
+    },
+    state: closeResponse.state
+  });
 
-      assertEqual(response.status, 404, 'unknown gateway route should return 404');
-      assertObject(response.body, 'not-found body should be an object');
-      assertEqual(response.body.code, 'NOT_FOUND', 'unknown gateway route should use stable code');
-    }
-  }
-];
+  assertEqual(snapshotResponse.status, 201, 'closed period should allow statement snapshot generation');
+  assertObject(snapshotResponse.body, 'statement snapshot body should be an object');
+  assertEqual(snapshotResponse.state.financialStatements.statementSnapshots.length, 1, 'snapshot should be persisted in gateway state');
+});
 
-for (const test of tests) {
-  test.run();
-}
+it('routes general-ledger reads through the HTTP gateway', () => {
+  const response = handleFinanceHttpApiGateway({
+    request: {
+      headers,
+      method: 'GET',
+      path: '/api/finance/general-ledger',
+      query: {
+        period: '2026-06'
+      }
+    },
+    state: createGatewayState()
+  });
+
+  assertEqual(response.status, 200, 'gateway general-ledger route should return 200');
+  assertObject(response.body, 'general-ledger body should be an object');
+  assertEqual(response.body.accountingPeriod, '2026-06', 'gateway should preserve requested ledger period');
+  assertEqual(response.body.periodStatus, '开放', 'gateway should expose period status');
+  assertObject(response.body.trialBalance, 'general-ledger body should include trial balance');
+  assertEqual(response.body.trialBalance.status, '平衡', 'gateway should expose balanced ledger status');
+});
+
+it('returns stable not-found responses for unknown gateway routes', () => {
+  const response = handleFinanceHttpApiGateway({
+    request: {
+      headers,
+      method: 'GET',
+      path: '/api/finance/unknown'
+    },
+    state: createGatewayState()
+  });
+
+  assertEqual(response.status, 404, 'unknown gateway route should return 404');
+  assertObject(response.body, 'not-found body should be an object');
+  assertEqual(response.body.code, 'NOT_FOUND', 'unknown gateway route should use stable code');
+});

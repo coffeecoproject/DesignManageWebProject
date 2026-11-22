@@ -11,33 +11,8 @@ import type {
   PerformanceMonthlyResultSnapshot,
   PerformanceQuarterlyResultSnapshot
 } from './performanceTypes';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-type UnitTestResult = {
-  failures: string[];
-  passed: number;
-  total: number;
-};
-
-function fail(message: string): never {
-  throw new Error(message);
-}
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    fail(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (!Object.is(actual, expected)) {
-    fail(`${message}. Expected ${String(expected)}, received ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../../__tests__/assertions';
 
 function createCategoryRecord(): PerformanceMonthlyCategoryRecord {
   return {
@@ -178,175 +153,140 @@ function createQuarterlyResult(
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'PF-16 employee confirms only the current own result without changing its amount',
-    run() {
-      const result = createMonthlyResult();
-      const outcome = confirmPerformanceResult([result], result.id, {
-        employeeId: 'employee-001',
-        respondedAt: '2026-06-17 09:00:00'
-      });
+it('PF-16 employee confirms only the current own result without changing its amount', () => {
+  const result = createMonthlyResult();
+  const outcome = confirmPerformanceResult([result], result.id, {
+    employeeId: 'employee-001',
+    respondedAt: '2026-06-17 09:00:00'
+  });
 
-      assert(outcome.success && outcome.result, 'current employee should be able to confirm the result');
-      assertEqual(outcome.result.employeeResponse.status, '已确认', 'response should become confirmed');
-      assertEqual(outcome.result.employeeResponse.respondedAt, '2026-06-17 09:00:00', 'response time should be recorded');
-      assertEqual(outcome.result.employeeResponse.resultVersion, 1, 'confirmed response should remain bound to V1');
-      assertEqual(outcome.result.kind === '月度结果' ? outcome.result.monthlyAmount : 0, 1200, 'confirmation must not change result amount');
-      assertEqual(outcome.result.events.at(-1)?.action, '确认结果', 'confirmation event should be appended');
-    }
-  },
-  {
-    name: 'PF-17 employee objection requires a reason and cannot edit the result amount',
-    run() {
-      const result = createMonthlyResult();
-      const missingReason = objectToPerformanceResult([result], result.id, {
-        employeeId: 'employee-001',
-        objectionReason: '   ',
-        respondedAt: '2026-06-17 09:00:00'
-      });
+  assert(outcome.success && outcome.result, 'current employee should be able to confirm the result');
+  assertEqual(outcome.result.employeeResponse.status, '已确认', 'response should become confirmed');
+  assertEqual(outcome.result.employeeResponse.respondedAt, '2026-06-17 09:00:00', 'response time should be recorded');
+  assertEqual(outcome.result.employeeResponse.resultVersion, 1, 'confirmed response should remain bound to V1');
+  assertEqual(outcome.result.kind === '月度结果' ? outcome.result.monthlyAmount : 0, 1200, 'confirmation must not change result amount');
+  assertEqual(outcome.result.events.at(-1)?.action, '确认结果', 'confirmation event should be appended');
+});
 
-      assertEqual(missingReason.success, false, 'blank objection reason should be rejected');
-      const outcome = objectToPerformanceResult([result], result.id, {
-        employeeId: 'employee-001',
-        evidenceFileIds: ['evidence-001', 'evidence-001'],
-        objectionReason: '任务验收记录缺少一项',
-        respondedAt: '2026-06-17 09:30:00'
-      });
+it('PF-17 employee objection requires a reason and cannot edit the result amount', () => {
+  const result = createMonthlyResult();
+  const missingReason = objectToPerformanceResult([result], result.id, {
+    employeeId: 'employee-001',
+    objectionReason: '   ',
+    respondedAt: '2026-06-17 09:00:00'
+  });
 
-      assert(outcome.success && outcome.result, 'reasoned objection should be accepted');
-      assertEqual(outcome.result.employeeResponse.status, '有异议', 'response should become objected');
-      assertEqual(outcome.result.employeeResponse.evidenceFileIds?.length, 1, 'duplicate evidence should be removed');
-      assertEqual(outcome.result.kind === '月度结果' ? outcome.result.monthlyAmount : 0, 1200, 'objection must not change result amount');
-      assertEqual(outcome.result.lifecycleStatus, '已发布', 'objection must not introduce an approval lifecycle');
-    }
-  },
-  {
-    name: 'PF-18 another employee and a superseded result version cannot be responded to',
-    run() {
-      const current = createMonthlyResult();
-      const otherEmployee = confirmPerformanceResult([current], current.id, {
-        employeeId: 'employee-002',
-        respondedAt: '2026-06-17 09:00:00'
-      });
+  assertEqual(missingReason.success, false, 'blank objection reason should be rejected');
+  const outcome = objectToPerformanceResult([result], result.id, {
+    employeeId: 'employee-001',
+    evidenceFileIds: ['evidence-001', 'evidence-001'],
+    objectionReason: '任务验收记录缺少一项',
+    respondedAt: '2026-06-17 09:30:00'
+  });
 
-      assertEqual(otherEmployee.success, false, 'another employee must not confirm the result');
-      const oldVersion = createMonthlyResult({
-        id: 'monthly:employee-001:2026-06:绘图任务制:v1',
-        lifecycleStatus: '已更正',
-        supersededByResultId: 'monthly:employee-001:2026-06:绘图任务制:v2',
-        version: 1
-      });
-      const currentVersion = createMonthlyResult({
-        id: 'monthly:employee-001:2026-06:绘图任务制:v2',
-        supersedesResultId: oldVersion.id,
-        version: 2
-      });
-      const oldVersionResponse = confirmPerformanceResult([oldVersion, currentVersion], oldVersion.id, {
-        employeeId: 'employee-001',
-        respondedAt: '2026-06-17 09:00:00'
-      });
+  assert(outcome.success && outcome.result, 'reasoned objection should be accepted');
+  assertEqual(outcome.result.employeeResponse.status, '有异议', 'response should become objected');
+  assertEqual(outcome.result.employeeResponse.evidenceFileIds?.length, 1, 'duplicate evidence should be removed');
+  assertEqual(outcome.result.kind === '月度结果' ? outcome.result.monthlyAmount : 0, 1200, 'objection must not change result amount');
+  assertEqual(outcome.result.lifecycleStatus, '已发布', 'objection must not introduce an approval lifecycle');
+});
 
-      assertEqual(oldVersionResponse.success, false, 'superseded V1 must not accept employee feedback');
-      assertEqual(oldVersion.employeeResponse.status, '待确认', 'rejected response must not mutate V1');
-    }
-  },
-  {
-    name: 'PF-19 pending result is blocked during feedback and becomes salary-eligible after deadline',
-    run() {
-      const result = createMonthlyResult();
-      const withinWindow = getPerformanceEmployeeResponseAvailability(
-        [result],
-        result.id,
-        'employee-001',
-        '2026-06-18 12:00:00'
-      );
+it('PF-18 another employee and a superseded result version cannot be responded to', () => {
+  const current = createMonthlyResult();
+  const otherEmployee = confirmPerformanceResult([current], current.id, {
+    employeeId: 'employee-002',
+    respondedAt: '2026-06-17 09:00:00'
+  });
 
-      assertEqual(withinWindow.allowed, true, 'employee should be able to respond before the frozen deadline');
-      assertEqual(isPerformanceResultSalaryEligible([result], result.id, '2026-06-18 12:00:00'), false, 'pending result should not enter salary during feedback');
-      assertEqual(
-        getPerformanceEmployeeResponseDisplayStatus(result, '2026-06-19 00:00:00'),
-        '已送达未反馈',
-        'expired pending response should be derived as delivered without feedback'
-      );
-      assertEqual(isPerformanceResultSalaryEligible([result], result.id, '2026-06-19 00:00:00'), true, 'no-objection result should enter salary after deadline');
-      const expiredResponse = confirmPerformanceResult([result], result.id, {
-        employeeId: 'employee-001',
-        respondedAt: '2026-06-19 00:00:00'
-      });
+  assertEqual(otherEmployee.success, false, 'another employee must not confirm the result');
+  const oldVersion = createMonthlyResult({
+    id: 'monthly:employee-001:2026-06:绘图任务制:v1',
+    lifecycleStatus: '已更正',
+    supersededByResultId: 'monthly:employee-001:2026-06:绘图任务制:v2',
+    version: 1
+  });
+  const currentVersion = createMonthlyResult({
+    id: 'monthly:employee-001:2026-06:绘图任务制:v2',
+    supersedesResultId: oldVersion.id,
+    version: 2
+  });
+  const oldVersionResponse = confirmPerformanceResult([oldVersion, currentVersion], oldVersion.id, {
+    employeeId: 'employee-001',
+    respondedAt: '2026-06-17 09:00:00'
+  });
 
-      assertEqual(expiredResponse.success, false, 'employee feedback must close after the deadline');
-    }
-  },
-  {
-    name: 'PF-20 open objection blocks performance salary until management maintains the result',
-    run() {
-      const result = createMonthlyResult();
-      const objection = objectToPerformanceResult([result], result.id, {
-        employeeId: 'employee-001',
-        objectionReason: '任务数量不一致',
-        respondedAt: '2026-06-17 09:30:00'
-      });
+  assertEqual(oldVersionResponse.success, false, 'superseded V1 must not accept employee feedback');
+  assertEqual(oldVersion.employeeResponse.status, '待确认', 'rejected response must not mutate V1');
+});
 
-      assert(objection.success && objection.result, 'objection fixture should be created');
-      assertEqual(isPerformanceResultSalaryEligible(objection.results, result.id, '2026-06-20 09:00:00'), false, 'open objection should block this performance result');
-      const resolution = resolvePerformanceResultObjection(objection.results, result.id, {
-        actor: '李明',
-        resolutionSummary: '已核对验收记录，维持当前结果',
-        resolvedAt: '2026-06-20 10:00:00'
-      });
+it('PF-19 pending result is blocked during feedback and becomes salary-eligible after deadline', () => {
+  const result = createMonthlyResult();
+  const withinWindow = getPerformanceEmployeeResponseAvailability(
+    [result],
+    result.id,
+    'employee-001',
+    '2026-06-18 12:00:00'
+  );
 
-      assert(resolution.success && resolution.result, 'management should be able to maintain the current result');
-      assertEqual(resolution.result.employeeResponse.status, '异议已处理', 'objection should be closed without adding approval state');
-      assertEqual(resolution.result.employeeResponse.resolvedBy, '李明', 'resolver should be recorded');
-      assertEqual(isPerformanceResultSalaryEligible(resolution.results, result.id, '2026-06-20 10:01:00'), true, 'resolved result should be salary-eligible');
-    }
-  },
-  {
-    name: 'PF-26 quarterly result reuses the same confirmation and objection contract',
-    run() {
-      const confirmedQuarter = createQuarterlyResult();
-      const confirmation = confirmPerformanceResult([confirmedQuarter], confirmedQuarter.id, {
-        employeeId: 'employee-001',
-        respondedAt: '2026-07-03 10:00:00'
-      });
+  assertEqual(withinWindow.allowed, true, 'employee should be able to respond before the frozen deadline');
+  assertEqual(isPerformanceResultSalaryEligible([result], result.id, '2026-06-18 12:00:00'), false, 'pending result should not enter salary during feedback');
+  assertEqual(
+    getPerformanceEmployeeResponseDisplayStatus(result, '2026-06-19 00:00:00'),
+    '已送达未反馈',
+    'expired pending response should be derived as delivered without feedback'
+  );
+  assertEqual(isPerformanceResultSalaryEligible([result], result.id, '2026-06-19 00:00:00'), true, 'no-objection result should enter salary after deadline');
+  const expiredResponse = confirmPerformanceResult([result], result.id, {
+    employeeId: 'employee-001',
+    respondedAt: '2026-06-19 00:00:00'
+  });
 
-      assert(confirmation.success && confirmation.result, 'quarterly result should support employee confirmation');
-      assertEqual(confirmation.result.employeeResponse.status, '已确认', 'quarterly response should become confirmed');
-      assertEqual(
-        confirmation.result.kind === '季度结果' ? confirmation.result.quarterDifferenceAmount : 0,
-        1800,
-        'quarterly confirmation must not change settlement difference'
-      );
-      const objectedQuarter = createQuarterlyResult({ id: 'quarterly:employee-001:2026-Q2:绘图任务制:objection-v1' });
-      const objection = objectToPerformanceResult([objectedQuarter], objectedQuarter.id, {
-        employeeId: 'employee-001',
-        objectionReason: '季度调整依据不完整',
-        respondedAt: '2026-07-03 11:00:00'
-      });
+  assertEqual(expiredResponse.success, false, 'employee feedback must close after the deadline');
+});
 
-      assert(objection.success && objection.result, 'quarterly result should support employee objection');
-      assertEqual(objection.result.employeeResponse.status, '有异议', 'quarterly response should become objected');
-    }
-  }
-];
+it('PF-20 open objection blocks performance salary until management maintains the result', () => {
+  const result = createMonthlyResult();
+  const objection = objectToPerformanceResult([result], result.id, {
+    employeeId: 'employee-001',
+    objectionReason: '任务数量不一致',
+    respondedAt: '2026-06-17 09:30:00'
+  });
 
-export function runPerformanceResultWorkflowTests(): UnitTestResult {
-  const failures: string[] = [];
-  let passed = 0;
+  assert(objection.success && objection.result, 'objection fixture should be created');
+  assertEqual(isPerformanceResultSalaryEligible(objection.results, result.id, '2026-06-20 09:00:00'), false, 'open objection should block this performance result');
+  const resolution = resolvePerformanceResultObjection(objection.results, result.id, {
+    actor: '李明',
+    resolutionSummary: '已核对验收记录，维持当前结果',
+    resolvedAt: '2026-06-20 10:00:00'
+  });
 
-  for (const test of tests) {
-    try {
-      test.run();
-      passed += 1;
-    } catch (error) {
-      failures.push(`${test.name}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
+  assert(resolution.success && resolution.result, 'management should be able to maintain the current result');
+  assertEqual(resolution.result.employeeResponse.status, '异议已处理', 'objection should be closed without adding approval state');
+  assertEqual(resolution.result.employeeResponse.resolvedBy, '李明', 'resolver should be recorded');
+  assertEqual(isPerformanceResultSalaryEligible(resolution.results, result.id, '2026-06-20 10:01:00'), true, 'resolved result should be salary-eligible');
+});
 
-  return {
-    failures,
-    passed,
-    total: tests.length
-  };
-}
+it('PF-26 quarterly result reuses the same confirmation and objection contract', () => {
+  const confirmedQuarter = createQuarterlyResult();
+  const confirmation = confirmPerformanceResult([confirmedQuarter], confirmedQuarter.id, {
+    employeeId: 'employee-001',
+    respondedAt: '2026-07-03 10:00:00'
+  });
+
+  assert(confirmation.success && confirmation.result, 'quarterly result should support employee confirmation');
+  assertEqual(confirmation.result.employeeResponse.status, '已确认', 'quarterly response should become confirmed');
+  assertEqual(
+    confirmation.result.kind === '季度结果' ? confirmation.result.quarterDifferenceAmount : 0,
+    1800,
+    'quarterly confirmation must not change settlement difference'
+  );
+  const objectedQuarter = createQuarterlyResult({ id: 'quarterly:employee-001:2026-Q2:绘图任务制:objection-v1' });
+  const objection = objectToPerformanceResult([objectedQuarter], objectedQuarter.id, {
+    employeeId: 'employee-001',
+    objectionReason: '季度调整依据不完整',
+    respondedAt: '2026-07-03 11:00:00'
+  });
+
+  assert(objection.success && objection.result, 'quarterly result should support employee objection');
+  assertEqual(objection.result.employeeResponse.status, '有异议', 'quarterly response should become objected');
+});

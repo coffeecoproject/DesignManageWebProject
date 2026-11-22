@@ -35,22 +35,11 @@ import {
   type PersistentFinanceSourceRecord,
   type PersistentSourceMutationResult
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 function assertIncludes<T>(values: readonly T[], expected: T, message: string) {
-  if (!values.includes(expected)) {
-    throw new Error(`${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
-  }
+  assert(values.includes(expected), `${message}. Expected ${String(expected)} in ${values.map(String).join(', ')}`);
 }
 
 const apiPackageManifestPath = 'apps/api/package.json';
@@ -337,170 +326,155 @@ function assertValid<T extends PersistentCloseAccountingPeriodResult | Persisten
   assertEqual(errors.length, 0, `shared service pool runtime trace should validate: ${errors.join('; ')}`);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'blocks before shared pool construction when readiness is not operationally ready',
-    run: async () => {
-      const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
-      const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
-        operationalGate
-      });
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readFactoryState } = createSharedPoolServiceBoundaryFactory();
-      const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule
-      });
-      const result = await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(readinessPackage),
-        period: '2026-06',
-        request: createCloseRequest()
-      });
+it('blocks before shared pool construction when readiness is not operationally ready', async () => {
+  const operationalGate = buildPeriodCloseMigrationOperationalGateContract();
+  const readinessPackage = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
+    operationalGate
+  });
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readFactoryState } = createSharedPoolServiceBoundaryFactory();
+  const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule
+  });
+  const result = await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(readinessPackage),
+    period: '2026-06',
+    request: createCloseRequest()
+  });
 
-      assertEqual(result.status, 'readiness_blocked', 'blocked readiness must stop before shared pool construction');
-      assertEqual(result.serviceResult, undefined, 'blocked runtime must not produce service result');
-      assertEqual(readFactoryState().factoryCallCount, 0, 'blocked runtime must not create service boundary');
-      assertEqual(readPgState().constructCount, 0, 'blocked runtime must not construct pg pool');
-      assertEqual(readPgState().connectCount, 0, 'blocked runtime must not connect pg pool');
-      assertValid(result);
+  assertEqual(result.status, 'readiness_blocked', 'blocked readiness must stop before shared pool construction');
+  assertEqual(result.serviceResult, undefined, 'blocked runtime must not produce service result');
+  assertEqual(readFactoryState().factoryCallCount, 0, 'blocked runtime must not create service boundary');
+  assertEqual(readPgState().constructCount, 0, 'blocked runtime must not construct pg pool');
+  assertEqual(readPgState().connectCount, 0, 'blocked runtime must not connect pg pool');
+  assertValid(result);
+});
+
+it('hands one shared runtime pool to service atomic boundary for close', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readCommittedSnapshot, readFactoryState } = createSharedPoolServiceBoundaryFactory();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule,
+    secretResolver
+  });
+  const result = await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-06',
+    request: createCloseRequest()
+  });
+  const pgState = readPgState();
+  const factoryState = readFactoryState();
+
+  assertEqual(result.status, 'committed', 'ready shared runtime should commit close through service boundary');
+  assertEqual(result.serviceResult?.status, 'committed', 'service boundary must commit after shared pool handoff');
+  assertEqual(pgState.constructCount, 1, 'runtime should construct exactly one pg pool for the service request');
+  assertEqual(pgState.connectCount, 1, 'service atomic boundary should use the shared runtime pool once');
+  assertEqual(pgState.releaseCount, 1, 'service atomic boundary must release the shared runtime client');
+  assertEqual(
+    pgState.constructorOptions[0]?.password,
+    'resolved-production-secret',
+    'secret value should only be injected into pg constructor options'
+  );
+  assertEqual(factoryState.factoryCallCount, 1, 'runtime should create one service boundary from the shared pool');
+  assertEqual(factoryState.poolCount, 1, 'runtime should hand one pool adapter to the service layer');
+  assertEqual(factoryState.commitCount, 1, 'service atomic boundary should publish staged close state');
+  assertEqual(
+    readCommittedSnapshot().periodCloseRows.accounting_periods[0]?.status,
+    '已结账',
+    'shared service pool close should persist the period lock in the local contract state'
+  );
+  assertIncludes(
+    result.adapterEvents.map((event) => event.event),
+    'connect_native_pool',
+    'shared runtime should expose native pool adapter connection evidence'
+  );
+  assertIncludes(
+    result.adapterEvents.map((event) => event.event),
+    'execute_native_query',
+    'shared runtime should expose service SQL replay through the native pool adapter'
+  );
+  assertEqual(
+    JSON.stringify(result.resolvedSecretEvidence).includes('resolved-production-secret'),
+    false,
+    'runtime result must not expose raw secret values'
+  );
+  assertValid(result);
+});
+
+it('uses the same shared runtime pool path for closed-period source guard', async () => {
+  const { loadPgModule, readState: readPgState } = createFakePgModule();
+  const { createServiceBoundary, readCommittedSnapshot, readFactoryState } = createSharedPoolServiceBoundaryFactory();
+  const secretResolver = createPeriodClosePostgresSecretResolverContract({
+    now: '2026-07-05T12:00:00.000Z',
+    secretStore: createSecretStore()
+  });
+  const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule,
+    secretResolver
+  });
+
+  await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-shared-service-pool-close-before-source' })
+  });
+
+  const result = await runtime.guardSourceMutation({
+    admission: createAdmissionInput(),
+    context: {
+      actorSnapshot: { id: 'user-001', name: '李明' },
+      now: '2026-07-05T12:05:00+08:00',
+      requestId: 'req-postgres-shared-service-pool-source-guard'
+    },
+    mutation: {
+      amount: '1500.00',
+      expectedVersion: 1,
+      operation: '调整应收应付事项',
+      sourceArea: 'receivable_payable',
+      sourceId: 'source-001',
+      status: '已调整',
+      targetAccountingPeriod: '2026-06'
     }
-  },
-  {
-    name: 'hands one shared runtime pool to service atomic boundary for close',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readCommittedSnapshot, readFactoryState } = createSharedPoolServiceBoundaryFactory();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule,
-        secretResolver
-      });
-      const result = await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-06',
-        request: createCloseRequest()
-      });
-      const pgState = readPgState();
-      const factoryState = readFactoryState();
+  });
+  const committedSnapshot = readCommittedSnapshot();
+  const pgState = readPgState();
+  const factoryState = readFactoryState();
 
-      assertEqual(result.status, 'committed', 'ready shared runtime should commit close through service boundary');
-      assertEqual(result.serviceResult?.status, 'committed', 'service boundary must commit after shared pool handoff');
-      assertEqual(pgState.constructCount, 1, 'runtime should construct exactly one pg pool for the service request');
-      assertEqual(pgState.connectCount, 1, 'service atomic boundary should use the shared runtime pool once');
-      assertEqual(pgState.releaseCount, 1, 'service atomic boundary must release the shared runtime client');
-      assertEqual(
-        pgState.constructorOptions[0]?.password,
-        'resolved-production-secret',
-        'secret value should only be injected into pg constructor options'
-      );
-      assertEqual(factoryState.factoryCallCount, 1, 'runtime should create one service boundary from the shared pool');
-      assertEqual(factoryState.poolCount, 1, 'runtime should hand one pool adapter to the service layer');
-      assertEqual(factoryState.commitCount, 1, 'service atomic boundary should publish staged close state');
-      assertEqual(
-        readCommittedSnapshot().periodCloseRows.accounting_periods[0]?.status,
-        '已结账',
-        'shared service pool close should persist the period lock in the local contract state'
-      );
-      assertIncludes(
-        result.adapterEvents.map((event) => event.event),
-        'connect_native_pool',
-        'shared runtime should expose native pool adapter connection evidence'
-      );
-      assertIncludes(
-        result.adapterEvents.map((event) => event.event),
-        'execute_native_query',
-        'shared runtime should expose service SQL replay through the native pool adapter'
-      );
-      assertEqual(
-        JSON.stringify(result.resolvedSecretEvidence).includes('resolved-production-secret'),
-        false,
-        'runtime result must not expose raw secret values'
-      );
-      assertValid(result);
-    }
-  },
-  {
-    name: 'uses the same shared runtime pool path for closed-period source guard',
-    run: async () => {
-      const { loadPgModule, readState: readPgState } = createFakePgModule();
-      const { createServiceBoundary, readCommittedSnapshot, readFactoryState } = createSharedPoolServiceBoundaryFactory();
-      const secretResolver = createPeriodClosePostgresSecretResolverContract({
-        now: '2026-07-05T12:00:00.000Z',
-        secretStore: createSecretStore()
-      });
-      const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule,
-        secretResolver
-      });
+  assertEqual(result.status, 'committed', 'shared runtime should commit source guard audit');
+  assertEqual(result.serviceResult?.status, 'committed', 'source guard should commit through service boundary');
+  assertEqual(pgState.constructCount, 2, 'close and source guard should each construct one request-scoped shared pool');
+  assertEqual(pgState.connectCount, 2, 'close and source guard should each replay SQL through the shared pool');
+  assertEqual(factoryState.factoryCallCount, 2, 'runtime should create one service boundary for each request-scoped pool');
+  assertEqual(factoryState.commitCount, 2, 'close and source guard should publish separate staged units');
+  assertEqual(committedSnapshot.sourceRecords[0]?.amount, '1000.00', 'closed-period source row should remain unchanged');
+  assertEqual(
+    committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
+    1,
+    'closed-period source guard audit should persist after shared pool handoff'
+  );
+  assertValid(result);
+});
 
-      await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-shared-service-pool-close-before-source' })
-      });
+it('rejects invalid pg module shape before service boundary creation', async () => {
+  const { createServiceBoundary, readFactoryState } = createSharedPoolServiceBoundaryFactory();
+  const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
+    createServiceBoundary,
+    loadPgModule: async () => ({})
+  });
+  const result = await runtime.closeAccountingPeriod({
+    admission: createAdmissionInput(),
+    period: '2026-06',
+    request: createCloseRequest({ requestId: 'req-postgres-shared-service-pool-invalid-module' })
+  });
 
-      const result = await runtime.guardSourceMutation({
-        admission: createAdmissionInput(),
-        context: {
-          actorSnapshot: { id: 'user-001', name: '李明' },
-          now: '2026-07-05T12:05:00+08:00',
-          requestId: 'req-postgres-shared-service-pool-source-guard'
-        },
-        mutation: {
-          amount: '1500.00',
-          expectedVersion: 1,
-          operation: '调整应收应付事项',
-          sourceArea: 'receivable_payable',
-          sourceId: 'source-001',
-          status: '已调整',
-          targetAccountingPeriod: '2026-06'
-        }
-      });
-      const committedSnapshot = readCommittedSnapshot();
-      const pgState = readPgState();
-      const factoryState = readFactoryState();
-
-      assertEqual(result.status, 'committed', 'shared runtime should commit source guard audit');
-      assertEqual(result.serviceResult?.status, 'committed', 'source guard should commit through service boundary');
-      assertEqual(pgState.constructCount, 2, 'close and source guard should each construct one request-scoped shared pool');
-      assertEqual(pgState.connectCount, 2, 'close and source guard should each replay SQL through the shared pool');
-      assertEqual(factoryState.factoryCallCount, 2, 'runtime should create one service boundary for each request-scoped pool');
-      assertEqual(factoryState.commitCount, 2, 'close and source guard should publish separate staged units');
-      assertEqual(committedSnapshot.sourceRecords[0]?.amount, '1000.00', 'closed-period source row should remain unchanged');
-      assertEqual(
-        committedSnapshot.periodCloseRows.accounting_period_source_mutation_events.length,
-        1,
-        'closed-period source guard audit should persist after shared pool handoff'
-      );
-      assertValid(result);
-    }
-  },
-  {
-    name: 'rejects invalid pg module shape before service boundary creation',
-    run: async () => {
-      const { createServiceBoundary, readFactoryState } = createSharedPoolServiceBoundaryFactory();
-      const runtime = createPeriodClosePostgresSharedServicePoolRuntimeContract({
-        createServiceBoundary,
-        loadPgModule: async () => ({})
-      });
-      const result = await runtime.closeAccountingPeriod({
-        admission: createAdmissionInput(),
-        period: '2026-06',
-        request: createCloseRequest({ requestId: 'req-postgres-shared-service-pool-invalid-module' })
-      });
-
-      assertEqual(result.status, 'module_invalid', 'invalid pg module shape should be classified before service work');
-      assertEqual(readFactoryState().factoryCallCount, 0, 'invalid pg module must not create service boundary');
-      assertValid(result);
-    }
-  }
-];
-
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(result.status, 'module_invalid', 'invalid pg module shape should be classified before service work');
+  assertEqual(readFactoryState().factoryCallCount, 0, 'invalid pg module must not create service boundary');
+  assertValid(result);
+});

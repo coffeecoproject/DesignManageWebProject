@@ -19,23 +19,8 @@ import type {
 } from './periodCloseNativePostgresPoolAdapterContract.js';
 import type { PeriodClosePostgresPoolConstructorOptions } from './periodClosePostgresPoolFactoryContract.js';
 import type { PeriodCloseSqlDriverStatement } from './periodCloseSqlDriverRepositoryContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 const apiPackageManifestPath = 'apps/api/package.json';
 const lockfilePath = 'pnpm-lock.yaml';
@@ -207,149 +192,132 @@ function createProductionSecretResolver() {
   });
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'derives current operational gate into a blocked readiness package without pool config',
-    run: () => {
-      const packageFromGate = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
-        operationalGate: buildPeriodCloseMigrationOperationalGateContract()
-      });
-      const result = derivePeriodClosePostgresRuntimeReadiness(packageFromGate);
+it('derives current operational gate into a blocked readiness package without pool config', () => {
+  const packageFromGate = buildBlockedPeriodClosePostgresRuntimeReadinessPackageFromOperationalGate({
+    operationalGate: buildPeriodCloseMigrationOperationalGateContract()
+  });
+  const result = derivePeriodClosePostgresRuntimeReadiness(packageFromGate);
 
-      assertEqual(result.status, 'blocked', 'current operational gate should remain blocked');
-      assertEqual(result.poolConfig, undefined, 'blocked package must not produce pool config');
-      assert(
-        Object.values(result.runtimeEvidence).every((value) => value === false),
-        'blocked package must keep all runtime evidence false'
-      );
-      assert(
-        result.gates.every((readinessGate) => readinessGate.status === 'blocked'),
-        'blocked package must keep every runtime readiness gate blocked'
-      );
-    }
-  },
-  {
-    name: 'derives a complete production readiness package into runtime evidence and redacted pool config',
-    run: () => {
-      const result = derivePeriodClosePostgresRuntimeReadiness(createReadyProductionPackage());
+  assertEqual(result.status, 'blocked', 'current operational gate should remain blocked');
+  assertEqual(result.poolConfig, undefined, 'blocked package must not produce pool config');
+  assert(
+    Object.values(result.runtimeEvidence).every((value) => value === false),
+    'blocked package must keep all runtime evidence false'
+  );
+  assert(
+    result.gates.every((readinessGate) => readinessGate.status === 'blocked'),
+    'blocked package must keep every runtime readiness gate blocked'
+  );
+});
 
-      assertEqual(result.status, 'ready', 'complete production package should be ready');
-      assert(result.poolConfig !== undefined, 'ready package should produce pool config');
-      assertEqual(result.poolConfig.environment, 'production', 'ready pool config should target production');
-      assertEqual(result.poolConfig.sslMode, 'require', 'production pool config should require ssl');
-      assertEqual(
-        result.poolConfig.passwordSecretRef,
-        'secret://finance/period-close/postgres-password',
-        'pool config should carry secret reference only'
-      );
-      assert(
-        !('password' in result.poolConfig),
-        'pool config must not carry raw secret values'
-      );
-      assert(
-        Object.values(result.runtimeEvidence).every((value) => value === true),
-        'ready package should satisfy all runtime evidence booleans'
-      );
-      assert(
-        result.gates.every((readinessGate) => readinessGate.status === 'satisfied'),
-        'ready package should satisfy every runtime readiness gate'
-      );
-    }
-  },
-  {
-    name: 'blocks production readiness when the secret source is not managed',
-    run: () => {
-      const result = derivePeriodClosePostgresRuntimeReadiness(
-        createReadyProductionPackage({
-          secret: {
-            accessPolicyEvidenceId: 'secret-access-policy-20260705',
-            reference: 'secret://finance/period-close/postgres-password',
-            rotationEvidenceId: 'secret-rotation-20260705',
-            source: 'local_dev_secret_store',
-            status: 'ready',
-            targetDatabaseEvidenceId: 'target-db-evidence-20260705'
-          }
-        })
-      );
+it('derives a complete production readiness package into runtime evidence and redacted pool config', () => {
+  const result = derivePeriodClosePostgresRuntimeReadiness(createReadyProductionPackage());
 
-      assertEqual(result.status, 'blocked', 'production readiness should reject local dev secret source');
-      assertEqual(result.poolConfig, undefined, 'invalid secret readiness must not produce pool config');
-      assert(
-        result.traceErrors.some((error) => error.includes('production-managed')),
-        'blocked readiness should explain production-managed secret requirement'
-      );
-    }
-  },
-  {
-    name: 'blocks readiness when secret evidence is scoped to a different target database',
-    run: () => {
-      const result = derivePeriodClosePostgresRuntimeReadiness(
-        createReadyProductionPackage({
-          secret: {
-            accessPolicyEvidenceId: 'secret-access-policy-20260705',
-            reference: 'secret://finance/period-close/postgres-password',
-            rotationEvidenceId: 'secret-rotation-20260705',
-            source: 'managed_secret_store',
-            status: 'ready',
-            targetDatabaseEvidenceId: 'other-target-db-evidence'
-          }
-        })
-      );
+  assertEqual(result.status, 'ready', 'complete production package should be ready');
+  assert(result.poolConfig !== undefined, 'ready package should produce pool config');
+  assertEqual(result.poolConfig.environment, 'production', 'ready pool config should target production');
+  assertEqual(result.poolConfig.sslMode, 'require', 'production pool config should require ssl');
+  assertEqual(
+    result.poolConfig.passwordSecretRef,
+    'secret://finance/period-close/postgres-password',
+    'pool config should carry secret reference only'
+  );
+  assert(
+    !('password' in result.poolConfig),
+    'pool config must not carry raw secret values'
+  );
+  assert(
+    Object.values(result.runtimeEvidence).every((value) => value === true),
+    'ready package should satisfy all runtime evidence booleans'
+  );
+  assert(
+    result.gates.every((readinessGate) => readinessGate.status === 'satisfied'),
+    'ready package should satisfy every runtime readiness gate'
+  );
+});
 
-      assertEqual(result.status, 'blocked', 'readiness should reject mismatched secret target evidence');
-      assertEqual(result.runtimeEvidence.secretManagerRuntimeReady, false, 'mismatched secret evidence should fail runtime evidence');
-      assert(
-        result.traceErrors.some((error) => error.includes('scoped to target database evidence')),
-        'blocked readiness should explain target database secret scope'
-      );
-    }
-  },
-  {
-    name: 'feeds readiness package directly into runtime admission orchestrator',
-    run: async () => {
-      const readinessPackage = createReadyProductionPackage();
-      const fakePg = createFakePgModule();
-      const contract = createPeriodClosePostgresRuntimeAdmissionOrchestratorContract({
-        loadPgModule: async () => fakePg.module,
-        secretResolver: createProductionSecretResolver()
-      });
+it('blocks production readiness when the secret source is not managed', () => {
+  const result = derivePeriodClosePostgresRuntimeReadiness(
+    createReadyProductionPackage({
+      secret: {
+        accessPolicyEvidenceId: 'secret-access-policy-20260705',
+        reference: 'secret://finance/period-close/postgres-password',
+        rotationEvidenceId: 'secret-rotation-20260705',
+        source: 'local_dev_secret_store',
+        status: 'ready',
+        targetDatabaseEvidenceId: 'target-db-evidence-20260705'
+      }
+    })
+  );
 
-      const result = await contract.run({
-        apiPackageManifest: {
-          dependencies: {
-            pg: '^8.22.0'
-          },
-          name: '@startupmanage/api'
-        },
-        apiPackageManifestPath,
-        lockfilePath,
-        lockfileText: pgLockfile,
-        operation: 'close_or_reopen_accounting_period',
-        period: '2026-06',
-        readinessPackage,
-        requestId: 'req-runtime-readiness-001',
-        statements: createStatements(),
-        transactionId: 'tx-runtime-readiness-001'
-      });
-      const state = fakePg.readState();
-      const traceErrors = validatePeriodClosePostgresRuntimeAdmissionOrchestratorTrace(result);
+  assertEqual(result.status, 'blocked', 'production readiness should reject local dev secret source');
+  assertEqual(result.poolConfig, undefined, 'invalid secret readiness must not produce pool config');
+  assert(
+    result.traceErrors.some((error) => error.includes('production-managed')),
+    'blocked readiness should explain production-managed secret requirement'
+  );
+});
 
-      assertEqual(traceErrors.length, 0, `runtime admission trace should validate: ${traceErrors.join('; ')}`);
-      assertEqual(result.readiness.status, 'ready', 'orchestrator should derive ready package internally');
-      assertEqual(result.readiness.poolConfig?.environment, 'production', 'orchestrator should derive production pool config internally');
-      assertEqual(result.dependencyAdmission.status, 'admitted', 'derived runtime evidence should admit dependency gates');
-      assertEqual(result.status, 'committed', 'derived pool config should reach fake pg commit');
-      assertEqual(state.constructedOptions.length, 1, 'runtime pool should be constructed after readiness admission');
-      assertEqual(state.constructedOptions[0]?.password, 'internal-password-not-for-output', 'secret should resolve only inside factory boundary');
-      assert(
-        state.queries.some((query) => query.sql === 'COMMIT;'),
-        'fake pg runtime should execute terminal commit statement'
-      );
-      assertEqual(state.releaseCount, 1, 'fake pg client should be released once');
-    }
-  }
-];
+it('blocks readiness when secret evidence is scoped to a different target database', () => {
+  const result = derivePeriodClosePostgresRuntimeReadiness(
+    createReadyProductionPackage({
+      secret: {
+        accessPolicyEvidenceId: 'secret-access-policy-20260705',
+        reference: 'secret://finance/period-close/postgres-password',
+        rotationEvidenceId: 'secret-rotation-20260705',
+        source: 'managed_secret_store',
+        status: 'ready',
+        targetDatabaseEvidenceId: 'other-target-db-evidence'
+      }
+    })
+  );
 
-for (const test of tests) {
-  await test.run();
-}
+  assertEqual(result.status, 'blocked', 'readiness should reject mismatched secret target evidence');
+  assertEqual(result.runtimeEvidence.secretManagerRuntimeReady, false, 'mismatched secret evidence should fail runtime evidence');
+  assert(
+    result.traceErrors.some((error) => error.includes('scoped to target database evidence')),
+    'blocked readiness should explain target database secret scope'
+  );
+});
+
+it('feeds readiness package directly into runtime admission orchestrator', async () => {
+  const readinessPackage = createReadyProductionPackage();
+  const fakePg = createFakePgModule();
+  const contract = createPeriodClosePostgresRuntimeAdmissionOrchestratorContract({
+    loadPgModule: async () => fakePg.module,
+    secretResolver: createProductionSecretResolver()
+  });
+
+  const result = await contract.run({
+    apiPackageManifest: {
+      dependencies: {
+        pg: '^8.22.0'
+      },
+      name: '@startupmanage/api'
+    },
+    apiPackageManifestPath,
+    lockfilePath,
+    lockfileText: pgLockfile,
+    operation: 'close_or_reopen_accounting_period',
+    period: '2026-06',
+    readinessPackage,
+    requestId: 'req-runtime-readiness-001',
+    statements: createStatements(),
+    transactionId: 'tx-runtime-readiness-001'
+  });
+  const state = fakePg.readState();
+  const traceErrors = validatePeriodClosePostgresRuntimeAdmissionOrchestratorTrace(result);
+
+  assertEqual(traceErrors.length, 0, `runtime admission trace should validate: ${traceErrors.join('; ')}`);
+  assertEqual(result.readiness.status, 'ready', 'orchestrator should derive ready package internally');
+  assertEqual(result.readiness.poolConfig?.environment, 'production', 'orchestrator should derive production pool config internally');
+  assertEqual(result.dependencyAdmission.status, 'admitted', 'derived runtime evidence should admit dependency gates');
+  assertEqual(result.status, 'committed', 'derived pool config should reach fake pg commit');
+  assertEqual(state.constructedOptions.length, 1, 'runtime pool should be constructed after readiness admission');
+  assertEqual(state.constructedOptions[0]?.password, 'internal-password-not-for-output', 'secret should resolve only inside factory boundary');
+  assert(
+    state.queries.some((query) => query.sql === 'COMMIT;'),
+    'fake pg runtime should execute terminal commit statement'
+  );
+  assertEqual(state.releaseCount, 1, 'fake pg client should be released once');
+});

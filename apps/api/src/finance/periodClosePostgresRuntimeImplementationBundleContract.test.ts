@@ -11,23 +11,8 @@ import type {
   PeriodClosePostgresRuntimeReadinessPackage,
 } from './periodClosePostgresRuntimeReadinessPackageContract.js';
 import type { PeriodClosePostgresPackageManifest } from './periodClosePostgresDependencyAdmissionContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual } from '../__tests__/assertions.js';
 
 const apiPackageManifestPath = 'apps/api/package.json';
 const lockfilePath = 'pnpm-lock.yaml';
@@ -228,121 +213,99 @@ function assertTraceValid(result: ReturnType<typeof evaluatePeriodClosePostgresR
   assertEqual(errors.length, 0, `bundle trace should validate: ${errors.join('; ')}`);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'assembles runtime implementation bundle only when implementation, dependency, pool, repositories, and service runtime evidence are ready',
-    run: () => {
-      const result = evaluate();
+it('assembles runtime implementation bundle only when implementation, dependency, pool, repositories, and service runtime evidence are ready', () => {
+  const result = evaluate();
 
-      assertEqual(result.status, 'ready', 'complete bundle should be ready');
-      assert(result.bundle !== undefined, 'ready result should expose bundle descriptor');
-      assert(result.poolConfig !== undefined, 'ready result should expose readiness-derived pool config');
-      assertEqual(result.dependencyAdmission?.status, 'admitted', 'dependency admission should be admitted');
-      assertEqual(result.bundle?.poolConfig.host, 'period-close-postgres.internal', 'bundle should carry pool target');
-      assert(
-        result.gates.every((item) => item.status === 'satisfied'),
-        'ready bundle should satisfy every bundle gate',
-      );
-      assertTraceValid(result);
+  assertEqual(result.status, 'ready', 'complete bundle should be ready');
+  assert(result.bundle !== undefined, 'ready result should expose bundle descriptor');
+  assert(result.poolConfig !== undefined, 'ready result should expose readiness-derived pool config');
+  assertEqual(result.dependencyAdmission?.status, 'admitted', 'dependency admission should be admitted');
+  assertEqual(result.bundle?.poolConfig.host, 'period-close-postgres.internal', 'bundle should carry pool target');
+  assert(
+    result.gates.every((item) => item.status === 'satisfied'),
+    'ready bundle should satisfy every bundle gate',
+  );
+  assertTraceValid(result);
+});
+
+it('does not evaluate dependencies when runtime implementation manifest is blocked', () => {
+  const result = evaluate({
+    manifest: createReadyManifest({
+      repositories: {
+        periodLockRepository: 'sql_repository_runtime',
+        sourceMutationRepository: 'row_backed_contract',
+        voucherLedgerRepository: 'sql_repository_runtime',
+      },
+    }),
+  });
+
+  assertEqual(result.status, 'implementation_blocked', 'blocked manifest should stop bundle construction');
+  assertEqual(result.dependencyAdmission, undefined, 'dependency admission should not run after blocked manifest');
+  assertEqual(result.bundle, undefined, 'blocked implementation should not expose bundle');
+  assert(
+    result.events.every((event) => event.event !== 'evaluate_dependency_admission'),
+    'blocked implementation should not evaluate dependency admission',
+  );
+  assertTraceValid(result);
+});
+
+it('keeps ready implementation blocked when pg dependency admission is not admitted', () => {
+  const result = evaluate({
+    apiPackageManifest: {
+      devDependencies: {
+        pg: '^8.22.0',
+      },
+      name: '@startupmanage/api',
     },
-  },
-  {
-    name: 'does not evaluate dependencies when runtime implementation manifest is blocked',
-    run: () => {
-      const result = evaluate({
-        manifest: createReadyManifest({
-          repositories: {
-            periodLockRepository: 'sql_repository_runtime',
-            sourceMutationRepository: 'row_backed_contract',
-            voucherLedgerRepository: 'sql_repository_runtime',
-          },
-        }),
-      });
+  });
 
-      assertEqual(result.status, 'implementation_blocked', 'blocked manifest should stop bundle construction');
-      assertEqual(result.dependencyAdmission, undefined, 'dependency admission should not run after blocked manifest');
-      assertEqual(result.bundle, undefined, 'blocked implementation should not expose bundle');
-      assert(
-        result.events.every((event) => event.event !== 'evaluate_dependency_admission'),
-        'blocked implementation should not evaluate dependency admission',
-      );
-      assertTraceValid(result);
-    },
-  },
-  {
-    name: 'keeps ready implementation blocked when pg dependency admission is not admitted',
-    run: () => {
-      const result = evaluate({
-        apiPackageManifest: {
-          devDependencies: {
-            pg: '^8.22.0',
-          },
-          name: '@startupmanage/api',
-        },
-      });
+  assertEqual(result.status, 'dependency_blocked', 'misclassified pg dependency should block bundle');
+  assertEqual(
+    result.dependencyAdmission?.status,
+    'runtime_dependency_misclassified',
+    'dependency admission should preserve misclassification status',
+  );
+  assertEqual(result.bundle, undefined, 'dependency-blocked bundle should not expose descriptor');
+  assert(
+    result.traceErrors.some((error) => error.includes('pg must be a runtime dependency')),
+    'dependency-blocked bundle should preserve pg misclassification trace error',
+  );
+});
 
-      assertEqual(result.status, 'dependency_blocked', 'misclassified pg dependency should block bundle');
-      assertEqual(
-        result.dependencyAdmission?.status,
-        'runtime_dependency_misclassified',
-        'dependency admission should preserve misclassification status',
-      );
-      assertEqual(result.bundle, undefined, 'dependency-blocked bundle should not expose descriptor');
-      assert(
-        result.traceErrors.some((error) => error.includes('pg must be a runtime dependency')),
-        'dependency-blocked bundle should preserve pg misclassification trace error',
-      );
-    },
-  },
-  {
-    name: 'blocks bundle when SQL repository binding drifts from manifest or migration artifact',
-    run: () => {
-      const result = evaluate({
-        repositoryBindings: createRepositoryBindings({
-          sourceMutationRepository: {
-            evidenceId: 'row-backed-source-evidence',
-            implementation: 'row_backed_contract',
-            migrationArtifactPath: 'migrations/20260705_period_close_persistent_lock.sql',
-            modulePath: 'apps/api/src/finance/periodCloseRepositoryContract.ts',
-            transactionBoundary: 'local_contract',
-          },
-        }),
-      });
+it('blocks bundle when SQL repository binding drifts from manifest or migration artifact', () => {
+  const result = evaluate({
+    repositoryBindings: createRepositoryBindings({
+      sourceMutationRepository: {
+        evidenceId: 'row-backed-source-evidence',
+        implementation: 'row_backed_contract',
+        migrationArtifactPath: 'migrations/20260705_period_close_persistent_lock.sql',
+        modulePath: 'apps/api/src/finance/periodCloseRepositoryContract.ts',
+        transactionBoundary: 'local_contract',
+      },
+    }),
+  });
 
-      assertEqual(result.status, 'repository_runtime_invalid', 'row-backed binding should block bundle');
-      assert(
-        result.repositoryErrors.some((error) => error.includes('sourceMutationRepository')),
-        'repository errors should identify source mutation binding',
-      );
-      assertEqual(result.bundle, undefined, 'repository-blocked bundle should not expose descriptor');
-      assertTraceValid(result);
-    },
-  },
-  {
-    name: 'blocks bundle when service runtime evidence is incomplete',
-    run: () => {
-      const result = evaluate({
-        bundleEvidence: createBundleEvidence({
-          managedServicePoolRuntimeModulePath: undefined,
-        }),
-      });
+  assertEqual(result.status, 'repository_runtime_invalid', 'row-backed binding should block bundle');
+  assert(
+    result.repositoryErrors.some((error) => error.includes('sourceMutationRepository')),
+    'repository errors should identify source mutation binding',
+  );
+  assertEqual(result.bundle, undefined, 'repository-blocked bundle should not expose descriptor');
+  assertTraceValid(result);
+});
 
-      assertEqual(result.status, 'service_runtime_bundle_invalid', 'missing service runtime evidence should block');
-      assert(
-        result.bundleErrors.some((error) => error.includes('managed service pool runtime module')),
-        'bundle errors should identify missing managed runtime module',
-      );
-      assertEqual(result.bundle, undefined, 'invalid service bundle should not expose descriptor');
-      assertTraceValid(result);
-    },
-  },
-];
+it('blocks bundle when service runtime evidence is incomplete', () => {
+  const result = evaluate({
+    bundleEvidence: createBundleEvidence({
+      managedServicePoolRuntimeModulePath: undefined,
+    }),
+  });
 
-for (const test of tests) {
-  try {
-    await test.run();
-  } catch (error) {
-    console.error(`Test failed: ${test.name}`);
-    throw error;
-  }
-}
+  assertEqual(result.status, 'service_runtime_bundle_invalid', 'missing service runtime evidence should block');
+  assert(
+    result.bundleErrors.some((error) => error.includes('managed service pool runtime module')),
+    'bundle errors should identify missing managed runtime module',
+  );
+  assertEqual(result.bundle, undefined, 'invalid service bundle should not expose descriptor');
+  assertTraceValid(result);
+});

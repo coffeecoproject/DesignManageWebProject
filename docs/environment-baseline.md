@@ -44,7 +44,7 @@ Install command: `corepack pnpm install`
 
 Dev command: `corepack pnpm dev:web`
 
-Local test command: `corepack pnpm test:web`
+Local test commands: `testpace focused` while developing (fast checks plus related tests), `testpace files <file>[:line]` for given tests, `testpace full` before landing on main (see `testpace.json`)
 
 Known local dependencies:
 
@@ -107,9 +107,9 @@ Rotation / incident owner: PENDING_CONFIRMATION
 
 ## Test Environment
 
-Frontend test command: `corepack pnpm test:web`
+Test runner: Vitest in `apps/web` and `apps/api`, driven by testpace (`testpace.json`; `scripts/testpace/files.sh` routes files per app).
 
-Local API contract test command: `corepack pnpm test:api`
+API PostgreSQL tests (`apps/api/src/**/*.postgres.test.ts`): `testpace files` starts a throwaway napbox Postgres for them.
 
 Typecheck command: `corepack pnpm typecheck`
 
@@ -141,7 +141,7 @@ CI test command: PENDING_CONFIRMATION
 
 CI system: PENDING_CONFIRMATION
 
-Required checks: local confirmed commands are `lint`, `typecheck`, `test:web`, `build:web`, and relevant workflow/document checks. For `apps/api` local contract changes, also run `test:api`.
+Required checks: `testpace full` (runs `check:full` = napbox check, `typecheck`, `lint`, `build:web`, `ai-native:check`, then every test matched by `testpace.json`), plus relevant workflow/document checks.
 
 Build command: `corepack pnpm build:web`
 

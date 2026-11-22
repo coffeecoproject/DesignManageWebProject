@@ -15,35 +15,14 @@ import type {
   PersistentAccountingPeriodRecord,
   PersistentFinanceSourceRecord
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
+import { it } from 'vitest';
+import { assert, assertEqual, assertObject } from '../__tests__/assertions.js';
 
 type CapturedFrameworkResponse = {
   bodyText?: string;
   headers: Record<string, string>;
   status?: number;
 };
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
 
 function parseBody(bodyText: string) {
   return JSON.parse(bodyText) as unknown;
@@ -195,184 +174,167 @@ function createResponseWriter() {
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'maps concrete framework request body query headers and writes framework response',
-    run: () => {
-      let delegatedRequest: FinanceHttpServerHandlerRequest | undefined;
-      const adapter = createFinanceHttpConcreteFrameworkAdapter({
-        frameworkName: 'express-like-local-contract',
-        handler: {
-          handleServerHandlerRequest: (request) => {
-            delegatedRequest = request;
+it('maps concrete framework request body query headers and writes framework response', () => {
+  let delegatedRequest: FinanceHttpServerHandlerRequest | undefined;
+  const adapter = createFinanceHttpConcreteFrameworkAdapter({
+    frameworkName: 'express-like-local-contract',
+    handler: {
+      handleServerHandlerRequest: (request) => {
+        delegatedRequest = request;
 
-            return {
-              bodyText: JSON.stringify({ ok: true }),
-              handled: true,
-              headers: {
-                'content-type': 'application/json; charset=utf-8',
-                'x-finance-test': 'adapter'
-              },
-              status: 202
-            };
-          }
-        }
-      });
-      const response = adapter.handleConcreteFrameworkRequest({
-        body: {
-          expectedCheckSnapshotHash: 'hash-client-001'
-        },
-        headers: {
-          accept: ['application/json', 'text/plain']
-        },
-        method: 'post',
-        path: '/api/finance/accounting-periods/2026-06/close',
-        query: {
-          include: ['checks', 'sources'],
-          preview: true
-        }
-      });
-      const { captured, writer } = createResponseWriter();
-
-      adapter.writeConcreteFrameworkResponse(writer, response);
-
-      assert(delegatedRequest !== undefined, 'concrete adapter should delegate to server handler');
-      assertEqual(delegatedRequest.method, 'post', 'adapter should preserve concrete framework method');
-      assertEqual(
-        delegatedRequest.url,
-        '/api/finance/accounting-periods/2026-06/close?include=checks&include=sources&preview=true',
-        'adapter should compose framework path and query'
-      );
-      assertEqual(
-        delegatedRequest.bodyText,
-        '{"expectedCheckSnapshotHash":"hash-client-001"}',
-        'adapter should serialize framework body objects'
-      );
-      assertEqual(Array.isArray(delegatedRequest.headers?.accept), true, 'adapter should preserve framework headers');
-      assertEqual(response.adapterTrace.adapterKind, 'local_concrete_framework_adapter_contract', 'trace should identify local adapter');
-      assertEqual(response.adapterTrace.handled, true, 'trace should preserve handled state');
-      assertEqual(captured.status, 202, 'response writer should receive status');
-      assertEqual(
-        captured.headers['content-type'],
-        'application/json; charset=utf-8',
-        'response writer should receive JSON content type'
-      );
-      assertEqual(captured.headers['x-finance-test'], 'adapter', 'response writer should receive custom headers');
-      assertEqual(captured.bodyText, '{"ok":true}', 'response writer should receive serialized body');
+        return {
+          bodyText: JSON.stringify({ ok: true }),
+          handled: true,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'x-finance-test': 'adapter'
+          },
+          status: 202
+        };
+      }
     }
-  },
-  {
-    name: 'closes a period through concrete framework adapter with server-owned actor permission and resource context',
-    run: () => {
-      const { adapter, repository } = createAdapterStack({
-        principal: createPrincipal()
-      });
-      const response = adapter.handleConcreteFrameworkRequest({
-        body: {
-          idempotencyKey: 'concrete-framework-close-001',
-          reason: '2026-06 月结',
-          version: 1
-        },
-        headers: {
-          authorization: 'Bearer finance-framework-token',
-          'content-type': 'application/json',
-          'x-actor-id': 'forged-client-user',
-          'x-finance-resource-scopes': 'finance.ledger:*',
-          'x-permission-scopes': ''
-        },
-        method: 'POST',
-        originalUrl: 'https://sms.test/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseBody(response.bodyText);
-      const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
-
-      assertObject(body, 'concrete framework close response body should be an object');
-      assertEqual(response.status, 201, 'concrete framework close should create close snapshot');
-      assertEqual(response.adapterTrace.frameworkName, 'express-like-local-contract', 'trace should preserve framework name');
-      assertEqual(response.adapterTrace.handled, true, 'finance route should be handled');
-      assertEqual(repository.readState().periods[0]?.status, '已结账', 'concrete framework close should persist lock');
-      assertObject(body.closedBySnapshot, 'concrete framework close should include server-owned actor');
-      assertEqual(body.closedBySnapshot.id, 'user-concrete-framework-001', 'actor should come from server principal');
-      assert(event !== undefined, 'concrete framework close should write close event');
-      assertEqual(event.request_id, 'req-concrete-framework-001', 'request id should come from runtime');
+  });
+  const response = adapter.handleConcreteFrameworkRequest({
+    body: {
+      expectedCheckSnapshotHash: 'hash-client-001'
+    },
+    headers: {
+      accept: ['application/json', 'text/plain']
+    },
+    method: 'post',
+    path: '/api/finance/accounting-periods/2026-06/close',
+    query: {
+      include: ['checks', 'sources'],
+      preview: true
     }
-  },
-  {
-    name: 'rejects client-forged resource scope when server principal has no ledger resource',
-    run: () => {
-      const { adapter, repository } = createAdapterStack({
-        principal: createPrincipal({
-          resourceScopes: []
-        })
-      });
-      const response = adapter.handleConcreteFrameworkRequest({
-        body: {
-          idempotencyKey: 'concrete-framework-forged-resource-001',
-          reason: '2026-06 月结',
-          version: 1
-        },
-        headers: {
-          authorization: 'Bearer finance-framework-token',
-          'content-type': 'application/json',
-          'x-finance-resource-scopes': 'finance.ledger:*'
-        },
-        method: 'POST',
-        pathname: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseBody(response.bodyText);
+  });
+  const { captured, writer } = createResponseWriter();
 
-      assertObject(body, 'forged resource response body should be an object');
-      assertEqual(response.status, 403, 'missing server-owned resource scope should be forbidden');
-      assertEqual(body.code, 'FORBIDDEN', 'forged resource response code should match');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'forged resource request must not mutate period');
-    }
-  },
-  {
-    name: 'keeps non-finance concrete framework requests outside the finance runtime',
-    run: () => {
-      const { adapter, repository } = createAdapterStack({
-        principal: createPrincipal()
-      });
-      const response = adapter.handleConcreteFrameworkRequest({
-        headers: {
-          authorization: 'Bearer finance-framework-token'
-        },
-        method: 'GET',
-        originalUrl: '/api/people/overview?tab=summary'
-      });
-      const body = parseBody(response.bodyText);
+  adapter.writeConcreteFrameworkResponse(writer, response);
 
-      assertObject(body, 'non-finance concrete framework response body should be an object');
-      assertEqual(response.handled, false, 'non-finance concrete framework route should not be handled');
-      assertEqual(response.status, 404, 'non-finance concrete framework route should return not-bound');
-      assertEqual(body.code, 'FINANCE_ROUTE_NOT_BOUND', 'non-finance concrete framework code should match');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'non-finance request must not mutate period');
-    }
-  },
-  {
-    name: 'rejects unsupported concrete framework finance methods before state mutation',
-    run: () => {
-      const { adapter, repository } = createAdapterStack({
-        principal: createPrincipal()
-      });
-      const response = adapter.handleConcreteFrameworkRequest({
-        headers: {
-          authorization: 'Bearer finance-framework-token'
-        },
-        method: 'DELETE',
-        pathname: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseBody(response.bodyText);
+  assert(delegatedRequest !== undefined, 'concrete adapter should delegate to server handler');
+  assertEqual(delegatedRequest.method, 'post', 'adapter should preserve concrete framework method');
+  assertEqual(
+    delegatedRequest.url,
+    '/api/finance/accounting-periods/2026-06/close?include=checks&include=sources&preview=true',
+    'adapter should compose framework path and query'
+  );
+  assertEqual(
+    delegatedRequest.bodyText,
+    '{"expectedCheckSnapshotHash":"hash-client-001"}',
+    'adapter should serialize framework body objects'
+  );
+  assertEqual(Array.isArray(delegatedRequest.headers?.accept), true, 'adapter should preserve framework headers');
+  assertEqual(response.adapterTrace.adapterKind, 'local_concrete_framework_adapter_contract', 'trace should identify local adapter');
+  assertEqual(response.adapterTrace.handled, true, 'trace should preserve handled state');
+  assertEqual(captured.status, 202, 'response writer should receive status');
+  assertEqual(
+    captured.headers['content-type'],
+    'application/json; charset=utf-8',
+    'response writer should receive JSON content type'
+  );
+  assertEqual(captured.headers['x-finance-test'], 'adapter', 'response writer should receive custom headers');
+  assertEqual(captured.bodyText, '{"ok":true}', 'response writer should receive serialized body');
+});
 
-      assertObject(body, 'unsupported method response body should be an object');
-      assertEqual(response.handled, true, 'unsupported finance method should be handled by route binding');
-      assertEqual(response.status, 405, 'unsupported finance method should return 405');
-      assertEqual(body.code, 'FINANCE_METHOD_NOT_ALLOWED', 'unsupported finance method code should match');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'unsupported method must not mutate period');
-    }
-  }
-];
+it('closes a period through concrete framework adapter with server-owned actor permission and resource context', () => {
+  const { adapter, repository } = createAdapterStack({
+    principal: createPrincipal()
+  });
+  const response = adapter.handleConcreteFrameworkRequest({
+    body: {
+      idempotencyKey: 'concrete-framework-close-001',
+      reason: '2026-06 月结',
+      version: 1
+    },
+    headers: {
+      authorization: 'Bearer finance-framework-token',
+      'content-type': 'application/json',
+      'x-actor-id': 'forged-client-user',
+      'x-finance-resource-scopes': 'finance.ledger:*',
+      'x-permission-scopes': ''
+    },
+    method: 'POST',
+    originalUrl: 'https://sms.test/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseBody(response.bodyText);
+  const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
 
-for (const test of tests) {
-  test.run();
-}
+  assertObject(body, 'concrete framework close response body should be an object');
+  assertEqual(response.status, 201, 'concrete framework close should create close snapshot');
+  assertEqual(response.adapterTrace.frameworkName, 'express-like-local-contract', 'trace should preserve framework name');
+  assertEqual(response.adapterTrace.handled, true, 'finance route should be handled');
+  assertEqual(repository.readState().periods[0]?.status, '已结账', 'concrete framework close should persist lock');
+  assertObject(body.closedBySnapshot, 'concrete framework close should include server-owned actor');
+  assertEqual(body.closedBySnapshot.id, 'user-concrete-framework-001', 'actor should come from server principal');
+  assert(event !== undefined, 'concrete framework close should write close event');
+  assertEqual(event.request_id, 'req-concrete-framework-001', 'request id should come from runtime');
+});
+
+it('rejects client-forged resource scope when server principal has no ledger resource', () => {
+  const { adapter, repository } = createAdapterStack({
+    principal: createPrincipal({
+      resourceScopes: []
+    })
+  });
+  const response = adapter.handleConcreteFrameworkRequest({
+    body: {
+      idempotencyKey: 'concrete-framework-forged-resource-001',
+      reason: '2026-06 月结',
+      version: 1
+    },
+    headers: {
+      authorization: 'Bearer finance-framework-token',
+      'content-type': 'application/json',
+      'x-finance-resource-scopes': 'finance.ledger:*'
+    },
+    method: 'POST',
+    pathname: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseBody(response.bodyText);
+
+  assertObject(body, 'forged resource response body should be an object');
+  assertEqual(response.status, 403, 'missing server-owned resource scope should be forbidden');
+  assertEqual(body.code, 'FORBIDDEN', 'forged resource response code should match');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'forged resource request must not mutate period');
+});
+
+it('keeps non-finance concrete framework requests outside the finance runtime', () => {
+  const { adapter, repository } = createAdapterStack({
+    principal: createPrincipal()
+  });
+  const response = adapter.handleConcreteFrameworkRequest({
+    headers: {
+      authorization: 'Bearer finance-framework-token'
+    },
+    method: 'GET',
+    originalUrl: '/api/people/overview?tab=summary'
+  });
+  const body = parseBody(response.bodyText);
+
+  assertObject(body, 'non-finance concrete framework response body should be an object');
+  assertEqual(response.handled, false, 'non-finance concrete framework route should not be handled');
+  assertEqual(response.status, 404, 'non-finance concrete framework route should return not-bound');
+  assertEqual(body.code, 'FINANCE_ROUTE_NOT_BOUND', 'non-finance concrete framework code should match');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'non-finance request must not mutate period');
+});
+
+it('rejects unsupported concrete framework finance methods before state mutation', () => {
+  const { adapter, repository } = createAdapterStack({
+    principal: createPrincipal()
+  });
+  const response = adapter.handleConcreteFrameworkRequest({
+    headers: {
+      authorization: 'Bearer finance-framework-token'
+    },
+    method: 'DELETE',
+    pathname: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseBody(response.bodyText);
+
+  assertObject(body, 'unsupported method response body should be an object');
+  assertEqual(response.handled, true, 'unsupported finance method should be handled by route binding');
+  assertEqual(response.status, 405, 'unsupported finance method should return 405');
+  assertEqual(body.code, 'FINANCE_METHOD_NOT_ALLOWED', 'unsupported finance method code should match');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'unsupported method must not mutate period');
+});

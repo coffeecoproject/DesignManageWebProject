@@ -12,31 +12,11 @@ import {
 import type {
   PeriodClosePostgresRuntimeImplementationBundleDescriptor,
 } from './periodClosePostgresRuntimeImplementationBundleContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => Promise<void> | void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertDeepEqual<T>(actual: T, expected: T, message: string) {
-  const actualJson = JSON.stringify(actual);
-  const expectedJson = JSON.stringify(expected);
-
-  if (actualJson !== expectedJson) {
-    throw new Error(`${message}. Expected ${expectedJson}, got ${actualJson}`);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertDeepEqual, assertEqual } from '../__tests__/assertions.js';
 
 function assertIncludes(actual: string, expected: string, message: string) {
-  if (!actual.includes(expected)) {
-    throw new Error(`${message}. Expected ${expected} in ${actual}`);
-  }
+  assert(actual.includes(expected), `${message}. Expected ${expected} in ${actual}`);
 }
 
 async function assertRejectsIncludes(input: {
@@ -182,203 +162,179 @@ function eventNames(events: Array<{ event: FinanceHttpPostgresManagedProjectServ
   return events.map((event) => event.event);
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'starts local service runtime, exposes probes, and shuts down in graceful order',
-    run: async () => {
-      const fakeBootstrap = createFakeBootstrap();
-      const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
-        bootstrap: fakeBootstrap.bootstrap,
-      });
+it('starts local service runtime, exposes probes, and shuts down in graceful order', async () => {
+  const fakeBootstrap = createFakeBootstrap();
+  const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
+    bootstrap: fakeBootstrap.bootstrap,
+  });
 
-      const handle = await runtime.start({
-        bootstrapInput: {
-          envSnapshot: {
-            FINANCE_DATABASE_PASSWORD: 'secret://finance/local/period-close/password',
-          },
-          host: '127.0.0.1',
-          port: 53221,
-        },
+  const handle = await runtime.start({
+    bootstrapInput: {
+      envSnapshot: {
+        FINANCE_DATABASE_PASSWORD: 'secret://finance/local/period-close/password',
+      },
+      host: '127.0.0.1',
+      port: 53221,
+    },
+    manifest: baseManifest,
+    requestId: 'runtime-start-001',
+    runtimeImplementationBundle: createRuntimeImplementationBundle(),
+  });
+
+  assertEqual(fakeBootstrap.bootstrapInputs.length, 1, 'Runtime should call bootstrap once');
+  assertEqual(
+    fakeBootstrap.bootstrapInputs[0]?.processName,
+    baseManifest.processName,
+    'Runtime should pass manifest processName to bootstrap',
+  );
+  assertEqual(fakeBootstrap.bootstrapInputs[0]?.mode, 'local_contract', 'Runtime should pass manifest mode to bootstrap');
+  assertEqual(handle.origin, 'http://127.0.0.1:53221', 'Runtime should expose bootstrap origin');
+  assertEqual(
+    handle.summary.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
+    'local-project-service-runtime-admission-evidence-20260705',
+    'Runtime summary should carry service runtime admission bundle evidence',
+  );
+  assertEqual(
+    handle.summary.runtimeBundleEvidenceId,
+    'local-project-service-runtime-admission-evidence-20260705',
+    'Runtime summary should preserve bootstrap runtime bundle evidence id',
+  );
+
+  const health = handle.health({ requestId: 'health-001' });
+  const readiness = handle.readiness({ requestId: 'ready-001' });
+
+  assertEqual(health.status, 'healthy', 'Ready runtime health probe should be healthy');
+  assertEqual(readiness.status, 'ready', 'Ready runtime readiness probe should be ready');
+  assertEqual(readiness.productionReady, false, 'Local runtime readiness must not claim production readiness');
+  assertEqual(
+    readiness.runtimeImplementationBundle?.runtimeImportModulePath,
+    'apps/api/src/finance/periodClosePostgresRuntimeImportContract.ts',
+    'Readiness probe should carry runtime import bundle evidence',
+  );
+
+  const shutdown = await handle.shutdown({ requestId: 'runtime-shutdown-001' });
+
+  assertEqual(fakeBootstrap.shutdownRequests.length, 1, 'Runtime shutdown should call bootstrap shutdown once');
+  assertEqual(
+    fakeBootstrap.shutdownRequests[0],
+    'runtime-shutdown-001',
+    'Runtime shutdown should forward request id',
+  );
+  assertEqual(shutdown.lifecycleState, 'closed', 'Runtime shutdown should close lifecycle');
+  assertEqual(handle.readiness({ requestId: 'ready-after-close-001' }).status, 'not_ready', 'Closed runtime should not be ready');
+  assertDeepEqual(
+    eventNames(handle.readRuntimeEvents()),
+    [
+      'validate_runtime_manifest',
+      'start_bootstrap',
+      'validate_runtime_bundle_continuity',
+      'runtime_ready',
+      'read_health',
+      'read_readiness',
+      'mark_draining',
+      'delegate_bootstrap_shutdown',
+      'runtime_closed',
+      'read_readiness',
+    ],
+    'Runtime trace should record probe and graceful shutdown order',
+  );
+});
+
+it('rejects runtime startup when bootstrap node server bundle evidence drifts', async () => {
+  const fakeBootstrap = createFakeBootstrap({
+    runtimeBundleEvidenceId: 'drifted-runtime-bundle-evidence',
+  });
+  const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
+    bootstrap: fakeBootstrap.bootstrap,
+  });
+
+  await assertRejectsIncludes({
+    expected: 'Finance project service process runtime bundle continuity rejected',
+    message: 'Runtime should reject bootstrap/runtime bundle evidence drift before ready',
+    run: () =>
+      runtime.start({
         manifest: baseManifest,
-        requestId: 'runtime-start-001',
+        requestId: 'runtime-bundle-drift-001',
         runtimeImplementationBundle: createRuntimeImplementationBundle(),
-      });
+      }),
+  });
 
-      assertEqual(fakeBootstrap.bootstrapInputs.length, 1, 'Runtime should call bootstrap once');
-      assertEqual(
-        fakeBootstrap.bootstrapInputs[0]?.processName,
-        baseManifest.processName,
-        'Runtime should pass manifest processName to bootstrap',
-      );
-      assertEqual(fakeBootstrap.bootstrapInputs[0]?.mode, 'local_contract', 'Runtime should pass manifest mode to bootstrap');
-      assertEqual(handle.origin, 'http://127.0.0.1:53221', 'Runtime should expose bootstrap origin');
-      assertEqual(
-        handle.summary.runtimeImplementationBundle.serviceRuntimeAdmissionEvidenceId,
-        'local-project-service-runtime-admission-evidence-20260705',
-        'Runtime summary should carry service runtime admission bundle evidence',
-      );
-      assertEqual(
-        handle.summary.runtimeBundleEvidenceId,
-        'local-project-service-runtime-admission-evidence-20260705',
-        'Runtime summary should preserve bootstrap runtime bundle evidence id',
-      );
+  assertEqual(fakeBootstrap.bootstrapInputs.length, 1, 'Bundle drift check should happen after bootstrap summary exists');
+  assertEqual(
+    fakeBootstrap.shutdownRequests.length,
+    0,
+    'Bundle drift startup rejection should not pretend to run graceful shutdown',
+  );
+});
 
-      const health = handle.health({ requestId: 'health-001' });
-      const readiness = handle.readiness({ requestId: 'ready-001' });
+it('rejects production runtime manifest before bootstrap', async () => {
+  const fakeBootstrap = createFakeBootstrap();
+  const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
+    bootstrap: fakeBootstrap.bootstrap,
+  });
 
-      assertEqual(health.status, 'healthy', 'Ready runtime health probe should be healthy');
-      assertEqual(readiness.status, 'ready', 'Ready runtime readiness probe should be ready');
-      assertEqual(readiness.productionReady, false, 'Local runtime readiness must not claim production readiness');
-      assertEqual(
-        readiness.runtimeImplementationBundle?.runtimeImportModulePath,
-        'apps/api/src/finance/periodClosePostgresRuntimeImportContract.ts',
-        'Readiness probe should carry runtime import bundle evidence',
-      );
+  await assertRejectsIncludes({
+    expected: 'production_runtime_requires_separate_manual_approval',
+    message: 'Production runtime manifest should be rejected by local contract',
+    run: () =>
+      runtime.start({
+        manifest: {
+          ...baseManifest,
+          mode: 'production',
+          supervisor: 'production_process_manager',
+        },
+        requestId: 'runtime-production-001',
+        runtimeImplementationBundle: createRuntimeImplementationBundle(),
+      }),
+  });
 
-      const shutdown = await handle.shutdown({ requestId: 'runtime-shutdown-001' });
+  assertEqual(fakeBootstrap.bootstrapInputs.length, 0, 'Rejected production runtime must not call bootstrap');
+});
 
-      assertEqual(fakeBootstrap.shutdownRequests.length, 1, 'Runtime shutdown should call bootstrap shutdown once');
-      assertEqual(
-        fakeBootstrap.shutdownRequests[0],
-        'runtime-shutdown-001',
-        'Runtime shutdown should forward request id',
-      );
-      assertEqual(shutdown.lifecycleState, 'closed', 'Runtime shutdown should close lifecycle');
-      assertEqual(handle.readiness({ requestId: 'ready-after-close-001' }).status, 'not_ready', 'Closed runtime should not be ready');
-      assertDeepEqual(
-        eventNames(handle.readRuntimeEvents()),
-        [
-          'validate_runtime_manifest',
-          'start_bootstrap',
-          'validate_runtime_bundle_continuity',
-          'runtime_ready',
-          'read_health',
-          'read_readiness',
-          'mark_draining',
-          'delegate_bootstrap_shutdown',
-          'runtime_closed',
-          'read_readiness',
-        ],
-        'Runtime trace should record probe and graceful shutdown order',
-      );
-    },
-  },
-  {
-    name: 'rejects runtime startup when bootstrap node server bundle evidence drifts',
-    run: async () => {
-      const fakeBootstrap = createFakeBootstrap({
-        runtimeBundleEvidenceId: 'drifted-runtime-bundle-evidence',
-      });
-      const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
-        bootstrap: fakeBootstrap.bootstrap,
-      });
+it('rejects runtime manifest that exposes production traffic', async () => {
+  const fakeBootstrap = createFakeBootstrap();
+  const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
+    bootstrap: fakeBootstrap.bootstrap,
+  });
 
-      await assertRejectsIncludes({
-        expected: 'Finance project service process runtime bundle continuity rejected',
-        message: 'Runtime should reject bootstrap/runtime bundle evidence drift before ready',
-        run: () =>
-          runtime.start({
-            manifest: baseManifest,
-            requestId: 'runtime-bundle-drift-001',
-            runtimeImplementationBundle: createRuntimeImplementationBundle(),
-          }),
-      });
+  await assertRejectsIncludes({
+    expected: 'local_runtime_must_not_expose_production_traffic',
+    message: 'Local runtime should reject production traffic exposure',
+    run: () =>
+      runtime.start({
+        manifest: {
+          ...baseManifest,
+          exposesProductionTraffic: true,
+        },
+        requestId: 'runtime-production-traffic-001',
+        runtimeImplementationBundle: createRuntimeImplementationBundle(),
+      }),
+  });
 
-      assertEqual(fakeBootstrap.bootstrapInputs.length, 1, 'Bundle drift check should happen after bootstrap summary exists');
-      assertEqual(
-        fakeBootstrap.shutdownRequests.length,
-        0,
-        'Bundle drift startup rejection should not pretend to run graceful shutdown',
-      );
-    },
-  },
-  {
-    name: 'rejects production runtime manifest before bootstrap',
-    run: async () => {
-      const fakeBootstrap = createFakeBootstrap();
-      const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
-        bootstrap: fakeBootstrap.bootstrap,
-      });
+  assertEqual(fakeBootstrap.bootstrapInputs.length, 0, 'Rejected production traffic manifest must not call bootstrap');
+});
 
-      await assertRejectsIncludes({
-        expected: 'production_runtime_requires_separate_manual_approval',
-        message: 'Production runtime manifest should be rejected by local contract',
-        run: () =>
-          runtime.start({
-            manifest: {
-              ...baseManifest,
-              mode: 'production',
-              supervisor: 'production_process_manager',
-            },
-            requestId: 'runtime-production-001',
-            runtimeImplementationBundle: createRuntimeImplementationBundle(),
-          }),
-      });
+it('rejects invalid probe and shutdown manifest before bootstrap', async () => {
+  const fakeBootstrap = createFakeBootstrap();
+  const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
+    bootstrap: fakeBootstrap.bootstrap,
+  });
 
-      assertEqual(fakeBootstrap.bootstrapInputs.length, 0, 'Rejected production runtime must not call bootstrap');
-    },
-  },
-  {
-    name: 'rejects runtime manifest that exposes production traffic',
-    run: async () => {
-      const fakeBootstrap = createFakeBootstrap();
-      const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
-        bootstrap: fakeBootstrap.bootstrap,
-      });
+  await assertRejectsIncludes({
+    expected: 'health_path_must_be_absolute',
+    message: 'Runtime manifest should reject invalid probe path before bootstrap',
+    run: () =>
+      runtime.start({
+        manifest: {
+          ...baseManifest,
+          healthPath: 'healthz',
+          readinessPath: 'healthz',
+          shutdownTimeoutMs: 100,
+        },
+        requestId: 'runtime-invalid-probe-001',
+        runtimeImplementationBundle: createRuntimeImplementationBundle(),
+      }),
+  });
 
-      await assertRejectsIncludes({
-        expected: 'local_runtime_must_not_expose_production_traffic',
-        message: 'Local runtime should reject production traffic exposure',
-        run: () =>
-          runtime.start({
-            manifest: {
-              ...baseManifest,
-              exposesProductionTraffic: true,
-            },
-            requestId: 'runtime-production-traffic-001',
-            runtimeImplementationBundle: createRuntimeImplementationBundle(),
-          }),
-      });
-
-      assertEqual(fakeBootstrap.bootstrapInputs.length, 0, 'Rejected production traffic manifest must not call bootstrap');
-    },
-  },
-  {
-    name: 'rejects invalid probe and shutdown manifest before bootstrap',
-    run: async () => {
-      const fakeBootstrap = createFakeBootstrap();
-      const runtime = createFinanceHttpPostgresManagedProjectServiceProcessRuntimeContract({
-        bootstrap: fakeBootstrap.bootstrap,
-      });
-
-      await assertRejectsIncludes({
-        expected: 'health_path_must_be_absolute',
-        message: 'Runtime manifest should reject invalid probe path before bootstrap',
-        run: () =>
-          runtime.start({
-            manifest: {
-              ...baseManifest,
-              healthPath: 'healthz',
-              readinessPath: 'healthz',
-              shutdownTimeoutMs: 100,
-            },
-            requestId: 'runtime-invalid-probe-001',
-            runtimeImplementationBundle: createRuntimeImplementationBundle(),
-          }),
-      });
-
-      assertEqual(fakeBootstrap.bootstrapInputs.length, 0, 'Invalid probe manifest must not call bootstrap');
-    },
-  },
-];
-
-async function run() {
-  for (const test of tests) {
-    await test.run();
-  }
-}
-
-run().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
+  assertEqual(fakeBootstrap.bootstrapInputs.length, 0, 'Invalid probe manifest must not call bootstrap');
 });

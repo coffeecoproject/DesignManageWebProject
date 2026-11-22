@@ -8,17 +8,8 @@ import {
   getBankReconciliationResolution
 } from './financeBankReconciliationModel';
 import { getFinanceCategorySnapshot, getFinanceSeedPublicAccountRef, type FinanceTransactionRecord } from './financeData';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+import { it } from 'vitest';
+import { assertEqual } from '../../__tests__/assertions';
 
 function createBankRow(overrides: Partial<BankStatementRecord> = {}): BankStatementRecord {
   const publicAccountRef = getFinanceSeedPublicAccountRef();
@@ -77,205 +68,170 @@ function createFinanceRecord(overrides: Partial<FinanceTransactionRecord> = {}):
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'filters quick-registration categories by bank direction and public-account method',
-    run: () => {
-      const incomeOptions = getBankReconciliationCategoryOptions('入账');
-      const expenseOptions = getBankReconciliationCategoryOptions('出账');
-      const incomePrimaryOptions = getBankReconciliationPrimaryCategoryOptions('入账');
+it('filters quick-registration categories by bank direction and public-account method', () => {
+  const incomeOptions = getBankReconciliationCategoryOptions('入账');
+  const expenseOptions = getBankReconciliationCategoryOptions('出账');
+  const incomePrimaryOptions = getBankReconciliationPrimaryCategoryOptions('入账');
 
-      assertEqual(incomeOptions.some((category) => category.name === '客户回款'), true, 'income bank rows should allow customer payment');
-      assertEqual(incomeOptions.some((category) => category.name === '客户现金收款'), false, 'cash collection should not appear for bank rows');
-      assertEqual(expenseOptions.some((category) => category.name === '外协付款'), true, 'expense bank rows should allow outsource payment');
-      assertEqual(expenseOptions.some((category) => category.name === '客户回款'), false, 'income categories should not appear in expense rows');
-      assertEqual(incomePrimaryOptions.map((category) => category.name).join('|'), '客户收入|其他收入', 'primary categories should be derived from usable secondary categories');
-    }
-  },
-  {
-    name: 'builds pending-review system cash flow from unmatched bank statement',
-    run: () => {
-      const bankRow = createBankRow();
-      const form = createBankReconciliationFlowForm(bankRow);
-      const transaction = buildFinanceTransactionFromBankStatement(bankRow, form, [createFinanceRecord()]);
+  assertEqual(incomeOptions.some((category) => category.name === '客户回款'), true, 'income bank rows should allow customer payment');
+  assertEqual(incomeOptions.some((category) => category.name === '客户现金收款'), false, 'cash collection should not appear for bank rows');
+  assertEqual(expenseOptions.some((category) => category.name === '外协付款'), true, 'expense bank rows should allow outsource payment');
+  assertEqual(expenseOptions.some((category) => category.name === '客户回款'), false, 'income categories should not appear in expense rows');
+  assertEqual(incomePrimaryOptions.map((category) => category.name).join('|'), '客户收入|其他收入', 'primary categories should be derived from usable secondary categories');
+});
 
-      assertEqual(transaction.transactionNo, 'FIN-202606-0009', 'transaction number should follow current period sequence');
-      assertEqual(transaction.status, '待复核', 'bank-generated system cash flow should wait for finance review');
-      assertEqual(transaction.reconciliationStatus, '未对账', 'bank-generated system cash flow should not auto reconcile');
-      assertEqual(transaction.paymentMethod, '对公账户收款', 'income bank row should generate public-account receipt');
-      assertEqual(transaction.voucherStatus, '已上传', 'imported bank row should be retained as voucher evidence');
-      assertEqual(transaction.files[0]?.type, '银行流水', 'voucher file should mark the bank statement source');
-      assertEqual(transaction.sourceNo, 'CMB-TEST-001', 'source number should default to the bank serial number');
-    }
-  },
-  {
-    name: 'builds expense cash flow with public-account payment semantics',
-    run: () => {
-      const bankRow = createBankRow({
-        amount: 3200,
-        counterparty: '林悦',
-        direction: '出账',
-        summary: '空间设计外协任务结算'
-      });
-      const form = createBankReconciliationFlowForm(bankRow);
-      const transaction = buildFinanceTransactionFromBankStatement(bankRow, form, []);
+it('builds pending-review system cash flow from unmatched bank statement', () => {
+  const bankRow = createBankRow();
+  const form = createBankReconciliationFlowForm(bankRow);
+  const transaction = buildFinanceTransactionFromBankStatement(bankRow, form, [createFinanceRecord()]);
 
-      assertEqual(form.category, '外协付款', 'expense bank row should default to outsource payment');
-      assertEqual(transaction.direction, '支出', 'expense bank row should generate expense cash flow');
-      assertEqual(transaction.paymentMethod, '对公账户付款', 'expense bank row should generate public-account payment');
-      assertEqual(transaction.counterpartyType, '外协', 'outsource category should map counterparty type');
-      assertEqual(transaction.reviewDueAt, '2026-06-16', 'generated cash flow should carry review SLA');
-    }
-  },
-  {
-    name: 'builds reconciliation link with transaction line roles',
-    run: () => {
-      const origin = createFinanceRecord({
-        amount: 3200,
-        category: '外协付款',
-        counterparty: '林悦',
-        counterpartyType: '外协',
-        direction: '支出',
-        id: 'finance-bank-link-origin',
-        paymentMethod: '对公账户付款',
-        sourceNo: 'OUT-202606-0008',
-        sourceTitle: '空间设计外协任务结算',
-        sourceType: '外协结算',
-        transactionNo: 'FIN-202606-0004'
-      });
-      const adjustment = createFinanceRecord({
-        amount: 200,
-        counterparty: '林悦',
-        direction: '收入',
-        id: 'finance-bank-link-adjustment',
-        paymentMethod: '对公账户收款',
-        sourceNo: origin.transactionNo,
-        sourceTitle: '补差处理 / FIN-202606-0004 / CMB202606120002',
-        sourceType: '流水补差',
-        transactionNo: 'FIN-ADJ-202606-0001'
-      });
-      const bankRow = createBankRow({
-        amount: 3000,
-        bankSerialNo: 'CMB202606120002',
-        direction: '出账',
-        matchedTransactionIds: [origin.id, adjustment.id]
-      });
-      const link = buildFinanceBankReconciliationLinkRecord(bankRow, [origin, adjustment]);
+  assertEqual(transaction.transactionNo, 'FIN-202606-0009', 'transaction number should follow current period sequence');
+  assertEqual(transaction.status, '待复核', 'bank-generated system cash flow should wait for finance review');
+  assertEqual(transaction.reconciliationStatus, '未对账', 'bank-generated system cash flow should not auto reconcile');
+  assertEqual(transaction.paymentMethod, '对公账户收款', 'income bank row should generate public-account receipt');
+  assertEqual(transaction.voucherStatus, '已上传', 'imported bank row should be retained as voucher evidence');
+  assertEqual(transaction.files[0]?.type, '银行流水', 'voucher file should mark the bank statement source');
+  assertEqual(transaction.sourceNo, 'CMB-TEST-001', 'source number should default to the bank serial number');
+});
 
-      assertEqual(link.linkedTransactions.length, 2, 'reconciliation link should retain transaction detail rows');
-      assertEqual(link.linkedTransactions[0]?.role, '主流水', 'first origin row should be the primary cash-flow line');
-      assertEqual(link.linkedTransactions[0]?.direction, '支出', 'link detail should keep system cash-flow direction snapshot');
-      assertEqual(link.linkedTransactions[1]?.role, '补差流水', 'amount adjustment row should be marked as adjustment line');
-      assertEqual(link.linkedTransactions[1]?.financeTransactionNo, adjustment.transactionNo, 'link detail should keep transaction number snapshot');
-    }
-  },
-  {
-    name: 'keeps amount mismatch waiting while adjustment flow is pending review',
-    run: () => {
-      const origin = createFinanceRecord({
-        amount: 3200,
-        category: '外协付款',
-        counterparty: '林悦',
-        counterpartyType: '外协',
-        direction: '支出',
-        id: 'finance-bank-reconcile-origin',
-        paymentMethod: '对公账户付款',
-        sourceNo: 'OUT-202606-0008',
-        sourceTitle: '空间设计外协任务结算',
-        sourceType: '外协结算',
-        transactionNo: 'FIN-202606-0004'
-      });
-      const bankRow = createBankRow({
-        amount: 3000,
-        bankSerialNo: 'CMB202606120002',
-        counterparty: '林悦',
-        direction: '出账',
-        matchedTransactionIds: [origin.id, 'finance-bank-reconcile-adjust-pending'],
-        matchStatus: '金额不一致',
-        summary: '空间设计外协任务结算'
-      });
-      const pendingAdjustment = createFinanceRecord({
-        amount: 200,
-        counterparty: '林悦',
-        direction: '收入',
-        id: 'finance-bank-reconcile-adjust-pending',
-        paymentMethod: '对公账户收款',
-        sourceNo: origin.transactionNo,
-        sourceTitle: `补差处理 / ${origin.transactionNo} / ${bankRow.bankSerialNo}`,
-        sourceType: '流水补差',
-        status: '待复核',
-        transactionNo: 'FIN-ADJ-202606-0001'
-      });
-      const resolution = getBankReconciliationResolution(bankRow, origin, [origin, pendingAdjustment]);
-
-      assertEqual(resolution.effectiveStatus, '暂不可对账', 'pending adjustment should block bank confirmation');
-      assertEqual(resolution.pendingAdjustmentRecords.length, 1, 'pending adjustment should be tracked');
-      assertEqual(resolution.canConfirmWithAdjustments, false, 'pending adjustment should not be confirmable');
-    }
-  },
-  {
-    name: 'turns amount mismatch into confirmable item after reviewed adjustment offsets difference',
-    run: () => {
-      const origin = createFinanceRecord({
-        amount: 3200,
-        category: '外协付款',
-        counterparty: '林悦',
-        counterpartyType: '外协',
-        direction: '支出',
-        id: 'finance-bank-reconcile-origin',
-        paymentMethod: '对公账户付款',
-        sourceNo: 'OUT-202606-0008',
-        sourceTitle: '空间设计外协任务结算',
-        sourceType: '外协结算',
-        transactionNo: 'FIN-202606-0004'
-      });
-      const bankRow = createBankRow({
-        amount: 3000,
-        bankSerialNo: 'CMB202606120002',
-        counterparty: '林悦',
-        direction: '出账',
-        matchedTransactionIds: [origin.id, 'finance-bank-reconcile-adjust-reviewed'],
-        matchStatus: '金额不一致',
-        summary: '空间设计外协任务结算'
-      });
-      const reviewedAdjustment = createFinanceRecord({
-        amount: 200,
-        counterparty: '林悦',
-        direction: '收入',
-        id: 'finance-bank-reconcile-adjust-reviewed',
-        paymentMethod: '对公账户收款',
-        sourceNo: origin.transactionNo,
-        sourceTitle: `补差处理 / ${origin.transactionNo} / ${bankRow.bankSerialNo}`,
-        sourceType: '流水补差',
-        status: '已入账',
-        transactionNo: 'FIN-ADJ-202606-0001'
-      });
-      const resolution = getBankReconciliationResolution(bankRow, origin, [origin, reviewedAdjustment]);
-
-      assertEqual(resolution.effectiveStatus, '待确认', 'reviewed adjustment should make mismatch confirmable');
-      assertEqual(resolution.remainingDifference, 0, 'reviewed adjustment should offset the signed bank difference');
-      assertEqual(resolution.canConfirmWithAdjustments, true, 'reviewed adjustment should allow confirmation');
-      assertEqual(resolution.reviewedAdjustmentRecords.length, 1, 'reviewed adjustment should be tracked');
-    }
-  }
-];
-
-export function runFinanceBankReconciliationModelTests() {
-  const failures: string[] = [];
-  let passed = 0;
-
-  tests.forEach((test) => {
-    try {
-      test.run();
-      passed += 1;
-    } catch (error) {
-      failures.push(`${test.name}: ${(error as Error).message}`);
-    }
+it('builds expense cash flow with public-account payment semantics', () => {
+  const bankRow = createBankRow({
+    amount: 3200,
+    counterparty: '林悦',
+    direction: '出账',
+    summary: '空间设计外协任务结算'
   });
+  const form = createBankReconciliationFlowForm(bankRow);
+  const transaction = buildFinanceTransactionFromBankStatement(bankRow, form, []);
 
-  return {
-    failures,
-    passed,
-    total: tests.length
-  };
-}
+  assertEqual(form.category, '外协付款', 'expense bank row should default to outsource payment');
+  assertEqual(transaction.direction, '支出', 'expense bank row should generate expense cash flow');
+  assertEqual(transaction.paymentMethod, '对公账户付款', 'expense bank row should generate public-account payment');
+  assertEqual(transaction.counterpartyType, '外协', 'outsource category should map counterparty type');
+  assertEqual(transaction.reviewDueAt, '2026-06-16', 'generated cash flow should carry review SLA');
+});
+
+it('builds reconciliation link with transaction line roles', () => {
+  const origin = createFinanceRecord({
+    amount: 3200,
+    category: '外协付款',
+    counterparty: '林悦',
+    counterpartyType: '外协',
+    direction: '支出',
+    id: 'finance-bank-link-origin',
+    paymentMethod: '对公账户付款',
+    sourceNo: 'OUT-202606-0008',
+    sourceTitle: '空间设计外协任务结算',
+    sourceType: '外协结算',
+    transactionNo: 'FIN-202606-0004'
+  });
+  const adjustment = createFinanceRecord({
+    amount: 200,
+    counterparty: '林悦',
+    direction: '收入',
+    id: 'finance-bank-link-adjustment',
+    paymentMethod: '对公账户收款',
+    sourceNo: origin.transactionNo,
+    sourceTitle: '补差处理 / FIN-202606-0004 / CMB202606120002',
+    sourceType: '流水补差',
+    transactionNo: 'FIN-ADJ-202606-0001'
+  });
+  const bankRow = createBankRow({
+    amount: 3000,
+    bankSerialNo: 'CMB202606120002',
+    direction: '出账',
+    matchedTransactionIds: [origin.id, adjustment.id]
+  });
+  const link = buildFinanceBankReconciliationLinkRecord(bankRow, [origin, adjustment]);
+
+  assertEqual(link.linkedTransactions.length, 2, 'reconciliation link should retain transaction detail rows');
+  assertEqual(link.linkedTransactions[0]?.role, '主流水', 'first origin row should be the primary cash-flow line');
+  assertEqual(link.linkedTransactions[0]?.direction, '支出', 'link detail should keep system cash-flow direction snapshot');
+  assertEqual(link.linkedTransactions[1]?.role, '补差流水', 'amount adjustment row should be marked as adjustment line');
+  assertEqual(link.linkedTransactions[1]?.financeTransactionNo, adjustment.transactionNo, 'link detail should keep transaction number snapshot');
+});
+
+it('keeps amount mismatch waiting while adjustment flow is pending review', () => {
+  const origin = createFinanceRecord({
+    amount: 3200,
+    category: '外协付款',
+    counterparty: '林悦',
+    counterpartyType: '外协',
+    direction: '支出',
+    id: 'finance-bank-reconcile-origin',
+    paymentMethod: '对公账户付款',
+    sourceNo: 'OUT-202606-0008',
+    sourceTitle: '空间设计外协任务结算',
+    sourceType: '外协结算',
+    transactionNo: 'FIN-202606-0004'
+  });
+  const bankRow = createBankRow({
+    amount: 3000,
+    bankSerialNo: 'CMB202606120002',
+    counterparty: '林悦',
+    direction: '出账',
+    matchedTransactionIds: [origin.id, 'finance-bank-reconcile-adjust-pending'],
+    matchStatus: '金额不一致',
+    summary: '空间设计外协任务结算'
+  });
+  const pendingAdjustment = createFinanceRecord({
+    amount: 200,
+    counterparty: '林悦',
+    direction: '收入',
+    id: 'finance-bank-reconcile-adjust-pending',
+    paymentMethod: '对公账户收款',
+    sourceNo: origin.transactionNo,
+    sourceTitle: `补差处理 / ${origin.transactionNo} / ${bankRow.bankSerialNo}`,
+    sourceType: '流水补差',
+    status: '待复核',
+    transactionNo: 'FIN-ADJ-202606-0001'
+  });
+  const resolution = getBankReconciliationResolution(bankRow, origin, [origin, pendingAdjustment]);
+
+  assertEqual(resolution.effectiveStatus, '暂不可对账', 'pending adjustment should block bank confirmation');
+  assertEqual(resolution.pendingAdjustmentRecords.length, 1, 'pending adjustment should be tracked');
+  assertEqual(resolution.canConfirmWithAdjustments, false, 'pending adjustment should not be confirmable');
+});
+
+it('turns amount mismatch into confirmable item after reviewed adjustment offsets difference', () => {
+  const origin = createFinanceRecord({
+    amount: 3200,
+    category: '外协付款',
+    counterparty: '林悦',
+    counterpartyType: '外协',
+    direction: '支出',
+    id: 'finance-bank-reconcile-origin',
+    paymentMethod: '对公账户付款',
+    sourceNo: 'OUT-202606-0008',
+    sourceTitle: '空间设计外协任务结算',
+    sourceType: '外协结算',
+    transactionNo: 'FIN-202606-0004'
+  });
+  const bankRow = createBankRow({
+    amount: 3000,
+    bankSerialNo: 'CMB202606120002',
+    counterparty: '林悦',
+    direction: '出账',
+    matchedTransactionIds: [origin.id, 'finance-bank-reconcile-adjust-reviewed'],
+    matchStatus: '金额不一致',
+    summary: '空间设计外协任务结算'
+  });
+  const reviewedAdjustment = createFinanceRecord({
+    amount: 200,
+    counterparty: '林悦',
+    direction: '收入',
+    id: 'finance-bank-reconcile-adjust-reviewed',
+    paymentMethod: '对公账户收款',
+    sourceNo: origin.transactionNo,
+    sourceTitle: `补差处理 / ${origin.transactionNo} / ${bankRow.bankSerialNo}`,
+    sourceType: '流水补差',
+    status: '已入账',
+    transactionNo: 'FIN-ADJ-202606-0001'
+  });
+  const resolution = getBankReconciliationResolution(bankRow, origin, [origin, reviewedAdjustment]);
+
+  assertEqual(resolution.effectiveStatus, '待确认', 'reviewed adjustment should make mismatch confirmable');
+  assertEqual(resolution.remainingDifference, 0, 'reviewed adjustment should offset the signed bank difference');
+  assertEqual(resolution.canConfirmWithAdjustments, true, 'reviewed adjustment should allow confirmation');
+  assertEqual(resolution.reviewedAdjustmentRecords.length, 1, 'reviewed adjustment should be tracked');
+});

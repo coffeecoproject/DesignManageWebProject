@@ -266,5 +266,7 @@ Close-out must state:
 
 ## 10. Project-Specific Notes
 
+- Tests run through testpace (`testpace.json`): `testpace focused` after changes, `testpace files <file>[:line]` to rerun given tests, `testpace full` before landing on main. Running Vitest or app scripts directly leaves no record for the merge gate.
+
 - Business requirements are intentionally pending until the user confirms scope.
 - Current bootstrap only creates governance assets. It does not initialize a frontend framework, backend runtime, database, deployment, CI/CD, secrets, or production infrastructure.

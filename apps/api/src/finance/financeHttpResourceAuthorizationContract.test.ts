@@ -16,29 +16,8 @@ import type {
   PersistentAccountingPeriodRecord,
   PersistentFinanceSourceRecord
 } from './periodClosePersistenceContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assert, assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function parseBody(bodyText: string) {
   return JSON.parse(bodyText) as unknown;
@@ -160,106 +139,91 @@ function createHandlerStack(principal: FinanceHttpAuthenticatedPrincipal) {
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects finance requests without ledger resource scope before gateway mutation',
-    run: () => {
-      const { handler, repository } = createHandlerStack(createPrincipal([]));
-      const response = handler.handleServerHandlerRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'resource-close-denied-001',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          authorization: 'Bearer finance-resource-token',
-          'content-type': 'application/json'
-        },
-        method: 'POST',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseBody(response.bodyText);
+it('rejects finance requests without ledger resource scope before gateway mutation', () => {
+  const { handler, repository } = createHandlerStack(createPrincipal([]));
+  const response = handler.handleServerHandlerRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'resource-close-denied-001',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      authorization: 'Bearer finance-resource-token',
+      'content-type': 'application/json'
+    },
+    method: 'POST',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseBody(response.bodyText);
 
-      assertObject(body, 'resource authorization rejection body should be object');
-      assertEqual(response.status, 403, 'missing ledger resource scope should reject close');
-      assertEqual(body.code, 'FORBIDDEN', 'missing ledger resource should use forbidden code');
-      assertEqual(body.resourceKey, 'default-ledger', 'resource rejection should expose ledger key');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'resource rejection must not close period');
-      assertEqual(repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events.length, 0, 'resource rejection must not write close events');
-    }
-  },
-  {
-    name: 'ignores client supplied ledger resource escalation and keeps server principal authoritative',
-    run: () => {
-      const { handler, repository } = createHandlerStack(createPrincipal([]));
-      const response = handler.handleServerHandlerRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'resource-client-forged-001',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          authorization: 'Bearer finance-resource-token',
-          'content-type': 'application/json',
-          'x-finance-resource-scopes': 'finance.ledger:*'
-        },
-        method: 'POST',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
+  assertObject(body, 'resource authorization rejection body should be object');
+  assertEqual(response.status, 403, 'missing ledger resource scope should reject close');
+  assertEqual(body.code, 'FORBIDDEN', 'missing ledger resource should use forbidden code');
+  assertEqual(body.resourceKey, 'default-ledger', 'resource rejection should expose ledger key');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'resource rejection must not close period');
+  assertEqual(repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events.length, 0, 'resource rejection must not write close events');
+});
 
-      assertEqual(response.status, 403, 'client supplied resource scope should not grant access');
-      assertEqual(repository.readState().periods[0]?.status, '开放', 'forged resource scope must not close period');
-    }
-  },
-  {
-    name: 'allows exact ledger resource scope through server handler chain',
-    run: () => {
-      const { handler, repository } = createHandlerStack(createPrincipal(['finance.ledger:default-ledger']));
-      const response = handler.handleServerHandlerRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'resource-close-allowed-001',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          authorization: 'Bearer finance-resource-token',
-          'content-type': 'application/json'
-        },
-        method: 'POST',
-        url: 'https://sms.test/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseBody(response.bodyText);
-      const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
+it('ignores client supplied ledger resource escalation and keeps server principal authoritative', () => {
+  const { handler, repository } = createHandlerStack(createPrincipal([]));
+  const response = handler.handleServerHandlerRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'resource-client-forged-001',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      authorization: 'Bearer finance-resource-token',
+      'content-type': 'application/json',
+      'x-finance-resource-scopes': 'finance.ledger:*'
+    },
+    method: 'POST',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
 
-      assertObject(body, 'resource-authorized close body should be object');
-      assertEqual(response.status, 201, 'principal with ledger resource should close period');
-      assertEqual(repository.readState().periods[0]?.status, '已结账', 'resource-authorized close should lock period');
-      assertObject(body.closedBySnapshot, 'close response should include actor snapshot');
-      assertEqual(body.closedBySnapshot.id, 'user-resource-001', 'close actor should be server principal');
-      assert(event !== undefined, 'resource-authorized close should write close event');
-      assertEqual(event.request_id, 'req-resource-authorization-001', 'close event should use trusted request id');
-    }
-  },
-  {
-    name: 'allows wildcard ledger resource scope through server handler chain',
-    run: () => {
-      const { handler } = createHandlerStack(createPrincipal(['finance.ledger:*']));
-      const response = handler.handleServerHandlerRequest({
-        headers: {
-          authorization: 'Bearer finance-resource-token'
-        },
-        method: 'GET',
-        url: '/api/finance/accounting-periods/2026-06/close-checks'
-      });
-      const body = parseBody(response.bodyText);
+  assertEqual(response.status, 403, 'client supplied resource scope should not grant access');
+  assertEqual(repository.readState().periods[0]?.status, '开放', 'forged resource scope must not close period');
+});
 
-      assertObject(body, 'resource-authorized close checks body should be object');
-      assertEqual(response.status, 200, 'wildcard ledger resource should read close checks');
-      assertEqual(body.period, '2026-06', 'close checks should still read requested period');
-    }
-  }
-];
+it('allows exact ledger resource scope through server handler chain', () => {
+  const { handler, repository } = createHandlerStack(createPrincipal(['finance.ledger:default-ledger']));
+  const response = handler.handleServerHandlerRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'resource-close-allowed-001',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      authorization: 'Bearer finance-resource-token',
+      'content-type': 'application/json'
+    },
+    method: 'POST',
+    url: 'https://sms.test/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseBody(response.bodyText);
+  const event = repository.readDatabaseSnapshot().periodCloseRows.accounting_period_events[0];
 
-for (const test of tests) {
-  test.run();
-}
+  assertObject(body, 'resource-authorized close body should be object');
+  assertEqual(response.status, 201, 'principal with ledger resource should close period');
+  assertEqual(repository.readState().periods[0]?.status, '已结账', 'resource-authorized close should lock period');
+  assertObject(body.closedBySnapshot, 'close response should include actor snapshot');
+  assertEqual(body.closedBySnapshot.id, 'user-resource-001', 'close actor should be server principal');
+  assert(event !== undefined, 'resource-authorized close should write close event');
+  assertEqual(event.request_id, 'req-resource-authorization-001', 'close event should use trusted request id');
+});
+
+it('allows wildcard ledger resource scope through server handler chain', () => {
+  const { handler } = createHandlerStack(createPrincipal(['finance.ledger:*']));
+  const response = handler.handleServerHandlerRequest({
+    headers: {
+      authorization: 'Bearer finance-resource-token'
+    },
+    method: 'GET',
+    url: '/api/finance/accounting-periods/2026-06/close-checks'
+  });
+  const body = parseBody(response.bodyText);
+
+  assertObject(body, 'resource-authorized close checks body should be object');
+  assertEqual(response.status, 200, 'wildcard ledger resource should read close checks');
+  assertEqual(body.period, '2026-06', 'close checks should still read requested period');
+});

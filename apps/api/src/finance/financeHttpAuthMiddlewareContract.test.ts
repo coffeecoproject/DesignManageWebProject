@@ -12,23 +12,8 @@ import type { CashFlowMappingRecord, FinancialStatementLedgerEntry } from './fin
 import type { GeneralLedgerSubjectRecord } from './generalLedgerContract.js';
 import type { FinancePeriodClosePermissionScope } from './periodCloseAuthorizationContract.js';
 import { requiredCloseCheckCodes, type AccountingPeriodRecord, type CloseCheckRow } from './periodCloseContract.js';
-
-type UnitTest = {
-  name: string;
-  run: () => void;
-};
-
-function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}. Expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
-
-function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(message);
-  }
-}
+import { it } from 'vitest';
+import { assertEqual, assertObject } from '../__tests__/assertions.js';
 
 function parseResponseBody(responseBodyText: string) {
   return JSON.parse(responseBodyText) as unknown;
@@ -210,175 +195,160 @@ function createGatewayState(): FinanceHttpApiGatewayState {
   };
 }
 
-const tests: UnitTest[] = [
-  {
-    name: 'rejects unauthenticated requests before transport delegation',
-    run: () => {
-      let delegated = false;
-      const middleware = createFinanceHttpAuthMiddleware({
-        transport: createFinanceHttpJsonTransport({
-          handle: () => {
-            delegated = true;
+it('rejects unauthenticated requests before transport delegation', () => {
+  let delegated = false;
+  const middleware = createFinanceHttpAuthMiddleware({
+    transport: createFinanceHttpJsonTransport({
+      handle: () => {
+        delegated = true;
 
-            return {
-              body: {},
-              headers: {},
-              status: 200
-            };
-          }
-        })
-      });
-      const response = middleware.handleAuthenticatedRequest({
-        method: 'GET',
-        url: '/api/finance/accounting-periods'
-      });
-      const body = parseResponseBody(response.bodyText);
+        return {
+          body: {},
+          headers: {},
+          status: 200
+        };
+      }
+    })
+  });
+  const response = middleware.handleAuthenticatedRequest({
+    method: 'GET',
+    url: '/api/finance/accounting-periods'
+  });
+  const body = parseResponseBody(response.bodyText);
 
-      assertEqual(response.status, 401, 'unauthenticated request should be rejected');
-      assertEqual(delegated, false, 'unauthenticated request should not reach transport');
-      assertObject(body, 'unauthenticated response should be JSON');
-      assertEqual(body.code, 'UNAUTHENTICATED', 'unauthenticated response should use stable code');
-    }
-  },
-  {
-    name: 'injects server-owned actor permission and request context instead of trusting client headers',
-    run: () => {
-      let delegatedHeaders: Record<string, string | undefined> | undefined;
-      const middleware = createFinanceHttpAuthMiddleware({
-        transport: createFinanceHttpJsonTransport({
-          handle: (request) => {
-            delegatedHeaders = request.headers;
+  assertEqual(response.status, 401, 'unauthenticated request should be rejected');
+  assertEqual(delegated, false, 'unauthenticated request should not reach transport');
+  assertObject(body, 'unauthenticated response should be JSON');
+  assertEqual(body.code, 'UNAUTHENTICATED', 'unauthenticated response should use stable code');
+});
 
-            return {
-              body: {
-                actorId: request.headers?.['x-actor-id'],
-                permissionScopes: request.headers?.['x-permission-scopes'],
-                requestId: request.headers?.['x-request-id']
-              },
-              headers: {},
-              status: 200
-            };
-          }
-        })
-      });
-      const response = middleware.handleAuthenticatedRequest({
-        headers: {
-          'content-type': 'application/json',
-          'x-actor-id': 'forged-user',
-          'x-permission-scopes': 'finance.accountingPeriod.close'
-        },
-        method: 'GET',
-        principal: createPrincipal(['finance.accountingPeriod.read']),
-        receivedAt: '2026-07-04T13:00:00+08:00',
-        requestId: 'req-auth-middleware-001',
-        url: '/api/finance/accounting-periods'
-      });
-      const body = parseResponseBody(response.bodyText);
+it('injects server-owned actor permission and request context instead of trusting client headers', () => {
+  let delegatedHeaders: Record<string, string | undefined> | undefined;
+  const middleware = createFinanceHttpAuthMiddleware({
+    transport: createFinanceHttpJsonTransport({
+      handle: (request) => {
+        delegatedHeaders = request.headers;
 
-      assertObject(body, 'middleware response should be JSON');
-      assertEqual(body.actorId, 'user-auth-001', 'server principal should own actor id');
-      assertEqual(
-        body.permissionScopes,
-        'finance.accountingPeriod.read',
-        'server principal should own permission scopes'
-      );
-      assertEqual(body.requestId, 'req-auth-middleware-001', 'server request id should be injected');
-      assertEqual(delegatedHeaders?.['x-actor-id'], 'user-auth-001', 'delegated actor header should be trusted actor');
-      assertEqual(
-        delegatedHeaders?.['x-request-time'],
-        '2026-07-04T13:00:00+08:00',
-        'delegated request time should be server supplied'
-      );
-    }
-  },
-  {
-    name: 'prevents client-supplied permission escalation from closing a period',
-    run: () => {
-      let state = createGatewayState();
-      const middleware = createFinanceHttpAuthMiddleware({
-        transport: createFinanceHttpJsonTransport({
-          handle: (request) => {
-            const response = handleFinanceHttpApiGateway({
-              request,
-              state
-            });
+        return {
+          body: {
+            actorId: request.headers?.['x-actor-id'],
+            permissionScopes: request.headers?.['x-permission-scopes'],
+            requestId: request.headers?.['x-request-id']
+          },
+          headers: {},
+          status: 200
+        };
+      }
+    })
+  });
+  const response = middleware.handleAuthenticatedRequest({
+    headers: {
+      'content-type': 'application/json',
+      'x-actor-id': 'forged-user',
+      'x-permission-scopes': 'finance.accountingPeriod.close'
+    },
+    method: 'GET',
+    principal: createPrincipal(['finance.accountingPeriod.read']),
+    receivedAt: '2026-07-04T13:00:00+08:00',
+    requestId: 'req-auth-middleware-001',
+    url: '/api/finance/accounting-periods'
+  });
+  const body = parseResponseBody(response.bodyText);
 
-            state = response.state;
+  assertObject(body, 'middleware response should be JSON');
+  assertEqual(body.actorId, 'user-auth-001', 'server principal should own actor id');
+  assertEqual(
+    body.permissionScopes,
+    'finance.accountingPeriod.read',
+    'server principal should own permission scopes'
+  );
+  assertEqual(body.requestId, 'req-auth-middleware-001', 'server request id should be injected');
+  assertEqual(delegatedHeaders?.['x-actor-id'], 'user-auth-001', 'delegated actor header should be trusted actor');
+  assertEqual(
+    delegatedHeaders?.['x-request-time'],
+    '2026-07-04T13:00:00+08:00',
+    'delegated request time should be server supplied'
+  );
+});
 
-            return response;
-          }
-        })
-      });
-      const response = middleware.handleAuthenticatedRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'auth-close-202606',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          'content-type': 'application/json',
-          'x-permission-scopes': 'finance.accountingPeriod.close'
-        },
-        method: 'POST',
-        principal: createPrincipal(['finance.accountingPeriod.read']),
-        receivedAt: '2026-07-04T13:10:00+08:00',
-        requestId: 'req-auth-close-denied',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseResponseBody(response.bodyText);
+it('prevents client-supplied permission escalation from closing a period', () => {
+  let state = createGatewayState();
+  const middleware = createFinanceHttpAuthMiddleware({
+    transport: createFinanceHttpJsonTransport({
+      handle: (request) => {
+        const response = handleFinanceHttpApiGateway({
+          request,
+          state
+        });
 
-      assertEqual(response.status, 403, 'read-only principal should not close period');
-      assertObject(body, 'forbidden response should be JSON');
-      assertEqual(body.code, 'FORBIDDEN', 'gateway should return stable forbidden code');
-      assertEqual(state.periodClose.periods[0]?.status, '开放', 'failed auth close should not lock period');
-    }
-  },
-  {
-    name: 'allows scoped active principal to close period through auth middleware and transport',
-    run: () => {
-      let state = createGatewayState();
-      const middleware = createFinanceHttpAuthMiddleware({
-        transport: createFinanceHttpJsonTransport({
-          handle: (request) => {
-            const response = handleFinanceHttpApiGateway({
-              request,
-              state
-            });
+        state = response.state;
 
-            state = response.state;
+        return response;
+      }
+    })
+  });
+  const response = middleware.handleAuthenticatedRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'auth-close-202606',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      'content-type': 'application/json',
+      'x-permission-scopes': 'finance.accountingPeriod.close'
+    },
+    method: 'POST',
+    principal: createPrincipal(['finance.accountingPeriod.read']),
+    receivedAt: '2026-07-04T13:10:00+08:00',
+    requestId: 'req-auth-close-denied',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseResponseBody(response.bodyText);
 
-            return response;
-          }
-        })
-      });
-      const response = middleware.handleAuthenticatedRequest({
-        bodyText: JSON.stringify({
-          idempotencyKey: 'auth-close-allowed-202606',
-          reason: '2026-06 月结',
-          version: 1
-        }),
-        headers: {
-          'content-type': 'application/json'
-        },
-        method: 'POST',
-        principal: createPrincipal(['finance.accountingPeriod.close']),
-        receivedAt: '2026-07-04T13:20:00+08:00',
-        requestId: 'req-auth-close-allowed',
-        url: '/api/finance/accounting-periods/2026-06/close'
-      });
-      const body = parseResponseBody(response.bodyText);
+  assertEqual(response.status, 403, 'read-only principal should not close period');
+  assertObject(body, 'forbidden response should be JSON');
+  assertEqual(body.code, 'FORBIDDEN', 'gateway should return stable forbidden code');
+  assertEqual(state.periodClose.periods[0]?.status, '开放', 'failed auth close should not lock period');
+});
 
-      assertEqual(response.status, 201, 'scoped active principal should close period');
-      assertObject(body, 'close response should be JSON');
-      assertEqual(body.status, '已结账', 'close response should expose closed period status');
-      assertObject(body.closedBySnapshot, 'close response should include server-owned close actor');
-      assertEqual(body.closedBySnapshot.id, 'user-auth-001', 'close actor should come from authenticated principal');
-      assertEqual(body.closedAt, '2026-07-04T13:20:00+08:00', 'close time should come from authenticated request context');
-      assertEqual(state.periodClose.periods[0]?.status, '已结账', 'authorized close should lock period');
-    }
-  }
-];
+it('allows scoped active principal to close period through auth middleware and transport', () => {
+  let state = createGatewayState();
+  const middleware = createFinanceHttpAuthMiddleware({
+    transport: createFinanceHttpJsonTransport({
+      handle: (request) => {
+        const response = handleFinanceHttpApiGateway({
+          request,
+          state
+        });
 
-for (const test of tests) {
-  test.run();
-}
+        state = response.state;
+
+        return response;
+      }
+    })
+  });
+  const response = middleware.handleAuthenticatedRequest({
+    bodyText: JSON.stringify({
+      idempotencyKey: 'auth-close-allowed-202606',
+      reason: '2026-06 月结',
+      version: 1
+    }),
+    headers: {
+      'content-type': 'application/json'
+    },
+    method: 'POST',
+    principal: createPrincipal(['finance.accountingPeriod.close']),
+    receivedAt: '2026-07-04T13:20:00+08:00',
+    requestId: 'req-auth-close-allowed',
+    url: '/api/finance/accounting-periods/2026-06/close'
+  });
+  const body = parseResponseBody(response.bodyText);
+
+  assertEqual(response.status, 201, 'scoped active principal should close period');
+  assertObject(body, 'close response should be JSON');
+  assertEqual(body.status, '已结账', 'close response should expose closed period status');
+  assertObject(body.closedBySnapshot, 'close response should include server-owned close actor');
+  assertEqual(body.closedBySnapshot.id, 'user-auth-001', 'close actor should come from authenticated principal');
+  assertEqual(body.closedAt, '2026-07-04T13:20:00+08:00', 'close time should come from authenticated request context');
+  assertEqual(state.periodClose.periods[0]?.status, '已结账', 'authorized close should lock period');
+});
