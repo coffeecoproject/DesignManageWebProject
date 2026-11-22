@@ -19,7 +19,8 @@ function setup() {
       return true;
     }
   };
-  const service=createYhtLedgerService({repository,newId:()=>('yht-'+(++counter)),now:()=> '2026-11-22T17:00:00+08:00'});
+  const resolveDesigner=async(id)=>id==='a'?{id:'a',name:'设计师A',enabled:true,role:'designer'}:id==='b'?{id:'b',name:'设计师B',enabled:true,role:'designer'}:null;
+  const service=createYhtLedgerService({repository,newId:()=>('yht-'+(++counter)),now:()=> '2026-11-22T17:00:00+08:00',resolveDesigner});
   return {service, records, audit};
 }
 const manager={userId:'owner',role:'manager',enabled:true};
@@ -72,4 +73,11 @@ test('仅负责人可以导出，内容不含内部备注',async()=>{
   const csv=await service.exportForClient(manager);
   assert.ok(csv.includes("'=1+1"));
   assert.equal(csv.includes('机密内部记录'),false);
+});
+
+test('只允许派单给真实启用的设计师账号',async()=>{
+  const {service}=setup();
+  await assert.rejects(()=>service.assign(manager,{...input,designerId:'invalid'}),/设计师账号/);
+  const p=await service.assign(manager,{...input,designerName:'伪造的设计师姓名'});
+  assert.equal(p.designerName,'设计师A');
 });
