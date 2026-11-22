@@ -46,3 +46,23 @@ CREATE INDEX IF NOT EXISTS yht_ledger_audit_events_project_idx
 
 -- 历史迁移时 source_record_id 去重，绝不根据店名或合同号简单合并。
 -- 不执行任何真实台账导入、TRUNCATE、DROP或生产数据库修改。
+
+-- 益禾堂独立门户账号。不能使用前端演示账号作为真实身份。
+CREATE TABLE IF NOT EXISTS yht_portal_accounts (
+  id text PRIMARY KEY,
+  username text NOT NULL UNIQUE,
+  display_name text NOT NULL,
+  role text NOT NULL CHECK (role IN ('manager','designer','executive')),
+  password_salt text NOT NULL,
+  password_hash text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS yht_portal_sessions (
+  token_hash text PRIMARY KEY,
+  account_id text NOT NULL REFERENCES yht_portal_accounts(id),
+  csrf_token text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS yht_portal_sessions_expiry_idx ON yht_portal_sessions(expires_at);
