@@ -40,7 +40,7 @@ Run commands from anywhere inside the repository. Scripts resolve the repository
 | Run period-close PostgreSQL persisted replay drill | `corepack pnpm db:period-close:replay-drill` |
 | Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` |
 | Show logs | `scripts/local/db-logs.sh` |
-| Sleep Postgres without deleting data | `scripts/local/db-down.sh` |
+| Sleep Postgres without deleting data | `scripts/local/db-sleep.sh` |
 
 The period-close commands do not touch the development database: each run starts its own throwaway napbox
 Postgres (`napbox up --temp period-close-drill-<pid>`, defined by the same `compose.yaml`), runs psql inside it,
@@ -67,9 +67,9 @@ postgres://startupmanage_app:startupmanage_local_dev_only@postgres:5432/startupm
 
 Do not delete local database data without explicit user approval.
 
-The period-close isolated apply, replay, and concurrency drills run in a throwaway environment and may create
-and drop only schemas named `period_close_drill_*` there. They must not drop tables, truncate rows,
-delete rows, drop the `public` schema, or remove the data volume.
+The period-close dry-run, apply, replay, and concurrency drills each run in their own throwaway napbox
+environment, which is deleted with its data when the drill exits; they never touch this worktree's
+development database. The generated SQL must still not drop tables, truncate rows, or delete rows.
 
 Commands such as these are destructive because they delete local database data:
 
@@ -106,13 +106,12 @@ If host tools cannot connect:
 
 This runbook and the scripts prove only that local dependency commands exist.
 The period-close dry-run command executes generated DDL and schema assertions
-inside a throwaway local PostgreSQL transaction and rolls back. The period-close isolated
-apply drill commits generated DDL and fixture writes only inside a temporary
-`period_close_drill_*` schema, verifies the local write path, and then drops
-that isolated schema. The period-close row-lock concurrency drill runs two local
-psql sessions against the same isolated schema to prove `FOR UPDATE` lock
+inside a throwaway local PostgreSQL transaction and rolls back. The period-close
+apply drill commits generated DDL and fixture writes to a throwaway database and
+verifies the local write path. The period-close row-lock concurrency drill runs two
+psql sessions against the same throwaway database to prove `FOR UPDATE` lock
 conflict behavior, then verifies close update and closed-period source-guard
-fixture behavior before cleanup. None of these commands are formal project
+fixture behavior. None of these commands are formal project
 schema migration apply, real repository integration, application DB transaction
 manager evidence, formal rollback/forward-fix, or production readiness evidence.
 

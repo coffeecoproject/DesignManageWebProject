@@ -5,34 +5,18 @@ import {
   type PeriodClosePostgresMigrationPlan
 } from './periodClosePostgresMigrationContract.js';
 
+// The drill runs in a throwaway database (scripts/local/temp-db.sh) that is deleted afterwards,
+// so it applies to the default schema and does no cleanup of its own.
 export type PeriodClosePostgresReplayDrillScript = {
-  cleanupStrategy: 'drop_isolated_schema';
   contractId: string;
   dialect: 'postgresql';
   fixtureAssertionCount: number;
   minimumVersion: '16';
-  schemaName: string;
   sql: string;
 };
 
-const drillSchemaNamePattern = /^period_close_drill_[a-z0-9_]+$/;
-
-function quoteIdentifier(identifier: string) {
-  if (!/^[a-z][a-z0-9_]*$/.test(identifier)) {
-    throw new Error(`Unsafe SQL identifier ${identifier}`);
-  }
-
-  return `"${identifier}"`;
-}
-
 function sqlString(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
-}
-
-function assertSafeDrillSchemaName(schemaName: string) {
-  if (!drillSchemaNamePattern.test(schemaName)) {
-    throw new Error(`Unsafe period-close drill schema name ${schemaName}`);
-  }
 }
 
 function renderFixtureAssertions() {
@@ -148,21 +132,16 @@ function renderReplaySql() {
 }
 
 export function buildPeriodClosePostgresReplayDrillScript({
-  plan = buildPeriodClosePostgresMigrationPlan(),
-  schemaName
+  plan = buildPeriodClosePostgresMigrationPlan()
 }: {
   plan?: PeriodClosePostgresMigrationPlan;
-  schemaName: string;
-}): PeriodClosePostgresReplayDrillScript {
-  assertSafeDrillSchemaName(schemaName);
-
+} = {}): PeriodClosePostgresReplayDrillScript {
   const planErrors = validatePeriodClosePostgresMigrationPlan(plan);
 
   if (planErrors.length > 0) {
     throw new Error(`Cannot build period-close Postgres replay drill script: ${planErrors.join('; ')}`);
   }
 
-  const schemaIdentifier = quoteIdentifier(schemaName);
   const migrationSql = plan.statements.map((statement) => statement.sql).join('\n\n');
   const schemaAssertions = buildPeriodClosePostgresSchemaValidationStatements(
     plan,
@@ -171,39 +150,30 @@ export function buildPeriodClosePostgresReplayDrillScript({
   const fixtureAssertionCount = renderFixtureAssertions().length;
 
   return {
-    cleanupStrategy: 'drop_isolated_schema',
     contractId: plan.sourceContractId,
     dialect: 'postgresql',
     fixtureAssertionCount,
     minimumVersion: '16',
-    schemaName,
     sql: [
       '\\set ON_ERROR_STOP on',
-      '-- Period close PostgreSQL persisted idempotent replay drill.',
+      '-- Period close PostgreSQL persisted idempotent replay drill, run in a throwaway database.',
       `-- Source contract: ${plan.sourceContractId}`,
-      `-- Isolated schema: ${schemaName}`,
-      `CREATE SCHEMA ${schemaIdentifier};`,
       'BEGIN;',
-      `SET LOCAL search_path TO ${schemaIdentifier};`,
       "SET LOCAL lock_timeout = '5s';",
       "SET LOCAL statement_timeout = '30s';",
       migrationSql,
       ...schemaAssertions,
       'COMMIT;',
       'BEGIN;',
-      `SET LOCAL search_path TO ${schemaIdentifier};`,
       "SET LOCAL lock_timeout = '5s';",
       "SET LOCAL statement_timeout = '30s';",
       renderInitialCloseSql(),
       'COMMIT;',
       'BEGIN;',
-      `SET LOCAL search_path TO ${schemaIdentifier};`,
       "SET LOCAL lock_timeout = '5s';",
       "SET LOCAL statement_timeout = '30s';",
       renderReplaySql(),
       'COMMIT;',
-      "SET search_path TO public;",
-      `DROP SCHEMA ${schemaIdentifier} CASCADE;`,
       "SELECT 'period_close_postgres_replay_drill_passed' AS evidence_marker;"
     ].join('\n\n')
   };
@@ -211,23 +181,9 @@ export function buildPeriodClosePostgresReplayDrillScript({
 
 export function validatePeriodClosePostgresReplayDrillScript(script: PeriodClosePostgresReplayDrillScript): string[] {
   const errors: string[] = [];
-  const isSafeSchemaName = drillSchemaNamePattern.test(script.schemaName);
-  const schemaIdentifier = isSafeSchemaName ? quoteIdentifier(script.schemaName) : '';
 
   if (script.dialect !== 'postgresql' || script.minimumVersion !== '16') {
     errors.push('Postgres replay drill script must target PostgreSQL 16');
-  }
-
-  if (!isSafeSchemaName) {
-    errors.push('Postgres replay drill script must use an isolated period_close_drill_* schema');
-  }
-
-  if (isSafeSchemaName && !script.sql.includes(`CREATE SCHEMA ${schemaIdentifier};`)) {
-    errors.push('Postgres replay drill script must create the isolated schema');
-  }
-
-  if (isSafeSchemaName && !script.sql.includes(`DROP SCHEMA ${schemaIdentifier} CASCADE;`)) {
-    errors.push('Postgres replay drill script must clean up only the isolated schema');
   }
 
   if (!script.sql.includes('FOR UPDATE')) {
@@ -263,13 +219,4 @@ export function validatePeriodClosePostgresReplayDrillScript(script: PeriodClose
   }
 
   return errors;
-}
-
-export function validatePeriodClosePostgresReplayDrillSchemaName(schemaName: string): string[] {
-  try {
-    assertSafeDrillSchemaName(schemaName);
-    return [];
-  } catch (error) {
-    return [error instanceof Error ? error.message : String(error)];
-  }
 }

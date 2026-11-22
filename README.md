@@ -81,7 +81,7 @@ gets its own hostname and port.
 | inspect local database | `scripts/local/db-status.sh` | Checks Postgres health. |
 | open local psql | `scripts/local/db-psql.sh` | Opens psql against the isolated local database. |
 | local database logs | `scripts/local/db-logs.sh` | Shows recent Postgres logs. |
-| stop local database | `scripts/local/db-down.sh` | Puts the environment to sleep; data is kept and the next connection wakes it. |
+| sleep local database | `scripts/local/db-sleep.sh` | Puts the environment to sleep; data is kept and the next connection wakes it. |
 | period-close PostgreSQL drills | `corepack pnpm db:period-close:dry-run` (also `apply-drill`, `replay-drill`, `concurrency-drill`) | Each run uses its own throwaway napbox Postgres (`napbox up --temp`), not the development database. |
 | start frontend | `corepack pnpm dev:web` | Serves on this worktree's napbox port; prints the URL. |
 | start API | TBD | Backend runtime not initialized. |

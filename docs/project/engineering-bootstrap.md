@@ -63,7 +63,7 @@ Backend/API/storage/auth runtime units are not initialized yet.
 | inspect local database | `scripts/local/db-status.sh` | ready_with_evidence | Checks local Postgres health. |
 | local database psql | `scripts/local/db-psql.sh` | ready_with_evidence | Connects to isolated local Postgres. |
 | local database logs | `scripts/local/db-logs.sh` | ready_with_evidence | Shows local Postgres logs. |
-| stop local database | `scripts/local/db-down.sh` | ready_with_evidence | Puts the napbox environment to sleep without deleting data. |
+| sleep local database | `scripts/local/db-sleep.sh` | ready_with_evidence | Puts the napbox environment to sleep without deleting data. |
 | dev API | TBD | planned_gap | Backend not initialized. |
 | format | TBD | planned_gap | Formatter command not initialized. |
 | unit test | TBD | planned_gap | Unit test runner not initialized. |

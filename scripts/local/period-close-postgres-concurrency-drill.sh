@@ -6,13 +6,12 @@ cd "$ROOT_DIR"
 source scripts/local/temp-db.sh
 
 SQL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/period-close-postgres-concurrency-drill.XXXXXX")"
-SCHEMA_NAME="period_close_drill_$(date +%Y%m%d%H%M%S)_$$"
 trap 'rm -rf "$SQL_DIR"; temp_db_down' EXIT
 
 corepack pnpm --filter @startupmanage/api exec tsc -p tsconfig.test.json
 
-for section in setup hold-lock contend-lock verify cleanup; do
-  node apps/api/node_modules/.cache/startupmanage-api-contract-tests/finance/periodClosePostgresConcurrencyDrillCli.js "$SCHEMA_NAME" "$section" > "$SQL_DIR/$section.sql"
+for section in setup hold-lock contend-lock verify; do
+  node apps/api/node_modules/.cache/startupmanage-api-contract-tests/finance/periodClosePostgresConcurrencyDrillCli.js "$section" > "$SQL_DIR/$section.sql"
 done
 
 temp_db_up
@@ -47,6 +46,5 @@ cat "$SQL_DIR/holder.out"
 cat "$SQL_DIR/contender.out"
 
 temp_db_psql -v ON_ERROR_STOP=1 < "$SQL_DIR/verify.sql"
-temp_db_psql -v ON_ERROR_STOP=1 < "$SQL_DIR/cleanup.sql"
 
 echo "period_close_postgres_concurrency_lock_conflict_observed"
