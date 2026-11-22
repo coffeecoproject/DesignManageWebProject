@@ -54,7 +54,7 @@ export function createYhtLedgerHttpHandler(service: YhtLedgerService) {
         return json(200, {projects: await service.list(principal)});
       }
       if (method === 'POST' && path === '/api/yht/ledger') {
-        return json(201, {project: await service.assign(principal, payload(request.body) as ManagerCreate)});
+        return json(201, {project: await service.assign(principal, payload(request.body) as unknown as ManagerCreate)});
       }
       if (method === 'GET' && path === '/api/yht/ledger/export.csv') {
         return {
