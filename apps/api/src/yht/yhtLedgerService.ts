@@ -24,6 +24,13 @@ export type LedgerDependencies = {
   /** 必须由服务端提供安全的ID和当前时间 */
   newId: () => string;
   now: () => string;
+  /** 由服务端查询人员/账号表，客户端传入的设计师姓名不能作为身份依据。 */
+  resolveDesigner: (designerId: string) => Promise<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    role: 'designer' | 'manager' | 'executive';
+  } | null>;
 };
 function assertKeys(input: Record<string, unknown>, allowed: Set<string>) {
   if (Object.keys(input).some(key => !allowed.has(key))) throw new Error('包含不允许写入的字段');
@@ -33,7 +40,15 @@ const baseFields = new Set([
   'region','storeType','storeName','contractNo','outsourcingType','designerId','designerName'
 ]);
 
-export function createYhtLedgerService({repository, newId, now}: LedgerDependencies) {
+export function createYhtLedgerService({repository, newId, now, resolveDesigner}: LedgerDependencies) {
+  async function verifyDesigner(input: ManagerCreate): Promise<ManagerCreate> {
+    const account = await resolveDesigner(input.designerId);
+    if (!account || !account.enabled || account.role !== 'designer') {
+      throw new Error('设计师账号不存在、已停用或角色不正确');
+    }
+    // 姓名从可信账号目录获取，避免人员ID与显示姓名不一致。
+    return {...input, designerId: account.id, designerName: account.name};
+  }
   async function visibleProject(principal: LedgerPrincipal, id: string) {
     assertActivePrincipal(principal);
     const project = await repository.findById(id);
@@ -52,7 +67,7 @@ export function createYhtLedgerService({repository, newId, now}: LedgerDependenc
     async assign(principal: LedgerPrincipal, input: ManagerCreate) {
       assertManager(principal);
       assertKeys(input as unknown as Record<string, unknown>, baseFields);
-      const base = validateManagerCreate(input);
+      const base = await verifyDesigner(validateManagerCreate(input));
       const instant = now();
       const next: VersionedProject = {
         ...base,
@@ -94,7 +109,7 @@ export function createYhtLedgerService({repository, newId, now}: LedgerDependenc
       const current = await visibleProject(principal, id);
       if (Object.keys(patch).length === 0) throw new Error('没有需要更新的字段');
       assertKeys(patch, baseFields);
-      const merged = validateManagerCreate({...current, ...patch});
+      const merged = await verifyDesigner(validateManagerCreate({...current, ...patch}));
       if (current.revision !== expectedRevision) throw new Error('项目已被其他人修改，请刷新后重试');
       const instant = now();
       const next = {...current, ...merged, revision: current.revision + 1, updatedAt: instant};
