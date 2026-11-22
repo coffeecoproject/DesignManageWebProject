@@ -1,30 +1,21 @@
 import {
   buildPeriodClosePostgresConcurrencyDrillScriptSet,
-  validatePeriodClosePostgresConcurrencyDrillSchemaName,
   validatePeriodClosePostgresConcurrencyDrillScriptSet
 } from './periodClosePostgresConcurrencyDrillContract.js';
 import { it } from 'vitest';
 import { assert, assertEqual } from '../../__tests__/assertions.js';
 
-it('builds a multi-session isolated-schema PostgreSQL concurrency drill', () => {
-  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet({
-    schemaName: 'period_close_drill_20260704_lock_001'
-  });
+it('builds a multi-session PostgreSQL concurrency drill', () => {
+  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet();
   const errors = validatePeriodClosePostgresConcurrencyDrillScriptSet(scriptSet);
 
   assertEqual(errors.length, 0, `concurrency drill should validate: ${errors.join('; ')}`);
-  assertEqual(scriptSet.cleanupStrategy, 'drop_isolated_schema', 'drill should clean up the isolated schema');
-  assert(scriptSet.scripts.setup.includes('CREATE SCHEMA "period_close_drill_20260704_lock_001";'), 'setup should create schema');
-  assert(
-    scriptSet.scripts.cleanup.includes('DROP SCHEMA IF EXISTS "period_close_drill_20260704_lock_001" CASCADE;'),
-    'cleanup should drop only the drill schema'
-  );
+  assertEqual(scriptSet.dialect, 'postgresql', 'concurrency drill dialect should be PostgreSQL');
+  assert(scriptSet.scripts.setup.includes('"drill_source_records"'), 'setup should create the source-row fixture');
 });
 
 it('requires holder and contender scripts to use real row locks', () => {
-  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet({
-    schemaName: 'period_close_drill_20260704_lock_002'
-  });
+  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet();
 
   assert(scriptSet.scripts['hold-lock'].includes('FOR UPDATE'), 'holder should lock the period row');
   assert(scriptSet.scripts['hold-lock'].includes('pg_sleep(4)'), 'holder should keep the transaction open');
@@ -33,9 +24,7 @@ it('requires holder and contender scripts to use real row locks', () => {
 });
 
 it('verifies close update and closed-period source guard after lock release', () => {
-  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet({
-    schemaName: 'period_close_drill_20260704_lock_003'
-  });
+  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet();
 
   assert(
     scriptSet.scripts.verify.includes('period_close_postgres_concurrency_drill_passed'),
@@ -55,20 +44,8 @@ it('verifies close update and closed-period source guard after lock release', ()
   );
 });
 
-it('rejects unsafe schema names', () => {
-  const errors = validatePeriodClosePostgresConcurrencyDrillSchemaName('period_close_drill_bad-name');
-
-  assert(errors.length > 0, 'unsafe schema names should fail validation');
-  assert(
-    errors.some((error) => error.includes('Unsafe period-close drill schema name')),
-    'unsafe schema validation should explain the failure'
-  );
-});
-
 it('fails validation when contender no longer uses a lock timeout', () => {
-  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet({
-    schemaName: 'period_close_drill_20260704_lock_004'
-  });
+  const scriptSet = buildPeriodClosePostgresConcurrencyDrillScriptSet();
   const brokenScriptSet = {
     ...scriptSet,
     scripts: {

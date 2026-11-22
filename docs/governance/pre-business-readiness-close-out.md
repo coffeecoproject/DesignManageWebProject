@@ -38,10 +38,10 @@ This does not mean:
 | Area | Evidence |
 | --- | --- |
 | Git baseline | Commit `6b3a63c`; follow-up readiness commit pending at the time this file is written |
-| Local DB config | `docker-compose.yml`, `scripts/local/db-config.sh` |
+| Local DB config | `compose.yaml` (run by napbox; replaced `docker-compose.yml` and `scripts/local/db-config.sh`) |
 | Local DB health | `scripts/local/db-status.sh` |
 | Local DB connection | `scripts/local/db-psql.sh -c 'SELECT current_database(), current_user;'` |
-| Local DB stop/start | `scripts/local/db-down.sh`, `scripts/local/db-up.sh`, then status/SQL verification |
+| Local DB stop/start | `scripts/local/db-sleep.sh`, `scripts/local/db-up.sh`, then status/SQL verification |
 | Runbook | `docs/operations/local-database-runbook.md` |
 | Evidence records | `docs/evidence/local-environment-evidence.md`, `docs/audit-reports/local-engineering-foundation-audit.md` |
 

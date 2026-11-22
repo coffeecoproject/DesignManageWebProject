@@ -43,7 +43,7 @@ if [[ "$needs_postgres" == "1" ]]; then
   scripts/testpace/require-napbox.sh
   temp_env="files-$(date +%s)-$$"
   napbox up --temp "$temp_env" >/dev/null
-  export STARTUPMANAGE_TEST_PSQL="napbox exec postgres --temp $temp_env -- psql -X -q -U startupmanage_app -d startupmanage_local"
+  export STARTUPMANAGE_TEST_PSQL="napbox exec postgres --temp $temp_env -- psql -X -q -U startupmanage_app"
 fi
 
 status=0

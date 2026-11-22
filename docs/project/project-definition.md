@@ -43,7 +43,7 @@
 
 ## 5. Environment And Infrastructure
 
-- Local: Postgres from `compose.yaml` run by napbox on a napbox-assigned `127.0.0.1` port; frontend dev server on `http://127.0.0.1:5173`.
+- Local: Postgres from `compose.yaml` run by napbox on a napbox-assigned `127.0.0.1` port; frontend dev server on the napbox host port `web` of the worktree (`http://<NAPBOX_HOSTNAME>:<NAPBOX_HOST_WEB>`).
 - Dev: TBD.
 - Preview: TBD.
 - Test: TBD.

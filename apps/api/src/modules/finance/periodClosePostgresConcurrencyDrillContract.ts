@@ -6,50 +6,25 @@ import {
 } from './periodClosePostgresMigrationContract.js';
 
 export type PeriodClosePostgresConcurrencyDrillSection =
-  | 'cleanup'
   | 'contend-lock'
   | 'hold-lock'
   | 'setup'
   | 'verify';
 
+// The drill runs in its own empty database (periodClosePostgresDrills.postgres.test.ts) that is deleted afterwards,
+// so it applies to the default schema and does no cleanup of its own.
 export type PeriodClosePostgresConcurrencyDrillScriptSet = {
-  cleanupStrategy: 'drop_isolated_schema';
   contractId: string;
   dialect: 'postgresql';
   minimumVersion: '16';
-  schemaName: string;
   scripts: Record<PeriodClosePostgresConcurrencyDrillSection, string>;
 };
-
-const drillSchemaNamePattern = /^period_close_drill_[a-z0-9_]+$/;
-
-function quoteIdentifier(identifier: string) {
-  if (!/^[a-z][a-z0-9_]*$/.test(identifier)) {
-    throw new Error(`Unsafe SQL identifier ${identifier}`);
-  }
-
-  return `"${identifier}"`;
-}
 
 function sqlString(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function assertSafeDrillSchemaName(schemaName: string) {
-  if (!drillSchemaNamePattern.test(schemaName)) {
-    throw new Error(`Unsafe period-close drill schema name ${schemaName}`);
-  }
-}
-
-function renderSetupSql({
-  plan,
-  schemaIdentifier,
-  schemaName
-}: {
-  plan: PeriodClosePostgresMigrationPlan;
-  schemaIdentifier: string;
-  schemaName: string;
-}) {
+function renderSetupSql(plan: PeriodClosePostgresMigrationPlan) {
   const migrationSql = plan.statements.map((statement) => statement.sql).join('\n\n');
   const schemaAssertions = buildPeriodClosePostgresSchemaValidationStatements(
     plan,
@@ -58,12 +33,8 @@ function renderSetupSql({
 
   return [
     '\\set ON_ERROR_STOP on',
-    '-- Period close PostgreSQL concurrency drill setup.',
-    `-- Isolated schema: ${schemaName}`,
-    `DROP SCHEMA IF EXISTS ${schemaIdentifier} CASCADE;`,
-    `CREATE SCHEMA ${schemaIdentifier};`,
+    '-- Period close PostgreSQL concurrency drill setup, run in a throwaway database.',
     'BEGIN;',
-    `SET LOCAL search_path TO ${schemaIdentifier};`,
     "SET LOCAL lock_timeout = '5s';",
     "SET LOCAL statement_timeout = '30s';",
     migrationSql,
@@ -80,11 +51,10 @@ function renderSetupSql({
   ].join('\n\n');
 }
 
-function renderHoldLockSql(schemaIdentifier: string) {
+function renderHoldLockSql() {
   return [
     '\\set ON_ERROR_STOP on',
     'BEGIN;',
-    `SET LOCAL search_path TO ${schemaIdentifier};`,
     "SET LOCAL lock_timeout = '5s';",
     "SET LOCAL statement_timeout = '10s';",
     'SELECT "period", "status", "version"',
@@ -97,11 +67,10 @@ function renderHoldLockSql(schemaIdentifier: string) {
   ].join('\n');
 }
 
-function renderContendLockSql(schemaIdentifier: string) {
+function renderContendLockSql() {
   return [
     '\\set ON_ERROR_STOP on',
     'BEGIN;',
-    `SET LOCAL search_path TO ${schemaIdentifier};`,
     "SET LOCAL lock_timeout = '500ms';",
     "SET LOCAL statement_timeout = '5s';",
     'SELECT "period", "status", "version"',
@@ -112,11 +81,10 @@ function renderContendLockSql(schemaIdentifier: string) {
   ].join('\n');
 }
 
-function renderVerifySql(schemaIdentifier: string) {
+function renderVerifySql() {
   return [
     '\\set ON_ERROR_STOP on',
     'BEGIN;',
-    `SET LOCAL search_path TO ${schemaIdentifier};`,
     "SET LOCAL lock_timeout = '5s';",
     "SET LOCAL statement_timeout = '30s';",
     'SELECT "period", "status", "version"',
@@ -155,7 +123,6 @@ function renderVerifySql(schemaIdentifier: string) {
     "INSERT INTO \"accounting_period_idempotency_records\" (\"id\", \"period\", \"operation\", \"idempotency_key\", \"request_signature\", \"response_snapshot\", \"created_at\") VALUES ('idem-202606-concurrency-001', '2026-06', 'close', 'concurrency-key-001', 'request-signature-concurrency-001', '{\"period\":\"2026-06\",\"status\":\"已结账\"}'::jsonb, '2026-06-30T23:10:00Z');",
     'COMMIT;',
     'BEGIN;',
-    `SET LOCAL search_path TO ${schemaIdentifier};`,
     "SET LOCAL lock_timeout = '5s';",
     'SELECT "period", "status"',
     'FROM "accounting_periods"',
@@ -180,7 +147,6 @@ function renderVerifySql(schemaIdentifier: string) {
       '$$;'
     ].join('\n'),
     'COMMIT;',
-    `SET search_path TO ${schemaIdentifier};`,
     [
       'DO $$',
       'BEGIN',
@@ -205,43 +171,26 @@ function renderVerifySql(schemaIdentifier: string) {
   ].join('\n\n');
 }
 
-function renderCleanupSql(schemaIdentifier: string) {
-  return [
-    '\\set ON_ERROR_STOP on',
-    "SET search_path TO public;",
-    `DROP SCHEMA IF EXISTS ${schemaIdentifier} CASCADE;`
-  ].join('\n');
-}
-
 export function buildPeriodClosePostgresConcurrencyDrillScriptSet({
-  plan = buildPeriodClosePostgresMigrationPlan(),
-  schemaName
+  plan = buildPeriodClosePostgresMigrationPlan()
 }: {
   plan?: PeriodClosePostgresMigrationPlan;
-  schemaName: string;
-}): PeriodClosePostgresConcurrencyDrillScriptSet {
-  assertSafeDrillSchemaName(schemaName);
-
+} = {}): PeriodClosePostgresConcurrencyDrillScriptSet {
   const planErrors = validatePeriodClosePostgresMigrationPlan(plan);
 
   if (planErrors.length > 0) {
     throw new Error(`Cannot build period-close Postgres concurrency drill script: ${planErrors.join('; ')}`);
   }
 
-  const schemaIdentifier = quoteIdentifier(schemaName);
-
   return {
-    cleanupStrategy: 'drop_isolated_schema',
     contractId: plan.sourceContractId,
     dialect: 'postgresql',
     minimumVersion: '16',
-    schemaName,
     scripts: {
-      cleanup: renderCleanupSql(schemaIdentifier),
-      'contend-lock': renderContendLockSql(schemaIdentifier),
-      'hold-lock': renderHoldLockSql(schemaIdentifier),
-      setup: renderSetupSql({ plan, schemaIdentifier, schemaName }),
-      verify: renderVerifySql(schemaIdentifier)
+      'contend-lock': renderContendLockSql(),
+      'hold-lock': renderHoldLockSql(),
+      setup: renderSetupSql(plan),
+      verify: renderVerifySql()
     }
   };
 }
@@ -250,23 +199,9 @@ export function validatePeriodClosePostgresConcurrencyDrillScriptSet(
   scriptSet: PeriodClosePostgresConcurrencyDrillScriptSet
 ): string[] {
   const errors: string[] = [];
-  const isSafeSchemaName = drillSchemaNamePattern.test(scriptSet.schemaName);
-  const schemaIdentifier = isSafeSchemaName ? quoteIdentifier(scriptSet.schemaName) : '';
 
   if (scriptSet.dialect !== 'postgresql' || scriptSet.minimumVersion !== '16') {
     errors.push('Postgres concurrency drill must target PostgreSQL 16');
-  }
-
-  if (!isSafeSchemaName) {
-    errors.push('Postgres concurrency drill must use an isolated period_close_drill_* schema');
-  }
-
-  if (isSafeSchemaName && !scriptSet.scripts.setup.includes(`CREATE SCHEMA ${schemaIdentifier};`)) {
-    errors.push('Postgres concurrency drill must create the isolated schema');
-  }
-
-  if (isSafeSchemaName && !scriptSet.scripts.cleanup.includes(`DROP SCHEMA IF EXISTS ${schemaIdentifier} CASCADE;`)) {
-    errors.push('Postgres concurrency drill must clean up only the isolated schema');
   }
 
   if (!scriptSet.scripts['hold-lock'].includes('pg_sleep(4)') || !scriptSet.scripts['hold-lock'].includes('FOR UPDATE')) {
@@ -296,13 +231,4 @@ export function validatePeriodClosePostgresConcurrencyDrillScriptSet(
   }
 
   return errors;
-}
-
-export function validatePeriodClosePostgresConcurrencyDrillSchemaName(schemaName: string): string[] {
-  try {
-    assertSafeDrillSchemaName(schemaName);
-    return [];
-  } catch (error) {
-    return [error instanceof Error ? error.message : String(error)];
-  }
 }

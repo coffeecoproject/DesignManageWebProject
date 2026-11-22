@@ -1,5 +1,7 @@
 // Period-close PostgreSQL drills against a real database. `scripts/testpace/files.sh` starts a throwaway napbox
-// Postgres for `*.postgres.test.ts` files and passes the psql command in STARTUPMANAGE_TEST_PSQL.
+// Postgres for `*.postgres.test.ts` files and passes the psql command (without a database) in
+// STARTUPMANAGE_TEST_PSQL. The drills write to the default schema and do not clean up, so each one runs in its
+// own empty database, created here and dropped afterwards.
 import { spawn } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { buildPeriodClosePostgresApplyDrillScript } from './periodClosePostgresApplyDrillContract.js';
@@ -8,6 +10,9 @@ import { buildPeriodClosePostgresDryRunScript } from './periodClosePostgresDryRu
 import { buildPeriodClosePostgresReplayDrillScript } from './periodClosePostgresReplayDrillContract.js';
 
 type PsqlResult = { code: number; output: string };
+
+// The database the Postgres service creates; used only to create and drop the per-drill databases.
+const adminDatabase = 'startupmanage_local';
 
 function psqlCommand() {
   const command = process.env.STARTUPMANAGE_TEST_PSQL;
@@ -21,9 +26,11 @@ function psqlCommand() {
   return command;
 }
 
-function runPsql(sql: string, extraArgs = ''): Promise<PsqlResult> {
+function runPsql(database: string, sql: string, extraArgs = ''): Promise<PsqlResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('sh', ['-c', `${psqlCommand()} -v ON_ERROR_STOP=1 ${extraArgs}`], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('sh', ['-c', `${psqlCommand()} -d ${database} -v ON_ERROR_STOP=1 ${extraArgs}`], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
     let output = '';
 
     child.stdout.on('data', (chunk) => {
@@ -38,27 +45,36 @@ function runPsql(sql: string, extraArgs = ''): Promise<PsqlResult> {
   });
 }
 
-async function runPsqlOk(sql: string) {
-  const result = await runPsql(sql);
+async function runPsqlOk(database: string, sql: string) {
+  const result = await runPsql(database, sql);
 
   expect(result.code, result.output).toBe(0);
 
   return result.output;
 }
 
-let schemaSequence = 0;
+let databaseSequence = 0;
 
-function drillSchemaName(kind: string) {
-  schemaSequence += 1;
+/** Runs a drill in its own empty database and drops the database afterwards. */
+async function withDrillDatabase(kind: string, drill: (database: string) => Promise<void>) {
+  databaseSequence += 1;
+  const database = `period_close_${kind}_${process.pid}_${databaseSequence}`;
 
-  return `period_close_drill_${kind}_${process.pid}_${Date.now()}_${schemaSequence}`;
+  await runPsqlOk(adminDatabase, `CREATE DATABASE ${database};`);
+
+  try {
+    await drill(database);
+  } finally {
+    await runPsql(adminDatabase, `DROP DATABASE IF EXISTS ${database} WITH (FORCE);`);
+  }
 }
 
-async function waitForHolderLock(applicationName: string) {
+async function waitForHolderLock(database: string, applicationName: string) {
   const deadline = Date.now() + 10_000;
 
   while (Date.now() < deadline) {
     const result = await runPsql(
+      database,
       `SELECT count(*) FROM pg_stat_activity WHERE application_name = '${applicationName}' AND wait_event = 'PgSleep';`,
       '-At'
     );
@@ -74,41 +90,40 @@ async function waitForHolderLock(applicationName: string) {
 }
 
 it('runs the period-close migration dry-run inside a rolled-back transaction', async () => {
-  const output = await runPsqlOk(buildPeriodClosePostgresDryRunScript().sql);
+  await withDrillDatabase('dry_run', async (database) => {
+    const output = await runPsqlOk(database, buildPeriodClosePostgresDryRunScript().sql);
 
-  expect(output).toContain('period_close_postgres_migration_dry_run_passed');
+    expect(output).toContain('period_close_postgres_migration_dry_run_passed');
+  });
 });
 
-it('applies the period-close migration into an isolated schema and drops it', async () => {
-  const schemaName = drillSchemaName('apply');
-  const output = await runPsqlOk(buildPeriodClosePostgresApplyDrillScript({ schemaName }).sql);
-  expect(output).toContain('period_close_postgres_apply_drill_passed');
+it('applies the period-close migration and fixture writes', async () => {
+  await withDrillDatabase('apply', async (database) => {
+    const output = await runPsqlOk(database, buildPeriodClosePostgresApplyDrillScript().sql);
 
-  const remaining = await runPsql(`SELECT count(*) FROM pg_namespace WHERE nspname = '${schemaName}';`, '-At');
-  expect(remaining.output.trim()).toBe('0');
+    expect(output).toContain('period_close_postgres_apply_drill_passed');
+  });
 });
 
-it('replays persisted period-close records in an isolated schema and drops it', async () => {
-  const schemaName = drillSchemaName('replay');
-  const output = await runPsqlOk(buildPeriodClosePostgresReplayDrillScript({ schemaName }).sql);
-  expect(output).toContain('period_close_postgres_replay_drill_passed');
+it('replays persisted period-close records idempotently', async () => {
+  await withDrillDatabase('replay', async (database) => {
+    const output = await runPsqlOk(database, buildPeriodClosePostgresReplayDrillScript().sql);
 
-  const remaining = await runPsql(`SELECT count(*) FROM pg_namespace WHERE nspname = '${schemaName}';`, '-At');
-  expect(remaining.output.trim()).toBe('0');
+    expect(output).toContain('period_close_postgres_replay_drill_passed');
+  });
 });
 
 it('makes a second session time out on the period row lock held by the first', async () => {
-  const schemaName = drillSchemaName('concurrency');
-  const { scripts } = buildPeriodClosePostgresConcurrencyDrillScriptSet({ schemaName });
-  const holderName = `${schemaName}_holder`;
+  await withDrillDatabase('concurrency', async (database) => {
+    const { scripts } = buildPeriodClosePostgresConcurrencyDrillScriptSet();
+    const holderName = `${database}_holder`;
 
-  await runPsqlOk(scripts.setup);
+    await runPsqlOk(database, scripts.setup);
 
-  try {
-    const holder = runPsql(`SET application_name = '${holderName}';\n${scripts['hold-lock']}`);
-    await waitForHolderLock(holderName);
+    const holder = runPsql(database, `SET application_name = '${holderName}';\n${scripts['hold-lock']}`);
+    await waitForHolderLock(database, holderName);
 
-    const contender = await runPsql(scripts['contend-lock']);
+    const contender = await runPsql(database, scripts['contend-lock']);
     expect(contender.code, contender.output).not.toBe(0);
     expect(contender.output).toMatch(/lock timeout/);
 
@@ -116,8 +131,6 @@ it('makes a second session time out on the period row lock held by the first', a
     expect(held.code, held.output).toBe(0);
     expect(held.output).toContain('period_close_postgres_concurrency_holder_released');
 
-    expect(await runPsqlOk(scripts.verify)).toContain('period_close_postgres_concurrency_drill_passed');
-  } finally {
-    await runPsql(scripts.cleanup);
-  }
+    expect(await runPsqlOk(database, scripts.verify)).toContain('period_close_postgres_concurrency_drill_passed');
+  });
 });

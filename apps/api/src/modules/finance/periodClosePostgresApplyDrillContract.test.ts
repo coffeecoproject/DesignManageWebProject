@@ -1,24 +1,18 @@
 import {
   buildPeriodClosePostgresApplyDrillScript,
-  validatePeriodClosePostgresApplyDrillSchemaName,
   validatePeriodClosePostgresApplyDrillScript
 } from './periodClosePostgresApplyDrillContract.js';
 import { it } from 'vitest';
 import { assert, assertEqual } from '../../__tests__/assertions.js';
 
-it('builds a persistent isolated-schema PostgreSQL apply drill script', () => {
-  const script = buildPeriodClosePostgresApplyDrillScript({
-    schemaName: 'period_close_drill_20260704_001'
-  });
+it('builds a persistent PostgreSQL apply drill script', () => {
+  const script = buildPeriodClosePostgresApplyDrillScript();
   const errors = validatePeriodClosePostgresApplyDrillScript(script);
 
   assertEqual(errors.length, 0, `apply drill script should validate: ${errors.join('; ')}`);
-  assertEqual(script.cleanupStrategy, 'drop_isolated_schema', 'apply drill should clean up the isolated schema');
   assertEqual(script.dialect, 'postgresql', 'apply drill dialect should be PostgreSQL');
   assertEqual(script.minimumVersion, '16', 'apply drill should target PostgreSQL 16');
-  assert(script.sql.includes('CREATE SCHEMA "period_close_drill_20260704_001";'), 'drill should create the schema');
-  assert(script.sql.includes('DROP SCHEMA "period_close_drill_20260704_001" CASCADE;'), 'drill should clean up schema');
-  assert(script.sql.includes('COMMIT;'), 'drill should persist isolated migration and fixture writes before cleanup');
+  assert(script.sql.includes('COMMIT;'), 'drill should persist migration and fixture writes');
   assert(!script.sql.includes('ROLLBACK;'), 'apply drill should not be rollback-only');
   assert(!/\b(DROP\s+TABLE|TRUNCATE|DELETE)\b/i.test(script.sql), 'drill should not destroy tables or rows');
   assert(
@@ -28,14 +22,12 @@ it('builds a persistent isolated-schema PostgreSQL apply drill script', () => {
 });
 
 it('exercises period lock, idempotency, source guard audit, and close update fixtures', () => {
-  const script = buildPeriodClosePostgresApplyDrillScript({
-    schemaName: 'period_close_drill_20260704_002'
-  });
+  const script = buildPeriodClosePostgresApplyDrillScript();
 
   assertEqual(script.fixtureAssertionCount, 4, 'apply drill should keep the fixture assertion count explicit');
   assert(
     script.sql.includes('FOR UPDATE'),
-    'apply drill should prove the period row can be locked in the isolated schema'
+    'apply drill should prove the period row can be locked'
   );
   assert(
     script.sql.includes('ON CONFLICT ("period", "operation", "idempotency_key") DO NOTHING'),
@@ -51,43 +43,15 @@ it('exercises period lock, idempotency, source guard audit, and close update fix
   );
 });
 
-it('rejects unsafe schema names before rendering SQL', () => {
-  const errors = validatePeriodClosePostgresApplyDrillSchemaName('public;drop_schema');
-
-  assert(errors.length > 0, 'unsafe schema names should fail validation');
-  assert(
-    errors.some((error) => error.includes('Unsafe period-close drill schema name')),
-    'unsafe schema validation should explain the failure'
-  );
-});
-
-it('returns validation errors for unsafe rendered script metadata', () => {
-  const script = buildPeriodClosePostgresApplyDrillScript({
-    schemaName: 'period_close_drill_20260704_004'
-  });
+it('fails validation when the apply is rolled back instead of persisted', () => {
+  const script = buildPeriodClosePostgresApplyDrillScript();
   const errors = validatePeriodClosePostgresApplyDrillScript({
     ...script,
-    schemaName: 'public'
+    sql: script.sql.replace('COMMIT;', 'ROLLBACK;')
   });
 
   assert(
-    errors.some((error) => error.includes('isolated period_close_drill_* schema')),
-    'validator should return a schema error instead of throwing'
-  );
-});
-
-it('fails validation when isolated cleanup is missing', () => {
-  const script = buildPeriodClosePostgresApplyDrillScript({
-    schemaName: 'period_close_drill_20260704_003'
-  });
-  const brokenScript = {
-    ...script,
-    sql: script.sql.replace('DROP SCHEMA "period_close_drill_20260704_003" CASCADE;', '')
-  };
-  const errors = validatePeriodClosePostgresApplyDrillScript(brokenScript);
-
-  assert(
-    errors.some((error) => error.includes('clean up only the isolated schema')),
-    'validator should reject missing isolated schema cleanup'
+    errors.some((error) => error.includes('must persist the apply')),
+    'validator should reject a rollback-only apply drill'
   );
 });

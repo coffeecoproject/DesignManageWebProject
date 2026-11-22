@@ -5,34 +5,18 @@ import {
   type PeriodClosePostgresMigrationPlan
 } from './periodClosePostgresMigrationContract.js';
 
+// The drill runs in its own empty database (periodClosePostgresDrills.postgres.test.ts) that is deleted afterwards,
+// so it applies to the default schema and does no cleanup of its own.
 export type PeriodClosePostgresApplyDrillScript = {
-  cleanupStrategy: 'drop_isolated_schema';
   contractId: string;
   dialect: 'postgresql';
   fixtureAssertionCount: number;
   minimumVersion: '16';
-  schemaName: string;
   sql: string;
 };
 
-const drillSchemaNamePattern = /^period_close_drill_[a-z0-9_]+$/;
-
-function quoteIdentifier(identifier: string) {
-  if (!/^[a-z][a-z0-9_]*$/.test(identifier)) {
-    throw new Error(`Unsafe SQL identifier ${identifier}`);
-  }
-
-  return `"${identifier}"`;
-}
-
 function sqlString(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
-}
-
-function assertSafeDrillSchemaName(schemaName: string) {
-  if (!drillSchemaNamePattern.test(schemaName)) {
-    throw new Error(`Unsafe period-close drill schema name ${schemaName}`);
-  }
 }
 
 function renderFixtureAssertions() {
@@ -123,21 +107,16 @@ function renderFixtureSql() {
 }
 
 export function buildPeriodClosePostgresApplyDrillScript({
-  plan = buildPeriodClosePostgresMigrationPlan(),
-  schemaName
+  plan = buildPeriodClosePostgresMigrationPlan()
 }: {
   plan?: PeriodClosePostgresMigrationPlan;
-  schemaName: string;
-}): PeriodClosePostgresApplyDrillScript {
-  assertSafeDrillSchemaName(schemaName);
-
+} = {}): PeriodClosePostgresApplyDrillScript {
   const planErrors = validatePeriodClosePostgresMigrationPlan(plan);
 
   if (planErrors.length > 0) {
     throw new Error(`Cannot build period-close Postgres apply drill script: ${planErrors.join('; ')}`);
   }
 
-  const schemaIdentifier = quoteIdentifier(schemaName);
   const migrationSql = plan.statements.map((statement) => statement.sql).join('\n\n');
   const schemaAssertions = buildPeriodClosePostgresSchemaValidationStatements(
     plan,
@@ -147,31 +126,23 @@ export function buildPeriodClosePostgresApplyDrillScript({
   const fixtureAssertionCount = renderFixtureAssertions().length;
 
   return {
-    cleanupStrategy: 'drop_isolated_schema',
     contractId: plan.sourceContractId,
     dialect: 'postgresql',
     fixtureAssertionCount,
     minimumVersion: '16',
-    schemaName,
     sql: [
       '\\set ON_ERROR_STOP on',
-      '-- Period close PostgreSQL isolated persistent apply drill.',
+      '-- Period close PostgreSQL persistent apply drill, run in a throwaway database.',
       `-- Source contract: ${plan.sourceContractId}`,
-      `-- Isolated schema: ${schemaName}`,
-      `CREATE SCHEMA ${schemaIdentifier};`,
       'BEGIN;',
-      `SET LOCAL search_path TO ${schemaIdentifier};`,
       "SET LOCAL lock_timeout = '5s';",
       "SET LOCAL statement_timeout = '30s';",
       migrationSql,
       ...schemaAssertions,
       'COMMIT;',
       'BEGIN;',
-      `SET LOCAL search_path TO ${schemaIdentifier};`,
       fixtureSql,
       'COMMIT;',
-      "SET search_path TO public;",
-      `DROP SCHEMA ${schemaIdentifier} CASCADE;`,
       "SELECT 'period_close_postgres_apply_drill_passed' AS evidence_marker;"
     ].join('\n\n')
   };
@@ -179,27 +150,13 @@ export function buildPeriodClosePostgresApplyDrillScript({
 
 export function validatePeriodClosePostgresApplyDrillScript(script: PeriodClosePostgresApplyDrillScript): string[] {
   const errors: string[] = [];
-  const isSafeSchemaName = drillSchemaNamePattern.test(script.schemaName);
-  const schemaIdentifier = isSafeSchemaName ? quoteIdentifier(script.schemaName) : '';
 
   if (script.dialect !== 'postgresql' || script.minimumVersion !== '16') {
     errors.push('Postgres apply drill script must target PostgreSQL 16');
   }
 
-  if (!isSafeSchemaName) {
-    errors.push('Postgres apply drill script must use an isolated period_close_drill_* schema');
-  }
-
-  if (isSafeSchemaName && !script.sql.includes(`CREATE SCHEMA ${schemaIdentifier};`)) {
-    errors.push('Postgres apply drill script must create the isolated schema');
-  }
-
-  if (isSafeSchemaName && !script.sql.includes(`DROP SCHEMA ${schemaIdentifier} CASCADE;`)) {
-    errors.push('Postgres apply drill script must clean up only the isolated schema');
-  }
-
   if (!script.sql.includes('COMMIT;') || script.sql.includes('ROLLBACK;')) {
-    errors.push('Postgres apply drill script must persist the isolated apply before cleanup');
+    errors.push('Postgres apply drill script must persist the apply');
   }
 
   if (/\b(DROP\s+TABLE|TRUNCATE|DELETE)\b/i.test(script.sql)) {
@@ -223,13 +180,4 @@ export function validatePeriodClosePostgresApplyDrillScript(script: PeriodCloseP
   }
 
   return errors;
-}
-
-export function validatePeriodClosePostgresApplyDrillSchemaName(schemaName: string): string[] {
-  try {
-    assertSafeDrillSchemaName(schemaName);
-    return [];
-  } catch (error) {
-    return [error instanceof Error ? error.message : String(error)];
-  }
 }
