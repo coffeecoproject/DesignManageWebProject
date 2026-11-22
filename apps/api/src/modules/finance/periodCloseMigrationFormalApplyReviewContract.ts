@@ -80,7 +80,7 @@ function buildRollbackForwardFixReview({
       status: artifact.forwardFixStrategy.includes('additive') ? 'passed' : 'blocked'
     },
     {
-      evidence: 'scripts/local/period-close-postgres-dry-run.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       id: 'isolated_rollback_only_before_formal_apply',
       requirement: '正式 apply 前的回滚证明只来自 rollback-only dry-run 或隔离 schema 演练。',
       status: 'passed'
@@ -115,28 +115,28 @@ function buildFormalApplyChecklist({
     },
     {
       blockingEffect: 'blocks_formal_apply',
-      evidence: 'scripts/local/period-close-postgres-dry-run.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       id: 'local_rollback_dry_run_passed',
       owner: 'engineering',
       status: 'local_passed'
     },
     {
       blockingEffect: 'blocks_formal_apply',
-      evidence: 'scripts/local/period-close-postgres-apply-drill.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       id: 'isolated_apply_drill_passed',
       owner: 'engineering',
       status: 'local_passed'
     },
     {
       blockingEffect: 'blocks_formal_apply',
-      evidence: 'scripts/local/period-close-postgres-replay-drill.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       id: 'persisted_replay_drill_passed',
       owner: 'engineering',
       status: 'local_passed'
     },
     {
       blockingEffect: 'blocks_formal_apply',
-      evidence: 'scripts/local/period-close-postgres-concurrency-drill.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       id: 'row_lock_concurrency_drill_passed',
       owner: 'engineering',
       status: 'local_passed'

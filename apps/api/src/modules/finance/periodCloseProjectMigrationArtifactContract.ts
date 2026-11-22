@@ -87,21 +87,21 @@ function buildEvidenceGates(): PeriodCloseProjectMigrationEvidenceGate[] {
     {
       blockingEffect: 'blocks_formal_apply',
       class: 'automated_gate',
-      evidence: 'scripts/local/period-close-postgres-dry-run.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       name: 'local_rollback_dry_run',
       status: 'local_passed'
     },
     {
       blockingEffect: 'blocks_formal_apply',
       class: 'automated_gate',
-      evidence: 'scripts/local/period-close-postgres-apply-drill.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       name: 'isolated_apply_drill',
       status: 'local_passed'
     },
     {
       blockingEffect: 'blocks_formal_apply',
       class: 'automated_gate',
-      evidence: 'scripts/local/period-close-postgres-concurrency-drill.sh',
+      evidence: 'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts',
       name: 'row_lock_concurrency_drill',
       status: 'local_passed'
     },

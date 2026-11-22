@@ -20,7 +20,6 @@ apps/
     src/
       modules/finance/        # the only API module: period close, ledger, statements, HTTP runtime contracts
       shared/                 # no business meaning (node:http type declarations)
-      cli/                    # assembly: period-close drill command-line entries
       __tests__/              # test support
   web/
     vite.config.ts

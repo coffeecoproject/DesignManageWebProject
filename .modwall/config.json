@@ -3,7 +3,7 @@
     "api": {
       "roots": ["apps/api/src/modules"],
       "shared": ["apps/api/src/shared/**"],
-      "app": ["apps/api/src/cli/**"],
+      "app": [],
       "entry": ["index.ts"],
       "map": {}
     },

@@ -229,10 +229,7 @@ export const financePeriodCloseStageAuditMatrix: readonly FinancePeriodCloseStag
       'apps/api/src/modules/finance/periodClosePostgresApplyDrillContract.ts',
       'apps/api/src/modules/finance/periodClosePostgresReplayDrillContract.ts',
       'apps/api/src/modules/finance/periodClosePostgresConcurrencyDrillContract.ts',
-      'scripts/local/period-close-postgres-dry-run.sh',
-      'scripts/local/period-close-postgres-apply-drill.sh',
-      'scripts/local/period-close-postgres-replay-drill.sh',
-      'scripts/local/period-close-postgres-concurrency-drill.sh'
+      'apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts'
     ],
     formalCompletion: 'not_formally_complete',
     gateClasses: ['document_gate', 'automated_gate', 'evidence_gate'],

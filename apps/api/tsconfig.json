@@ -8,7 +8,6 @@
     "moduleResolution": "NodeNext",
     "types": ["node"],
     "rootDir": "src",
-    "outDir": "node_modules/.cache/startupmanage-api-contract-tests",
     "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

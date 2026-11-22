@@ -35,11 +35,7 @@ Run commands from anywhere inside the repository. Scripts resolve the repository
 | Check health and show the host port | `scripts/local/db-status.sh` |
 | Run psql (stdin is forwarded, no interactive terminal) | `scripts/local/db-psql.sh` |
 | Run one SQL command | `scripts/local/db-psql.sh -c 'SELECT current_database(), current_user;'` |
-| Run period-close PostgreSQL migration dry-run | `corepack pnpm db:period-close:dry-run` |
-| Run period-close PostgreSQL isolated apply drill | `corepack pnpm db:period-close:apply-drill` |
-| Run period-close PostgreSQL persisted replay drill | `corepack pnpm db:period-close:replay-drill` |
-| Run period-close PostgreSQL row-lock concurrency drill | `corepack pnpm db:period-close:concurrency-drill` (needs `rg` on PATH) |
-| Run the same four drills automatically on a throwaway database | `testpace files apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts` (also part of `testpace full`) |
+| Run the period-close PostgreSQL drills (dry-run, isolated apply, persisted replay, row-lock concurrency) on a throwaway database | `testpace files apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts` (also part of `testpace full`) |
 | Show logs | `scripts/local/db-logs.sh` |
 | Sleep Postgres without deleting data | `scripts/local/db-down.sh` |
 
@@ -64,8 +60,8 @@ postgres://startupmanage_app:startupmanage_local_dev_only@postgres:5432/startupm
 
 Do not delete local database data without explicit user approval.
 
-The period-close isolated apply, replay, and concurrency drills may create and drop only
-schemas named `period_close_drill_*`. They must not drop tables, truncate rows,
+The period-close drills run only on a throwaway napbox database that `testpace files` starts and removes;
+inside it they create and drop only schemas named `period_close_drill_*`. They must not drop tables, truncate rows,
 delete rows, drop the `public` schema, or remove the data volume.
 
 Commands such as these are destructive because they delete local database data:
@@ -102,7 +98,7 @@ If host tools cannot connect:
 ## 7. Evidence Boundary
 
 This runbook and the scripts prove only that local dependency commands exist.
-The period-close dry-run command executes generated DDL and schema assertions
+The period-close drills in `apps/api/src/modules/finance/periodClosePostgresDrills.postgres.test.ts` run on every full test suite: the dry-run executes generated DDL and schema assertions
 inside a local PostgreSQL transaction and rolls back. The period-close isolated
 apply drill commits generated DDL and fixture writes only inside a temporary
 `period_close_drill_*` schema, verifies the local write path, and then drops
