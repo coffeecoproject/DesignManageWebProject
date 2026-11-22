@@ -154,7 +154,7 @@ export function YhtPortalApp(){
     }catch(error){messageApi.error((error as Error).message);}
   }
   const columns:ColumnsType<Project>=[
-    {title:'店铺名称',dataIndex:'storeName',width:210,fixed:'left',render:(name:string,row:Project)=><Button type="link" onClick={()=>openProgress(row)}>{name}</Button>},
+    {title:'店铺名称',dataIndex:'storeName',width:210,fixed:'left',render:(name:string,row:Project)=>account.role==='executive'?<Typography.Text>{name}</Typography.Text>:<Button type="link" onClick={()=>openProgress(row)}>{name}</Button>},
     {title:'所属区域',dataIndex:'region',width:120},
     {title:'合同号',dataIndex:'contractNo',width:145},
     {title:'门店类型',dataIndex:'storeType',width:120},
