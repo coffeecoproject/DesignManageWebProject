@@ -44,7 +44,7 @@ If the project has backend runtime units beyond API, such as workers, schedulers
 
 `services/api`-only coverage is a governance gap when other runtime units exist.
 
-Local external dependencies such as database, cache, queue, object storage, search, email, or mocks must run through Docker or a compatible container runtime unless explicitly N/A.
+Local external dependencies such as database, cache, queue, object storage, search, email, or mocks must be defined in `compose.yaml` and run by napbox (one isolated environment per git worktree) unless explicitly N/A. Scripts and docs do not call `docker`; host ports come from `napbox up` / `napbox env`, never fixed ports, and tests that need a database use a throwaway environment (`napbox up --temp`), not the development database.
 
 Remote containerized deployment is recommended but not mandatory. Remote non-container runtime units must have auditable artifact identity, deploy identity, config source, rollback/forward-fix path, CI/CD evidence, release evidence, and ADR or approved exception evidence for production use.
 

@@ -1,6 +1,10 @@
 # Local development dependencies, run by napbox (one isolated environment per git worktree).
-# The host port is assigned by napbox and stays fixed for the environment; read it with `napbox env`.
+# Host ports are assigned by napbox and stay fixed for the environment; read them with `napbox env`.
 # Local-only credentials; never reuse them outside local development.
+
+x-napbox:
+  # Port for the web dev server that runs on the host; scripts/local/dev-web.sh reads NAPBOX_HOST_WEB.
+  host_ports: [web]
 
 services:
   postgres:
@@ -16,11 +20,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
+      # TCP, not the socket: on first start the init server listens on the socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 1s
       timeout: 5s
-      retries: 20
-      start_period: 5s
+      retries: 60
 
 volumes:
   pgdata:

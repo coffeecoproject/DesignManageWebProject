@@ -67,11 +67,10 @@ corepack pnpm install
 corepack pnpm dev:web
 ```
 
-Frontend URL:
-
-```text
-http://127.0.0.1:5173
-```
+`dev:web` runs `scripts/local/dev-web.sh`: it brings up this worktree's napbox environment, which owns the web
+dev-server port, and prints the URL `http://<NAPBOX_HOSTNAME>:<NAPBOX_HOST_WEB>` (for example
+`http://main--startupmanagesystem.localhost:<port>` in the main checkout). There is no fixed port; every worktree
+gets its own hostname and port.
 
 ## 4. Core Commands
 
@@ -83,7 +82,8 @@ http://127.0.0.1:5173
 | open local psql | `scripts/local/db-psql.sh` | Opens psql against the isolated local database. |
 | local database logs | `scripts/local/db-logs.sh` | Shows recent Postgres logs. |
 | stop local database | `scripts/local/db-down.sh` | Puts the environment to sleep; data is kept and the next connection wakes it. |
-| start frontend | `corepack pnpm dev:web` | Opens `http://127.0.0.1:5173`. |
+| period-close PostgreSQL drills | `corepack pnpm db:period-close:dry-run` (also `apply-drill`, `replay-drill`, `concurrency-drill`) | Each run uses its own throwaway napbox Postgres (`napbox up --temp`), not the development database. |
+| start frontend | `corepack pnpm dev:web` | Serves on this worktree's napbox port; prints the URL. |
 | start API | TBD | Backend runtime not initialized. |
 | lint | `corepack pnpm lint` | Frontend ESLint gate. |
 | format | TBD | Planned gap. |

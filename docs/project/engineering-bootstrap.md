@@ -55,7 +55,7 @@ Backend/API/storage/auth runtime units are not initialized yet.
 | --- | --- | --- | --- |
 | install | `corepack pnpm install` | ready_with_evidence | Passed on 2026-06-09 after network approval. |
 | peer dependency check | `corepack pnpm peers check` | ready_with_evidence | `No peer dependency issues found`. |
-| dev frontend | `corepack pnpm dev:web` | ready_with_evidence | Serves `apps/web` on `http://127.0.0.1:5173`. |
+| dev frontend | `corepack pnpm dev:web` | ready_with_evidence | Serves `apps/web` on this worktree's napbox host port `web`; the script prints the URL. |
 | lint | `corepack pnpm lint` | ready_with_evidence | Passed on 2026-06-09. |
 | typecheck | `corepack pnpm typecheck` | ready_with_evidence | Passed on 2026-06-09. |
 | build frontend | `corepack pnpm build:web` | ready_with_evidence | Passed on 2026-06-09. |
@@ -83,11 +83,9 @@ Run frontend:
 corepack pnpm dev:web
 ```
 
-Frontend URL:
-
-```text
-http://127.0.0.1:5173
-```
+Frontend URL: printed by `corepack pnpm dev:web` as `http://<NAPBOX_HOSTNAME>:<NAPBOX_HOST_WEB>`, for example
+`http://main--startupmanagesystem.localhost:<port>` in the main checkout. Each worktree has its own hostname and
+port, so logins and cookies of different worktrees do not overwrite each other.
 
 Local dependency startup:
 

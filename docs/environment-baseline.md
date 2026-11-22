@@ -50,7 +50,7 @@ Known local dependencies:
 
 - Vite React web app under `apps/web`
 - Frontend mock/session data
-- Docker/containerized external dependencies required when backend/database/storage are introduced, per `AGENTS.md`
+- External dependencies (database, storage, ...) defined in `compose.yaml` and run by napbox, per `AGENTS.md`
 
 ## Runtime Versions
 
