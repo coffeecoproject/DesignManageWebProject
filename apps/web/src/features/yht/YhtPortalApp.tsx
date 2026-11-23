@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Descriptions, Divider, Form, Input, Layout, Modal, Select, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, DatePicker, Descriptions, Divider, Form, Input, Layout, Modal, Select, Space, Spin, Statistic, Table, Tag, Typography, Upload, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
@@ -14,6 +14,20 @@ type Project = {
   planScore:string;constructionScore:string;
 };
 type Session={account:Account|null;csrfToken?:string};
+type ActivityKind='内部审核'|'甲方审核'|'关键事项';
+type Activity={id:string;kind:ActivityKind;description:string;stage:string|null;result:string|null;happenedAt:string;recordedBy:string;image?:{name:string;mime:string;bytes:number}};
+type ActivityDraft={kind:ActivityKind;stage?:'平面方案'|'施工图';result?:'待确认'|'通过'|'需修改';description:string;happenedAt:dayjs.Dayjs};
+async function encodeUpload(file:File):Promise<{name:string;mime:string;base64:string}>{
+  if(file.size>3145728 || file.size===0)throw Error('单张截图限3MB');
+  if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('只支持PNG/JPEG/WEBP');
+  const encoded=await new Promise<string>((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');
+    reader.onerror=()=>reject(Error('读取截图失败'));
+    reader.readAsDataURL(file);
+  });
+  return {name:file.name,mime:file.type,base64:encoded};
+}
 const { Header, Content } = Layout;
 const stages:Stage[]=['未开始','平面完成','施工图完成','下单完成'];
 
@@ -52,10 +66,16 @@ export function YhtPortalApp(){
   const [createOpen,setCreateOpen]=useState(false);
   const [accountOpen,setAccountOpen]=useState(false);
   const [editing,setEditing]=useState<Project|null>(null);
+  const [activityProject,setActivityProject]=useState<Project|null>(null);
+  const [activities,setActivities]=useState<Activity[]>([]);
+  const [activityLoading,setActivityLoading]=useState(false);
+  const [activityOpen,setActivityOpen]=useState(false);
+  const [attachment,setAttachment]=useState<File|null>(null);
   const [loginForm]=Form.useForm();
   const [createForm]=Form.useForm();
   const [accountForm]=Form.useForm();
   const [progressForm]=Form.useForm();
+  const [activityForm]=Form.useForm<ActivityDraft>();
   const [messageApi,contextHolder]=message.useMessage();
   const account=session?.account;
   const csrf=session?.csrfToken;
@@ -132,6 +152,50 @@ export function YhtPortalApp(){
     }catch(error){messageApi.error((error as Error).message);}
     finally{setBusy(false);}
   }
+  async function openActivities(project:Project){
+    setActivityProject(project);
+    setActivities([]);
+    setActivityLoading(true);
+    try{
+      const result=await api<{activities:Activity[]}>('/ledger/'+project.id+'/activities');
+      setActivities(result.activities);
+    }catch(error){messageApi.error((error as Error).message);}
+    finally{setActivityLoading(false);}
+  }
+  async function submitActivity(values:ActivityDraft){
+    if(!activityProject)return;
+    setBusy(true);
+    try{
+      const image=attachment?await encodeUpload(attachment):undefined;
+      await api('/ledger/'+activityProject.id+'/activities',{
+        method:'POST',body:JSON.stringify({
+          kind:values.kind,
+          stage:values.kind==='关键事项'?null:values.stage,
+          result:values.kind==='关键事项'?null:values.result,
+          description:values.description,
+          happenedAt:values.happenedAt.toISOString(),
+          image
+        })
+      },csrf);
+      const result=await api<{activities:Activity[]}>('/ledger/'+activityProject.id+'/activities');
+      setActivities(result.activities);
+      setActivityOpen(false);
+      setAttachment(null);
+      activityForm.resetFields();
+      messageApi.success('记录已保存');
+    }catch(error){messageApi.error((error as Error).message);}
+    finally{setBusy(false);}
+  }
+  async function openPrivateImage(projectId:string,id:string){
+    try{
+      const resp=await fetch('/api/yht/ledger/'+projectId+'/activities/'+id+'/image',{credentials:'same-origin'});
+      if(!resp.ok)throw Error('无法读取截图');
+      const blob=await resp.blob();
+      const url=URL.createObjectURL(blob);
+      window.open(url,'_blank','noopener,noreferrer');
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }catch(error){messageApi.error((error as Error).message);}
+  }
   function openProgress(record:Project){
     setEditing(record);
     progressForm.setFieldsValue({
@@ -166,7 +230,8 @@ export function YhtPortalApp(){
     {title:'施工图上传时间',dataIndex:'constructionUploadedAt',width:165,render:dateText},
     {title:'方案时效(天)',width:110,render:(_,p)=>days(p.assignedAt,p.planUploadedAt)??'—'},
     {title:'施工图时效(天)',width:125,render:(_,p)=>days(p.operationsConfirmedAt,p.constructionUploadedAt)??'—'},
-    {title:'项目状态',dataIndex:'stage',width:120,render:(v:Stage)=><Tag color={v==='下单完成'?'green':v==='未开始'?'default':'blue'}>{v}</Tag>}
+    {title:'项目状态',dataIndex:'stage',width:120,render:(v:Stage)=><Tag color={v==='下单完成'?'green':v==='未开始'?'default':'blue'}>{v}</Tag>},
+    {title:'审核与记录',width:125,fixed:'right',render:(_,p)=><Button size="small" onClick={()=>void openActivities(p)}>查看记录</Button>}
   ];
   if(loading)return <div style={{margin:'20vh auto',width:150}}><Spin tip="加载中"><div style={{height:80}}/></Spin></div>;
   if(!account) return (
@@ -215,6 +280,43 @@ export function YhtPortalApp(){
         </Card>
       </Space>
     </Content>
+    <Modal title={activityProject?'审核与关键记录 · '+activityProject.storeName:'审核记录'} open={!!activityProject} width={760} onCancel={()=>setActivityProject(null)} footer={null}>
+      <Space direction="vertical" size="middle" style={{width:'100%'}}>
+        <Space style={{justifyContent:'space-between',width:'100%'}}>
+          <Typography.Text type="secondary">历次审核记录不会被新记录覆盖</Typography.Text>
+          {account.role!=='executive'&&<Button type="primary" onClick={()=>{setActivityOpen(true);setAttachment(null);activityForm.setFieldsValue({kind:'内部审核',stage:'平面方案',result:'待确认',happenedAt:dayjs()});}}>+ 新增记录</Button>}
+        </Space>
+        <Table<Activity> rowKey="id" loading={activityLoading} size="small" pagination={{pageSize:8}} dataSource={activities} columns={[
+          {title:'时间',dataIndex:'happenedAt',width:145,render:dateText},
+          {title:'类型',dataIndex:'kind',width:96},
+          {title:'阶段',dataIndex:'stage',width:90,render:(v:string|null)=>v||'—'},
+          {title:'结果',dataIndex:'result',width:90,render:(v:string|null)=>v||'—'},
+          {title:'内容',dataIndex:'description',ellipsis:true},
+          {title:'附件',width:90,render:(_,row)=>row.image?<Button size="small" onClick={()=>void openPrivateImage(activityProject?.id||'',row.id)}>查看截图</Button>:'—'}
+        ]}/>
+      </Space>
+    </Modal>
+    <Modal title="新增审核或关键事项" open={activityOpen} onCancel={()=>setActivityOpen(false)} onOk={()=>activityForm.submit()} okButtonProps={{loading:busy}} destroyOnClose>
+      <Form form={activityForm} layout="vertical" onFinish={submitActivity}>
+        <Form.Item name="kind" label="记录类型" rules={[{required:true}]}>
+          <Select options={['内部审核','甲方审核','关键事项'].map(v=>({label:v,value:v}))}/>
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev:ActivityDraft,next:ActivityDraft)=>prev.kind!==next.kind}>
+          {({getFieldValue})=>getFieldValue('kind')!=='关键事项'?<>
+            <Form.Item name="stage" label="审核阶段" rules={[{required:true}]}><Select options={['平面方案','施工图'].map(v=>({label:v,value:v}))}/></Form.Item>
+            <Form.Item name="result" label="审核结果" rules={[{required:true}]}><Select options={['待确认','通过','需修改'].map(v=>({label:v,value:v}))}/></Form.Item>
+          </>:null}
+        </Form.Item>
+        <Form.Item name="happenedAt" label="事项发生时间" rules={[{required:true}]}><DatePicker showTime style={{width:'100%'}}/></Form.Item>
+        <Form.Item name="description" label="审核意见 / 关键事项说明" rules={[{required:true,max:4000}]}><Input.TextArea rows={3} maxLength={4000} showCount/></Form.Item>
+        <Form.Item label="截图（可不上传）">
+          <Upload beforeUpload={(file)=>{setAttachment(file);return false;}} fileList={attachment?[{uid:'selected',name:attachment.name,status:'done'}]:[]} onRemove={()=>{setAttachment(null);}} accept="image/png,image/jpeg,image/webp" maxCount={1}>
+            <Button>选择微信截图</Button>
+          </Upload>
+          <Typography.Text type="secondary" style={{fontSize:12}}>仅支持3MB以内 PNG、JPEG、WEBP。截图只允许项目相关人员查看。</Typography.Text>
+        </Form.Item>
+      </Form>
+    </Modal>
     <Modal title="新建门店并分配设计师" open={createOpen} onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okButtonProps={{loading:busy}} destroyOnClose>
       <Form form={createForm} layout="vertical" onFinish={create} initialValues={{outsourcingType:'平面+施工图',storeType:'6.5整店'}}>
         <Form.Item name="region" label="所属区域" rules={[{required:true}]}><Input placeholder="如：湖北区域"/></Form.Item>
