@@ -66,3 +66,27 @@ CREATE TABLE IF NOT EXISTS yht_portal_sessions (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS yht_portal_sessions_expiry_idx ON yht_portal_sessions(expires_at);
+
+-- 审核截图与关键事项：每条记录独立留存，不覆盖上一轮意见。
+-- 图片仅通过验证会话的业务接口读取；不得映射为公开静态目录。
+CREATE TABLE IF NOT EXISTS yht_ledger_activities (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES yht_ledger_projects(id),
+  kind text NOT NULL CHECK (kind IN ('内部审核','甲方审核','关键事项')),
+  stage text CHECK (stage IN ('平面方案','施工图')),
+  result text CHECK (result IN ('待确认','通过','需修改')),
+  description text NOT NULL CHECK (length(description) BETWEEN 1 AND 4000),
+  happened_at timestamptz NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  recorded_by text NOT NULL,
+  image_name text,
+  image_mime text CHECK (image_mime IN ('image/png','image/jpeg','image/webp')),
+  image_bytes bytea,
+  CONSTRAINT yht_activity_image_fields_consistent CHECK (
+    (image_name IS NULL AND image_mime IS NULL AND image_bytes IS NULL)
+    OR (image_name IS NOT NULL AND image_mime IS NOT NULL AND image_bytes IS NOT NULL
+        AND octet_length(image_bytes) <= 3145728)
+  )
+);
+CREATE INDEX IF NOT EXISTS yht_ledger_activities_project_idx
+  ON yht_ledger_activities(project_id, happened_at DESC, id DESC);
