@@ -31,11 +31,11 @@ function write(res:ServerResponse,status:number,data:unknown,headers:Record<stri
   });
   res.end(body);
 }
-async function readJson(req:IncomingMessage):Promise<unknown> {
+async function readJson(req:IncomingMessage, maxBytes=32768):Promise<unknown> {
   let text='';
   for await(const part of req) {
     text+=part.toString();
-    if(text.length>32768) throw Error('请求体超过大小限制');
+    if(Buffer.byteLength(text,'utf8')>maxBytes) throw Error('请求体超过大小限制');
   }
   try{return text ? JSON.parse(text) as unknown : {};}catch{throw Error('JSON格式错误');}
 }
@@ -141,7 +141,7 @@ export async function startYhtPortalServer() {
           return res.end(image.bytes);
         }
         if(method==='GET' && !imageId)return write(res,200,{activities:await activities.list(session.principal,projectId)});
-        if(method==='POST' && !imageId)return write(res,201,{activity:await activities.add(session.principal,projectId,asObject(await readJson(req)) as AddActivity)});
+        if(method==='POST' && !imageId)return write(res,201,{activity:await activities.add(session.principal,projectId,asObject(await readJson(req,4300000)) as unknown as AddActivity)});
         return write(res,405,{error:'不支持的方法'});
       }
       if(path.startsWith('/api/yht/ledger')){
