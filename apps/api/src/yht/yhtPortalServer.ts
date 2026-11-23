@@ -5,6 +5,7 @@ import { createYhtPostgresRepository, type LedgerSqlPool } from './yhtLedgerPost
 import { createYhtLedgerService } from './yhtLedgerService.js';
 import { createYhtLedgerHttpHandler } from './yhtLedgerHttpHandler.js';
 import { createPortalAuth } from './yhtPortalAuth.js';
+import { createYhtActivityService, type AddActivity } from './yhtActivityService.js';
 
 const require = createRequire(import.meta.url);
 // Existing workspace depends on pg; keep its runtime adapter isolated here.
@@ -60,8 +61,10 @@ export async function startYhtPortalServer() {
   const pool = new Pool({connectionString,max:10});
   const auth=createPortalAuth(pool);
   await auth.bootstrapManager(process.env.YHT_BOOTSTRAP_USER,process.env.YHT_BOOTSTRAP_PASSWORD);
+  const repository=createYhtPostgresRepository(pool);
+  const activities=createYhtActivityService(pool,repository);
   const service=createYhtLedgerService({
-    repository:createYhtPostgresRepository(pool),
+    repository,
     newId:randomUUID,
     now:()=>new Date().toISOString(),
     resolveDesigner:(id)=>auth.resolveDesigner(id)
@@ -127,6 +130,20 @@ export async function startYhtPortalServer() {
         });
         return write(res,201,{account:created});
       }
+      const activityMatch=path.match(/^\/api\/yht\/ledger\/([A-Za-z0-9_-]+)\/activities(?:\/([A-Za-z0-9_-]+)\/image)?$/);
+      if(activityMatch){
+        const projectId=activityMatch[1] as string;
+        const imageId=activityMatch[2];
+        if(method==='GET' && imageId){
+          const image=await activities.image(session.principal,projectId,imageId);
+          if(!image)return write(res,404,{error:'截图不存在'});
+          res.writeHead(200,{'content-type':image.mime,'content-disposition':'inline','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; sandbox"});
+          return res.end(image.bytes);
+        }
+        if(method==='GET' && !imageId)return write(res,200,{activities:await activities.list(session.principal,projectId)});
+        if(method==='POST' && !imageId)return write(res,201,{activity:await activities.add(session.principal,projectId,asObject(await readJson(req)) as AddActivity)});
+        return write(res,405,{error:'不支持的方法'});
+      }
       if(path.startsWith('/api/yht/ledger')){
         const response=await ledger({
           method,
@@ -139,7 +156,7 @@ export async function startYhtPortalServer() {
       return write(res,404,{error:'Not found'});
     }catch(error){
       const err=error instanceof Error ? error.message : '系统错误';
-      const status=err.includes('duplicate key')?409:err.includes('请求')||err.includes('密码')||err.includes('账号')?400:500;
+      const status=err.includes('duplicate key')?409:err.includes('没有访问权限')||err.includes('没有添加记录的权限')?403:err.includes('请求')||err.includes('密码')||err.includes('账号')||err.includes('记录')||err.includes('截图')||err.includes('审核')?400:500;
       if(status===500) console.error('YHT portal request failed',error);
       return write(res,status,{error:status===500?'服务器处理失败':err});
     }
